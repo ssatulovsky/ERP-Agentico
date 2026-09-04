@@ -1,0 +1,1723 @@
+import React, { useState, useMemo } from 'react';
+import { 
+  Warehouse, 
+  InventoryItem, 
+  WarehouseTransfer, 
+  ReplenishmentRequisition,
+  ClientCompany,
+  AccountingFirmProfile,
+  CompanyProfile,
+  AccountingEntry,
+  StockStatus,
+  InventoryCategory,
+  WarehouseType
+} from '../types';
+import { 
+  formatCLP, 
+  calculateStockStatus, 
+  calculateCoverageDays,
+  createWarehouseTransferEntry,
+  createWarehouseReceiptEntry,
+  generateAutoReplenishmentRequisition
+} from '../utils/chileanAccounting';
+import { 
+  Boxes, 
+  Warehouse as WarehouseIcon, 
+  Truck, 
+  ArrowLeftRight, 
+  AlertTriangle, 
+  CheckCircle2, 
+  Clock, 
+  Plus, 
+  Search, 
+  Filter, 
+  ShieldCheck, 
+  Bot, 
+  Sparkles, 
+  RefreshCw, 
+  FileText, 
+  Layers, 
+  MapPin, 
+  User, 
+  Calendar, 
+  DollarSign, 
+  SlidersHorizontal, 
+  Eye, 
+  TrendingDown, 
+  TrendingUp, 
+  PackageCheck, 
+  PackageMinus, 
+  X, 
+  ChevronRight,
+  Send,
+  Building2,
+  Check,
+  AlertCircle
+} from 'lucide-react';
+
+interface InventoryAgentModuleProps {
+  company: CompanyProfile;
+  firm: AccountingFirmProfile;
+  activeClient: ClientCompany;
+  onUpdateClient: (updated: ClientCompany) => void;
+  warehouses: Warehouse[];
+  onUpdateWarehouses: (warehouses: Warehouse[]) => void;
+  inventoryItems: InventoryItem[];
+  onUpdateInventoryItems: (items: InventoryItem[]) => void;
+  transfers: WarehouseTransfer[];
+  onUpdateTransfers: (transfers: WarehouseTransfer[]) => void;
+  requisitions: ReplenishmentRequisition[];
+  onUpdateRequisitions: (reqs: ReplenishmentRequisition[]) => void;
+  onAddAccountingEntry?: (entry: AccountingEntry) => void;
+}
+
+export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
+  company,
+  firm,
+  activeClient,
+  onUpdateClient,
+  warehouses,
+  onUpdateWarehouses,
+  inventoryItems,
+  onUpdateInventoryItems,
+  transfers,
+  onUpdateTransfers,
+  requisitions,
+  onUpdateRequisitions,
+  onAddAccountingEntry
+}) => {
+  // Navigation tabs inside Inventory module
+  const [activeSubTab, setActiveSubTab] = useState<'stock' | 'transfers' | 'requisitions' | 'warehouses'>('stock');
+
+  // Filtering & Search
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Modals & Drawers
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
+  const [isNewWarehouseModalOpen, setIsNewWarehouseModalOpen] = useState<boolean>(false);
+  const [isEditStockLimitsModalOpen, setIsEditStockLimitsModalOpen] = useState<boolean>(false);
+  const [selectedItemForLimits, setSelectedItemForLimits] = useState<InventoryItem | null>(null);
+  const [isDiagnosingAgent, setIsDiagnosingAgent] = useState<boolean>(false);
+  const [agentDiagnosticMessage, setAgentDiagnosticMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // New Transfer form state
+  const [newTransferOrigen, setNewTransferOrigen] = useState<string>(warehouses[0]?.id || '');
+  const [newTransferDestino, setNewTransferDestino] = useState<string>(warehouses[1]?.id || '');
+  const [newTransferItemId, setNewTransferItemId] = useState<string>(inventoryItems[0]?.id || '');
+  const [newTransferCantidad, setNewTransferCantidad] = useState<number>(10);
+  const [newTransferPatente, setNewTransferPatente] = useState<string>('KJ-PR-88');
+  const [newTransferChofer, setNewTransferChofer] = useState<string>('Manuel Valdivia Reyes');
+  const [newTransferChoferRut, setNewTransferChoferRut] = useState<string>('14.890.342-1');
+  const [newTransferMotivo, setNewTransferMotivo] = useState<'REPOSICION_SUCURSAL' | 'EQUILIBRIO_STOCK' | 'SUMINISTRO_FAENA'>('REPOSICION_SUCURSAL');
+
+  // New Warehouse form state
+  const [newWhCodigo, setNewWhCodigo] = useState<string>('BOD-05-STGO');
+  const [newWhNombre, setNewWhNombre] = useState<string>('Bodega Norte Santiago');
+  const [newWhDireccion, setNewWhDireccion] = useState<string>('Panamericana Norte 4500');
+  const [newWhComuna, setNewWhComuna] = useState<string>('Conchalí');
+  const [newWhTipo, setNewWhTipo] = useState<WarehouseType>('SUCURSAL');
+  const [newWhEncargado, setNewWhEncargado] = useState<string>('Patricia Morales');
+  const [newWhRutEncargado, setNewWhRutEncargado] = useState<string>('16.782.100-3');
+  const [newWhCapacidad, setNewWhCapacidad] = useState<number>(1000);
+
+  // Show temporary toast
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  // Toggle inventory applicability for this client
+  const handleToggleManejaInventario = (enabled: boolean) => {
+    const updated: ClientCompany = {
+      ...activeClient,
+      manejaInventario: enabled,
+      reglaValoracionInventario: activeClient.reglaValoracionInventario || 'PMP',
+      alertasInventarioAgente: {
+        autoReposicion: enabled,
+        alertaStockCritico: enabled,
+        controlGuiasDespacho52: enabled,
+      }
+    };
+    onUpdateClient(updated);
+    showToast(enabled 
+      ? `Módulo de Inventarios activado para ${activeClient.nombreCorto}` 
+      : `Módulo de Inventarios pausado para ${activeClient.nombreCorto}`
+    );
+  };
+
+  // Filter items by client company (or general catalog)
+  const clientWarehouses = useMemo(() => {
+    const direct = warehouses.filter(w => w.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : warehouses;
+  }, [warehouses, activeClient.id]);
+
+  const clientItems = useMemo(() => {
+    const direct = inventoryItems.filter(i => i.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : inventoryItems;
+  }, [inventoryItems, activeClient.id]);
+
+  const clientTransfers = useMemo(() => {
+    const direct = transfers.filter(t => t.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : transfers;
+  }, [transfers, activeClient.id]);
+
+  const clientRequisitions = useMemo(() => {
+    const direct = requisitions.filter(r => r.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : requisitions;
+  }, [requisitions, activeClient.id]);
+
+  // Filtered Stock Items
+  const filteredItems = useMemo(() => {
+    return clientItems.filter(item => {
+      // Warehouse filter
+      if (selectedWarehouseId !== 'ALL') {
+        const hasStockInWh = item.stockPorBodega.some(b => b.bodegaId === selectedWarehouseId && b.stockFisico > 0);
+        if (!hasStockInWh) return false;
+      }
+      // Status filter
+      if (selectedStatus !== 'ALL' && item.estadoStock !== selectedStatus) {
+        return false;
+      }
+      // Category filter
+      if (selectedCategory !== 'ALL' && item.categoria !== selectedCategory) {
+        return false;
+      }
+      // Search query
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const matchSku = item.sku.toLowerCase().includes(query);
+        const matchName = item.nombre.toLowerCase().includes(query);
+        const matchBar = item.codigoBarras?.toLowerCase().includes(query) || false;
+        if (!matchSku && !matchName && !matchBar) return false;
+      }
+      return true;
+    });
+  }, [clientItems, selectedWarehouseId, selectedStatus, selectedCategory, searchQuery]);
+
+  // Aggregate Metrics
+  const totalInventoryValueCLP = useMemo(() => {
+    return clientItems.reduce((acc, item) => acc + (item.stockGeneral * item.costoUnitarioPMP), 0);
+  }, [clientItems]);
+
+  const criticalStockCount = useMemo(() => {
+    return clientItems.filter(i => i.estadoStock === 'CRITICO').length;
+  }, [clientItems]);
+
+  const lowStockCount = useMemo(() => {
+    return clientItems.filter(i => i.estadoStock === 'BAJO_MINIMO').length;
+  }, [clientItems]);
+
+  const inTransitCount = useMemo(() => {
+    return clientTransfers.filter(t => t.estado === 'EN_TRANSITO').length;
+  }, [clientTransfers]);
+
+  const pendingRequisitionsCount = useMemo(() => {
+    return clientRequisitions.filter(r => r.estado === 'PENDIENTE_APROBACION').length;
+  }, [clientRequisitions]);
+
+  // Trigger Autonomous Agent Diagnostic
+  const handleRunAgentDiagnostic = () => {
+    setIsDiagnosingAgent(true);
+    setAgentDiagnosticMessage(null);
+
+    setTimeout(() => {
+      setIsDiagnosingAgent(false);
+      // Run auto-replenishment evaluation
+      const newReqs: ReplenishmentRequisition[] = [...clientRequisitions];
+      let newReqCount = 0;
+
+      clientItems.forEach(item => {
+        if (item.estadoStock === 'CRITICO' || item.estadoStock === 'BAJO_MINIMO') {
+          // Check if there's already an active requisition for this item
+          const alreadyExists = newReqs.some(r => r.itemId === item.id && r.estado === 'PENDIENTE_APROBACION');
+          if (!alreadyExists) {
+            const targetWh = clientWarehouses[0];
+            const autoReq = generateAutoReplenishmentRequisition(item, targetWh, clientWarehouses);
+            newReqs.unshift(autoReq);
+            newReqCount++;
+          }
+        }
+      });
+
+      if (newReqCount > 0) {
+        onUpdateRequisitions(newReqs);
+        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente IA analizó ${clientItems.length} SKUs en ${clientWarehouses.length} bodegas. Se detectaron ${criticalStockCount} ítems en estado crítico y se generaron automáticamente ${newReqCount} nuevas Solicitudes de Reposición/Traspaso Inteligente.`);
+      } else {
+        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente IA verificó los stocks contra las tasas de consumo mensual y guías DTE 52. Todas las alertas activas ya cuentan con requisición en curso.`);
+      }
+      showToast('Diagnóstico del Agente de Inventario ejecutado exitosamente.');
+    }, 900);
+  };
+
+  // Approve Requisition
+  const handleApproveRequisition = (req: ReplenishmentRequisition) => {
+    const updated = clientRequisitions.map(r => {
+      if (r.id === req.id) {
+        return {
+          ...r,
+          estado: r.tipoAccionRecomendada === 'TRASPASO_INTERNO' ? 'TRASPASO_INICIADO' as const : 'ORDEN_COMPRA_GENERADA' as const,
+          ordenCompraFolio: Math.floor(10000 + Math.random() * 90000),
+        };
+      }
+      return r;
+    });
+    onUpdateRequisitions(updated);
+
+    // If it was a transfer, automatically create the transfer
+    if (req.tipoAccionRecomendada === 'TRASPASO_INTERNO' && req.bodegaOrigenSugeridaTraspaso) {
+      const origWh = clientWarehouses.find(w => w.nombre.includes(req.bodegaOrigenSugeridaTraspaso!)) || clientWarehouses[0];
+      const newTrans: WarehouseTransfer = {
+        id: `trans-${Date.now()}`,
+        empresaId: activeClient.id,
+        folioGuiaDespacho52: Math.floor(85000 + Math.random() * 1000),
+        fechaDespacho: new Date().toISOString().split('T')[0],
+        fechaEstimadaLlegada: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
+        bodegaOrigenId: origWh.id,
+        bodegaOrigenNombre: origWh.nombre,
+        bodegaDestinoId: req.bodegaDestinoId,
+        bodegaDestinoNombre: req.bodegaDestinoNombre,
+        motivoTraslado: 'EQUILIBRIO_STOCK',
+        estado: 'EN_TRANSITO',
+        items: [
+          {
+            itemId: req.itemId,
+            sku: req.sku,
+            nombre: req.nombreItem,
+            cantidadEnviada: req.cantidadSugerida,
+            costoUnitarioPMP: req.costoEstimadoCLP / req.cantidadSugerida,
+          }
+        ],
+        valorTotalTraslado: req.costoEstimadoCLP,
+        transporte: {
+          patenteCamion: 'HG-TK-92',
+          rutChofer: '13.412.980-4',
+          nombreChofer: 'Pedro Morales Carrizo',
+          rutTransportista: '76.432.100-3',
+          razonSocialTransportista: 'TRANSPORTES CRUZ DEL SUR LOGÍSTICA SPA',
+        },
+        observaciones: `Traspaso generado automáticamente por el Agente IA en base a Requisición ${req.folioRequisicion}.`,
+      };
+
+      onUpdateTransfers([newTrans, ...clientTransfers]);
+
+      // Generate accounting entry for transfer
+      if (onAddAccountingEntry) {
+        const transferEntry = createWarehouseTransferEntry(newTrans);
+        onAddAccountingEntry(transferEntry);
+      }
+      showToast(`Requisición aprobada. Se emitió automáticamente la Guía DTE 52 N° ${newTrans.folioGuiaDespacho52} en estado EN TRÁNSITO.`);
+    } else {
+      showToast(`Orden de Compra emitida al proveedor ${req.proveedorSugerido?.razonSocial || 'Oficial'}.`);
+    }
+  };
+
+  // Approve all pending requisitions
+  const handleApproveAllRequisitions = () => {
+    const pending = clientRequisitions.filter(r => r.estado === 'PENDIENTE_APROBACION');
+    if (pending.length === 0) return;
+
+    pending.forEach(p => handleApproveRequisition(p));
+    showToast(`Se aprobaron ${pending.length} requisiciones de reposición automáticamente.`);
+  };
+
+  // Receive Transfer in Destination Warehouse
+  const handleReceiveTransfer = (transfer: WarehouseTransfer) => {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 1. Update transfer state
+    const updatedTransfers = clientTransfers.map(t => {
+      if (t.id === transfer.id) {
+        return {
+          ...t,
+          estado: 'RECEPCIONADO' as const,
+          fechaRecepcionReal: today,
+          items: t.items.map(i => ({ ...i, cantidadRecepcionada: i.cantidadEnviada })),
+        };
+      }
+      return t;
+    });
+    onUpdateTransfers(updatedTransfers);
+
+    // 2. Update physical stocks for the transferred items
+    const updatedItems = clientItems.map(item => {
+      const transferDetail = transfer.items.find(ti => ti.itemId === item.id);
+      if (!transferDetail) return item;
+
+      // Increase stock in destination warehouse, deduct from transit
+      const updatedWhStock = item.stockPorBodega.map(ws => {
+        if (ws.bodegaId === transfer.bodegaDestinoId) {
+          return { ...ws, stockFisico: ws.stockFisico + transferDetail.cantidadEnviada };
+        }
+        return ws;
+      });
+
+      const newStockGeneral = item.stockGeneral;
+      const newStockTransit = Math.max(0, item.stockEnTransito - transferDetail.cantidadEnviada);
+      const newStatus = calculateStockStatus(newStockGeneral, item.stockMinimo, item.stockCritico);
+
+      return {
+        ...item,
+        stockPorBodega: updatedWhStock,
+        stockEnTransito: newStockTransit,
+        stockDisponible: newStockGeneral - item.stockComprometido,
+        estadoStock: newStatus,
+      };
+    });
+    onUpdateInventoryItems(updatedItems);
+
+    // 3. Generate accounting entry for definitive receipt
+    if (onAddAccountingEntry) {
+      const receiptEntry = createWarehouseReceiptEntry({ ...transfer, fechaRecepcionReal: today });
+      onAddAccountingEntry(receiptEntry);
+    }
+
+    showToast(`Traslado DTE 52 N° ${transfer.folioGuiaDespacho52} recepcionado conforme en ${transfer.bodegaDestinoNombre}. Stock actualizado y asiento contable generado.`);
+  };
+
+  // Create New Manual Inter-Warehouse Transfer
+  const handleCreateTransfer = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newTransferOrigen === newTransferDestino) {
+      alert('La bodega de origen y destino deben ser distintas.');
+      return;
+    }
+
+    const item = clientItems.find(i => i.id === newTransferItemId);
+    const origWh = clientWarehouses.find(w => w.id === newTransferOrigen);
+    const destWh = clientWarehouses.find(w => w.id === newTransferDestino);
+
+    if (!item || !origWh || !destWh) return;
+
+    // Check available stock in origin warehouse
+    const origStock = item.stockPorBodega.find(sb => sb.bodegaId === origWh.id)?.stockFisico || 0;
+    if (origStock < newTransferCantidad) {
+      alert(`La bodega de origen (${origWh.nombre}) solo cuenta con ${origStock} ${item.unidadMedida}. No se puede transferir ${newTransferCantidad}.`);
+      return;
+    }
+
+    const totalValue = Math.round(newTransferCantidad * item.costoUnitarioPMP);
+    const newTrans: WarehouseTransfer = {
+      id: `trans-${Date.now()}`,
+      empresaId: activeClient.id,
+      folioGuiaDespacho52: Math.floor(85100 + Math.random() * 900),
+      fechaDespacho: new Date().toISOString().split('T')[0],
+      fechaEstimadaLlegada: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
+      bodegaOrigenId: origWh.id,
+      bodegaOrigenNombre: origWh.nombre,
+      bodegaDestinoId: destWh.id,
+      bodegaDestinoNombre: destWh.nombre,
+      motivoTraslado: newTransferMotivo,
+      estado: 'EN_TRANSITO',
+      items: [
+        {
+          itemId: item.id,
+          sku: item.sku,
+          nombre: item.nombre,
+          cantidadEnviada: newTransferCantidad,
+          costoUnitarioPMP: item.costoUnitarioPMP,
+        }
+      ],
+      valorTotalTraslado: totalValue,
+      transporte: {
+        patenteCamion: newTransferPatente,
+        rutChofer: newTransferChoferRut,
+        nombreChofer: newTransferChofer,
+        rutTransportista: activeClient.rut,
+        razonSocialTransportista: activeClient.razonSocial,
+      },
+      observaciones: 'Traslado interno con Guía Electrónica DTE 52 timbrada por el SII.',
+    };
+
+    // Deduct stock from origin warehouse and add to transit
+    const updatedItems = clientItems.map(it => {
+      if (it.id !== item.id) return it;
+      const updatedWh = it.stockPorBodega.map(wb => {
+        if (wb.bodegaId === origWh.id) {
+          return { ...wb, stockFisico: wb.stockFisico - newTransferCantidad };
+        }
+        return wb;
+      });
+      return {
+        ...it,
+        stockPorBodega: updatedWh,
+        stockEnTransito: it.stockEnTransito + newTransferCantidad,
+      };
+    });
+
+    onUpdateTransfers([newTrans, ...clientTransfers]);
+    onUpdateInventoryItems(updatedItems);
+
+    // Register transfer accounting entry
+    if (onAddAccountingEntry) {
+      const transferEntry = createWarehouseTransferEntry(newTrans);
+      onAddAccountingEntry(transferEntry);
+    }
+
+    setIsTransferModalOpen(false);
+    showToast(`Guía DTE 52 N° ${newTrans.folioGuiaDespacho52} emitida. Camión ${newTransferPatente} despachado hacia ${destWh.nombre}.`);
+  };
+
+  // Create New Warehouse
+  const handleCreateWarehouse = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newWh: Warehouse = {
+      id: `bod-${Date.now()}`,
+      empresaId: activeClient.id,
+      codigo: newWhCodigo.toUpperCase(),
+      nombre: newWhNombre,
+      direccion: newWhDireccion,
+      comuna: newWhComuna,
+      region: 'Región Metropolitana',
+      tipo: newWhTipo,
+      encargadoNombre: newWhEncargado,
+      encargadoRut: newWhRutEncargado,
+      capacidadM2: newWhCapacidad,
+      ocupacionPorcentaje: 10,
+      esBodegaPrincipal: false,
+      activa: true,
+    };
+
+    onUpdateWarehouses([...clientWarehouses, newWh]);
+    setIsNewWarehouseModalOpen(false);
+    showToast(`Bodega ${newWh.nombre} registrada exitosamente.`);
+  };
+
+  // Save edited limits
+  const handleSaveStockLimits = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedItemForLimits) return;
+
+    const updated = clientItems.map(i => {
+      if (i.id === selectedItemForLimits.id) {
+        const newStatus = calculateStockStatus(i.stockGeneral, selectedItemForLimits.stockMinimo, selectedItemForLimits.stockCritico);
+        return {
+          ...selectedItemForLimits,
+          estadoStock: newStatus,
+        };
+      }
+      return i;
+    });
+
+    onUpdateInventoryItems(updated);
+    setIsEditStockLimitsModalOpen(false);
+    setSelectedItemForLimits(null);
+    showToast(`Umbrales de stock actualizados para ${selectedItemForLimits.sku}.`);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-lg shadow-xl border border-blue-500/30 flex items-center gap-3 animate-in fade-in duration-200 text-sm">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+          <button onClick={() => setToastMessage(null)} className="ml-2 text-slate-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Main Header & Client Inventory Status Banner */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                Agente WMS & Existencias SII
+              </span>
+              <span className="text-slate-400 text-xs">|</span>
+              <span className="text-slate-500 text-xs font-mono">
+                Cliente: <strong className="text-slate-800">{activeClient.nombreCorto}</strong> ({activeClient.rut})
+              </span>
+            </div>
+            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+              <Boxes className="w-7 h-7 text-blue-600" />
+              <span>Control de Inventario, Bodegas & Agente Logístico</span>
+            </h1>
+            <p className="text-sm text-slate-500 max-w-3xl">
+              Monitoreo autónomo de existencias valorizadas según norma PMP (Art. 30 LIR), transferencias entre sucursales con Guía de Despacho DTE 52, alertas preventivas y requisiciones automáticas.
+            </p>
+          </div>
+
+          {/* Right Action: Applicability Switch & Diagnostics */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg">
+              <span className="text-xs font-medium text-slate-600">Aplica Inventario:</span>
+              <button
+                onClick={() => handleToggleManejaInventario(!activeClient.manejaInventario)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
+                  activeClient.manejaInventario ? 'bg-blue-600' : 'bg-slate-300'
+                }`}
+                title="Habilitar/Deshabilitar inventario para esta empresa"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    activeClient.manejaInventario ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className="text-xs font-bold font-mono text-slate-800">
+                {activeClient.manejaInventario ? 'SÍ' : 'NO'}
+              </span>
+            </div>
+
+            <button
+              onClick={handleRunAgentDiagnostic}
+              disabled={isDiagnosingAgent || !activeClient.manejaInventario}
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-medium px-4 py-2 rounded-lg transition-all shadow-sm cursor-pointer text-xs"
+            >
+              <Bot className={`w-4 h-4 ${isDiagnosingAgent ? 'animate-spin' : ''}`} />
+              <span>{isDiagnosingAgent ? 'Analizando Stocks...' : 'Ejecutar Diagnóstico IA'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Warning if inventory is disabled for this company */}
+        {!activeClient.manejaInventario && (
+          <div className="mt-4 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <p className="font-bold text-amber-950">
+                Esta empresa ({activeClient.razonSocial}) está configurada sin control de inventarios.
+              </p>
+              <p className="text-amber-800">
+                Por su giro ante el SII ({activeClient.giro}), opera habitualmente como prestadora de servicios puros. Si esta empresa comercializa productos, insumos o repuestos, puedes activar el interruptor superior para habilitar el Agente de Bodegas y Reabastecimiento.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* AI Agent Diagnostic Message if present */}
+        {agentDiagnosticMessage && (
+          <div className="mt-4 p-4 rounded-lg bg-blue-50/80 border border-blue-200 text-blue-900 flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <span className="font-bold uppercase tracking-wider text-blue-700 text-[10px]">
+                Informe de Auditoría del Agente IA
+              </span>
+              <p className="text-slate-800 leading-relaxed">{agentDiagnosticMessage}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* KPI Cards Strip */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Total Valuation */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs mb-1 font-medium">
+            <span>Valor Total Existencias</span>
+            <DollarSign className="w-4 h-4 text-blue-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-slate-900">
+            {formatCLP(totalInventoryValueCLP)}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+            <span className="text-blue-600 font-bold">Norma SII PMP</span>
+            <span>({clientItems.length} SKUs)</span>
+          </div>
+        </div>
+
+        {/* Critical Stocks */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs mb-1 font-medium">
+            <span>Stock Crítico</span>
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-rose-600 flex items-center gap-2">
+            <span>{criticalStockCount} SKUs</span>
+            {criticalStockCount > 0 && (
+              <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            )}
+          </div>
+          <div className="text-[11px] text-rose-600 font-medium mt-1">
+            Quiebre inminente en bodega
+          </div>
+        </div>
+
+        {/* Low Minimum Stocks */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs mb-1 font-medium">
+            <span>Bajo Nivel Mínimo</span>
+            <TrendingDown className="w-4 h-4 text-amber-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-amber-600">
+            {lowStockCount} SKUs
+          </div>
+          <div className="text-[11px] text-amber-700 mt-1">
+            Requiere reorden preventivo
+          </div>
+        </div>
+
+        {/* In Transit */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs mb-1 font-medium">
+            <span>Traspasos en Ruta</span>
+            <Truck className="w-4 h-4 text-indigo-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-indigo-600">
+            {inTransitCount} En Tránsito
+          </div>
+          <div className="text-[11px] text-indigo-700 mt-1">
+            Con Guía DTE 52 Electrónica
+          </div>
+        </div>
+
+        {/* Requisitions */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs mb-1 font-medium">
+            <span>Requisiciones Agente</span>
+            <Bot className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-emerald-600">
+            {pendingRequisitionsCount} Pendientes
+          </div>
+          <div className="text-[11px] text-emerald-700 mt-1">
+            Listas para orden o traspaso
+          </div>
+        </div>
+      </div>
+
+      {/* Sub-Navigation Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveSubTab('stock')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'stock'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Boxes className="w-4 h-4" />
+            <span>Stock General & por Bodega</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-current font-mono">
+              {clientItems.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('transfers')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'transfers'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Truck className="w-4 h-4" />
+            <span>Traspasos & En Tránsito (DTE 52)</span>
+            {inTransitCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500 text-white font-mono">
+                {inTransitCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('requisitions')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'requisitions'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            <span>Requisiciones Agente</span>
+            {pendingRequisitionsCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-mono">
+                {pendingRequisitionsCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('warehouses')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'warehouses'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <WarehouseIcon className="w-4 h-4" />
+            <span>Red de Bodegas</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 font-mono">
+              {clientWarehouses.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Action Buttons according to tab */}
+        <div className="flex items-center gap-2">
+          {activeSubTab === 'transfers' && (
+            <button
+              onClick={() => setIsTransferModalOpen(true)}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition-colors shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nuevo Traspaso (DTE 52)</span>
+            </button>
+          )}
+
+          {activeSubTab === 'warehouses' && (
+            <button
+              onClick={() => setIsNewWarehouseModalOpen(true)}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition-colors shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nueva Bodega</span>
+            </button>
+          )}
+
+          {activeSubTab === 'requisitions' && pendingRequisitionsCount > 0 && (
+            <button
+              onClick={handleApproveAllRequisitions}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition-colors shadow-sm cursor-pointer"
+            >
+              <Check className="w-4 h-4" />
+              <span>Aprobar Todas ({pendingRequisitionsCount})</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* TAB 1: STOCK GENERAL & POR BODEGA */}
+      {/* ========================================================= */}
+      {activeSubTab === 'stock' && (
+        <div className="space-y-4">
+          {/* Filter Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              {/* Search input */}
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar SKU, descripción..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Warehouse selector */}
+              <select
+                value={selectedWarehouseId}
+                onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="ALL">Todas las Bodegas (Consolidado)</option>
+                {clientWarehouses.map(wh => (
+                  <option key={wh.id} value={wh.id}>
+                    {wh.codigo} - {wh.nombre}
+                  </option>
+                ))}
+              </select>
+
+              {/* Status filter */}
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="ALL">Todos los Estados</option>
+                <option value="CRITICO">⚠️ Stock Crítico</option>
+                <option value="BAJO_MINIMO">🔻 Bajo Mínimo</option>
+                <option value="OPTIMO">🟢 Stock Óptimo</option>
+                <option value="SOBRESTOCK">📦 Sobrestock</option>
+              </select>
+
+              {/* Category filter */}
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="ALL">Todas las Categorías</option>
+                <option value="REPUESTOS">Repuestos</option>
+                <option value="INSUMOS">Insumos</option>
+                <option value="MERCADERIA_VENTA">Mercadería Venta</option>
+                <option value="MATERIAS_PRIMAS">Materias Primas</option>
+                <option value="EQUIPAMIENTO">Equipamiento</option>
+              </select>
+            </div>
+
+            <div className="text-xs text-slate-500 font-mono">
+              Mostrando <strong className="text-slate-800">{filteredItems.length}</strong> de {clientItems.length} SKUs
+            </div>
+          </div>
+
+          {/* Stock Table */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">SKU / Producto</th>
+                    <th className="py-3 px-4">Categoría</th>
+                    <th className="py-3 px-4 text-right">Stock General</th>
+                    <th className="py-3 px-4 text-center">Desglose por Bodega</th>
+                    <th className="py-3 px-4 text-center">En Tránsito</th>
+                    <th className="py-3 px-4 text-center">Mín / Crítico</th>
+                    <th className="py-3 px-4 text-center">Cobertura</th>
+                    <th className="py-3 px-4 text-right">Costo PMP (CLP)</th>
+                    <th className="py-3 px-4 text-right">Total Existencia</th>
+                    <th className="py-3 px-4 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-8 text-center text-slate-400">
+                        No se encontraron productos con los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredItems.map(item => {
+                      const totalVal = item.stockGeneral * item.costoUnitarioPMP;
+                      const statusBadge = {
+                        CRITICO: 'bg-rose-50 text-rose-700 border-rose-200',
+                        BAJO_MINIMO: 'bg-amber-50 text-amber-700 border-amber-200',
+                        OPTIMO: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                        SOBRESTOCK: 'bg-blue-50 text-blue-700 border-blue-200',
+                      }[item.estadoStock];
+
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="font-mono font-bold text-slate-900">{item.sku}</div>
+                            <div className="text-slate-600 line-clamp-1 max-w-xs">{item.nombre}</div>
+                            {item.codigoBarras && (
+                              <div className="text-[10px] text-slate-400 font-mono">EAN: {item.codigoBarras}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
+                              {item.categoria}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono">
+                            <div className="font-bold text-sm text-slate-900">
+                              {item.stockGeneral.toLocaleString('es-CL')} <span className="text-[10px] font-normal text-slate-500">{item.unidadMedida}</span>
+                            </div>
+                            <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-bold border mt-0.5 ${statusBadge}`}>
+                              {item.estadoStock}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex flex-wrap gap-1 justify-center">
+                              {item.stockPorBodega.map(sb => (
+                                <span
+                                  key={sb.bodegaId}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                                    sb.stockFisico === 0 
+                                      ? 'bg-rose-50 text-rose-600 border-rose-200' 
+                                      : 'bg-slate-50 text-slate-700 border-slate-200'
+                                  }`}
+                                  title={`${sb.bodegaNombre}: ${sb.stockFisico} ${item.unidadMedida} (${sb.ubicacionPasillo || 'General'})`}
+                                >
+                                  {sb.bodegaNombre.split(' ')[1] || sb.bodegaNombre.substring(0, 7)}: <strong>{sb.stockFisico}</strong>
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono">
+                            {item.stockEnTransito > 0 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center justify-center gap-1">
+                                <Truck className="w-3 h-3" />
+                                <span>{item.stockEnTransito} un.</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono text-xs">
+                            <div className="text-slate-600">Mín: <strong>{item.stockMinimo}</strong></div>
+                            <div className="text-rose-600 text-[11px]">Crít: <strong>{item.stockCritico}</strong></div>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold ${
+                              item.diasCoberturaEstimados < 20
+                                ? 'bg-rose-100 text-rose-800'
+                                : item.diasCoberturaEstimados < 40
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              {item.diasCoberturaEstimados} días
+                            </span>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {item.consumoMensualPromedio}/mes
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-800">
+                            {formatCLP(item.costoUnitarioPMP)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                            {formatCLP(totalVal)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => {
+                                  setSelectedItemForLimits(item);
+                                  setIsEditStockLimitsModalOpen(true);
+                                }}
+                                className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100"
+                                title="Editar parámetros de stock mínimo y crítico"
+                              >
+                                <SlidersHorizontal className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setNewTransferItemId(item.id);
+                                  setIsTransferModalOpen(true);
+                                }}
+                                className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-100"
+                                title="Transferir entre bodegas (DTE 52)"
+                              >
+                                <ArrowLeftRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 2: TRASPASOS & EN TRÁNSITO (GUÍA DTE 52) */}
+      {/* ========================================================= */}
+      {activeSubTab === 'transfers' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div className="space-y-0.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Truck className="w-4 h-4 text-blue-600" />
+                <span>Traslados Internos entre Bodegas (Normativa SII DTE 52)</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Todo movimiento entre sucursales requiere Guía de Despacho Electrónica con Código de Traslado 5 (Traslados internos). Permite recepción física y control de mermas.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsTransferModalOpen(true)}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Emitir Guía DTE 52</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {clientTransfers.map(transfer => {
+              const isEnTransito = transfer.estado === 'EN_TRANSITO';
+              return (
+                <div
+                  key={transfer.id}
+                  className={`bg-white border rounded-xl p-5 shadow-sm space-y-4 transition-all ${
+                    isEnTransito ? 'border-blue-300 ring-1 ring-blue-100' : 'border-slate-200'
+                  }`}
+                >
+                  {/* Card Header */}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-slate-900 text-white">
+                          DTE 52 Folio #{transfer.folioGuiaDespacho52}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          isEnTransito 
+                            ? 'bg-blue-100 text-blue-800 animate-pulse' 
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {transfer.estado}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        <span>Despacho: {transfer.fechaDespacho}</span>
+                        <span>•</span>
+                        <span>Llegada estimada: {transfer.fechaEstimadaLlegada}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-right font-mono">
+                      <div className="text-sm font-bold text-slate-900">
+                        {formatCLP(transfer.valorTotalTraslado)}
+                      </div>
+                      <div className="text-[10px] text-slate-400">Valorización PMP</div>
+                    </div>
+                  </div>
+
+                  {/* Route Visualizer */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center justify-between text-xs">
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] uppercase font-bold text-slate-400">Origen</div>
+                      <div className="font-semibold text-slate-800">{transfer.bodegaOrigenNombre}</div>
+                    </div>
+                    <div className="flex flex-col items-center px-3">
+                      <Truck className={`w-4 h-4 ${isEnTransito ? 'text-blue-600 animate-bounce' : 'text-slate-400'}`} />
+                      <span className="text-[10px] text-slate-400 mt-0.5">Traslado SII Cód 5</span>
+                    </div>
+                    <div className="space-y-0.5 text-right">
+                      <div className="text-[10px] uppercase font-bold text-slate-400">Destino</div>
+                      <div className="font-semibold text-slate-800">{transfer.bodegaDestinoNombre}</div>
+                    </div>
+                  </div>
+
+                  {/* Items List */}
+                  <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                    <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      Ítems en Tránsito ({transfer.items.length})
+                    </div>
+                    {transfer.items.map(item => (
+                      <div key={item.itemId} className="flex items-center justify-between text-xs py-1 border-b border-slate-50">
+                        <div>
+                          <span className="font-mono font-bold text-slate-800">{item.sku}</span> - <span className="text-slate-600">{item.nombre}</span>
+                        </div>
+                        <div className="font-mono font-bold text-slate-900">
+                          {item.cantidadEnviada} un.
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Transport Details & Actions */}
+                  <div className="border-t border-slate-100 pt-3 flex items-center justify-between text-xs">
+                    <div className="text-slate-500 text-[11px] space-y-0.5">
+                      <div>Camión: <strong className="font-mono text-slate-700">{transfer.transporte.patenteCamion}</strong></div>
+                      <div>Chofer: <strong className="text-slate-700">{transfer.transporte.nombreChofer}</strong></div>
+                    </div>
+
+                    {isEnTransito ? (
+                      <button
+                        onClick={() => handleReceiveTransfer(transfer)}
+                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                      >
+                        <PackageCheck className="w-3.5 h-3.5" />
+                        <span>Recepcionar en Destino</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1 text-emerald-600 font-medium text-xs">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Recepcionado el {transfer.fechaRecepcionReal}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 3: REQUISICIONES AUTOMÁTICAS DEL AGENTE */}
+      {/* ========================================================= */}
+      {activeSubTab === 'requisitions' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div className="space-y-0.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Bot className="w-4 h-4 text-blue-600" />
+                <span>Solicitudes Automáticas de Reposición y Rebalanceo</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                El Agente monitorea las velocidades de consumo y stock mínimo. Si detecta stock excedentario en otra bodega, prioriza un <strong>Traspaso Interno</strong> para no incurrir en compras innecesarias.
+              </p>
+            </div>
+            {pendingRequisitionsCount > 0 && (
+              <button
+                onClick={handleApproveAllRequisitions}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer shadow-sm"
+              >
+                <Check className="w-4 h-4" />
+                <span>Aprobar Todas ({pendingRequisitionsCount})</span>
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            {clientRequisitions.map(req => {
+              const isPending = req.estado === 'PENDIENTE_APROBACION';
+              const isTraspaso = req.tipoAccionRecomendada === 'TRASPASO_INTERNO';
+
+              return (
+                <div
+                  key={req.id}
+                  className={`bg-white border rounded-xl p-4 shadow-sm space-y-3 transition-all ${
+                    isPending 
+                      ? req.prioridad === 'URGENTE' ? 'border-rose-300 ring-1 ring-rose-100' : 'border-blue-200'
+                      : 'border-slate-200 opacity-80'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-xs text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
+                        {req.folioRequisicion}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        req.prioridad === 'URGENTE'
+                          ? 'bg-rose-100 text-rose-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {req.prioridad}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                        isTraspaso
+                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                          : 'bg-blue-100 text-blue-800 border border-blue-200'
+                      }`}>
+                        {isTraspaso ? <ArrowLeftRight className="w-3 h-3" /> : <DollarSign className="w-3 h-3" />}
+                        <span>{isTraspaso ? 'Traspaso Interno Sugerido' : 'Compra a Proveedor'}</span>
+                      </span>
+                    </div>
+
+                    <div className="text-right font-mono text-xs">
+                      <span className="text-slate-400">Estimado: </span>
+                      <strong className="text-slate-900 font-bold">{formatCLP(req.costoEstimadoCLP)}</strong>
+                    </div>
+                  </div>
+
+                  {/* Reason by AI Agent */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1">
+                    <div className="flex items-center gap-1.5 text-blue-700 font-bold text-[10px] uppercase">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Diagnóstico del Agente IA</span>
+                    </div>
+                    <p className="text-slate-700 leading-relaxed">{req.motivoAgente}</p>
+                  </div>
+
+                  {/* Requisition Details Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border-t border-slate-100 pt-2 font-mono">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">SKU / ÍTEM</span>
+                      <span className="font-bold text-slate-800">{req.sku}</span>
+                      <span className="text-[11px] text-slate-500 block truncate">{req.nombreItem}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">BODEGA DESTINO</span>
+                      <span className="text-slate-800">{req.bodegaDestinoNombre}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">CANTIDAD SUGERIDA</span>
+                      <span className="font-bold text-blue-600">{req.cantidadSugerida} unidades</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">
+                        {isTraspaso ? 'BODEGA ORIGEN' : 'PROVEEDOR'}
+                      </span>
+                      <span className="text-slate-800 truncate block">
+                        {isTraspaso ? req.bodegaOrigenSugeridaTraspaso : req.proveedorSugerido?.razonSocial}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  {isPending && (
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                      <button
+                        onClick={() => {
+                          const updated = clientRequisitions.map(r => r.id === req.id ? { ...r, estado: 'RECHAZADA' as const } : r);
+                          onUpdateRequisitions(updated);
+                          showToast('Requisición descartada.');
+                        }}
+                        className="px-3 py-1.5 text-xs text-slate-600 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                      >
+                        Descartar
+                      </button>
+
+                      <button
+                        onClick={() => handleApproveRequisition(req)}
+                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{isTraspaso ? 'Aprobar Traspaso DTE 52' : 'Emitir Orden de Compra'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 4: RED DE BODEGAS & CAPACIDAD */}
+      {/* ========================================================= */}
+      {activeSubTab === 'warehouses' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div className="space-y-0.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <WarehouseIcon className="w-4 h-4 text-blue-600" />
+                <span>Infraestructura de Almacenamiento & Bodegas Físicas</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Cada bodega cuenta con su propio inventario segregado, encargado responsable ante el SII y capacidad volumétrica.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsNewWarehouseModalOpen(true)}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nueva Bodega</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clientWarehouses.map(wh => {
+              // Calculate items count in this warehouse
+              const itemsInWh = clientItems.filter(i => {
+                const b = i.stockPorBodega.find(sb => sb.bodegaId === wh.id);
+                return b && b.stockFisico > 0;
+              }).length;
+
+              return (
+                <div key={wh.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-800">
+                        {wh.codigo}
+                      </span>
+                      <h4 className="font-bold text-slate-900 text-sm mt-1">{wh.nombre}</h4>
+                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3 h-3" />
+                        <span>{wh.comuna}, {wh.region}</span>
+                      </p>
+                    </div>
+
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      wh.tipo === 'CENTRAL'
+                        ? 'bg-blue-100 text-blue-800'
+                        : wh.tipo === 'FAENA'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {wh.tipo}
+                    </span>
+                  </div>
+
+                  {/* Occupancy bar */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-600">
+                      <span>Ocupación de Capacidad:</span>
+                      <strong className="font-mono">{wh.ocupacionPorcentaje}%</strong>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          wh.ocupacionPorcentaje > 85 ? 'bg-rose-500' : 'bg-blue-600'
+                        }`}
+                        style={{ width: `${wh.ocupacionPorcentaje}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Manager and specs */}
+                  <div className="border-t border-slate-100 pt-3 text-xs space-y-1 text-slate-600">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Encargado:</span>
+                      <span className="font-medium text-slate-800">{wh.encargadoNombre}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">RUT Encargado:</span>
+                      <span className="font-mono text-slate-700">{wh.encargadoRut}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Superficie:</span>
+                      <span className="font-mono text-slate-700">{wh.capacidadM2} m²</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">SKUs almacenados:</span>
+                      <span className="font-bold text-blue-600">{itemsInWh} ítems</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: EMITIR NUEVO TRASPASO ENTRE BODEGAS (DTE 52) */}
+      {/* ========================================================= */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <Truck className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-base">Emitir Traslado Interno (Guía DTE 52)</h3>
+              </div>
+              <button onClick={() => setIsTransferModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTransfer} className="space-y-4 mt-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Bodega Origen</label>
+                  <select
+                    value={newTransferOrigen}
+                    onChange={(e) => setNewTransferOrigen(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    {clientWarehouses.map(wh => (
+                      <option key={wh.id} value={wh.id}>{wh.codigo} - {wh.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Bodega Destino</label>
+                  <select
+                    value={newTransferDestino}
+                    onChange={(e) => setNewTransferDestino(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    {clientWarehouses.map(wh => (
+                      <option key={wh.id} value={wh.id}>{wh.codigo} - {wh.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Ítem a Transferir</label>
+                <select
+                  value={newTransferItemId}
+                  onChange={(e) => setNewTransferItemId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  {clientItems.map(it => (
+                    <option key={it.id} value={it.id}>
+                      {it.sku} - {it.nombre} (Stock General: {it.stockGeneral} {it.unidadMedida})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Cantidad</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newTransferCantidad}
+                    onChange={(e) => setNewTransferCantidad(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Motivo Traslado SII</label>
+                  <select
+                    value={newTransferMotivo}
+                    onChange={(e) => setNewTransferMotivo(e.target.value as any)}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="REPOSICION_SUCURSAL">Reposición Sucursal</option>
+                    <option value="EQUILIBRIO_STOCK">Equilibrio de Stock</option>
+                    <option value="SUMINISTRO_FAENA">Suministro de Faena</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Patente Camión</label>
+                  <input
+                    type="text"
+                    value={newTransferPatente}
+                    onChange={(e) => setNewTransferPatente(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono uppercase"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">RUT Chofer</label>
+                  <input
+                    type="text"
+                    value={newTransferChoferRut}
+                    onChange={(e) => setNewTransferChoferRut(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Nombre Completo Chofer</label>
+                <input
+                  type="text"
+                  value={newTransferChofer}
+                  onChange={(e) => setNewTransferChofer(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg p-2"
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTransferModalOpen(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium cursor-pointer shadow-sm"
+                >
+                  Emitir y Timbrar DTE 52
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: EDITAR LÍMITES DE STOCK CRÍTICO Y MÍNIMO */}
+      {/* ========================================================= */}
+      {isEditStockLimitsModalOpen && selectedItemForLimits && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-base">Parámetros de Reorden</h3>
+              </div>
+              <button onClick={() => setIsEditStockLimitsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveStockLimits} className="space-y-4 mt-4 text-xs">
+              <div className="bg-slate-50 p-3 rounded-lg space-y-1">
+                <div className="font-mono font-bold text-slate-900">{selectedItemForLimits.sku}</div>
+                <div className="text-slate-600">{selectedItemForLimits.nombre}</div>
+                <div className="text-[11px] text-slate-500 font-mono">
+                  Stock General Actual: <strong>{selectedItemForLimits.stockGeneral} {selectedItemForLimits.unidadMedida}</strong>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Stock Mínimo (Alerta preventiva)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={selectedItemForLimits.stockMinimo}
+                  onChange={(e) => setSelectedItemForLimits({ ...selectedItemForLimits, stockMinimo: Number(e.target.value) })}
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-sm"
+                  required
+                />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  El sistema generará requisición cuando las existencias desciendan de este nivel.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-rose-700 font-semibold mb-1">
+                  Stock Crítico (Quiebre Inminente)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={selectedItemForLimits.stockCritico}
+                  onChange={(e) => setSelectedItemForLimits({ ...selectedItemForLimits, stockCritico: Number(e.target.value) })}
+                  className="w-full border border-rose-300 rounded-lg p-2 font-mono text-sm focus:ring-rose-500"
+                  required
+                />
+                <span className="text-[10px] text-rose-500 mt-0.5 block">
+                  Desencadena alerta urgente en el dashboard y requisición con prioridad máxima.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Lote Óptimo de Reposición (EOQ)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={selectedItemForLimits.loteOptimoReposicion}
+                  onChange={(e) => setSelectedItemForLimits({ ...selectedItemForLimits, loteOptimoReposicion: Number(e.target.value) })}
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-sm"
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditStockLimitsModalOpen(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium cursor-pointer shadow-sm"
+                >
+                  Guardar Parámetros
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: REGISTRAR NUEVA BODEGA */}
+      {/* ========================================================= */}
+      {isNewWarehouseModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <WarehouseIcon className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-base">Registrar Nueva Bodega</h3>
+              </div>
+              <button onClick={() => setIsNewWarehouseModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateWarehouse} className="space-y-3.5 mt-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Código Bodega</label>
+                  <input
+                    type="text"
+                    value={newWhCodigo}
+                    onChange={(e) => setNewWhCodigo(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono uppercase"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Tipo</label>
+                  <select
+                    value={newWhTipo}
+                    onChange={(e) => setNewWhTipo(e.target.value as any)}
+                    className="w-full border border-slate-300 rounded-lg p-2 bg-white"
+                  >
+                    <option value="SUCURSAL">Sucursal</option>
+                    <option value="CENTRAL">Central</option>
+                    <option value="FAENA">Faena</option>
+                    <option value="TRANSITO">Tránsito</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Nombre de la Bodega</label>
+                <input
+                  type="text"
+                  value={newWhNombre}
+                  onChange={(e) => setNewWhNombre(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg p-2"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Dirección</label>
+                  <input
+                    type="text"
+                    value={newWhDireccion}
+                    onChange={(e) => setNewWhDireccion(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Comuna</label>
+                  <input
+                    type="text"
+                    value={newWhComuna}
+                    onChange={(e) => setNewWhComuna(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Nombre Encargado</label>
+                  <input
+                    type="text"
+                    value={newWhEncargado}
+                    onChange={(e) => setNewWhEncargado(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">RUT Encargado</label>
+                  <input
+                    type="text"
+                    value={newWhRutEncargado}
+                    onChange={(e) => setNewWhRutEncargado(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Capacidad (m²)</label>
+                <input
+                  type="number"
+                  min="10"
+                  value={newWhCapacidad}
+                  onChange={(e) => setNewWhCapacidad(Number(e.target.value))}
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono"
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNewWarehouseModalOpen(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium cursor-pointer shadow-sm"
+                >
+                  Guardar Bodega
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
