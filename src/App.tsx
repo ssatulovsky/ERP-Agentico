@@ -40,6 +40,7 @@ import {
   createBankNovedadEntry,
   formatCLP
 } from './utils/chileanAccounting';
+import { useAccountingLedger } from './hooks/useAccountingLedger';
 import { 
   DteDocument, 
   F29Declaration, 
@@ -180,7 +181,8 @@ export default function App() {
     };
 
     setDtes(prev => [newDownloadedDte, ...prev]);
-    setEntries(prev => [createPurchaseDteEntry(newDownloadedDte), ...prev]);
+    const dteEntry = createPurchaseDteEntry(newDownloadedDte);
+    handleAddEntry(dteEntry);
 
     // Update client sync timestamp
     handleUpdateClient({
@@ -191,30 +193,16 @@ export default function App() {
     });
   };
 
-  // Initial accounting entries generated automatically
-  const [entries, setEntries] = useState<AccountingEntry[]>(() => {
-    const list: AccountingEntry[] = [];
-    
-    // Add DTE entries
-    seedDtes.forEach((d) => {
-      if (d.tipoOperacion === 'VENTA') list.push(createSalesDteEntry(d));
-      else if (d.tipoOperacion === 'COMPRA') list.push(createPurchaseDteEntry(d));
-      else list.push(createHonorariosEntry(d));
-    });
-
-    // Add Payroll centralization
-    list.push(createPayrollCentralizationEntry(seedPayrolls, '2026-08'));
-
-    // Add F29 Payment entry
-    list.push(createF29PaymentEntry(seedF29));
-
-    // Add Lease IFRS 16 entry
-    seedLeases.forEach((l) => {
-      if (l.tratamientoContable === 'IFRS_16') list.push(createLeaseIfrs16Entry(l));
-    });
-
-    return list;
-  });
+  // Libro Diario Contable Persistente (PostgreSQL / Drizzle ORM API)
+  const {
+    entries,
+    isLoading: isLedgerLoading,
+    isCommitting: isLedgerCommitting,
+    error: ledgerError,
+    commitEntry,
+    addEntry,
+    refetch: refetchLedger,
+  } = useAccountingLedger(company.rut, '2026-09');
 
   // Modals
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -259,8 +247,12 @@ export default function App() {
     setDtes(prev => prev.map(d => d.id === updated.id ? updated : d));
   };
 
-  const handleAddEntry = (entry: AccountingEntry) => {
-    setEntries(prev => [entry, ...prev]);
+  const handleAddEntry = async (entry: AccountingEntry) => {
+    try {
+      await addEntry(entry);
+    } catch (err: any) {
+      console.error('[App] Error al autorizar y persistir comprobante contable:', err);
+    }
   };
 
   const handleAddEmployee = (emp: EmployeePayroll) => {
@@ -294,7 +286,7 @@ export default function App() {
 
     // 1. Generate formal accounting entry
     const newEntry = createBankNovedadEntry(movement, bankName);
-    setEntries(prev => [newEntry, ...prev]);
+    handleAddEntry(newEntry);
 
     // 2. Generate corresponding cashflow entry
     const total = movement.abono > 0 ? movement.abono : movement.cargo;
@@ -575,6 +567,10 @@ export default function App() {
               indicators={indicators}
               entries={entries}
               onAddEntry={handleAddEntry}
+              commitEntry={commitEntry}
+              isLedgerLoading={isLedgerLoading}
+              isLedgerCommitting={isLedgerCommitting}
+              refetchLedger={refetchLedger}
               dtes={dtes}
               payrolls={payrolls}
               f29={f29}

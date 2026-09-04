@@ -46,6 +46,7 @@ import {
   calculatePreF29,
   convertF29AsientoToAccountingEntry
 } from '../utils/f29SeniorEngine';
+import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
 
 interface F29SeniorAgentProps {
   f29: F29Declaration;
@@ -67,7 +68,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
   onAddEntry,
 }) => {
   // Estado general
-  const [activeSubTab, setActiveSubTab] = useState<'panel' | 'terminal' | 'rcv_audit' | 'patente_f22'>('panel');
+  const [activeSubTab, setActiveSubTab] = useState<'panel' | 'terminal' | 'rcv_audit' | 'patente_f22' | 'queue_tracker'>('panel');
   const [selectedPeriod, setSelectedPeriod] = useState<string>(f29.periodo || '2026-08');
   const [isPostergacionActive, setIsPostergacionActive] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState(false);
@@ -456,6 +457,19 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
         >
           <Landmark className="w-4 h-4 text-purple-600" />
           <span>Patente Municipal & Proyección F22</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('queue_tracker')}
+          className={`py-3 px-4 text-xs font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
+            activeSubTab === 'queue_tracker'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-blue-600" />
+          <span>Monitor Asíncrono (Workers & SSE)</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-700 text-[10px]">BullMQ Hook</span>
         </button>
       </div>
 
@@ -1041,6 +1055,13 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* PESTAÑA 5: MONITOR ASÍNCRONO DE COLA (BULLMQ + SSE + POLLING HOOK) */}
+      {activeSubTab === 'queue_tracker' && (
+        <div className="space-y-6">
+          <F29SettlementTrackerExample />
         </div>
       )}
 

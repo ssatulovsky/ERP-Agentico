@@ -3,6 +3,10 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import { supervisorLedgerRouter } from "./src/controllers/supervisorLedgerController";
+import { asyncJobsRouter } from "./src/controllers/asyncJobsController";
+import { sseJobRouter } from "./src/routes/sseJobRoutes";
+import { startWorkers } from "./src/workers";
 
 dotenv.config();
 
@@ -642,8 +646,23 @@ Todos los registros en el Libro Diario cumplen con el principio de partida doble
   }
 });
 
+// RUTAS DEL AGENTE SUPERVISOR CONTABLE (POST /api/accounting/commit-entry)
+app.use("/api/accounting", supervisorLedgerRouter);
+
+// RUTAS DE STREAMING SERVER-SENT EVENTS (SSE) PARA BULLMQ (GET /api/jobs/stream/:queueName/:jobId)
+app.use("/api/jobs", sseJobRouter);
+
+// RUTAS DE COLAS ASÍNCRONAS Y WORKERS BULLMQ
+app.use("/api/jobs", asyncJobsRouter);
+
 // Vite middleware setup for development and production
 async function startServer() {
+  // Inicialización de workers de procesamiento en segundo plano (BullMQ)
+  if (process.env.REDIS_HOST || process.env.REDIS_URL) {
+    startWorkers().catch((wErr) => {
+      console.warn("[Server] Aviso: Workers BullMQ no iniciados automáticamente (Redis no disponible):", wErr.message);
+    });
+  }
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

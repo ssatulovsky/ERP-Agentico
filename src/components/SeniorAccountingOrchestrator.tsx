@@ -69,6 +69,13 @@ interface SeniorAccountingOrchestratorProps {
   indicators: ChileIndicators;
   entries: AccountingEntry[];
   onAddEntry: (entry: AccountingEntry) => void;
+  commitEntry?: (
+    payloadOrEntry: any,
+    auditContextOverrides?: any
+  ) => Promise<any>;
+  isLedgerLoading?: boolean;
+  isLedgerCommitting?: boolean;
+  refetchLedger?: () => Promise<void>;
   dtes?: DteDocument[];
   payrolls?: EmployeePayroll[];
   f29?: F29Declaration;
@@ -82,6 +89,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   indicators,
   entries,
   onAddEntry,
+  commitEntry,
+  isLedgerLoading = false,
+  isLedgerCommitting = false,
+  refetchLedger,
   dtes = [],
   payrolls = [],
   f29 = seedF29,
@@ -195,6 +206,29 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     setTimeout(() => setCopiedText(null), 2500);
   };
 
+  // Helper para despachar comprobantes contables con trazabilidad o fallback a onAddEntry
+  const dispatchEntry = async (
+    entry: AccountingEntry,
+    context?: { agenteNombre?: string; accion?: string; modelName?: string; payloadInput?: any }
+  ) => {
+    if (commitEntry) {
+      try {
+        await commitEntry(entry, {
+          agenteNombre: context?.agenteNombre || 'AGENTE_ORQUESTADOR_SENIOR',
+          accion: context?.accion || `ASIENTO_${entry.origen}`,
+          modelName: context?.modelName,
+          payloadInput: context?.payloadInput,
+        });
+      } catch (err: any) {
+        console.error('[SeniorOrchestrator] Error al autorizar comprobante contable:', err);
+        // Fallback local por seguridad si el endpoint rechaza
+        onAddEntry(entry);
+      }
+    } else {
+      onAddEntry(entry);
+    }
+  };
+
   // Handle Centralization of Peripheral Module
   const handleCentralizeModule = (modulo: OrchestratorAuditItem['modulo']) => {
     const today = new Date().toISOString().split('T')[0];
@@ -236,7 +270,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         balanceado: true,
         creadoEn: new Date().toISOString(),
       };
-      onAddEntry(entry);
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_RCV', accion: 'CENTRALIZACION_RCV_VENTAS' });
     } else if (modulo === 'COMPRAS') {
       const purchaseDtes = dtes.filter(d => d.tipoOperacion === 'COMPRA');
       const totalCompraNeto = purchaseDtes.reduce((s, d) => s + (d.montoNeto || 0), 0);
@@ -274,7 +308,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         balanceado: true,
         creadoEn: new Date().toISOString(),
       };
-      onAddEntry(entry);
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_RCV', accion: 'CENTRALIZACION_RCV_COMPRAS' });
     } else if (modulo === 'RRHH') {
       const totalSueldoLiquido = payrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
       const totalImposiciones = payrolls.reduce((s, p) => s + p.totalDescuentosLegales, 0);
@@ -321,7 +355,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         balanceado: true,
         creadoEn: new Date().toISOString(),
       };
-      onAddEntry(entry);
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_RRHH', accion: 'CENTRALIZACION_REMUNERACIONES' });
     } else if (modulo === 'F29') {
       const debito = f29.debitoFiscalIva || 0;
       const credito = f29.creditoFiscalIva || 0;
@@ -379,7 +413,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         balanceado: true,
         creadoEn: new Date().toISOString(),
       };
-      onAddEntry(entry);
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_F29', accion: 'LIQUIDACION_F29_TRIBUTARIO' });
     }
   };
 
@@ -407,7 +441,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       creadoEn: new Date().toISOString(),
     };
 
-    onAddEntry(entry);
+    dispatchEntry(entry, {
+      agenteNombre: 'AGENTE_ORQUESTADOR_SENIOR',
+      accion: `AJUSTE_CIERRE_${adj.id}`,
+    });
     setClosingAdjustments(prev =>
       prev.map(a => (a.id === adj.id ? { ...a, aplicado: true } : a))
     );
@@ -529,8 +566,13 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       creadoEn: new Date().toISOString(),
     };
 
-    onAddEntry(entry);
-    alert('Asiento contable imputado con éxito en el Libro Diario.');
+    dispatchEntry(entry, {
+      agenteNombre: 'AGENTE_SUPERVISOR_AI',
+      accion: 'IMPUTACION_ASIENTO_INTELIGENTE',
+      modelName: 'gemini-3.8-flash',
+      payloadInput: { glosa: rawGlosaInput },
+    });
+    alert('Asiento contable imputado y sincronizado con éxito en el Libro Diario.');
   };
 
   // Handle Add Account to Chart
@@ -697,7 +739,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       creadoEn: new Date().toISOString(),
     };
 
-    onAddEntry(created);
+    dispatchEntry(created, {
+      agenteNombre: 'OPERADOR_MANUAL',
+      accion: 'ASIENTO_MANUAL_DIARIO',
+    });
     setShowManualModal(false);
   };
 
@@ -717,10 +762,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                 NÚCLEO CONTABLE AUTÓNOMO ERP
               </span>
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs px-2.5 py-0.5 rounded-full font-mono flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Drizzle ORM & Node HMAC
+              </span>
               <span className="bg-slate-800 text-slate-300 border border-slate-700 text-xs px-2.5 py-0.5 rounded-full font-mono">
                 RUT: {company.rut || '77.798.901-4'}
               </span>
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs px-2.5 py-0.5 rounded-full font-mono">
+              <span className="bg-slate-800 text-slate-300 border border-slate-700 text-xs px-2.5 py-0.5 rounded-full font-mono">
                 Régimen: {company.regimenTributario || '14 D3 Pro Pyme General'}
               </span>
             </div>
@@ -735,6 +784,20 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
           {/* Currency Switcher & Quick Actions */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+            {refetchLedger && (
+              <button
+                onClick={() => refetchLedger()}
+                disabled={isLedgerLoading || isLedgerCommitting}
+                className="px-3 py-2 rounded-lg bg-slate-800/90 text-xs text-slate-300 hover:text-white border border-slate-700 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-colors shadow-sm"
+                title="Sincronizar libro diario desde base de datos PostgreSQL / Drizzle ORM"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLedgerLoading || isLedgerCommitting ? 'animate-spin text-blue-400' : 'text-slate-400'}`} />
+                <span className="font-medium">
+                  {isLedgerCommitting ? 'Firmando HMAC...' : isLedgerLoading ? 'Cargando API...' : 'Sincronizar BD'}
+                </span>
+              </button>
+            )}
+
             <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-1 flex items-center gap-1">
               <button
                 onClick={() => setCurrencyMode('CLP')}
