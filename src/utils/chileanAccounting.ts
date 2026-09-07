@@ -128,27 +128,77 @@ export function formatNumberCL(amount: number, decimals: number = 0): string {
 }
 
 /**
- * Formato Normalizado Estricto exigido para asientos contables
+ * Formato Normalizado Estricto exigido para asientos contables del Libro Diario
+ * Cumplimiento del Código de Comercio chileno y normas IFRS/NIIF:
+ * - Cuentas del DEBE primero (cargos)
+ * - Cuentas del HABER a continuación (abonos, visualmente indentadas con prefijo "a ")
+ * - Cero valores negativos en columnas de partida doble
+ * - Totalizadores con sumas iguales al pie
  */
 export function formatNormalizedAccountingEntry(entry: AccountingEntry): string {
-  const separator = '--------------------------------------------------';
-  const header = `${separator}\nFECHA: ${entry.fecha}\nCONCEPTO: ${entry.concepto}\nDOCUMENTO: ${entry.documento}\n\nCUENTA CONTABLE                       DEBE ($)     HABER ($)\n${separator}`;
+  const separator = '--------------------------------------------------------------------------------';
+  const header = `${separator}\nLIBRO DIARIO CANÓNICO - COMPROBANTE DE OPERACIONES\nFECHA: ${entry.fecha} | ORIGEN: ${entry.origen || 'DIARIO'}\nCONCEPTO: ${entry.concepto}\nDOCUMENTO: ${entry.documento || 'Sin documento de referencia'}\n\nLÍN  CÓDIGO    CUENTA CONTABLE                       DEBE ($)         HABER ($)\n${separator}`;
 
-  const lines = entry.lineas
-    .map((l) => {
-      const name = l.cuentaNombre.length > 34 ? l.cuentaNombre.substring(0, 31) + '...' : l.cuentaNombre;
-      const paddedName = name.padEnd(35, ' ');
-      const debeStr = l.debe > 0 ? formatNumberCL(l.debe).padStart(11, ' ') : ''.padStart(11, ' ');
-      const haberStr = l.haber > 0 ? formatNumberCL(l.haber).padStart(12, ' ') : ''.padStart(12, ' ');
-      return `${paddedName}${debeStr} ${haberStr}`;
-    })
-    .join('\n');
+  // Separación y ordenamiento canónico estricto: DEBE primero, HABER después
+  const debits: AccountingEntryLine[] = [];
+  const credits: AccountingEntryLine[] = [];
 
-  const totalDebeStr = formatNumberCL(entry.totalDebe).padStart(11, ' ');
-  const totalHaberStr = formatNumberCL(entry.totalHaber).padStart(12, ' ');
-  const footer = `${separator}\nTOTALES                              ${totalDebeStr} ${totalHaberStr}\n${separator}`;
+  for (const line of entry.lineas || []) {
+    let d = Number(line.debe) || 0;
+    let h = Number(line.haber) || 0;
 
-  return `${header}\n${lines}\n${footer}`;
+    // Sanitizar posibles negativos
+    if (d < 0) {
+      h += Math.abs(d);
+      d = 0;
+    }
+    if (h < 0) {
+      d += Math.abs(h);
+      h = 0;
+    }
+
+    if (d > 0) {
+      debits.push({ ...line, debe: d, haber: 0 });
+    } else if (h > 0) {
+      credits.push({ ...line, debe: 0, haber: h });
+    }
+  }
+
+  let lineIdx = 1;
+  const formattedLines: string[] = [];
+
+  for (const l of debits) {
+    const idxStr = String(lineIdx++).padStart(3, ' ');
+    const codeStr = (l.cuentaCodigo || '9.9.99').padEnd(9, ' ');
+    const rawName = l.cuentaNombre.length > 34 ? l.cuentaNombre.substring(0, 31) + '...' : l.cuentaNombre;
+    const nameStr = rawName.padEnd(35, ' ');
+    const debeStr = formatNumberCL(l.debe).padStart(15, ' ');
+    const haberStr = ''.padStart(16, ' ');
+    formattedLines.push(`${idxStr}  ${codeStr} ${nameStr} ${debeStr} ${haberStr}`);
+  }
+
+  for (const l of credits) {
+    const idxStr = String(lineIdx++).padStart(3, ' ');
+    const codeStr = (l.cuentaCodigo || '9.9.99').padEnd(9, ' ');
+    const indentedName = `  a ${l.cuentaNombre}`;
+    const rawName = indentedName.length > 34 ? indentedName.substring(0, 31) + '...' : indentedName;
+    const nameStr = rawName.padEnd(35, ' ');
+    const debeStr = ''.padStart(15, ' ');
+    const haberStr = formatNumberCL(l.haber).padStart(16, ' ');
+    formattedLines.push(`${idxStr}  ${codeStr} ${nameStr} ${debeStr} ${haberStr}`);
+  }
+
+  const calcTotalDebe = debits.reduce((s, l) => s + l.debe, 0);
+  const calcTotalHaber = credits.reduce((s, l) => s + l.haber, 0);
+  const diff = Math.abs(calcTotalDebe - calcTotalHaber);
+
+  const totalDebeStr = formatNumberCL(calcTotalDebe).padStart(15, ' ');
+  const totalHaberStr = formatNumberCL(calcTotalHaber).padStart(16, ' ');
+  const estadoCuadre = diff < 0.01 ? '[PARTIDA DOBLE CUADRADA - BALANCEADA]' : `[DESCUADRE DETECTADO: $${diff.toFixed(2)}]`;
+
+  const footer = `${separator}\nTOTALES SUMAS IGUALES                     ${totalDebeStr} ${totalHaberStr}\nESTADO: ${estadoCuadre}\n${separator}`;
+
+  return `${header}\n${formattedLines.join('\n')}\n${footer}`;
 }
 
 /**

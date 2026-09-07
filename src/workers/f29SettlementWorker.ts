@@ -8,14 +8,16 @@ import {
   type RecordVerifiedEntryPayload,
   type AccountingEntryLineInput,
 } from '../services/accountingLedgerService';
+import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
 import { QUEUE_NAMES } from '../queues/types';
 import { getRedisConnectionOptions } from '../queues/redisConfig';
 import { calculatePreF29, type PreF29Options } from '../utils/f29SeniorEngine';
 import {
   INITIAL_CLIENTS,
-  INITIAL_DTES,
-  INITIAL_EMPLOYEES,
 } from '../data/seedData';
+import { PayrollCalculationService } from '../services/payrollCalculationService';
+import { pool, isRealMysqlConnected, inMemoryDtesRcv } from '../db/mysqlClient';
+
 import { DEFAULT_INDICATORS, formatCLP } from '../utils/chileanAccounting';
 import {
   type CompanyProfile,
@@ -195,7 +197,7 @@ Genera un dictamen conciso en formato JSON puro con las siguientes claves:
 
   try {
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -358,17 +360,108 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
 
     // ------------------------------------------------------------------------
     // FASE 2 (25%): OBTENIENDO_DATOS
-    // Lectura y consolidación de DTEs de compras/ventas del RCV del periodo.
+    // Lectura y consolidación de DTEs de compras/ventas del RCV del periodo ejecutando consultas SQL reales.
     // ------------------------------------------------------------------------
     await emitProgress(
       job,
       25,
       'OBTENIENDO_DATOS',
-      `Consolidando DTEs de compras y ventas desde el Registro de Compras y Ventas (RCV) del período ${periodo}.`
+      `Consultando tabla dtes_rcv en MySQL 8.0 para compras y ventas del período ${periodo}.`
     );
 
-    // En producción se consultaría a la BD o servicio RCV del SII; usamos INITIAL_DTES como semilla
-    const dtesPeriodo: DteDocument[] = INITIAL_DTES;
+    const cleanRutContribuyente = companyProfile.rut.replace(/\./g, '').trim().toUpperCase();
+    let comprasAgg: any[] = [];
+    let ventasAgg: any[] = [];
+    let rawDtesFromDb: any[] = [];
+
+
+    if (isRealMysqlConnected) {
+      // Consulta SQL de agregación pericial para compras
+      const [comprasResult]: any = await pool.query(
+        `SELECT 
+           tipo_dte,
+           COUNT(*) as cantidad,
+           COALESCE(SUM(monto_neto), 0) as total_neto,
+           COALESCE(SUM(monto_iva_recuperable), 0) as total_iva
+         FROM dtes_rcv
+         WHERE empresa_id = ? AND periodo = ? AND tipo_operacion = 'COMPRA'
+         GROUP BY tipo_dte`,
+        [cleanRutContribuyente, periodo]
+      );
+      comprasAgg = Array.isArray(comprasResult) ? comprasResult : [];
+
+      // Consulta SQL de agregación pericial para ventas
+      const [ventasResult]: any = await pool.query(
+        `SELECT 
+           tipo_dte,
+           COUNT(*) as cantidad,
+           COALESCE(SUM(monto_neto), 0) as total_neto,
+           COALESCE(SUM(monto_iva_recuperable), 0) as total_iva
+         FROM dtes_rcv
+         WHERE empresa_id = ? AND periodo = ? AND tipo_operacion = 'VENTA'
+         GROUP BY tipo_dte`,
+        [cleanRutContribuyente, periodo]
+      );
+      ventasAgg = Array.isArray(ventasResult) ? ventasResult : [];
+
+      // Recuperación de los registros reales de DTEs para el motor F29
+      const [dteRecords]: any = await pool.query(
+        `SELECT * FROM dtes_rcv WHERE empresa_id = ? AND periodo = ? ORDER BY fecha_emision ASC, folio ASC`,
+        [cleanRutContribuyente, periodo]
+      );
+      rawDtesFromDb = Array.isArray(dteRecords) ? dteRecords : [];
+    } else {
+      // Modo contingencia memoria
+      const matchRows = inMemoryDtesRcv.filter(
+        (d) => (d.empresaId === cleanRutContribuyente || d.empresaId === empresaId) && d.periodo === periodo
+      );
+      rawDtesFromDb = matchRows;
+
+      // Agrupación SQL simulada en memoria
+      const comprasRows = matchRows.filter((d) => d.tipoOperacion === 'COMPRA');
+      const ventasRows = matchRows.filter((d) => d.tipoOperacion === 'VENTA');
+
+      const groupByTipo = (rows: any[]) => {
+        const groups: Record<number, { tipo_dte: number; cantidad: number; total_neto: number; total_iva: number }> = {};
+        for (const r of rows) {
+          const t = Number(r.tipoDte || r.tipo_dte);
+          if (!groups[t]) groups[t] = { tipo_dte: t, cantidad: 0, total_neto: 0, total_iva: 0 };
+          groups[t].cantidad++;
+          groups[t].total_neto += Number(r.montoNeto || r.monto_neto || 0);
+          groups[t].total_iva += Number(r.montoIvaRecuperable || r.monto_iva_recuperable || 0);
+        }
+        return Object.values(groups);
+      };
+
+      comprasAgg = groupByTipo(comprasRows);
+      ventasAgg = groupByTipo(ventasRows);
+    }
+
+    console.log(`[Worker:F29:RCV] Resultados de consulta SQL sobre dtes_rcv para ${cleanRutContribuyente} (${periodo}):`, {
+      cantidadTotalDtes: rawDtesFromDb.length,
+      resumenCompras: comprasAgg,
+      resumenVentas: ventasAgg,
+    });
+
+    // Mapeo riguroso de registros reales a la interfaz DteDocument esperada por el motor F29
+    const dtesPeriodo: DteDocument[] = rawDtesFromDb.map((row: any) => ({
+      id: row.id,
+      tipoDte: String(row.tipo_dte || row.tipoDte) as any,
+      folio: Number(row.folio),
+      tipoOperacion: (row.tipo_operacion || row.tipoOperacion) as 'VENTA' | 'COMPRA' | 'HONORARIOS',
+      rutContraparte: row.rut_contraparte || row.rutContraparte,
+      razonSocialContraparte: row.razon_social_contraparte || row.razonSocialContraparte,
+      fechaEmision: row.fecha_emision ? String(row.fecha_emision).split('T')[0] : row.fechaEmision,
+      fechaRecepcion: row.fecha_emision ? String(row.fecha_emision).split('T')[0] : row.fechaEmision,
+      montoExento: Number(row.monto_exento || row.montoExento || 0),
+      montoNeto: Number(row.monto_neto || row.montoNeto || 0),
+      montoIva: Number(row.monto_iva_recuperable || row.montoIvaRecuperable || 0),
+      montoTotal: Number(row.monto_total || row.montoTotal || 0),
+      estadoSii: 'ACEPTADO',
+      estadoPago: 'PENDIENTE',
+      glosa: `DTE ${row.tipo_dte || row.tipoDte} Folio ${row.folio} - ${row.razon_social_contraparte || row.razonSocialContraparte}`,
+    }));
+
 
     // ------------------------------------------------------------------------
     // FASE 3 (45%): CONCILIANDO_RETENCIONES
@@ -381,7 +474,49 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       `Conciliando retenciones de Boletas de Honorarios (14.5%) e Impuesto Único de liquidaciones de sueldo.`
     );
 
-    const payrollsPeriodo: EmployeePayroll[] = INITIAL_EMPLOYEES;
+    let payrollsPeriodo: EmployeePayroll[] = [];
+    try {
+      const payrollSummary = await PayrollCalculationService.calculateRealPayroll(empresaId, periodo);
+      payrollsPeriodo = payrollSummary.detalles.map((det) => ({
+        id: det.employeeId,
+        rut: det.rut,
+        nombreCompleto: det.nombreCompleto,
+        cargo: det.cargo,
+        departamento: det.departamento,
+        fechaIngreso: '2023-01-01',
+        tipoContrato: (det.tipoContrato === 'PLAZO_FIJO' ? 'PLAZO_FIJO' : 'INDEFINIDO') as 'INDEFINIDO' | 'PLAZO_FIJO',
+        diasTrabajados: det.diasTrabajados,
+        sueldoBase: det.sueldoBase,
+        gratificacionModalidad: 'ART_50',
+        gratificacionMonto: det.gratificacionLegal,
+        horasExtrasCantidad: det.horasExtrasCantidad,
+        horasExtrasMonto: det.horasExtrasMonto,
+        comisionesBonosImponibles: det.comisionesBonos,
+        totalHaberesImponibles: det.totalHaberesImponibles,
+        asignacionColacion: det.asignacionColacion,
+        asignacionMovilizacion: det.asignacionMovilizacion,
+        viaticosAsignacionFamiliar: det.viaticos,
+        totalHaberesNoImponibles: det.totalHaberesNoImponibles,
+        totalHaberesBrutos: det.totalHaberesBrutos,
+        afpNombre: det.afpNombre as any,
+        afpTasa: det.afpTasa,
+        afpMonto: det.afpMonto,
+        saludTipo: (det.saludTipo === 'ISAPRE' ? 'ISAPRE' : 'FONASA') as 'FONASA' | 'ISAPRE',
+        saludMonto: det.saludMonto,
+        afcTrabajadorMonto: det.afcTrabajadorMonto,
+        impuestoUnicoMonto: det.impuestoUnicoMonto,
+        otrosDescuentos: det.otrosDescuentos,
+        totalDescuentos: det.totalDescuentos,
+        sueldoLiquido: det.sueldoLiquido,
+        sisEmpleadorMonto: det.sisEmpleadorMonto,
+        mutualEmpleadorMonto: det.mutualEmpleadorMonto,
+        afcEmpleadorMonto: det.afcEmpleadorMonto,
+        costoTotalEmpresa: det.costoTotalEmpresa,
+      }));
+    } catch (payrollErr: any) {
+      console.warn(`[Worker:F29] Advertencia al calcular nómina real para ${empresaId}:`, payrollErr.message);
+    }
+
     const indicators: ChileIndicators = {
       ...DEFAULT_INDICATORS,
       utm: utmActual || DEFAULT_INDICATORS.utm,
@@ -476,16 +611,16 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       });
     }
 
-    // 2. Crédito Fiscal IVA consumido (Se salda abonándolo al Haber)
-    const creditoFiscalConsumido = Math.min(casillas.c537, casillas.c538);
-    if (creditoFiscalConsumido > 0) {
+    // 2. Crédito Fiscal IVA del período (Se salda abonándolo al Haber)
+    if (casillas.c537 > 0) {
       lineasContables.push({
         codigoCuenta: '1.1.07.001',
         nombreCuenta: 'Crédito Fiscal IVA (Compras Recuperables)',
         debe: 0,
-        haber: creditoFiscalConsumido,
+        haber: casillas.c537,
       });
     }
+
 
     // 3. Remanente Crédito Fiscal Siguiente Período (Activo que queda a favor)
     if (casillas.c077 > 0) {
@@ -570,25 +705,30 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       );
     }
 
-    // Verificación formal y matemática de partida doble
-    const totalDebe = lineasContables.reduce((acc, l) => acc + Number(l.debe), 0);
-    const totalHaber = lineasContables.reduce((acc, l) => acc + Number(l.haber), 0);
-    const descuadre = Math.abs(totalDebe - totalHaber);
+    // Normalización canónica formal según Código de Comercio e IFRS:
+    // - Bloque 1: Cuentas cargadas (DEBE) ordenadas
+    // - Bloque 2: Cuentas abonadas (HABER) ordenadas
+    // - Sumas iguales estrictas (|Debe - Haber| == 0.00)
+    const normalizedJournal = normalizeAndValidateJournalEntry({
+      empresaId,
+      periodo,
+      fecha: fechaAsiento,
+      glosaGeneral: `Liquidación F29 ${periodo} - Agente Liquidador Autónomo (${companyProfile.razonSocial})`,
+      documentoRef: `F29-SII-${periodo}`,
+      origenModulo: 'F29_CENTRALIZACION',
+      creadoPorAgente: 'AGENTE_WORKER_F29',
+      lineas: lineasContables.map((l) => ({
+        codigoCuenta: l.codigoCuenta,
+        nombreCuenta: l.nombreCuenta,
+        debe: Number(l.debe) || 0,
+        haber: Number(l.haber) || 0,
+        rutAuxiliar: l.rutAuxiliar || null,
+        centroCosto: l.centroCosto || null,
+      })),
+    });
 
-    if (descuadre >= 0.01) {
-      throw new DoubleEntryImbalanceError(
-        totalDebe,
-        totalHaber,
-        descuadre,
-        lineasContables.length,
-        {
-          traceId,
-          empresaId,
-          periodo,
-          f29Calculado: casillas,
-        }
-      );
-    }
+    const totalDebe = normalizedJournal.totalDebe;
+    const totalHaber = normalizedJournal.totalHaber;
 
     // ------------------------------------------------------------------------
     // FASE 7 (100%): PERSISTIENDO
@@ -611,7 +751,14 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         creadoPorAgente: 'AGENTE_WORKER_F29',
         documentoRef: `F29-SII-${periodo}`,
       },
-      lineas: lineasContables,
+      lineas: normalizedJournal.lineas.map((l) => ({
+        codigoCuenta: l.codigoCuenta,
+        nombreCuenta: l.nombreCuenta,
+        debe: l.debe,
+        haber: l.haber,
+        rutAuxiliar: l.rutAuxiliar,
+        centroCosto: l.centroCosto,
+      })),
       auditContext: {
         traceId,
         agenteNombre: 'AGENTE_WORKER_F29',

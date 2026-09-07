@@ -46,6 +46,7 @@ import {
   calculatePreF29,
   convertF29AsientoToAccountingEntry
 } from '../utils/f29SeniorEngine';
+import { JournalEntryView } from './accounting/JournalEntryView';
 import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
 
 interface F29SeniorAgentProps {
@@ -667,72 +668,26 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
               </div>
             </div>
 
-            {/* Asiento Contable Normalizado del F29 */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                    <FileCode className="w-4 h-4 text-emerald-600" />
-                    <span>Asiento Contable de Centralización F29</span>
-                  </h3>
-                  <button
-                    onClick={() => handleCopyJson(seniorResult.asiento_contable_f29)}
-                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedJson ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedJson ? 'Copiado' : 'Copiar'}</span>
-                  </button>
-                </div>
-
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold">
-                        <th className="py-2">Cuenta Contable</th>
-                        <th className="py-2 text-right">Debe ($)</th>
-                        <th className="py-2 text-right">Haber ($)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono">
-                      {seniorResult.asiento_contable_f29.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="py-2 font-sans font-medium text-slate-800">{item.cuenta}</td>
-                          <td className="py-2 text-right text-slate-700">
-                            {item.debe > 0 ? formatNumberCL(item.debe) : '-'}
-                          </td>
-                          <td className="py-2 text-right text-slate-700">
-                            {item.haber > 0 ? formatNumberCL(item.haber) : '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-slate-300 font-bold text-slate-900 font-mono">
-                        <td className="py-2 font-sans">TOTALES CUADRADOS</td>
-                        <td className="py-2 text-right text-blue-700">
-                          {formatNumberCL(seniorResult.asiento_contable_f29.reduce((s, i) => s + i.debe, 0))}
-                        </td>
-                        <td className="py-2 text-right text-blue-700">
-                          {formatNumberCL(seniorResult.asiento_contable_f29.reduce((s, i) => s + i.haber, 0))}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Asiento balanceado y conforme al Plan de Cuentas SII
-                </span>
-                <button
-                  onClick={handleAddF29AccountingEntry}
-                  className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                >
-                  Registrar Asiento
-                </button>
-              </div>
+            {/* Asiento Contable Normalizado del F29 (Libro Diario Canónico) */}
+            <div className="flex flex-col">
+              <JournalEntryView
+                entry={{
+                  empresaId: company.rut,
+                  periodo: selectedPeriod,
+                  fecha: `${selectedPeriod}-20`,
+                  glosaGeneral: `Liquidación F29 período ${selectedPeriod} - ${company.razonSocial}`,
+                  documentoRef: `F29-SII-${selectedPeriod}`,
+                  origenModulo: 'F29_CENTRALIZACION',
+                  creadoPorAgente: 'ENGINE_F29_SENIOR',
+                  lineas: seniorResult.asiento_contable_f29.map((item) => ({
+                    nombreCuenta: item.cuenta,
+                    debe: item.debe,
+                    haber: item.haber,
+                  })),
+                }}
+                onApprove={handleAddF29AccountingEntry}
+                showExportButton={true}
+              />
             </div>
           </div>
         </div>

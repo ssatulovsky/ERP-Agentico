@@ -7,9 +7,11 @@ import {
 } from '../queues/types';
 import { db } from '../db';
 import { agentAuditLogs } from '../db/schema';
+import { PayrollCalculationService } from '../services/payrollCalculationService';
 
 /**
  * Función central de procesamiento de cálculo de nómina en lote.
+ * Conectada al motor laboral pericial chileno con persistencia en MySQL y Libro Diario.
  */
 export async function processPayrollJob(job: {
   id?: string;
@@ -19,12 +21,12 @@ export async function processPayrollJob(job: {
   const startTime = Date.now();
   const { traceId, empresaId, periodo, totalTrabajadores } = job.data;
 
-  console.log(`[Worker:Payroll] Procesando liquidaciones para ${totalTrabajadores} trabajadores (${periodo})`, {
+  console.log(`[Worker:Payroll] Procesando liquidaciones reales para empresa ${empresaId} (${periodo})`, {
     jobId: job.id,
     traceId,
   });
 
-  // Registrar inicio de la liquidación masiva
+  // 1. Registrar inicio de la liquidación masiva en auditoría forense
   try {
     await db.insert(agentAuditLogs).values({
       traceId,
@@ -34,22 +36,19 @@ export async function processPayrollJob(job: {
       estadoTransicion: 'EJECUTANDO',
       modelName: 'labor-engine-cl',
       payloadInput: job.data,
-      payloadOutput: { estado: 'CALCULANDO_HABERES_Y_DESCUENTOS' },
+      payloadOutput: { estado: 'CALCULANDO_HABERES_Y_DESCUENTOS_REALES' },
       tiempoEjecucionMs: 0,
     });
   } catch (err) {
     console.warn('[Worker:Payroll] Advertencia en log inicial:', err);
   }
 
-  // Cálculos referenciales agregados
-  const totalHaberesImponibles = totalTrabajadores * 1250000;
-  const totalAfp = Math.round(totalHaberesImponibles * 0.1144);
-  const totalSalud = Math.round(totalHaberesImponibles * 0.07);
-  const totalAfcTrabajador = Math.round(totalHaberesImponibles * 0.006);
-  const totalSueldoLiquido = totalHaberesImponibles - (totalAfp + totalSalud + totalAfcTrabajador);
+  // 2. Ejecución del motor laboral chileno real (Contratos, AFPs, Fonasa/Isapre, AFC, Impuesto Único)
+  const payrollSummary = await PayrollCalculationService.calculateRealPayroll(empresaId, periodo);
 
   const tiempoEjecucionMs = Date.now() - startTime;
 
+  // 3. Registrar auditoría con resultados reales consolidados
   try {
     await db.insert(agentAuditLogs).values({
       traceId,
@@ -60,10 +59,20 @@ export async function processPayrollJob(job: {
       modelName: 'labor-engine-cl',
       payloadInput: job.data,
       payloadOutput: {
-        totalTrabajadores,
-        totalHaberesImponibles,
-        totalSueldoLiquido,
-        totalLeyesSociales: totalAfp + totalSalud + totalAfcTrabajador,
+        totalTrabajadores: payrollSummary.totalTrabajadores,
+        totalHaberesImponibles: payrollSummary.totalHaberesImponibles,
+        totalHaberesBrutos: payrollSummary.totalHaberesBrutos,
+        totalSueldoLiquido: payrollSummary.totalSueldosLiquidos,
+        totalImpuestoUnico: payrollSummary.totalImpuestoUnico,
+        totalLeyesSociales:
+          payrollSummary.totalAfp +
+          payrollSummary.totalSalud +
+          payrollSummary.totalAfcTrabajador +
+          payrollSummary.totalAfcEmpleador +
+          payrollSummary.totalSisEmpleador +
+          payrollSummary.totalMutualEmpleador,
+        costoTotalEmpresa: payrollSummary.costoTotalEmpresa,
+        asientoCentralizacionId: payrollSummary.asientoCentralizacionId,
       },
       tiempoEjecucionMs,
     });
@@ -77,9 +86,13 @@ export async function processPayrollJob(job: {
     payloadGenerado: {
       empresaId,
       periodo,
-      totalTrabajadores,
-      totalHaberesImponibles,
-      totalSueldoLiquido,
+      totalTrabajadores: payrollSummary.totalTrabajadores,
+      totalHaberesImponibles: payrollSummary.totalHaberesImponibles,
+      totalHaberesBrutos: payrollSummary.totalHaberesBrutos,
+      totalSueldoLiquido: payrollSummary.totalSueldosLiquidos,
+      totalImpuestoUnico: payrollSummary.totalImpuestoUnico,
+      costoTotalEmpresa: payrollSummary.costoTotalEmpresa,
+      asientoCentralizacionId: payrollSummary.asientoCentralizacionId,
       fechaCalculo: new Date().toISOString(),
     },
     tiempoEjecucionMs,

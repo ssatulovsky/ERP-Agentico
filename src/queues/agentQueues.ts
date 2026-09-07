@@ -303,7 +303,8 @@ export const payrollQueue = initialized.payroll;
 // ============================================================================
 
 export function generateRcvJobId(data: RcvSyncJobData): string {
-  const cleanRut = data.rutEmpresa.replace(/[^0-9kK]/g, '').toUpperCase();
+  const rawRut = data.rutEmpresa || data.empresaId;
+  const cleanRut = rawRut.replace(/[^0-9kK]/g, '').toUpperCase();
   return `rcv_${cleanRut}_${data.periodo}_${data.modo.toLowerCase()}`;
 }
 
@@ -314,10 +315,12 @@ export async function scheduleRcvSync(
 
   console.log(`[Queue:RCV] Encolando trabajo: ${jobId}`, {
     traceId: data.traceId,
-    rutEmpresa: data.rutEmpresa,
+    empresaId: data.empresaId,
     periodo: data.periodo,
     modo: data.modo,
+    source: data.source,
   });
+
 
   return rcvQueue.add('SYNC_RCV_SII', data, {
     jobId,

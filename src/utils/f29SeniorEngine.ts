@@ -11,6 +11,7 @@ import {
   AccountingEntryLine
 } from '../types';
 import { formatCLP, formatNumberCL } from './chileanAccounting';
+import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
 
 export interface PreF29Options {
   periodo?: string; // YYYY-MM
@@ -297,84 +298,96 @@ export function calculatePreF29(
     c091_total_a_pagar_f29: totalAPagarF29
   };
 
-  // 11. ASIENTO CONTABLE NORMALIZADO F29 (BALANCEADO EXACTO)
-  // Construcción del asiento respetando las cuentas exactas solicitadas
-  const asientoContable: F29AsientoItem[] = [];
+  // 11. ASIENTO CONTABLE NORMALIZADO F29 (ORDEN CANÓNICO ESTRICTO - LIBRO DIARIO)
+  const rawLinesForNormalization = [];
 
-  // Débito Fiscal (se salda cargando al Debe)
+  // Débito Fiscal
   if (totalDebitoCalculado > 0) {
-    asientoContable.push({ cuenta: 'IVA Débito Fiscal', debe: totalDebitoCalculado, haber: 0 });
-  } else {
-    asientoContable.push({ cuenta: 'IVA Débito Fiscal', debe: 0, haber: 0 });
+    rawLinesForNormalization.push({ nombreCuenta: 'IVA Débito Fiscal', debe: totalDebitoCalculado, haber: 0 });
   }
 
-  // Crédito Fiscal (se salda abonando al Haber)
+  // Crédito Fiscal consumido en el mes
   const creditoMesConsumido = Math.min(creditoFiscalNormal + comprasActivoFijoIva, totalDebitoCalculado);
-  asientoContable.push({
-    cuenta: 'IVA Crédito Fiscal',
-    debe: 0,
-    haber: creditoMesConsumido
-  });
+  if (creditoMesConsumido > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'IVA Crédito Fiscal',
+      debe: 0,
+      haber: creditoMesConsumido
+    });
+  }
 
-  // Remanente Mes Anterior
+  // Remanente Mes Anterior consumido
   const remanenteConsumido = Math.min(remanenteReajustadoClp, Math.max(0, totalDebitoCalculado - creditoMesConsumido));
-  asientoContable.push({
-    cuenta: 'Remanente Crédito Fiscal (Mes Anterior)',
-    debe: 0,
-    haber: remanenteConsumido
-  });
+  if (remanenteConsumido > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Remanente Crédito Fiscal (Mes Anterior)',
+      debe: 0,
+      haber: remanenteConsumido
+    });
+  }
 
-  // Retenciones Honorarios
-  asientoContable.push({
-    cuenta: 'Retenciones Honorarios por Pagar',
-    debe: retencionHonorariosSegundaCat,
-    haber: 0
-  });
+  // Retenciones Honorarios 2da Categoría
+  if (retencionHonorariosSegundaCat > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Retenciones Honorarios por Pagar',
+      debe: retencionHonorariosSegundaCat,
+      haber: 0
+    });
+  }
 
-  // Impuesto Único
-  asientoContable.push({
-    cuenta: 'Impuesto Único por Pagar',
-    debe: impuestoUnicoTrabajadoresSueldos,
-    haber: 0
-  });
+  // Impuesto Único de Segunda Categoría
+  if (impuestoUnicoTrabajadoresSueldos > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Impuesto Único por Pagar',
+      debe: impuestoUnicoTrabajadoresSueldos,
+      haber: 0
+    });
+  }
 
   // PPM por Recuperar (Activo)
-  asientoContable.push({
-    cuenta: 'PPM por Recuperar (Activo)',
-    debe: ppmDeterminado,
-    haber: 0
-  });
+  if (ppmDeterminado > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'PPM por Recuperar (Activo)',
+      debe: ppmDeterminado,
+      haber: 0
+    });
+  }
 
-  // Impuestos por Pagar (F29 / TGR)
-  asientoContable.push({
-    cuenta: 'Impuestos por Pagar (F29 / TGR)',
-    debe: 0,
-    haber: totalAPagarF29
-  });
+  // Total a Pagar F29 (TGR)
+  if (totalAPagarF29 > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Impuestos por Pagar (F29 / TGR)',
+      debe: 0,
+      haber: totalAPagarF29
+    });
+  }
 
   // Remanente Crédito Fiscal Mes Siguiente (si sobró crédito)
   if (saldoAFavorORemanente > 0) {
-    asientoContable.push({
-      cuenta: 'Remanente Crédito Fiscal (Mes Siguiente)',
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Remanente Crédito Fiscal (Mes Siguiente)',
       debe: saldoAFavorORemanente,
-      haber: 0
-    });
-  } else {
-    asientoContable.push({
-      cuenta: 'Remanente Crédito Fiscal (Mes Siguiente)',
-      debe: 0,
       haber: 0
     });
   }
 
-  // Validación de cuadratura del asiento contable
-  const totalDebeAsiento = asientoContable.reduce((s, i) => s + i.debe, 0);
-  const totalHaberAsiento = asientoContable.reduce((s, i) => s + i.haber, 0);
-  const diferenciaCuadratura = Math.abs(totalDebeAsiento - totalHaberAsiento);
-  
-  if (diferenciaCuadratura > 1) {
-    console.warn(`[F29 Engine] Diferencia en asiento contable: Debe ${totalDebeAsiento} vs Haber ${totalHaberAsiento}`);
-  }
+  // Ejecución de la normalización canónica (Bloque 1: DEBE > 0, Bloque 2: HABER > 0)
+  const normalizedJournal = normalizeAndValidateJournalEntry({
+    empresaId: company.rut,
+    periodo,
+    fecha: `${periodo}-20`,
+    glosaGeneral: `Liquidación F29 período ${periodo} - ${company.razonSocial}`,
+    documentoRef: `F29-SII-${periodo}`,
+    origenModulo: 'F29_CENTRALIZACION',
+    creadoPorAgente: 'ENGINE_F29_SENIOR',
+    lineas: rawLinesForNormalization
+  });
+
+  const asientoContable: F29AsientoItem[] = normalizedJournal.lineas.map(l => ({
+    cuenta: l.nombreCuenta,
+    debe: l.debe,
+    haber: l.haber
+  }));
 
   // 12. CAPA ASESORA HUMAN-READABLE
   const resumenEjecutivo = `Liquidación Oficial F29 período ${periodo} para ${company.razonSocial} (RUT: ${company.rut}, Régimen: ${company.regimenTributario === '14D3_PROPYME_GENERAL' ? 'Pro Pyme General 14 D3' : company.regimenTributario === '14D8_PROPYME_TRANSPARENTE' ? 'Pro Pyme Transparente 14 D8' : 'Régimen General 14 A'}). Total Débitos IVA: ${formatCLP(totalDebitoCalculado)}, Total Créditos IVA con Remanente Reajustado: ${formatCLP(totalCreditoConRemanente)}. Resultado IVA: ${impuestoDeterminadoIva > 0 ? `Impuesto Determinado de ${formatCLP(impuestoDeterminadoIva)}` : `Remanente a favor de ${formatCLP(saldoAFavorORemanente)}`}. Retenciones 2da Cat (Honorarios + Sueldos): ${formatCLP(retencionHonorariosSegundaCat + impuestoUnicoTrabajadoresSueldos)}, PPM (${(tasaTotalAplicada * 100).toFixed(2)}%): ${formatCLP(ppmDeterminado)}. Total Líquido a Pagar en F29: ${formatCLP(totalAPagarF29)}.`;
@@ -484,18 +497,36 @@ export function convertF29AsientoToAccountingEntry(
       };
     });
 
-  const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
-  const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+  const normalized = normalizeAndValidateJournalEntry({
+    empresaId: company.rut,
+    periodo: result.periodo_tributario,
+    fecha: `${result.periodo_tributario}-20`,
+    glosaGeneral: `Liquidación y Centralización F29 Período ${result.periodo_tributario} - ${company.razonSocial}`,
+    documentoRef: `F29 SII Folio Electrónico`,
+    origenModulo: 'F29_CENTRALIZACION',
+    creadoPorAgente: 'ENGINE_F29_SENIOR',
+    lineas: lineas.map(l => ({
+      codigoCuenta: l.cuentaCodigo,
+      nombreCuenta: l.cuentaNombre,
+      debe: l.debe,
+      haber: l.haber
+    }))
+  });
 
   return {
     id: `entry-f29-senior-${result.periodo_tributario}-${Date.now()}`,
     fecha: `${result.periodo_tributario}-20`,
-    concepto: `Liquidación y Centralización F29 Período ${result.periodo_tributario} - ${company.razonSocial}`,
+    concepto: normalized.glosaGeneral,
     documento: `F29 SII Folio Electrónico`,
-    lineas,
-    totalDebe,
-    totalHaber,
-    balanceado: Math.abs(totalDebe - totalHaber) <= 5,
+    lineas: normalized.lineas.map(l => ({
+      cuentaCodigo: l.codigoCuenta,
+      cuentaNombre: l.nombreCuenta,
+      debe: l.debe,
+      haber: l.haber
+    })),
+    totalDebe: normalized.totalDebe,
+    totalHaber: normalized.totalHaber,
+    balanceado: Math.abs(normalized.diferencia) < 0.01,
     origen: 'F29_TRIBUTARIO',
     creadoEn: new Date().toISOString()
   };

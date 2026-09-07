@@ -4,11 +4,25 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { supervisorLedgerRouter } from "./src/controllers/supervisorLedgerController";
+import { tenancyRouter } from "./src/controllers/tenancyController";
+import { accountingJournalRouter } from "./src/controllers/accountingJournalController";
+import { erpModulesRouter } from "./src/controllers/erpModulesController";
+import { agentGovernanceRouter } from "./src/controllers/agentGovernanceController";
 import { asyncJobsRouter } from "./src/controllers/asyncJobsController";
 import { sseJobRouter } from "./src/routes/sseJobRoutes";
+import { siiRcvRouter } from "./src/controllers/siiRcvController";
+import { payrollRouter } from "./src/controllers/payrollController";
+import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
+import { RcvIngestionService } from "./src/services/rcvIngestionService";
 import { startWorkers } from "./src/workers";
+import { IndicatorSyncService } from "./src/services/indicatorSyncService";
+import { checkMySqlConnection } from "./src/db/mysqlClient";
+import {
+  normalizeAndValidateJournalEntry,
+  formatJournalEntryToTextTable,
+} from "./src/services/journalEntryNormalizer";
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const app = express();
 const PORT = 3000;
@@ -40,27 +54,47 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), country: "CL" });
 });
 
-// Economic indicators helper (UF, UTM, Dólar) - with live / realistic fallback
-app.get("/api/indicators", async (_req, res) => {
+// Economic indicators helper (UF, UTM, Dólar, IPC) - Sincronizado en línea con MySQL y mindicador.cl
+app.get("/api/indicators", async (req, res) => {
   try {
-    // Standard Chile reference indicators for calculation
-    const today = new Date();
+    const fechaQuery = typeof req.query.fecha === "string" ? req.query.fecha : undefined;
+    const synced = await IndicatorSyncService.syncAllCurrentIndicators(fechaQuery);
+
     res.json({
       success: true,
       data: {
-        uf: 39150.50,
-        utm: 68320,
-        dolar: 955.20,
+        uf: synced.uf,
+        utm: synced.utm,
+        dolar: synced.dolar,
+        ipc: synced.ipc,
         imm: 500000,
         topeImponibleAfpUf: 84.3,
         topeImponibleAfcUf: 126.6,
-        retencionHonorariosTasa: 0.145, // 14.5% vigente 2025-2026 (o 13.75%/15.25%)
+        retencionHonorariosTasa: 0.145, // 14.5% vigente en Chile
         sisTasa: 0.0149,
         mutualBaseTasa: 0.0093,
-        fecha: today.toISOString().split("T")[0],
-      }
+        fecha: synced.fecha,
+        fuente: "mindicador.cl / MySQL economic_indicators",
+      },
     });
   } catch (error: any) {
+    console.error("[Server] Error en /api/indicators:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Ruta de consulta directa auditada de indicadores económicos en MySQL / API
+app.get("/api/indicators/current", async (req, res) => {
+  try {
+    const fechaQuery = typeof req.query.fecha === "string" ? req.query.fecha : undefined;
+    const synced = await IndicatorSyncService.syncAllCurrentIndicators(fechaQuery);
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: synced,
+    });
+  } catch (error: any) {
+    console.error("[Server] Error en /api/indicators/current:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -203,51 +237,69 @@ app.post("/api/sii/detect-pending", (req, res) => {
   }
 });
 
-// SII Endpoints: Descarga RCV y BHE (Compras, Ventas, Honorarios)
+// SII Endpoints: Sincronización oficial RCV (Compras, Ventas)
 app.post("/api/sii/download-rcv", async (req, res) => {
   try {
-    const { tipo, periodo, rut, clave } = req.body;
+    const { tipo, periodo, rut } = req.body;
     if (!tipo || !periodo) {
       return res.status(400).json({ error: "Faltan parámetros tipo o período (AAAAMM o YYYY-MM)." });
     }
 
-    // Normalizar período a AAAAMM y YYYY-MM
-    const normalizedPeriodo = periodo.replace("-", ""); // ej: 202606
+    const cleanRut = (rut || process.env.SII_RUT || "").replace(/\./g, "").trim().toUpperCase();
+    if (!cleanRut) {
+      return res.status(400).json({ error: "RUT de la empresa mandante requerido." });
+    }
+
     const formattedPeriodo = periodo.includes("-") 
       ? periodo 
       : `${periodo.slice(0, 4)}-${periodo.slice(4, 6)}`;
 
-    // Rut y clave tomados de la solicitud o del entorno
-    const siiRut = rut || process.env.SII_RUT || "77.798.901-4";
-    const siiClave = clave || process.env.SII_PASSWORD || "********";
+    console.log(`[SII Gateway] Conectando a Portal RCV para RUT: ${cleanRut}, Periodo: ${formattedPeriodo}, Tipo: ${tipo}`);
 
-    console.log(`[SII Gateway] Conectando a Portal RCV para RUT: ${siiRut}, Periodo: ${normalizedPeriodo}, Tipo: ${tipo}`);
+    const opTipo = (tipo === "VENTA" ? "VENTA" : "COMPRA") as "COMPRA" | "VENTA";
+    const remoteRecords = await SiiRcvService.fetchRemoteRcv(cleanRut, formattedPeriodo, opTipo);
 
-    // Si se solicita descarga directa como archivo CSV adjunto
-    const format = req.query.format || req.body.format || "json";
+    // Ingestar automáticamente en MySQL
+    const parsedRows = remoteRecords.map((r) => ({
+      empresaId: cleanRut,
+      periodo: formattedPeriodo,
+      tipoOperacion: opTipo,
+      tipoDte: r.tipoDte,
+      folio: r.folio,
+      rutContraparte: r.rutContraparte,
+      razonSocialContraparte: r.razonSocialContraparte,
+      fechaEmision: r.fechaEmision,
+      montoExento: r.montoExento,
+      montoNeto: r.montoNeto,
+      montoIvaRecuperable: r.montoIvaRecuperable,
+      montoIvaNoRecuperable: r.montoIvaNoRecuperable,
+      montoTotal: r.montoTotal,
+      estadoAcuse: r.estadoAcuse || null,
+    }));
 
-    if (format === "csv") {
-      let csvHeader = "Tipo Doc;Folio;RUT Proveedor;Razon Social;Fecha Docto;Fecha Recepcion;Monto Exento;Monto Neto;Monto IVA;Monto Total\n";
-      if (tipo === "VENTA") {
-        csvHeader = "Tipo Doc;Folio;RUT Cliente;Razon Social;Fecha Docto;Fecha Recepcion;Monto Exento;Monto Neto;Monto IVA;Monto Total\n";
-      } else if (tipo === "HONORARIOS") {
-        csvHeader = "Tipo Doc;Folio;RUT Emisor;Nombre Emisor;Fecha Docto;Monto Bruto;Tasa Retencion;Monto Retencion;Monto Liquido\n";
-      }
-
-      res.setHeader("Content-Type", "text/csv; charset=ISO-8859-1");
-      res.setHeader("Content-Disposition", `attachment; filename=${tipo}_${normalizedPeriodo}.csv`);
-      return res.send(Buffer.from(csvHeader, "latin1"));
-    }
+    const ingestResult = await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-rcv-${Date.now()}`);
 
     res.json({
       success: true,
       periodo: formattedPeriodo,
-      tipo,
-      rutConsultado: siiRut,
-      mensaje: `Sincronización con SII RCV completada con éxito para el período ${formattedPeriodo}`,
+      tipo: opTipo,
+      rutConsultado: cleanRut,
+      documentosRecibidos: remoteRecords.length,
+      documentosIngestados: ingestResult.insertedCount,
+      totalNeto: ingestResult.totalNeto,
+      totalIvaRecuperable: ingestResult.totalIvaRecuperable,
+      totalMonto: ingestResult.totalMonto,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
+    if (error instanceof SiiGatewayError) {
+      return res.status(error.statusCode || 502).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        details: error.details,
+      });
+    }
     console.error("[SII Gateway Error]:", error);
     res.status(500).json({ success: false, error: error.message });
   }
@@ -417,16 +469,35 @@ app.post("/api/f29/senior-agent", async (req, res) => {
     const creditoConsumido = Math.min(creditoFiscalNormal + comprasActivoFijoIva, totalDebitoCalculado);
     const remanenteConsumido = Math.min(remanenteReajustadoClp, Math.max(0, totalDebitoCalculado - creditoConsumido));
 
-    const asientoBase = [
-      { cuenta: "IVA Débito Fiscal", debe: totalDebitoCalculado, haber: 0 },
-      { cuenta: "IVA Crédito Fiscal", debe: 0, haber: creditoConsumido },
-      { cuenta: "Remanente Crédito Fiscal (Mes Anterior)", debe: 0, haber: remanenteConsumido },
-      { cuenta: "Retenciones Honorarios por Pagar", debe: retencionHonorarios, haber: 0 },
-      { cuenta: "Impuesto Único por Pagar", debe: impuestoUnicoSueldos, haber: 0 },
-      { cuenta: "PPM por Recuperar (Activo)", debe: ppmDeterminado, haber: 0 },
-      { cuenta: "Impuestos por Pagar (F29 / TGR)", debe: 0, haber: totalAPagarF29 },
-      { cuenta: "Remanente Crédito Fiscal (Mes Siguiente)", debe: saldoAFavorORemanente, haber: 0 }
+    const rawAsientoLines = [
+      { nombreCuenta: "IVA Débito Fiscal", debe: totalDebitoCalculado, haber: 0 },
+      { nombreCuenta: "IVA Crédito Fiscal", debe: 0, haber: creditoConsumido },
+      { nombreCuenta: "Remanente Crédito Fiscal (Mes Anterior)", debe: 0, haber: remanenteConsumido },
+      { nombreCuenta: "Retenciones Honorarios por Pagar", debe: retencionHonorarios, haber: 0 },
+      { nombreCuenta: "Impuesto Único por Pagar", debe: impuestoUnicoSueldos, haber: 0 },
+      { nombreCuenta: "PPM por Recuperar (Activo)", debe: ppmDeterminado, haber: 0 },
+      { nombreCuenta: "Impuestos por Pagar (F29 / TGR)", debe: 0, haber: totalAPagarF29 },
+      { nombreCuenta: "Remanente Crédito Fiscal (Mes Siguiente)", debe: saldoAFavorORemanente, haber: 0 }
     ];
+
+    const normalizedF29Entry = normalizeAndValidateJournalEntry({
+      empresaId: empresa?.rut || '76.892.410-K',
+      periodo,
+      fecha: `${periodo}-20`,
+      glosaGeneral: `Liquidación y Centralización F29 Período ${periodo} - ${empresa?.razonSocial || 'Empresa'}`,
+      documentoRef: `F29-${periodo}`,
+      origenModulo: 'F29_CENTRALIZACION',
+      creadoPorAgente: 'AGENTE_FISCAL_SENIOR',
+      lineas: rawAsientoLines
+    });
+
+    const asientoBase = normalizedF29Entry.lineas.map(l => ({
+      cuenta: l.nombreCuenta,
+      codigo: l.codigoCuenta,
+      debe: l.debe,
+      haber: l.haber
+    }));
+    const asientoTextoFormateado = formatJournalEntryToTextTable(normalizedF29Entry);
 
     const f29Mapeo = {
       c538_total_debito: totalDebitoCalculado,
@@ -530,6 +601,8 @@ Debes responder SIEMPRE en dos capas:
       data: {
         f29_mapeo: f29Mapeo,
         asiento_contable_f29: asientoBase,
+        asiento_normalizado: normalizedF29Entry,
+        asiento_texto_formateado: asientoTextoFormateado,
         aiResponseText,
         calculos: {
           totalDebitoCalculado,
@@ -560,6 +633,9 @@ app.post("/api/accounting/senior-orchestrator", async (req, res) => {
     let aiText = "";
     try {
       const ai = getAIClient();
+      const activeUf = indicators?.uf || (await IndicatorSyncService.getDailyIndicator("UF"));
+      const activeDolar = indicators?.dolar || (await IndicatorSyncService.getDailyIndicator("USD"));
+
       const systemInstruction = `Eres el "Agente Orquestador Contable y Financiero Senior", el núcleo contable autónomo embebido en el ERP corporativo chileno.
 Eres la máxima autoridad técnica sobre el Libro Mayor, Libro Diario, Plan de Cuentas (Clases 1 a 7) y Estados Financieros (Balance 8 Columnas e IFRS / NIIF) de la empresa seleccionada.
 
@@ -567,7 +643,7 @@ DATOS DE LA EMPRESA ACTIVA:
 - RUT: ${empresa?.rut || "77.798.901-4"}
 - Razón Social: ${empresa?.razonSocial || "Empresa Corporativa SpA"}
 - Régimen Tributario: ${empresa?.regimenTributario || "14D3_PROPYME_GENERAL"}
-- Moneda: Peso Chileno ($ CLP) con soporte multimoneda (UF: $${indicators?.uf || 39150}, Dólar: $${indicators?.dolar || 955})
+- Moneda: Peso Chileno ($ CLP) con soporte multimoneda (UF: $${activeUf}, Dólar: $${activeDolar})
 
 TUS DIRECTIVAS ESTRICTAS:
 1. Coordinar y auditar los asientos contables provenientes de los módulos periféricos (RCV Ventas/Compras, RRHH, F29, Bancos/Tesorería, Inventario, Arriendos IFRS 16).
@@ -646,8 +722,26 @@ Todos los registros en el Libro Diario cumplen con el principio de partida doble
   }
 });
 
+// RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
+app.use("/api/tenancy", tenancyRouter);
+
+// RUTAS DEL MOTOR CONTABLE CENTRALIZADO Y PLAN DE CUENTAS IFRS
+app.use("/api/accounting", accountingJournalRouter);
+
+// RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
+app.use("/api/modules", erpModulesRouter);
+
+// RUTAS DEL SUBSISTEMA DE GOBERNANZA, CONTEXTO E INSTRUCCIONES ESPECIALES (SUPERVISOR & MEMORIA)
+app.use("/api/governance", agentGovernanceRouter);
+
 // RUTAS DEL AGENTE SUPERVISOR CONTABLE (POST /api/accounting/commit-entry)
 app.use("/api/accounting", supervisorLedgerRouter);
+
+// RUTAS DE INGESTA Y CONSULTA DEL REGISTRO DE COMPRAS Y VENTAS (SII RCV)
+app.use("/api/rcv", siiRcvRouter);
+
+// RUTAS DE NÓMINA Y REMUNERACIONES (CÓDIGO DEL TRABAJO / PREVIRED)
+app.use("/api/payroll", payrollRouter);
 
 // RUTAS DE STREAMING SERVER-SENT EVENTS (SSE) PARA BULLMQ (GET /api/jobs/stream/:queueName/:jobId)
 app.use("/api/jobs", sseJobRouter);
@@ -657,6 +751,29 @@ app.use("/api/jobs", asyncJobsRouter);
 
 // Vite middleware setup for development and production
 async function startServer() {
+  // Verificación de conectividad con MySQL 8.0
+  checkMySqlConnection()
+    .then((isConnected) => {
+      if (isConnected) {
+        console.log("[Contable Chile] Conexión a MySQL 8.0 verificada exitosamente.");
+      } else {
+        console.warn("[Contable Chile] Aviso: Servidor MySQL 8.0 no disponible. Modo contingencia activo.");
+      }
+    })
+    .catch((err) => {
+      console.warn(`[Contable Chile] Error en healthcheck MySQL: ${err.message}`);
+    });
+
+  // Precarga y sincronización asíncrona no bloqueante de indicadores económicos chilenos en MySQL
+  const todayStr = new Date().toISOString().split("T")[0];
+  IndicatorSyncService.syncAllCurrentIndicators(todayStr)
+    .then(() => {
+      console.log("[Contable Chile] Indicadores económicos diarios sincronizados con éxito en MySQL.");
+    })
+    .catch((indErr: any) => {
+      console.warn("[Contable Chile] Aviso al sincronizar indicadores iniciales:", indErr.message);
+    });
+
   // Inicialización de workers de procesamiento en segundo plano (BullMQ)
   if (process.env.REDIS_HOST || process.env.REDIS_URL) {
     startWorkers().catch((wErr) => {

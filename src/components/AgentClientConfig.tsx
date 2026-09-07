@@ -41,6 +41,7 @@ import {
   validateRutChileno, 
   formatRutChileno 
 } from '../utils/chileanAccounting';
+import { AgentGovernancePanel } from './AgentGovernancePanel';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -65,7 +66,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onDeleteClient,
   onDownloadClientDtes,
 }) => {
-  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL'>('CLIENTS');
+  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE'>('GOVERNANCE');
   
   // Modal / Editor State for Clients
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -352,6 +353,18 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         {/* Section Navigation Tabs */}
         <div className="flex items-center gap-2 mt-6 pt-4 border-t border-slate-100 overflow-x-auto text-xs font-semibold">
           <button
+            onClick={() => setActiveSection('GOVERNANCE')}
+            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeSection === 'GOVERNANCE'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-indigo-300" />
+            <span>Gobernanza & Memoria (Orquestador Senior)</span>
+          </button>
+
+          <button
             onClick={() => setActiveSection('CLIENTS')}
             className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
               activeSection === 'CLIENTS'
@@ -388,6 +401,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </button>
         </div>
       </div>
+
+      {/* SECTION 0: GOBERNANZA AGÉNTICA, CONTEXTO E INSTRUCCIONES ESPECIALES (MEMORIA) */}
+      {activeSection === 'GOVERNANCE' && (
+        <AgentGovernancePanel clients={clients} activeClientId={activeClientId} />
+      )}
 
       {/* SECTION 1: CLIENTS PORTFOLIO & SII CREDENTIALS */}
       {activeSection === 'CLIENTS' && (

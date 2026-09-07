@@ -20,15 +20,19 @@ export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 // ============================================================================
 
 /**
- * Payload para sincronización y scraping asistido de RCV (Registro de Compras y Ventas) desde el SII.
+ * Payload para sincronización y procesamiento de RCV (Registro de Compras y Ventas) desde el SII.
  */
 export interface RcvSyncJobData {
-  traceId: string;
+  traceId?: string;
   empresaId: string;
-  rutEmpresa: string;
-  periodo: string; // Formato 'YYYY-MM', ej: '2026-09'
+  rutEmpresa?: string;
+  periodo: string; // Formato 'AAAA-MM', ej: '2026-08'
   modo: 'COMPRAS' | 'VENTAS' | 'CONSOLIDADO';
+  source?: 'FILE_UPLOAD' | 'DIRECT_API';
+  payloadBase64?: string;
 }
+
+
 
 /**
  * Payload para el cálculo de liquidación tributaria F29 mensual y determinación de IVA/PPM.

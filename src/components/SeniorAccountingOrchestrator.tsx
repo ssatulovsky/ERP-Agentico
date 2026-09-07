@@ -51,6 +51,7 @@ import {
   PeriodClosingAdjustment,
 } from '../types';
 import { formatCLP, formatNumberCL, formatNormalizedAccountingEntry } from '../utils/chileanAccounting';
+import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
 import {
   CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS,
   buildOfficial8ColumnBalance,
@@ -720,30 +721,47 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     e.preventDefault();
     if (!manualEntry.concepto.trim()) return;
 
-    const validation = validateAndBalanceEntry(manualEntry.lineas);
-    if (!validation.valido) {
-      alert(`No se puede guardar el asiento. Existe un descuadre en la partida doble de ${formatCLP(Math.abs(validation.diferencia))}. Σ Débitos debe ser igual a Σ Créditos.`);
-      return;
+    try {
+      const normalized = normalizeAndValidateJournalEntry({
+        fecha: manualEntry.fecha,
+        glosaGeneral: manualEntry.concepto,
+        documentoRef: manualEntry.documentoReferencia || 'Comprobante Diario Interno',
+        origenModulo: manualEntry.origen,
+        creadoPorAgente: 'OPERADOR_MANUAL',
+        lineas: manualEntry.lineas.map(l => ({
+          codigoCuenta: l.cuentaCodigo,
+          nombreCuenta: l.cuentaNombre,
+          debe: l.debe,
+          haber: l.haber
+        }))
+      });
+
+      const created: AccountingEntry = {
+        id: `entry-man-${Date.now()}`,
+        fecha: normalized.fecha,
+        concepto: normalized.glosaGeneral,
+        documento: normalized.documentoRef || 'Comprobante Diario Interno',
+        origen: manualEntry.origen,
+        lineas: normalized.lineas.map(l => ({
+          cuentaCodigo: l.codigoCuenta,
+          cuentaNombre: l.nombreCuenta,
+          debe: l.debe,
+          haber: l.haber
+        })),
+        totalDebe: normalized.totalDebe,
+        totalHaber: normalized.totalHaber,
+        balanceado: true,
+        creadoEn: new Date().toISOString(),
+      };
+
+      dispatchEntry(created, {
+        agenteNombre: 'OPERADOR_MANUAL',
+        accion: 'ASIENTO_MANUAL_DIARIO',
+      });
+      setShowManualModal(false);
+    } catch (err: any) {
+      alert(`Rechazo formal de auditoría: ${err.message}`);
     }
-
-    const created: AccountingEntry = {
-      id: `entry-man-${Date.now()}`,
-      fecha: manualEntry.fecha,
-      concepto: manualEntry.concepto,
-      documento: manualEntry.documentoReferencia || 'Comprobante Diario Interno',
-      origen: manualEntry.origen,
-      lineas: validation.lineasCorregidas,
-      totalDebe: validation.totalDebe,
-      totalHaber: validation.totalHaber,
-      balanceado: true,
-      creadoEn: new Date().toISOString(),
-    };
-
-    dispatchEntry(created, {
-      agenteNombre: 'OPERADOR_MANUAL',
-      accion: 'ASIENTO_MANUAL_DIARIO',
-    });
-    setShowManualModal(false);
   };
 
   const manualDebe = manualEntry.lineas.reduce((s, l) => s + (l.debe || 0), 0);
@@ -1238,18 +1256,34 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 font-mono">
-                        {entry.lineas.map((line, lIdx) => (
-                          <tr key={lIdx} className="hover:bg-slate-50/50">
-                            <td className="py-1.5 text-slate-500">{line.cuentaCodigo}</td>
-                            <td className="py-1.5 text-slate-800 font-sans">{line.cuentaNombre}</td>
-                            <td className="py-1.5 text-right text-emerald-700 font-semibold">
-                              {line.debe > 0 ? convertAmount(line.debe) : '-'}
-                            </td>
-                            <td className="py-1.5 text-right text-blue-700 font-semibold">
-                              {line.haber > 0 ? convertAmount(line.haber) : '-'}
-                            </td>
-                          </tr>
-                        ))}
+                        {[...entry.lineas]
+                          .sort((a, b) => {
+                            if (a.debe > 0 && b.haber > 0) return -1;
+                            if (a.haber > 0 && b.debe > 0) return 1;
+                            return 0;
+                          })
+                          .map((line, lIdx) => {
+                            const isHaber = line.haber > 0;
+                            return (
+                              <tr key={lIdx} className={`hover:bg-slate-50/50 ${isHaber ? 'bg-amber-50/20' : ''}`}>
+                                <td className="py-1.5 text-slate-500">{line.cuentaCodigo}</td>
+                                <td className="py-1.5 text-slate-800 font-sans">
+                                  <span className={`flex items-center gap-1.5 ${isHaber ? 'pl-4 sm:pl-6' : ''}`}>
+                                    {isHaber && <span className="text-slate-400 italic text-[11px]">a</span>}
+                                    <span className={isHaber ? 'font-normal text-slate-700' : 'font-semibold text-slate-900'}>
+                                      {line.cuentaNombre}
+                                    </span>
+                                  </span>
+                                </td>
+                                <td className="py-1.5 text-right text-emerald-700 font-semibold">
+                                  {line.debe > 0 ? convertAmount(line.debe) : '-'}
+                                </td>
+                                <td className="py-1.5 text-right text-blue-700 font-semibold">
+                                  {line.haber > 0 ? convertAmount(line.haber) : '-'}
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-slate-200 font-mono font-bold text-slate-900 bg-slate-50/50">
