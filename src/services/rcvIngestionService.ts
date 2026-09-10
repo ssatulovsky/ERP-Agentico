@@ -198,7 +198,10 @@ export class RcvIngestionService {
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]/g, '');
 
-      if (normalized.includes('tipodoc') || normalized.includes('tipodte') || normalized === 'tipo') {
+      if (
+        (normalized.includes('tipodoc') || normalized.includes('tipodte') || normalized === 'tipo') &&
+        !normalized.includes('referencia')
+      ) {
         colIndexMap['tipoDte'] = idx;
       } else if (normalized === 'folio' || normalized.includes('nrofolio') || normalized.includes('numfolio')) {
         colIndexMap['folio'] = idx;
@@ -214,11 +217,12 @@ export class RcvIngestionService {
       ) {
         colIndexMap['rutContraparte'] = idx;
       } else if (
-        normalized.includes('razonsocial') ||
+        !normalized.includes('rut') &&
+        (normalized.includes('razonsocial') ||
         normalized.includes('nombreorazonsocial') ||
         normalized.includes('contraparte') ||
         normalized.includes('proveedor') ||
-        normalized.includes('cliente')
+        normalized.includes('cliente'))
       ) {
         colIndexMap['razonSocialContraparte'] = idx;
       } else if (normalized.includes('montoexento') || normalized === 'exento') {
@@ -245,8 +249,14 @@ export class RcvIngestionService {
       }
     });
 
-    if (colIndexMap['tipoDte'] === undefined || colIndexMap['folio'] === undefined) {
-      throw new Error('FORMATO_INVALIDO: Columnas mínimas (Tipo DTE y Folio) no identificadas en el archivo.');
+    if (colIndexMap['folio'] === undefined) {
+      // Buscar cualquier columna que contenga folio o docto
+      const fallbackFolioIdx = rawHeaders.findIndex(h => h.includes('folio') || h.includes('docto'));
+      if (fallbackFolioIdx !== -1) {
+        colIndexMap['folio'] = fallbackFolioIdx;
+      } else {
+        throw new Error('FORMATO_INVALIDO: Columna de Folio no identificada en el archivo.');
+      }
     }
 
     const parsedRows: ParsedDteRow[] = [];
@@ -259,13 +269,27 @@ export class RcvIngestionService {
       const cols = line.split(delimiter).map((c) => c.replace(/^["']|["']$/g, '').trim());
       if (cols.length < 3) continue;
 
-      const rawTipoDte = cols[colIndexMap['tipoDte']];
       const rawFolio = cols[colIndexMap['folio']];
-      const tipoDteNum = parseInt(rawTipoDte, 10);
-      const folioNum = parseInt(rawFolio, 10);
-
-      if (isNaN(tipoDteNum) || isNaN(folioNum) || folioNum <= 0) {
+      const folioNum = parseInt(rawFolio ? rawFolio.replace(/[^0-9]/g, '') : '', 10);
+      if (isNaN(folioNum) || folioNum <= 0) {
         continue;
+      }
+
+      const montoExentoCandidate = colIndexMap['montoExento'] !== undefined ? parseChileanNumber(cols[colIndexMap['montoExento']]) : 0;
+      const montoNetoCandidate = colIndexMap['montoNeto'] !== undefined ? parseChileanNumber(cols[colIndexMap['montoNeto']]) : 0;
+
+      let tipoDteNum = 33;
+      if (colIndexMap['tipoDte'] !== undefined && cols[colIndexMap['tipoDte']]) {
+        const parsed = parseInt(cols[colIndexMap['tipoDte']].replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          tipoDteNum = parsed;
+        }
+      } else {
+        if (montoExentoCandidate > 0 && montoNetoCandidate === 0) {
+          tipoDteNum = 34; // Factura Exenta
+        } else {
+          tipoDteNum = 33;
+        }
       }
 
       const rawRut = colIndexMap['rutContraparte'] !== undefined ? cols[colIndexMap['rutContraparte']] : '';

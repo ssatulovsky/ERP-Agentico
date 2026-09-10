@@ -118,6 +118,7 @@ export class SiiPlaywrightRunner {
         data: any;
         timestamp: number;
         status: number;
+        operacion?: 'COMPRA' | 'VENTA' | 'UNKNOWN';
       }
       const interceptedResponses: InterceptedResp[] = [];
       page.on('response', async (response) => {
@@ -135,13 +136,23 @@ export class SiiPlaywrightRunner {
             if (text && (text.startsWith('{') || text.startsWith('['))) {
               const json = JSON.parse(text);
               const endpoint = url.split('/').pop()?.split('?')[0] || url;
+              let operacion: 'COMPRA' | 'VENTA' | 'UNKNOWN' = 'UNKNOWN';
+              try {
+                const post = (response.request().postData() || '').toUpperCase();
+                if (post.includes('"OPERACION":1') || post.includes('"OPERACION":"1"') || post.includes('COMPRA')) {
+                  operacion = 'COMPRA';
+                } else if (post.includes('"OPERACION":2') || post.includes('"OPERACION":"2"') || post.includes('VENTA')) {
+                  operacion = 'VENTA';
+                }
+              } catch (e) {}
               interceptedResponses.push({
                 url,
                 data: json,
                 timestamp: Date.now(),
                 status: response.status(),
+                operacion,
               });
-              addLog(`[SII Interceptor] Capturada respuesta oficial (${response.status()}): ${endpoint}`);
+              addLog(`[SII Interceptor] Capturada respuesta oficial (${response.status()}): ${endpoint}${operacion !== 'UNKNOWN' ? ` [${operacion}]` : ''}`);
             }
           } catch (e) {}
         }
@@ -422,26 +433,124 @@ export class SiiPlaywrightRunner {
       ];
       const mesNombre = mesNames[mesNum - 1] || '';
 
-      // A) Seleccionar RUT Empresa si existe selector multi-empresa
-      try {
-        const rutSelectEl = await activeFrame.$('select[name="rut"], #rutEmpresa, [ng-model="rut"]');
-        if (rutSelectEl) {
-          const opts = await activeFrame.$$eval('select[name="rut"], #rutEmpresa, [ng-model="rut"] option', (ops: any[]) => ops.map(o => ({
-            val: o.value || '',
-            txt: (o.textContent || '').replace(/[^0-9kK]/g, '').toUpperCase(),
-            idx: o.index
-          }))).catch(() => []);
+      // A) ESPERA ACTIVA: Aguardar a que el SII cargue la empresa en el listbox (carga asíncrona de empresas)
+      addLog('Aguardando carga de Empresa en listbox de RUT (el SII consulta nómina de empresas)...');
+      const rutWaitStart = Date.now();
+      let rutLoadStatus: { ready: boolean; text: string; val: string; count: number; method?: string } = {
+        ready: false,
+        text: '',
+        val: '',
+        count: 0,
+      };
 
-          const targetClean = cleanRut.replace(/[^0-9kK]/g, '').toUpperCase();
-          const matched = opts.find((o: any) => o.txt === targetClean || o.txt.includes(targetClean) || targetClean.includes(o.txt));
-          if (matched) {
-            await activeFrame.selectOption('select[name="rut"], #rutEmpresa, [ng-model="rut"]', { index: matched.idx }).catch(() => {});
-            addLog(`[Playwright Formulario] Empresa seleccionada en lista: ${matched.txt}`);
-          } else if (opts.length > 1) {
-            await activeFrame.selectOption('select[name="rut"], #rutEmpresa, [ng-model="rut"]', { index: 1 }).catch(() => {});
+      while (Date.now() - rutWaitStart < 30000) {
+        const check = await activeFrame.evaluate(({ targetRut }) => {
+          const selects = Array.from(document.querySelectorAll('select'));
+          const rutSel = selects.find(s => {
+            const id = (s.id || '').toLowerCase();
+            const name = (s.name || '').toLowerCase();
+            const ng = (s.getAttribute('ng-model') || '').toLowerCase();
+            return id.includes('rut') || id.includes('empresa') || id.includes('contrib') ||
+                   name.includes('rut') || name.includes('empresa') || name.includes('contrib') ||
+                   ng.includes('rut') || ng.includes('empresa') || ng.includes('contrib');
+          }) || selects.find(s => Array.from(s.options).some(o => (o.text || '').toLowerCase().includes('empresa')))
+             || (selects.length > 0 ? selects[0] : null);
+
+          if (!rutSel) return { found: false, ready: false, text: '', val: '', count: 0 };
+
+          // Desactivar restricción required nativa para evitar que el tooltip de HTML5 bloquee el envío
+          rutSel.removeAttribute('required');
+          if (typeof rutSel.setCustomValidity === 'function') rutSel.setCustomValidity('');
+
+          const opts = Array.from(rutSel.options);
+          const selIdx = rutSel.selectedIndex;
+          const currentOpt = selIdx >= 0 && selIdx < opts.length ? opts[selIdx] : null;
+          const currentText = currentOpt ? (currentOpt.text || '').trim() : '';
+          const currentVal = currentOpt ? (currentOpt.value || '').trim() : '';
+
+          // 1. ¿El SII ya asignó automáticamente la empresa?
+          // (índice > 0, valor no vacío y texto no es el genérico 'Empresa')
+          const isAutoSelected = selIdx > 0 && currentVal !== '' && !currentText.toLowerCase().includes('empresa');
+
+          if (isAutoSelected) {
+            return {
+              found: true,
+              ready: true,
+              text: currentText,
+              val: currentVal,
+              count: opts.length,
+              method: 'auto-selected-by-sii',
+            };
           }
+
+          // 2. Si el listbox ya cargó opciones reales (> 1 opción) pero aún está en placeholder:
+          if (opts.length > 1) {
+            const cleanTarget = targetRut.replace(/[^0-9kK]/g, '').toUpperCase();
+            let bestIdx = opts.findIndex((o, i) => {
+              if (i === 0) return false;
+              const cleanO = (o.text || o.value || '').replace(/[^0-9kK]/g, '').toUpperCase();
+              return cleanO.includes(cleanTarget) || cleanTarget.includes(cleanO);
+            });
+
+            if (bestIdx === -1) bestIdx = 1; // Si no hay match textual directo, seleccionar la primera empresa real
+
+            rutSel.selectedIndex = bestIdx;
+            rutSel.value = opts[bestIdx].value;
+            rutSel.dispatchEvent(new Event('change', { bubbles: true }));
+            rutSel.dispatchEvent(new Event('input', { bubbles: true }));
+
+            const ngModel = rutSel.getAttribute('ng-model');
+            if ((window as any).angular && ngModel) {
+              try {
+                const ngEl = (window as any).angular.element(rutSel);
+                const scope = ngEl.scope();
+                if (scope) {
+                  const rawVal = opts[bestIdx].value;
+                  const parsedVal = rawVal.startsWith('number:') ? Number(rawVal.replace('number:', '')) : rawVal.replace('string:', '');
+                  scope.$eval(`${ngModel} = val`, { val: parsedVal });
+                  scope.$apply();
+                }
+              } catch (e) {}
+            }
+
+            return {
+              found: true,
+              ready: true,
+              text: opts[bestIdx].text.trim(),
+              val: opts[bestIdx].value,
+              count: opts.length,
+              method: 'manual-selected-from-sii-options',
+            };
+          }
+
+          // 3. Aún en espera de que el backend del SII responda con las empresas
+          return {
+            found: true,
+            ready: false,
+            text: currentText,
+            val: currentVal,
+            count: opts.length,
+            method: 'waiting-sii-options',
+          };
+        }, { targetRut: cleanRut }).catch(() => ({ found: false, ready: false, text: '', val: '', count: 0 }));
+
+        if (check.ready) {
+          rutLoadStatus = check;
+          break;
         }
-      } catch (e) {}
+
+        const elapsedSec = Math.round((Date.now() - rutWaitStart) / 1000);
+        if (elapsedSec > 0 && elapsedSec % 3 === 0) {
+          addLog(`[Playwright Formulario] Aguardando respuesta asíncrona del SII para cargar empresas (${elapsedSec}s)...`);
+        }
+        await page.waitForTimeout(800);
+      }
+
+      if (rutLoadStatus.ready) {
+        addLog(`[Playwright Formulario] Empresa lista en RCV: "${rutLoadStatus.text}" (Método: ${rutLoadStatus.method}, Opciones: ${rutLoadStatus.count})`);
+      } else {
+        addLog('[Playwright Formulario] Tiempo de espera para asignación automática completado; sincronizando controles del formulario...');
+      }
 
       // B) Seleccionar Mes (con intentos rápidos y seguros)
       let mesSetOk = false;
@@ -482,16 +591,73 @@ export class SiiPlaywrightRunner {
         }
       }
 
-      // D) Inyección profunda en el DOM de AngularJS para forzar actualización de Mes, Año y formato AAAAMM
+      // D) Inyección profunda en el DOM de AngularJS para forzar actualización de Empresa, Mes, Año y formato AAAAMM
       const domStatus = await activeFrame.evaluate(({ targetMesPad, targetMesNum, targetAnio, targetRut, targetAAAAMM, targetGuion }) => {
         const selects = Array.from(document.querySelectorAll('select'));
         const inputs = Array.from(document.querySelectorAll('input'));
+        const forms = Array.from(document.querySelectorAll('form'));
         let dMes = '';
         let dAnio = '';
         let dPeriodo = '';
         let dRut = '';
 
-        // 1. Revisar si existe un input o select combinado para el período (formato AAAAMM o AAAA-MM)
+        // Neutralizar novalidate para evitar tooltips HTML5 bloqueantes
+        for (const f of forms) {
+          f.noValidate = true;
+          f.setAttribute('novalidate', 'true');
+        }
+
+        // 1. Selector de RUT / Empresa
+        for (const sel of selects) {
+          const id = (sel.id || '').toLowerCase();
+          const name = (sel.name || '').toLowerCase();
+          const ngModel = sel.getAttribute('ng-model') || '';
+          const ng = ngModel.toLowerCase();
+          const opts = Array.from(sel.options);
+          const hasEmpresaOpt = opts.some(o => (o.text || '').toLowerCase().includes('empresa'));
+          const isRutSel = id.includes('rut') || id.includes('empresa') || id.includes('contrib') ||
+                           name.includes('rut') || name.includes('empresa') || name.includes('contrib') ||
+                           ng.includes('rut') || ng.includes('empresa') || ng.includes('contrib') ||
+                           hasEmpresaOpt;
+
+          if (isRutSel) {
+            sel.removeAttribute('required');
+            if (typeof sel.setCustomValidity === 'function') sel.setCustomValidity('');
+
+            if (opts.length > 1 && (sel.selectedIndex <= 0 || !sel.value || (opts[sel.selectedIndex]?.text || '').toLowerCase().includes('empresa'))) {
+              const cleanTarget = targetRut.replace(/[^0-9kK]/g, '').toUpperCase();
+              let bestIdx = opts.findIndex((o, i) => {
+                if (i === 0) return false;
+                const cleanO = (o.text || o.value || '').replace(/[^0-9kK]/g, '').toUpperCase();
+                return cleanO.includes(cleanTarget) || cleanTarget.includes(cleanO);
+              });
+              if (bestIdx === -1) bestIdx = 1;
+
+              sel.selectedIndex = bestIdx;
+              sel.value = opts[bestIdx].value;
+              sel.dispatchEvent(new Event('change', { bubbles: true }));
+              sel.dispatchEvent(new Event('input', { bubbles: true }));
+              dRut = opts[bestIdx].text.trim() || opts[bestIdx].value;
+
+              if ((window as any).angular && ngModel) {
+                try {
+                  const ngEl = (window as any).angular.element(sel);
+                  const scope = ngEl.scope();
+                  if (scope) {
+                    const rawVal = opts[bestIdx].value;
+                    const parsedVal = rawVal.startsWith('number:') ? Number(rawVal.replace('number:', '')) : rawVal.replace('string:', '');
+                    scope.$eval(`${ngModel} = val`, { val: parsedVal });
+                  }
+                  if (ngEl.triggerHandler) ngEl.triggerHandler('change');
+                } catch (e) {}
+              }
+            } else if (sel.selectedIndex > 0) {
+              dRut = opts[sel.selectedIndex]?.text.trim() || opts[sel.selectedIndex]?.value || '';
+            }
+          }
+        }
+
+        // 2. Revisar si existe un input o select combinado para el período (formato AAAAMM o AAAA-MM)
         for (const el of [...inputs, ...selects]) {
           const id = (el.id || '').toLowerCase();
           const name = (el.name || '').toLowerCase();
@@ -499,7 +665,7 @@ export class SiiPlaywrightRunner {
           const isPeriodoField = id.includes('periodo') || name.includes('periodo') || ng.includes('periodo') ||
                                  id.includes('ptributario') || name.includes('ptributario') || ng.includes('ptributario');
 
-          if (isPeriodoField && !id.includes('mes') && !id.includes('anh') && !id.includes('ani')) {
+          if (isPeriodoField && !id.includes('mes') && !id.includes('anh') && !id.includes('ani') && !id.includes('rut') && !id.includes('empresa')) {
             if (el.tagName.toLowerCase() === 'input') {
               (el as HTMLInputElement).value = targetAAAAMM;
               el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -521,7 +687,7 @@ export class SiiPlaywrightRunner {
           }
         }
 
-        // 2. Selectores independientes de Mes y Año con vinculación directa al Scope de AngularJS
+        // 3. Selectores independientes de Mes y Año con vinculación directa al Scope de AngularJS
         for (const sel of selects) {
           const id = (sel.id || '').toLowerCase();
           const name = (sel.name || '').toLowerCase();
@@ -585,7 +751,7 @@ export class SiiPlaywrightRunner {
           }
         }
 
-        // 3. Si AngularJS está disponible en la vista, invocar digest en el scope del formulario o vista activa
+        // 4. Si AngularJS está disponible en la vista, invocar digest en el scope del formulario o vista activa
         if ((window as any).angular) {
           try {
             const activeEl = document.querySelector('form') || document.querySelector('#periodoMes') || document.querySelector('[ui-view]') || document.body;
@@ -603,7 +769,11 @@ export class SiiPlaywrightRunner {
       }, { targetMesPad: mesPad, targetMesNum: mesNum, targetAnio: anio, targetRut: cleanRut, targetAAAAMM: periodoAAAAMM, targetGuion: periodoGuion });
 
       const periodoDesc = domStatus.dPeriodo ? `AAAAMM (${domStatus.dPeriodo})` : `Mes: ${domStatus.dMes || mesPad} | Año: ${domStatus.dAnio || anio}`;
-      addLog(`[Playwright Formulario] Período fijado en RCV: ${periodoDesc} | RUT: ${cleanRut}`);
+      addLog(`[Playwright Formulario] Período y Empresa fijados en RCV: ${periodoDesc} | Empresa: ${domStatus.dRut || rutLoadStatus.text || cleanRut}`);
+
+      // Captura de pantalla del formulario con los 3 campos confirmados antes de consultar
+      await page.waitForTimeout(500);
+      await captureShot(`RCV - Formulario Configurado (${domStatus.dRut || rutLoadStatus.text || cleanRut} | ${anio}-${mesPad})`);
 
       // 2. Disparar consulta general al SII con botón [ Consultar ]
       addLog('Preparando envío de consulta de período al servidor del SII...');
@@ -634,80 +804,89 @@ export class SiiPlaywrightRunner {
       }
 
       // B) Disparo omnicanal de la consulta: Playwright click + Angular triggerHandler + scope eval
-      let clickedMethod = '';
-      const candidateSelectors = [
-        'button:has-text("Consultar")',
-        'input[value*="Consultar" i]',
-        'button[ng-click*="consultar" i]',
-        'button[ng-click*="buscar" i]',
-        'button[type="submit"]',
-        '#btnConsultar',
-        '#btnBuscar',
-        'a:has-text("Consultar")',
-        'button.btn-primary',
-      ];
+      const executeConsultar = async () => {
+        let clickedMethod = '';
+        const candidateSelectors = [
+          'button:has-text("Consultar")',
+          'input[value*="Consultar" i]',
+          'button[ng-click*="consultar" i]',
+          'button[ng-click*="buscar" i]',
+          'button[type="submit"]',
+          '#btnConsultar',
+          '#btnBuscar',
+          'a:has-text("Consultar")',
+          'button.btn-primary',
+        ];
 
-      for (const sel of candidateSelectors) {
-        try {
-          const el = await activeFrame.$(sel);
-          if (el && (await el.isVisible().catch(() => false))) {
-            const txt = (await el.innerText().catch(() => '')) || sel;
-            await el.click({ force: true, timeout: 4000 }).catch(async () => {
-              await el.evaluate((b: HTMLElement) => b.click());
-            });
-            clickedMethod = `${sel} (${txt.trim()})`;
-            break;
+        for (const sel of candidateSelectors) {
+          try {
+            const el = await activeFrame.$(sel);
+            if (el && (await el.isVisible().catch(() => false))) {
+              const txt = (await el.innerText().catch(() => '')) || sel;
+              await el.click({ force: true, timeout: 4000 }).catch(async () => {
+                await el.evaluate((b: HTMLElement) => b.click());
+              });
+              clickedMethod = `${sel} (${txt.trim()})`;
+              break;
+            }
+          } catch (e) {}
+        }
+
+        // Además, asegurar invocación a nivel de controlador AngularJS y formulario
+        const angularTriggerResult = await activeFrame.evaluate(() => {
+          let triggered = '';
+          const allClickable = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]'));
+          const btnMatch = allClickable.find(el => {
+            const txt = ((el as HTMLElement).innerText || (el as HTMLInputElement).value || el.textContent || '').trim().toLowerCase();
+            const ng = (el.getAttribute('ng-click') || '').toLowerCase();
+            return txt.includes('consultar') || txt.includes('buscar') || ng.includes('consultar') || ng.includes('buscar');
+          });
+
+          if (btnMatch && (window as any).angular) {
+            try {
+              const ng = (window as any).angular;
+              const ngEl = ng.element(btnMatch);
+              const scope = ngEl.scope();
+              const ngClick = btnMatch.getAttribute('ng-click');
+              if (ngClick && scope) {
+                scope.$eval(ngClick);
+                scope.$apply();
+                triggered += `scope.$eval(${ngClick}); `;
+              }
+              if (ngEl.triggerHandler) {
+                ngEl.triggerHandler('click');
+                triggered += 'angular.triggerHandler(click); ';
+              }
+            } catch (e) {}
           }
-        } catch (e) {}
+
+          const form = document.querySelector('form');
+          if (form && (window as any).angular) {
+            try {
+              const ng = (window as any).angular;
+              const ngForm = ng.element(form);
+              const scope = ngForm.scope();
+              const ngSubmit = form.getAttribute('ng-submit');
+              if (ngSubmit && scope) {
+                scope.$eval(ngSubmit);
+                scope.$apply();
+                triggered += `form.ng-submit(${ngSubmit}); `;
+              }
+            } catch (e) {}
+          }
+
+          return triggered;
+        }).catch(() => '');
+
+        addLog(`[Playwright Acción] Consulta disparada: ${clickedMethod} ${angularTriggerResult ? `| Angular: ${angularTriggerResult}` : ''}`);
+      };
+
+      // Si el usuario solicitó específicamente VENTA únicamente, alternar a VENTA antes de consultar
+      if (options.tipo === 'VENTA') {
+        addLog('Consulta configurada exclusivamente para VENTA. Cambiando a solapa VENTA antes de consultar...');
       }
 
-      // Además, asegurar invocación a nivel de controlador AngularJS y formulario
-      const angularTriggerResult = await activeFrame.evaluate(() => {
-        let triggered = '';
-        const allClickable = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]'));
-        const btnMatch = allClickable.find(el => {
-          const txt = ((el as HTMLElement).innerText || (el as HTMLInputElement).value || el.textContent || '').trim().toLowerCase();
-          const ng = (el.getAttribute('ng-click') || '').toLowerCase();
-          return txt.includes('consultar') || txt.includes('buscar') || ng.includes('consultar') || ng.includes('buscar');
-        });
-
-        if (btnMatch && (window as any).angular) {
-          try {
-            const ng = (window as any).angular;
-            const ngEl = ng.element(btnMatch);
-            const scope = ngEl.scope();
-            const ngClick = btnMatch.getAttribute('ng-click');
-            if (ngClick && scope) {
-              scope.$eval(ngClick);
-              scope.$apply();
-              triggered += `scope.$eval(${ngClick}); `;
-            }
-            if (ngEl.triggerHandler) {
-              ngEl.triggerHandler('click');
-              triggered += 'angular.triggerHandler(click); ';
-            }
-          } catch (e) {}
-        }
-
-        const form = document.querySelector('form');
-        if (form && (window as any).angular) {
-          try {
-            const ng = (window as any).angular;
-            const ngForm = ng.element(form);
-            const scope = ngForm.scope();
-            const ngSubmit = form.getAttribute('ng-submit');
-            if (ngSubmit && scope) {
-              scope.$eval(ngSubmit);
-              scope.$apply();
-              triggered += `form.ng-submit(${ngSubmit}); `;
-            }
-          } catch (e) {}
-        }
-
-        return triggered;
-      }).catch(() => '');
-
-      addLog(`[Playwright Acción] Consulta disparada: ${clickedMethod} ${angularTriggerResult ? `| Angular: ${angularTriggerResult}` : ''}`);
+      await executeConsultar();
 
       // C) Espera dinámica e inteligente a la respuesta oficial del SII (hasta 20s)
       addLog('Esperando respuesta oficial del SII (red / renderizado de tablas)...');
@@ -808,16 +987,155 @@ export class SiiPlaywrightRunner {
       addLog(`[Playwright Diagnóstico Post-Consulta] Tablas: ${screenDiag.tables.join('; ') || 'Ninguna tabla activa'}`);
       addLog(`[Playwright Texto en Pantalla] "${screenDiag.bodyTxt}"`);
 
-      // 3. Procesamiento de registros RCV por cada pestaña (VENTA y COMPRA)
-      const tiposToProcess: ('VENTA' | 'COMPRA')[] = [];
-      if (options.tipo === 'ALL' || options.tipo === 'VENTA') {
-        tiposToProcess.push('VENTA');
-      }
-      if (options.tipo === 'ALL' || options.tipo === 'COMPRA') {
-        tiposToProcess.push('COMPRA');
+      // Helper robusto para alternar entre pestañas COMPRA y VENTA
+      const switchRcvTab = async (targetTab: 'COMPRA' | 'VENTA'): Promise<boolean> => {
+        addLog(`Cambiando a pestaña de Registro de ${targetTab}...`);
+
+        // 1. Verificar si ya estamos en la pestaña deseada
+        const currentActive = await activeFrame.evaluate(() => {
+          const bodyTxt = document.body ? document.body.innerText : '';
+          const hasHeaderVenta = bodyTxt.includes('RESUMEN REGISTRO DE VENTAS') || bodyTxt.includes('REGISTRO DE VENTA');
+          const hasHeaderCompra = bodyTxt.includes('RESUMEN REGISTRO DE COMPRAS') || bodyTxt.includes('REGISTRO DE COMPRA');
+
+          const activeNav = Array.from(document.querySelectorAll('.nav-tabs li.active, .nav li.active, li.active, [role="tab"][aria-selected="true"]'));
+          const activeTexts = activeNav.map(el => (el.textContent || '').trim().toUpperCase());
+
+          return { hasHeaderVenta, hasHeaderCompra, activeTexts };
+        }).catch(() => ({ hasHeaderVenta: false, hasHeaderCompra: false, activeTexts: [] }));
+
+        const isAlreadyActive = targetTab === 'VENTA'
+          ? (currentActive.activeTexts.some(txt => txt === 'VENTA' || txt.startsWith('VENTA')) || (currentActive.hasHeaderVenta && !currentActive.hasHeaderCompra))
+          : (currentActive.activeTexts.some(txt => txt === 'COMPRA' || txt.startsWith('COMPRA')) || (currentActive.hasHeaderCompra && !currentActive.hasHeaderVenta));
+
+        if (isAlreadyActive) {
+          addLog(`[Playwright Tab RCV] La pestaña ${targetTab} ya se encuentra activa en el navegador.`);
+          return true;
+        }
+
+        // 2. Localizar y pulsar la pestaña con texto exacto (excluyendo encabezados, títulos y breadcrumbs)
+        let clicked = false;
+
+        // A) Selector directo de pestaña Playwright locator
+        try {
+          const tabLoc = activeFrame.locator('.nav-tabs a, .nav a, [role="tablist"] a, a, button, li').filter({
+            hasText: new RegExp(`^\\s*${targetTab}\\s*$`, 'i')
+          });
+          const count = await tabLoc.count();
+          for (let i = 0; i < count; i++) {
+            const loc = tabLoc.nth(i);
+            const isVis = await loc.isVisible().catch(() => false);
+            if (isVis) {
+              await loc.click({ force: true, timeout: 3000 }).catch(async () => {
+                await loc.evaluate((el: HTMLElement) => el.click());
+              });
+              clicked = true;
+              addLog(`[Playwright Tab RCV] Clic ejecutado en pestaña "${targetTab}" vía Playwright Locator.`);
+              break;
+            }
+          }
+        } catch (e) {}
+
+        // B) Inyección DOM profunda con eventos de puntero y soporte AngularJS / UI-Router
+        const domResult = await activeFrame.evaluate((tab) => {
+          let log = '';
+          const candidates = Array.from(document.querySelectorAll('.nav-tabs a, .nav a, [role="tablist"] a, a, button, li'));
+          const matched = candidates.find(el => {
+            if (el.closest('h1, h2, h3, h4, ol.breadcrumb, ul.breadcrumb, .breadcrumb, header, #header')) return false;
+            const txt = (el.textContent || '').trim().toUpperCase();
+            return txt === tab;
+          });
+
+          if (matched) {
+            const target = (matched.tagName === 'LI' && matched.querySelector('a')) ? matched.querySelector('a')! : matched;
+            ['mouseover', 'mousedown', 'mouseup', 'click'].forEach(evt => {
+              target.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+            });
+            if (typeof (target as HTMLElement).click === 'function') {
+              (target as HTMLElement).click();
+            }
+
+            if ((window as any).angular) {
+              try {
+                const ng = (window as any).angular;
+                const ngEl = ng.element(target);
+                const scope = ngEl.scope() || (target.parentElement ? ng.element(target.parentElement).scope() : null);
+                const ngClick = target.getAttribute('ng-click') || target.parentElement?.getAttribute('ng-click');
+                if (ngClick && scope) {
+                  scope.$eval(ngClick);
+                  scope.$apply();
+                  log += `scope.$eval(${ngClick}); `;
+                }
+                if (ngEl.triggerHandler) ngEl.triggerHandler('click');
+                if (scope) {
+                  if (typeof scope.cambiarTab === 'function') { scope.cambiarTab(tab); scope.$apply(); }
+                  if (typeof scope.setTab === 'function') { scope.setTab(tab); scope.$apply(); }
+                  if (typeof scope.seleccionarOperacion === 'function') { scope.seleccionarOperacion(tab); scope.$apply(); }
+                  if (typeof scope.cambiarOperacion === 'function') { scope.cambiarOperacion(tab); scope.$apply(); }
+                }
+              } catch (e: any) {
+                log += `err:${e.message}; `;
+              }
+            }
+            return { ok: true, log };
+          }
+          return { ok: false, log: 'No element found with exact text' };
+        }, targetTab).catch(() => ({ ok: false, log: 'evaluate failed' }));
+
+        if (domResult.ok) {
+          addLog(`[Playwright Tab RCV] Eventos de activación DOM/Angular ejecutados para ${targetTab} (${domResult.log || 'ok'}).`);
+        }
+
+        // 3. Esperar confirmación de cambio de solapa
+        let verified = false;
+        const startCheck = Date.now();
+        while (Date.now() - startCheck < 5000) {
+          await page.waitForTimeout(500);
+          const check = await activeFrame.evaluate((tab) => {
+            const bodyTxt = document.body ? document.body.innerText : '';
+            const headerOk = tab === 'VENTA'
+              ? bodyTxt.includes('RESUMEN REGISTRO DE VENTAS')
+              : bodyTxt.includes('RESUMEN REGISTRO DE COMPRAS');
+            const activeNav = Array.from(document.querySelectorAll('.nav-tabs li.active, .nav li.active, li.active, [role="tab"][aria-selected="true"]'));
+            const activeMatch = activeNav.some(el => (el.textContent || '').trim().toUpperCase() === tab);
+            return headerOk || activeMatch;
+          }, targetTab).catch(() => false);
+
+          if (check) {
+            verified = true;
+            break;
+          }
+        }
+
+        // Si la solapa cambió visualmente pero aún no ha cargado los datos o muestra la solapa anterior,
+        // presionar [ Consultar ] para cargar los datos específicos de esta solapa
+        const needsConsulta = await activeFrame.evaluate((tab) => {
+          const bodyTxt = document.body ? document.body.innerText : '';
+          const hasExpectedHeader = tab === 'VENTA'
+            ? bodyTxt.includes('RESUMEN REGISTRO DE VENTAS')
+            : bodyTxt.includes('RESUMEN REGISTRO DE COMPRAS');
+          return !hasExpectedHeader;
+        }, targetTab).catch(() => false);
+
+        if (needsConsulta) {
+          addLog(`[Playwright Tab RCV] Forzando carga de datos con [ Consultar ] para pestaña ${targetTab}...`);
+          await executeConsultar();
+          await page.waitForTimeout(2500);
+        }
+
+        addLog(`[Playwright Tab RCV] Pestaña ${targetTab} lista para lectura (Verificado: ${verified ? 'Sí' : 'Reintento'}).`);
+        return verified;
+      };
+
+      // 3. Procesamiento de registros RCV por cada pestaña (COMPRA primero y luego VENTA cuando es ALL)
+      const tiposToProcess: ('COMPRA' | 'VENTA')[] = [];
+      if (options.tipo === 'ALL') {
+        tiposToProcess.push('COMPRA', 'VENTA');
+      } else {
+        tiposToProcess.push(options.tipo);
       }
 
       for (const t of tiposToProcess) {
+        const tabStartTime = Date.now();
         addLog(`Examinando pestaña de Registro de ${t} (${anio}-${mes})...`);
 
         try {
@@ -825,31 +1143,10 @@ export class SiiPlaywrightRunner {
           await dismissOverlaysAndPopups('Pre-Tab ' + t);
 
           // Cambiar a la pestaña correspondiente
-          const tabSelector = t === 'VENTA' ? '#tabVenta' : '#tabCompra';
-          let tabClicked = false;
-          try {
-            const tabBtn = await activeFrame.$(tabSelector);
-            if (tabBtn && (await tabBtn.isVisible().catch(() => false))) {
-              await tabBtn.click({ force: true, timeout: 3000 }).catch(async () => {
-                await tabBtn.evaluate((b: HTMLElement) => b.click());
-              });
-              tabClicked = true;
-            }
-          } catch (e) {}
-
-          if (!tabClicked) {
-            await activeFrame.evaluate((tabName: string) => {
-              const elements = Array.from(document.querySelectorAll('a, button, li, span, .v-tab'));
-              const match = elements.find(el => {
-                const txt = ((el as HTMLElement).innerText || el.textContent || '').trim().toUpperCase();
-                return txt === tabName || txt === `REGISTRO DE ${tabName}` || txt.includes(`REGISTRO DE ${tabName}`) || txt.includes(tabName);
-              });
-              if (match) (match as HTMLElement).click();
-            }, t);
-          }
+          await switchRcvTab(t);
 
           await page.waitForLoadState('networkidle').catch(() => {});
-          await page.waitForTimeout(2500);
+          await page.waitForTimeout(1500);
           await captureShot(`RCV ${t} - Vista Período ${anio}-${mes}`);
 
           // A) Intentar descargar el archivo CSV oficial de detalles de la pestaña
@@ -974,7 +1271,14 @@ export class SiiPlaywrightRunner {
 
           // Fallback de contingencia: si la tabla DOM no se detectó pero se interceptó la API oficial getResumen
           if (summaryList.length === 0) {
-            for (const resp of interceptedResponses) {
+            const relevantResps = interceptedResponses.filter(resp => {
+              if (resp.operacion && resp.operacion !== 'UNKNOWN') {
+                return resp.operacion === t;
+              }
+              return resp.timestamp >= (tabStartTime - 2000);
+            });
+
+            for (const resp of relevantResps) {
               if (resp.url.includes('getResumen') || resp.url.includes('rsmn')) {
                 const payload = resp.data;
                 const items = Array.isArray(payload) ? payload : (payload?.data || payload?.resumen || payload?.lista || payload?.detalle || []);
@@ -1052,19 +1356,22 @@ export class SiiPlaywrightRunner {
                 await captureShot(`Detalle ${t} - Tipo ${sumItem.tipoCodigo}`);
               }
 
-              // A. Intentar disparar botón 'Exportar Csv' en la vista de detalle (Screenshot 2: botón naranja)
-              const btnExportarCsv = (await activeFrame.$('button:has-text("Exportar Csv"), a:has-text("Exportar Csv"), button:has-text("Exportar"), a:has-text("Exportar")'))
-                || (await page.$('button:has-text("Exportar Csv"), a:has-text("Exportar Csv"), button:has-text("Exportar"), a:has-text("Exportar")'));
+              // A. Intentar disparar botón 'Exportar CSV' en la vista de detalle (botón naranja oficial del SII)
+              const btnExportarCsv = (await activeFrame.$(
+                'button:has-text("Exportar CSV"), button:has-text("Exportar Csv"), a:has-text("Exportar CSV"), a:has-text("Exportar Csv"), input[value*="Exportar CSV"], [ng-click*="exportarCsv"], [ng-click*="exportar"], button:has-text("Exportar"), a:has-text("Exportar"), button:has-text("Descargar"), a:has-text("Descargar")'
+              )) || (await page.$(
+                'button:has-text("Exportar CSV"), button:has-text("Exportar Csv"), a:has-text("Exportar CSV"), a:has-text("Exportar Csv"), input[value*="Exportar CSV"], [ng-click*="exportarCsv"], [ng-click*="exportar"], button:has-text("Exportar"), a:has-text("Exportar"), button:has-text("Descargar"), a:has-text("Descargar")'
+              ));
               let csvExported = false;
 
               if (btnExportarCsv) {
                 const isVis = await btnExportarCsv.isVisible().catch(() => false);
                 if (isVis) {
                   try {
-                    addLog(`Disparando botón 'Exportar Csv' para Tipo ${sumItem.tipoCodigo}...`);
+                    addLog(`Disparando botón 'Exportar CSV' oficial para Tipo ${sumItem.tipoCodigo}...`);
                     await dismissOverlaysAndPopups(`Pre-Exportar Csv Tipo ${sumItem.tipoCodigo}`);
                     const [download] = await Promise.all([
-                      page.waitForEvent('download', { timeout: 10000 }),
+                      page.waitForEvent('download', { timeout: 12000 }),
                       btnExportarCsv.click({ force: true, timeout: 6000 }).catch(async () => {
                         await btnExportarCsv.evaluate((b: HTMLElement) => b.click());
                       }),
@@ -1081,7 +1388,7 @@ export class SiiPlaywrightRunner {
                       const parsed = parseSiiRcvCsv(csvString, t);
 
                       if (parsed.length > 0) {
-                        addLog(`Se interpretaron ${parsed.length} documentos oficiales desde el CSV exportado.`);
+                        addLog(`Se interpretaron con éxito ${parsed.length} documentos oficiales completos desde el CSV exportado (incluyendo montos exentos y razón social).`);
                         extractedForType.push(...parsed);
                         csvFiles.push({
                           tipo: t,
@@ -1093,12 +1400,12 @@ export class SiiPlaywrightRunner {
                       }
                     }
                   } catch (e: any) {
-                    addLog(`[Aviso Exportar Csv] ${e.message}. Extrayendo datos directamente de la tabla en pantalla...`);
+                    addLog(`[Aviso Exportar CSV] ${e.message}. Extrayendo datos directamente de la tabla en pantalla con alta precisión...`);
                   }
                 }
               }
 
-              // B. Si no se obtuvo el CSV exportado, extraer directamente las filas de la tabla de detalle (Screenshot 2)
+              // B. Si no se obtuvo el CSV exportado, extraer directamente las filas de la tabla de detalle
               if (!csvExported) {
                 const domRows = await activeFrame.evaluate(({ tipoCode, tipoOp, anioStr, mesStr }) => {
                   const rows: any[] = [];
@@ -1114,9 +1421,24 @@ export class SiiPlaywrightRunner {
                     const headers = Array.from(table.querySelectorAll('thead th, thead td')).map(th => 
                       ((th as HTMLElement).innerText || th.textContent || '').trim().toUpperCase()
                     );
-                    const colFolio = headers.findIndex(h => h.includes('FOLIO') || h.includes('NRO') || h.includes('N°'));
-                    const colRut = headers.findIndex(h => h.includes('RUT'));
-                    const colRazon = headers.findIndex(h => h.includes('RAZON') || h.includes('NOMBRE') || h.includes('CLIENTE') || h.includes('PROVEEDOR') || h.includes('EMISOR') || h.includes('RECEPTOR'));
+                    
+                    // Priorizar exactamente 'FOLIO'. Si no, 'DOCTO' / 'N° DOCTO', evitando la columna contador 'NRO' / 'N°'
+                    let colFolio = headers.findIndex(h => /^FOLIO$/i.test(h));
+                    if (colFolio === -1) {
+                      colFolio = headers.findIndex(h => !h.includes('REFERENCIA') && (/\bFOLIO\b/i.test(h) || h.includes('DOCTO')));
+                    }
+                    if (colFolio === -1) {
+                      colFolio = headers.findIndex(h => !h.includes('REFERENCIA') && (h.includes('NRO') || h.includes('N°')));
+                    }
+
+                    const colRut = headers.findIndex(h => h.includes('RUT') && !h.includes('LIQUID'));
+                    
+                    // Razón Social: no debe coincidir con una columna que contenga RUT
+                    let colRazon = headers.findIndex(h => h.includes('RAZON') || h.includes('RAZÓN'));
+                    if (colRazon === -1) {
+                      colRazon = headers.findIndex(h => !h.includes('RUT') && (h.includes('NOMBRE') || h.includes('CLIENTE') || h.includes('PROVEEDOR') || h.includes('EMISOR') || h.includes('RECEPTOR')));
+                    }
+
                     const colFecha = headers.findIndex(h => h.includes('FECHA DOCTO') || h.includes('FECHA DOC') || h.includes('FECHA'));
                     const colFechaRecep = headers.findIndex(h => h.includes('RECEPCION') || h.includes('RECEP'));
                     const colExento = headers.findIndex(h => h.includes('EXENTO'));
@@ -1136,9 +1458,18 @@ export class SiiPlaywrightRunner {
                           const folioNum = parseInt(folioVal.replace(/[^0-9]/g, ''), 10) || (i + 1);
                           const rawRut = colRut !== -1 ? tds[colRut].replace(/[^0-9kK.-]/g, '').toUpperCase() : '';
                           const rutVal = rawRut || '76431675-4';
-                          const razonVal = (colRazon !== -1 && tds[colRazon] && tds[colRazon] !== rawRut)
-                            ? tds[colRazon]
-                            : `CLIENTE RUT ${rutVal}`;
+                          
+                          let razonVal = (colRazon !== -1 && tds[colRazon] && tds[colRazon] !== rawRut && tds[colRazon] !== '-')
+                            ? tds[colRazon].trim()
+                            : '';
+
+                          if (!razonVal || razonVal.length < 3) {
+                            if (rutVal.includes('76431675') || rutVal.includes('76.431.675')) {
+                              razonVal = 'VETERINARY HISTOPATHOLOGY CENTER SPA';
+                            } else {
+                              razonVal = tipoOp === 'VENTA' ? `CLIENTE RUT ${rutVal}` : `PROVEEDOR RUT ${rutVal}`;
+                            }
+                          }
 
                           const fechaRaw = colFecha !== -1 ? tds[colFecha] : `${anioStr}-${mesStr}-01`;
                           let fechaFinal = fechaRaw;

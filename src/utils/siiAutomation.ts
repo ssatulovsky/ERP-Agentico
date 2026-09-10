@@ -250,11 +250,12 @@ export function getSuggestedAccountForDte(
 
   // 1. Caso: Documento de Venta
   if (dte.tipoOperacion === 'VENTA') {
+    const isExento = dte.tipoDte === '34' || (dte.montoExento > 0 && dte.montoIva === 0);
     return {
-      cuentaCodigo: '4.1.01',
-      cuentaNombre: 'Ingresos por Ventas del Giro',
+      cuentaCodigo: isExento ? '4.1.02' : '4.1.01',
+      cuentaNombre: isExento ? 'Ingresos por Servicios Exentos del Giro' : 'Ingresos por Ventas del Giro',
       origen: 'MANUAL',
-      glosaSugerida: `Venta según Factura N° ${dte.folio} a ${dte.razonSocialContraparte}`,
+      glosaSugerida: `Venta ${isExento ? 'Exenta ' : ''}según Factura N° ${dte.folio} a ${dte.razonSocialContraparte}`,
       esHistorico: true,
       certeza: 100
     };
@@ -457,14 +458,15 @@ export function generateLibroCompras(dtes: DteDocument[], periodo: string) {
   const totalIvaRecuperable = compras.reduce((s, c) => s + c.montoIva, 0);
   const totalBruto = compras.reduce((s, c) => s + c.montoTotal, 0);
 
-  const porTipoDoc: Record<string, { count: number; neto: number; iva: number; total: number }> = {};
+  const porTipoDoc: Record<string, { count: number; exento: number; neto: number; iva: number; total: number }> = {};
 
   compras.forEach(c => {
     const t = c.tipoDte;
     if (!porTipoDoc[t]) {
-      porTipoDoc[t] = { count: 0, neto: 0, iva: 0, total: 0 };
+      porTipoDoc[t] = { count: 0, exento: 0, neto: 0, iva: 0, total: 0 };
     }
     porTipoDoc[t].count++;
+    porTipoDoc[t].exento += c.montoExento || 0;
     porTipoDoc[t].neto += c.montoNeto;
     porTipoDoc[t].iva += c.montoIva;
     porTipoDoc[t].total += c.montoTotal;
@@ -493,14 +495,15 @@ export function generateLibroVentas(dtes: DteDocument[], periodo: string) {
   const totalIvaDebito = ventas.reduce((s, v) => s + v.montoIva, 0);
   const totalBruto = ventas.reduce((s, v) => s + v.montoTotal, 0);
 
-  const porTipoDoc: Record<string, { count: number; neto: number; iva: number; total: number }> = {};
+  const porTipoDoc: Record<string, { count: number; exento: number; neto: number; iva: number; total: number }> = {};
 
   ventas.forEach(v => {
     const t = v.tipoDte;
     if (!porTipoDoc[t]) {
-      porTipoDoc[t] = { count: 0, neto: 0, iva: 0, total: 0 };
+      porTipoDoc[t] = { count: 0, exento: 0, neto: 0, iva: 0, total: 0 };
     }
     porTipoDoc[t].count++;
+    porTipoDoc[t].exento += v.montoExento || 0;
     porTipoDoc[t].neto += v.montoNeto;
     porTipoDoc[t].iva += v.montoIva;
     porTipoDoc[t].total += v.montoTotal;
@@ -871,19 +874,42 @@ export function parseSiiRcvCsv(
     headers = rawLines[0].split(separator).map(h => h.trim().toUpperCase().replace(/^"|"$/g, ''));
   }
 
-  // Mapear índices de columnas dinámicamente
+  // Mapear índices de columnas dinámicamente con alta precisión para CSV oficial del SII
   const findCol = (pattern: RegExp): number => {
     return headers.findIndex(h => pattern.test(h));
   };
 
-  const colTipoDoc = findCol(/TIPO\s*DOC|TIPO\s*DOCUMENTO/i);
-  const colFolio = findCol(/FOLIO|N[°º.]*\s*BOLETA|NUMERO|NRO/i);
-  const colRutProv = findCol(/RUT\s*PROV|RUT\s*EMISOR|RUT\s*CONTRA/i);
-  const colRutCliente = findCol(/RUT\s*CLIENT|RUT\s*RECEP/i);
-  const colRutGen = findCol(/RUT/i);
+  const colTipoDoc = findCol(/^(TIPO\s*DOC|TIPO\s*DOCUMENTO|COD\s*TIPO\s*DOC)$/i) !== -1
+    ? findCol(/^(TIPO\s*DOC|TIPO\s*DOCUMENTO|COD\s*TIPO\s*DOC)$/i)
+    : headers.findIndex(h => !/REFERENCIA|VENTA|COMPRA/i.test(h) && /TIPO\s*DOC/i.test(h));
+
+  // 1. Folio: Priorizar columna explícita 'FOLIO'. Si no existe, buscar 'N° DOCTO', etc., evitando la columna contador 'NRO' / 'N°'.
+  let colFolio = headers.findIndex(h => /^FOLIO$/i.test(h));
+  if (colFolio === -1) {
+    colFolio = headers.findIndex(h => !/REFERENCIA/i.test(h) && /\bFOLIO\b/i.test(h));
+  }
+  if (colFolio === -1) {
+    colFolio = headers.findIndex(h => /N[°º.]*\s*(BOLETA|DOCTO|DOC)|NUMERO\s*DOCTO|NRO\s*DOCTO/i.test(h));
+  }
+  if (colFolio === -1) {
+    colFolio = headers.findIndex(h => !/REFERENCIA/i.test(h) && /NUMERO|NRO|N[°º]/i.test(h));
+  }
+
+  // 2. RUT:
+  const colRutProv = headers.findIndex(h => /RUT\s*(PROV|EMISOR|CONTRA)/i.test(h) && !/LIQUID/i.test(h));
+  const colRutCliente = headers.findIndex(h => /RUT\s*(CLIENT|RECEP)/i.test(h));
+  const colRutGen = headers.findIndex(h => /^RUT$/i.test(h) || (/RUT/i.test(h) && !/LIQUID|REFERENCIA/i.test(h)));
   const colRut = colRutProv !== -1 ? colRutProv : (colRutCliente !== -1 ? colRutCliente : colRutGen);
 
-  const colRazonSocial = findCol(/RAZ[OÓ]N|NOMBRE|PROVEEDOR|CLIENTE|EMISOR/i);
+  // 3. Razón Social: NUNCA debe coincidir con una columna que contenga "RUT" (e.g. "Rut cliente")
+  let colRazonSocial = headers.findIndex(h => /RAZ[OÓ]N\s*SOCIAL/i.test(h));
+  if (colRazonSocial === -1) {
+    colRazonSocial = headers.findIndex(h => !/RUT/i.test(h) && /RAZ[OÓ]N|NOMBRE/i.test(h));
+  }
+  if (colRazonSocial === -1) {
+    colRazonSocial = headers.findIndex(h => !/RUT|LIQUID/i.test(h) && /PROVEEDOR|CLIENTE|EMISOR|RECEPTOR/i.test(h));
+  }
+
   const colFechaDocto = findCol(/FECHA\s*(DOCTO|EMISI[OÓ]N|DOCUMENTO|DOC)/i);
   const colFechaRecep = findCol(/FECHA\s*(RECEP|ACUSE)/i);
   const colExento = findCol(/EXENTO/i);
@@ -897,6 +923,10 @@ export function parseSiiRcvCsv(
   if (colRutCliente !== -1 && colRutProv === -1) {
     tipoOperacion = 'VENTA';
   } else if (colRutProv !== -1 && colRutCliente === -1) {
+    tipoOperacion = 'COMPRA';
+  } else if (headers.some(h => /TIPO\s*VENTA/i.test(h))) {
+    tipoOperacion = 'VENTA';
+  } else if (headers.some(h => /TIPO\s*COMPRA/i.test(h))) {
     tipoOperacion = 'COMPRA';
   } else if (colRetencion !== -1 || headers.some(h => h.includes('HONORARIO') || h.includes('BOLETA'))) {
     tipoOperacion = 'HONORARIOS';
@@ -922,15 +952,39 @@ export function parseSiiRcvCsv(
       return isNaN(val) ? 0 : val;
     };
 
-    const rawTipoDoc = getVal(colTipoDoc, tipoOperacion === 'HONORARIOS' ? '999' : '33');
-    const tipoDte = (rawTipoDoc.replace(/[^0-9]/g, '') || (tipoOperacion === 'HONORARIOS' ? '999' : '33')) as any;
+    const montoExento = parseNum(colExento);
+    const montoNeto = parseNum(colNeto);
+    let montoIva = parseNum(colIva);
+    let montoTotal = parseNum(colTotal);
+
+    if (montoTotal === 0 && (montoNeto > 0 || montoExento > 0)) {
+      montoTotal = montoNeto + montoIva + montoExento;
+    }
+
+    // Identificar Tipo DTE con soporte para Factura Exenta (34)
+    let tipoDte: string = '33';
+    if (colTipoDoc !== -1 && cols[colTipoDoc]) {
+      const parsedTipo = cols[colTipoDoc].replace(/[^0-9]/g, '');
+      if (parsedTipo) tipoDte = parsedTipo;
+    } else {
+      if (montoExento > 0 && montoNeto === 0 && montoIva === 0) {
+        tipoDte = '34';
+      } else if (tipoOperacion === 'HONORARIOS') {
+        tipoDte = '999';
+      } else {
+        tipoDte = '33';
+      }
+    }
     
     const folioStr = getVal(colFolio, `${i}`);
     const folio = parseInt(folioStr.replace(/[^0-9]/g, ''), 10) || i;
 
     const rawRut = getVal(colRut, 'S/RUT');
     const rutContraparte = rawRut.replace(/[^0-9kK.-]/g, '').toUpperCase() || 'S/RUT';
-    const razonSocialContraparte = getVal(colRazonSocial, 'RAZÓN SOCIAL OFICIAL SII');
+    let razonSocialContraparte = getVal(colRazonSocial, '');
+    if (!razonSocialContraparte || razonSocialContraparte === rutContraparte || razonSocialContraparte === '-') {
+      razonSocialContraparte = tipoOperacion === 'VENTA' ? `CLIENTE RUT ${rutContraparte}` : `PROVEEDOR RUT ${rutContraparte}`;
+    }
 
     // Parsear fecha
     let fechaEmision = getVal(colFechaDocto, new Date().toISOString().split('T')[0]);
@@ -947,14 +1001,6 @@ export function parseSiiRcvCsv(
     }
     const fechaRecepcion = getVal(colFechaRecep, fechaEmision);
 
-    const montoExento = parseNum(colExento);
-    const montoNeto = parseNum(colNeto);
-    let montoIva = parseNum(colIva);
-    let montoTotal = parseNum(colTotal);
-
-    if (montoTotal === 0 && (montoNeto > 0 || montoExento > 0)) {
-      montoTotal = montoNeto + montoIva + montoExento;
-    }
     if (montoIva === 0 && montoNeto > 0 && String(tipoDte) === '33') {
       montoIva = Math.round(montoNeto * 0.19);
       if (montoTotal === montoNeto) montoTotal += montoIva;
@@ -963,8 +1009,8 @@ export function parseSiiRcvCsv(
     const retencionMonto = parseNum(colRetencion);
 
     dtes.push({
-      id: `dte-real-sii-${tipoOperacion.toLowerCase()}-${folio}-${Date.now().toString(36)}-${i}`,
-      tipoDte,
+      id: `dte-real-sii-${tipoOperacion.toLowerCase()}-${tipoDte}-${folio}-${Date.now().toString(36)}-${i}`,
+      tipoDte: tipoDte as any,
       folio,
       tipoOperacion,
       rutContraparte,

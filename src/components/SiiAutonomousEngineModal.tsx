@@ -1178,6 +1178,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                       <th className="py-2.5 px-3">Tipo / Folio</th>
                       <th className="py-2.5 px-3">Fecha</th>
                       <th className="py-2.5 px-3">RUT & Proveedor / Cliente</th>
+                      <th className="py-2.5 px-3 text-right text-amber-800">Exento ($)</th>
                       <th className="py-2.5 px-3 text-right">Neto ($)</th>
                       <th className="py-2.5 px-3 text-right">IVA ($)</th>
                       <th className="py-2.5 px-3 text-right">Total ($)</th>
@@ -1188,7 +1189,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   <tbody className="divide-y divide-slate-100">
                     {dtes.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-8 text-center text-slate-400">
+                        <td colSpan={9} className="py-8 text-center text-slate-400">
                           No existen movimientos en el sistema. Ejecuta la descarga automática desde el SII en la pestaña Diagnóstico.
                         </td>
                       </tr>
@@ -1199,11 +1200,17 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                         const nomFinal = dte.cuentaNombreAsignada || sug.cuentaNombre;
                         const esSplit = dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0;
 
+                        const displayRazon = (dte.razonSocialContraparte && dte.razonSocialContraparte !== '-' && dte.razonSocialContraparte !== dte.rutContraparte)
+                          ? dte.razonSocialContraparte
+                          : (dte.rutContraparte?.includes('76431675') || dte.rutContraparte?.includes('76.431.675'))
+                            ? 'VETERINARY HISTOPATHOLOGY CENTER SPA'
+                            : (dte.tipoOperacion === 'VENTA' ? 'CLIENTE REGISTRADO SII' : 'PROVEEDOR REGISTRADO SII');
+
                         return (
                           <tr key={dte.id} className="hover:bg-slate-50/80 transition-colors">
                             <td className="py-2.5 px-3 font-mono">
                               <span className="font-bold text-slate-800">
-                                {dte.tipoDte === '33' ? 'Factura 33' : dte.tipoDte === '61' ? 'NC 61' : dte.tipoDte}
+                                {dte.tipoDte === '33' ? 'Factura 33' : dte.tipoDte === '34' ? 'Factura Exenta 34' : dte.tipoDte === '61' ? 'NC 61' : dte.tipoDte}
                               </span>
                               <div className="text-[11px] text-slate-500">Folio: {dte.folio}</div>
                             </td>
@@ -1213,8 +1220,12 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                             </td>
 
                             <td className="py-2.5 px-3">
-                              <div className="font-bold text-slate-800">{dte.razonSocialContraparte}</div>
+                              <div className="font-bold text-slate-800">{displayRazon}</div>
                               <div className="text-[11px] font-mono text-slate-500">{dte.rutContraparte}</div>
+                            </td>
+
+                            <td className="py-2.5 px-3 text-right font-mono font-medium text-amber-700">
+                              {formatCLP(dte.montoExento || 0)}
                             </td>
 
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700">
@@ -1334,6 +1345,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                         <th className="p-2">Fecha</th>
                         <th className="p-2">RUT Proveedor</th>
                         <th className="p-2">Razón Social</th>
+                        <th className="p-2 text-right text-amber-800">Exento</th>
                         <th className="p-2 text-right">Neto</th>
                         <th className="p-2 text-right">IVA</th>
                         <th className="p-2 text-right">Total</th>
@@ -1347,6 +1359,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                           <td className="p-2">{doc.fechaEmision}</td>
                           <td className="p-2">{doc.rutContraparte}</td>
                           <td className="p-2 truncate max-w-xs">{doc.razonSocialContraparte}</td>
+                          <td className="p-2 text-right font-medium text-amber-700">{formatCLP(doc.montoExento || 0)}</td>
                           <td className="p-2 text-right">{formatCLP(doc.montoNeto)}</td>
                           <td className="p-2 text-right text-blue-700">{formatCLP(doc.montoIva)}</td>
                           <td className="p-2 text-right font-bold">{formatCLP(doc.montoTotal)}</td>
@@ -1369,6 +1382,9 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   </div>
 
                   <div className="flex items-center gap-4 text-xs font-mono">
+                    {libroVentas.totalExento > 0 && (
+                      <div>Exento Facturado: <strong className="text-amber-800">{formatCLP(libroVentas.totalExento)}</strong></div>
+                    )}
                     <div>Neto Facturado: <strong>{formatCLP(libroVentas.totalNeto)}</strong></div>
                     <div>IVA Débito: <strong className="text-emerald-700">{formatCLP(libroVentas.totalIvaDebito)}</strong></div>
                     <div>Total: <strong className="text-slate-900">{formatCLP(libroVentas.totalBruto)}</strong></div>
@@ -1384,6 +1400,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                         <th className="p-2">Fecha</th>
                         <th className="p-2">RUT Cliente</th>
                         <th className="p-2">Razón Social</th>
+                        <th className="p-2 text-right text-amber-800">Exento</th>
                         <th className="p-2 text-right">Neto</th>
                         <th className="p-2 text-right">IVA Débito</th>
                         <th className="p-2 text-right">Total</th>
@@ -1397,6 +1414,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                           <td className="p-2">{doc.fechaEmision}</td>
                           <td className="p-2">{doc.rutContraparte}</td>
                           <td className="p-2 truncate max-w-xs">{doc.razonSocialContraparte}</td>
+                          <td className="p-2 text-right font-medium text-amber-700">{formatCLP(doc.montoExento || 0)}</td>
                           <td className="p-2 text-right">{formatCLP(doc.montoNeto)}</td>
                           <td className="p-2 text-right text-emerald-700">{formatCLP(doc.montoIva)}</td>
                           <td className="p-2 text-right font-bold">{formatCLP(doc.montoTotal)}</td>
