@@ -170,9 +170,9 @@ export function calculatePreF29(
   const cambioSujetoIva = 0;
   const retencionesNoResidentes = 0;
 
-  // 5. PAGO PROVISORIO MENSUAL (PPM) (CÓDIGOS 030 Y 062)
-  // Base Imponible de Ventas Netas devengadas/percibidas
-  const baseImponibleVentasNetas = Math.max(0, facturasVentaAfectasNeto);
+  // 5. PAGO PROVISORIO MENSUAL (PPM) (CÓDIGOS 030 Y 062 - Art. 84 LIR)
+  // Base Imponible de Ingresos Brutos del Giro percibidos o devengados (Ventas netas afectas + ventas exentas del giro)
+  const baseImponibleVentasNetas = Math.max(0, facturasVentaAfectasNeto + ventasExentasInformadas);
   
   // Tasa de PPM según régimen tributario y configuración
   let tasaPpmObligatoria = options.tasaPpmManual ?? company.tasaPpm ?? 0.01;
@@ -301,32 +301,25 @@ export function calculatePreF29(
   // 11. ASIENTO CONTABLE NORMALIZADO F29 (ORDEN CANÓNICO ESTRICTO - LIBRO DIARIO)
   const rawLinesForNormalization = [];
 
-  // Débito Fiscal
+  // Proporcionalidad del Crédito Fiscal e IVA no recuperable (Art. 23 DL 825)
+  const creditoFiscalRecuperable = Math.round(creditoFiscalNormal * factorProporcionalidadIva);
+  const ivaNoRecuperableProporcionalidad = Math.max(0, creditoFiscalNormal - creditoFiscalRecuperable);
+
+  // 1. Débito Fiscal IVA
   if (totalDebitoCalculado > 0) {
     rawLinesForNormalization.push({ nombreCuenta: 'IVA Débito Fiscal', debe: totalDebitoCalculado, haber: 0 });
   }
 
-  // Crédito Fiscal consumido en el mes
-  const creditoMesConsumido = Math.min(creditoFiscalNormal + comprasActivoFijoIva, totalDebitoCalculado);
-  if (creditoMesConsumido > 0) {
+  // 2. Gasto IVA No Recuperable por Proporcionalidad (Art. 23 N° 3 DL 825)
+  if (ivaNoRecuperableProporcionalidad > 0) {
     rawLinesForNormalization.push({
-      nombreCuenta: 'IVA Crédito Fiscal',
-      debe: 0,
-      haber: creditoMesConsumido
+      nombreCuenta: 'Gasto IVA No Recuperable (Art. 23 DL 825)',
+      debe: ivaNoRecuperableProporcionalidad,
+      haber: 0
     });
   }
 
-  // Remanente Mes Anterior consumido
-  const remanenteConsumido = Math.min(remanenteReajustadoClp, Math.max(0, totalDebitoCalculado - creditoMesConsumido));
-  if (remanenteConsumido > 0) {
-    rawLinesForNormalization.push({
-      nombreCuenta: 'Remanente Crédito Fiscal (Mes Anterior)',
-      debe: 0,
-      haber: remanenteConsumido
-    });
-  }
-
-  // Retenciones Honorarios 2da Categoría
+  // 3. Retenciones Honorarios 2da Categoría
   if (retencionHonorariosSegundaCat > 0) {
     rawLinesForNormalization.push({
       nombreCuenta: 'Retenciones Honorarios por Pagar',
@@ -335,7 +328,7 @@ export function calculatePreF29(
     });
   }
 
-  // Impuesto Único de Segunda Categoría
+  // 4. Impuesto Único de Segunda Categoría
   if (impuestoUnicoTrabajadoresSueldos > 0) {
     rawLinesForNormalization.push({
       nombreCuenta: 'Impuesto Único por Pagar',
@@ -344,7 +337,7 @@ export function calculatePreF29(
     });
   }
 
-  // PPM por Recuperar (Activo)
+  // 5. PPM por Recuperar (Activo)
   if (ppmDeterminado > 0) {
     rawLinesForNormalization.push({
       nombreCuenta: 'PPM por Recuperar (Activo)',
@@ -353,21 +346,40 @@ export function calculatePreF29(
     });
   }
 
-  // Total a Pagar F29 (TGR)
-  if (totalAPagarF29 > 0) {
-    rawLinesForNormalization.push({
-      nombreCuenta: 'Impuestos por Pagar (F29 / TGR)',
-      debe: 0,
-      haber: totalAPagarF29
-    });
-  }
-
-  // Remanente Crédito Fiscal Mes Siguiente (si sobró crédito)
+  // 6. Remanente Crédito Fiscal Mes Siguiente (si sobró crédito a favor)
   if (saldoAFavorORemanente > 0) {
     rawLinesForNormalization.push({
       nombreCuenta: 'Remanente Crédito Fiscal (Mes Siguiente)',
       debe: saldoAFavorORemanente,
       haber: 0
+    });
+  }
+
+  // 7. IVA Crédito Fiscal liquidado del mes (se extingue contra débitos y gasto no recuperable)
+  const creditoMesTotal = creditoFiscalNormal + comprasActivoFijoIva;
+  if (creditoMesTotal > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'IVA Crédito Fiscal',
+      debe: 0,
+      haber: creditoMesTotal
+    });
+  }
+
+  // 8. Remanente Mes Anterior consumido/compensado
+  if (remanenteReajustadoClp > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Remanente Crédito Fiscal (Mes Anterior)',
+      debe: 0,
+      haber: remanenteReajustadoClp
+    });
+  }
+
+  // 9. Total a Pagar F29 (TGR)
+  if (totalAPagarF29 > 0) {
+    rawLinesForNormalization.push({
+      nombreCuenta: 'Impuestos por Pagar (F29 / TGR)',
+      debe: 0,
+      haber: totalAPagarF29
     });
   }
 
@@ -488,6 +500,7 @@ export function convertF29AsientoToAccountingEntry(
       else if (item.cuenta.includes('Impuesto Único')) cuentaCodigo = '2.1.05';
       else if (item.cuenta.includes('PPM')) cuentaCodigo = '1.1.07';
       else if (item.cuenta.includes('Impuestos por Pagar') || item.cuenta.includes('TGR')) cuentaCodigo = '2.1.08';
+      else if (item.cuenta.includes('No Recuperable')) cuentaCodigo = '5.2.12';
 
       return {
         cuentaCodigo,

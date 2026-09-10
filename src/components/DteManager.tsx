@@ -20,9 +20,10 @@ import {
   RefreshCw,
   Bot,
   Sparkles,
-  Split
+  Split,
+  Trash2
 } from 'lucide-react';
-import { DteDocument, DteType, AccountingEntry, CompanyProfile } from '../types';
+import { DteDocument, DteType, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
 import { 
   formatCLP, 
   formatNumberCL, 
@@ -40,8 +41,9 @@ interface DteManagerProps {
   onAddMultipleDtes?: (dtes: DteDocument[], autoSyncCashFlow: boolean) => void;
   onUpdateDte: (dte: DteDocument) => void;
   onAddEntry: (entry: AccountingEntry) => void;
-  company?: CompanyProfile;
+  company?: CompanyProfile | ClientCompany;
   onSyncPendingToCashFlow?: () => void;
+  onClearAllDtes?: () => void;
 }
 
 export const DteManager: React.FC<DteManagerProps> = ({
@@ -51,7 +53,8 @@ export const DteManager: React.FC<DteManagerProps> = ({
   onUpdateDte,
   onAddEntry,
   company,
-  onSyncPendingToCashFlow
+  onSyncPendingToCashFlow,
+  onClearAllDtes
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'TODOS' | 'VENTA' | 'COMPRA' | 'HONORARIOS' | 'PENDIENTES_CONTABILIZAR'>('TODOS');
   const [searchTerm, setSearchTerm] = useState('');
@@ -416,6 +419,22 @@ export const DteManager: React.FC<DteManagerProps> = ({
             <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
             <span>Config / APIs</span>
           </button>
+
+          <button
+            id="btn-vaciar-base-rcv"
+            onClick={() => {
+              if (onClearAllDtes) {
+                onClearAllDtes();
+              } else if (onAddMultipleDtes) {
+                onAddMultipleDtes([], false);
+              }
+            }}
+            className="flex-1 md:flex-none flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-md text-xs font-bold transition-all shadow-sm cursor-pointer border border-rose-500"
+            title="Purgar todos los documentos cargados en memoria y dejar la base en blanco (0)"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-white" />
+            <span>Vaciar Base {dtes.length > 0 ? `(${dtes.length})` : '(0)'}</span>
+          </button>
         </div>
       </div>
 
@@ -478,6 +497,19 @@ export const DteManager: React.FC<DteManagerProps> = ({
               className="w-full bg-slate-50 border border-slate-300 rounded-md pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#2563eb] focus:bg-white"
             />
           </div>
+
+          {onClearAllDtes && dtes.length > 0 && (
+            <button
+              onClick={() => {
+                onClearAllDtes();
+              }}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              title="Eliminar documentos demo y dejar la empresa en 0 movimientos para cargar sus archivos reales"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-white" />
+              <span>Vaciar Base ({dtes.length})</span>
+            </button>
+          )}
 
           <button
             onClick={() => setShowIngestModal(true)}
@@ -657,16 +689,9 @@ export const DteManager: React.FC<DteManagerProps> = ({
         isOpen={showSiiModal}
         onClose={() => setShowSiiModal(false)}
         onIngestDtes={handleIngestFromSiiModal}
-        currentCompany={company || {
-          rut: '76.890.123-4',
-          razonSocial: 'EMPRESA EJEMPLO SPA',
-          giro: 'Servicios de Tecnología',
-          direccion: 'Av. Providencia 1234',
-          comuna: 'Providencia',
-          regimenTributario: '14D3_PROPYME_GENERAL',
-          tasaPpm: 0.0025,
-          remanenteIvaAnterior: 0
-        }}
+        company={company}
+        currentCompany={company}
+        existingDtes={dtes}
       />
 
       {/* MODAL: Ingesta Rápida (Texto / CSV) */}
@@ -1025,6 +1050,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
           }}
           onUpdateDte={onUpdateDte}
           onAddAccountingEntry={onAddEntry}
+          onClearAllDtes={onClearAllDtes}
         />
       )}
     </div>

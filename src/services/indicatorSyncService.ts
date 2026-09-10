@@ -91,91 +91,161 @@ export class IndicatorSyncService {
 
     console.log(`[IndicatorSyncService] Sincronizando indicadores económicos en línea para la fecha: ${targetDate}`);
 
-    // 1. Consultar endpoint consolidado de mindicador.cl (entrega UF, USD, UTM e IPC en un único llamado)
-    let apiData: any = null;
+    const syncedResults: Record<string, number> = {};
+    const [year, monthStr, dayStr] = targetDate.split('-');
+    const monthNum = parseInt(monthStr, 10) || 1;
+    const dayNum = parseInt(dayStr, 10) || 1;
+    const monthNames = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+    const targetMonthName = monthNames[monthNum - 1] || 'Enero';
+
+    // 1. Intentar proveedor principal mindicador.cl (timeout de 2.5s para no bloquear peticiones)
+    let mindicadorData: any = null;
     try {
       const response = await fetch('https://mindicador.cl/api', {
         method: 'GET',
         headers: commonHeaders,
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(2500),
       });
 
       if (response.ok) {
-        apiData = await response.json();
+        mindicadorData = await response.json();
       }
-    } catch (err: any) {
-      console.warn(`[IndicatorSyncService] Aviso en consulta a mindicador.cl consolidado (${err.name || 'Error'}): ${err.message}`);
+    } catch (_err: any) {
+      // mindicador.cl timeout o caída momentánea: proceder con los proveedores oficiales del SII y DolarAPI
+      console.info(`[IndicatorSyncService] mindicador.cl no disponible en 2.5s. Activando proveedores oficiales chilenos (SII / DolarAPI).`);
     }
 
-    const syncedResults: Record<string, number> = {};
-    const codesToSync: Array<{ code: SupportedIndicatorCode; apiKey: string; isMonthly?: boolean }> = [
-      { code: 'UF', apiKey: 'uf', isMonthly: false },
-      { code: 'USD', apiKey: 'dolar', isMonthly: false },
-      { code: 'UTM', apiKey: 'utm', isMonthly: true },
-      { code: 'IPC', apiKey: 'ipc', isMonthly: true },
-    ];
+    // Estructura para consolidar valores verificados
+    const extracted: {
+      UF?: { valor: number; fuente: string };
+      USD?: { valor: number; fuente: string };
+      UTM?: { valor: number; fuente: string };
+      IPC?: { valor: number; fuente: string };
+    } = {};
 
-    const targetMonth = targetDate.slice(0, 7);
+    if (mindicadorData) {
+      if (typeof mindicadorData.uf?.valor === 'number' && mindicadorData.uf.valor > 0) {
+        extracted.UF = { valor: mindicadorData.uf.valor, fuente: 'mindicador.cl-oficial' };
+      }
+      if (typeof mindicadorData.dolar?.valor === 'number' && mindicadorData.dolar.valor > 0) {
+        extracted.USD = { valor: mindicadorData.dolar.valor, fuente: 'mindicador.cl-oficial' };
+      }
+      if (typeof mindicadorData.utm?.valor === 'number' && mindicadorData.utm.valor > 0) {
+        extracted.UTM = { valor: mindicadorData.utm.valor, fuente: 'mindicador.cl-oficial' };
+      }
+      if (typeof mindicadorData.ipc?.valor === 'number') {
+        extracted.IPC = { valor: mindicadorData.ipc.valor, fuente: 'mindicador.cl-oficial' };
+      }
+    }
 
-    for (const item of codesToSync) {
-      let value: number | null = null;
-      let fuente = 'mindicador.cl';
+    // 2. Si faltan indicadores, consultar fuentes oficiales chilenas en paralelo: DolarAPI y SII Oficial
+    const missingCodes = (['UF', 'USD', 'UTM', 'IPC'] as SupportedIndicatorCode[]).filter((c) => !extracted[c]);
 
-      // 1. Intentar extraer del payload consolidado
-      if (apiData && apiData[item.apiKey] && typeof apiData[item.apiKey].valor === 'number') {
-        value = Number(apiData[item.apiKey].valor);
+    if (missingCodes.length > 0) {
+      const fetchTasks: Promise<void>[] = [];
+
+      // A. DolarAPI para USD
+      if (missingCodes.includes('USD')) {
+        fetchTasks.push((async () => {
+          try {
+            const res = await fetch('https://cl.dolarapi.com/v1/cotizaciones/usd', {
+              headers: commonHeaders,
+              signal: AbortSignal.timeout(3000),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const val = Number(data.venta || data.compra || data.ultimoCierre);
+              if (val > 0 && !isNaN(val)) {
+                extracted.USD = { valor: val, fuente: 'dolarapi.cl-oficial' };
+              }
+            }
+          } catch (_e) {}
+        })());
       }
 
-      // 2. Si no se obtuvo del consolidado, consultar el endpoint de serie reciente de la API (/api/{indicador})
-      // Nota: /api/{indicador} entrega la serie de los últimos 30 días/meses con caché CDN de alta velocidad,
-      // evitando timeouts o fallos causados por búsquedas puntuales no indexadas.
-      if (value === null || isNaN(value)) {
-        try {
-          const detailRes = await fetch(`https://mindicador.cl/api/${item.apiKey}`, {
-            headers: commonHeaders,
-            signal: AbortSignal.timeout(4000),
-          });
-
-          if (detailRes.ok) {
-            const detailData: any = await detailRes.json();
-            if (Array.isArray(detailData?.serie) && detailData.serie.length > 0) {
-              if (item.isMonthly) {
-                // Para UTM e IPC buscar coincidencia con el mes YYYY-MM o tomar el más reciente
-                const matchedMonth = detailData.serie.find(
-                  (s: any) => typeof s?.fecha === 'string' && s.fecha.startsWith(targetMonth)
-                );
-                const chosen = matchedMonth || detailData.serie[0];
-                if (typeof chosen?.valor === 'number') {
-                  value = Number(chosen.valor);
-                  fuente = `mindicador.cl/${item.apiKey}/${chosen.fecha?.slice(0, 10) || targetDate}`;
-                }
-              } else {
-                // Para UF y USD buscar por fecha exacta YYYY-MM-DD o tomar el último valor disponible
-                const matchedDay = detailData.serie.find(
-                  (s: any) => typeof s?.fecha === 'string' && s.fecha.startsWith(targetDate)
-                );
-                const chosen = matchedDay || detailData.serie[0];
-                if (typeof chosen?.valor === 'number') {
-                  value = Number(chosen.valor);
-                  fuente = `mindicador.cl/${item.apiKey}/${chosen.fecha?.slice(0, 10) || targetDate}`;
+      // B. SII Oficial para UF
+      if (missingCodes.includes('UF')) {
+        fetchTasks.push((async () => {
+          try {
+            const res = await fetch(`https://www.sii.cl/valores_y_fechas/uf/uf${year}.htm`, {
+              headers: { ...commonHeaders, 'Accept': 'text/html' },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (res.ok) {
+              const html = await res.text();
+              const mPos = html.indexOf(`<h2>${targetMonthName}</h2>`);
+              if (mPos !== -1) {
+                const slice = html.slice(mPos, mPos + 8000);
+                const dayRegex = new RegExp(`<th[^>]*><strong>${dayNum}<\\/strong><\\/th>\\s*<td[^>]*>([0-9.,]+)<\\/td>`, 'i');
+                const match = slice.match(dayRegex);
+                if (match && match[1]) {
+                  const parsed = parseFloat(match[1].replace(/\./g, '').replace(',', '.'));
+                  if (parsed > 0 && !isNaN(parsed)) {
+                    extracted.UF = { valor: parsed, fuente: 'sii.cl-oficial' };
+                  }
                 }
               }
             }
-          }
-        } catch (detailErr: any) {
-          console.warn(`[IndicatorSyncService] Fallback de serie ${item.code} (${targetDate}): ${detailErr.message}`);
-        }
+          } catch (_e) {}
+        })());
       }
 
-      // 3. Validación y persistencia (para IPC se admiten valores negativos o 0; para UF/USD/UTM se exige > 0)
+      // C. SII Oficial para UTM e IPC
+      if (missingCodes.includes('UTM') || missingCodes.includes('IPC')) {
+        fetchTasks.push((async () => {
+          try {
+            const res = await fetch(`https://www.sii.cl/valores_y_fechas/utm/utm${year}.htm`, {
+              headers: { ...commonHeaders, 'Accept': 'text/html' },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (res.ok) {
+              const html = await res.text();
+              const rowRegex = /<tr>\s*<th>([^<]+)<\/th>([\s\S]*?)<\/tr>/gi;
+              let m;
+              let lastIpc: number | null = null;
+              while ((m = rowRegex.exec(html)) !== null) {
+                const mes = m[1].trim();
+                const row = m[2];
+                const tds = [...row.matchAll(/<td[^>]*>(.*?)<\/td>/gi)].map((x) => x[1].replace(/&nbsp;/g, '').trim());
+                if (tds.length >= 1 && mes.toLowerCase() === targetMonthName.toLowerCase()) {
+                  const val = parseFloat(tds[0].replace(/\./g, '').replace(',', '.'));
+                  if (val > 0 && !isNaN(val)) {
+                    extracted.UTM = { valor: val, fuente: 'sii.cl-oficial' };
+                  }
+                }
+                if (tds.length >= 4 && tds[3] !== '') {
+                  const val = parseFloat(tds[3].replace(/\./g, '').replace(',', '.'));
+                  if (!isNaN(val)) lastIpc = val;
+                }
+              }
+              if (lastIpc !== null && !extracted.IPC) {
+                extracted.IPC = { valor: lastIpc, fuente: 'sii.cl-oficial' };
+              }
+            }
+          } catch (_e) {}
+        })());
+      }
+
+      await Promise.allSettled(fetchTasks);
+    }
+
+    // 3. Validación y persistencia en MySQL o memoria
+    for (const [codeKey, data] of Object.entries(extracted)) {
+      const code = codeKey as SupportedIndicatorCode;
+      const value = data.valor;
+      const fuente = data.fuente;
+
       const isValidValue =
-        item.code === 'IPC'
+        code === 'IPC'
           ? value !== null && !isNaN(value) && value >= -20 && value <= 100
           : value !== null && !isNaN(value) && value > 0;
 
       if (isValidValue && value !== null) {
-        syncedResults[item.code.toLowerCase()] = value;
-        syncedResults[item.code] = value;
+        syncedResults[code.toLowerCase()] = value;
+        syncedResults[code] = value;
 
         try {
           const valorStr = value.toFixed(4);
@@ -183,7 +253,7 @@ export class IndicatorSyncService {
             await db
               .insert(economicIndicators)
               .values({
-                codigo: item.code,
+                codigo: code,
                 valor: valorStr,
                 fecha: targetDate,
                 fuente,
@@ -196,7 +266,7 @@ export class IndicatorSyncService {
               });
           } else {
             const existingIdx = inMemoryIndicators.findIndex(
-              (ind) => ind.codigo === item.code && ind.fecha === targetDate
+              (ind) => ind.codigo === code && ind.fecha === targetDate
             );
             if (existingIdx >= 0) {
               inMemoryIndicators[existingIdx].valor = valorStr;
@@ -204,7 +274,7 @@ export class IndicatorSyncService {
             } else {
               inMemoryIndicators.push({
                 id: inMemoryIndicators.length + 1,
-                codigo: item.code,
+                codigo: code,
                 valor: valorStr,
                 fecha: targetDate,
                 fuente,
@@ -213,7 +283,7 @@ export class IndicatorSyncService {
             }
           }
         } catch (upsertErr: any) {
-          console.warn(`[IndicatorSyncService] Error al guardar indicador ${item.code} en MySQL:`, upsertErr.message);
+          console.warn(`[IndicatorSyncService] Error al guardar indicador ${code} en MySQL:`, upsertErr.message);
         }
       }
     }
@@ -308,7 +378,7 @@ export class IndicatorSyncService {
 
     // 4. SI NO HAY NINGÚN DATO EN BD Y LA RED FALLÓ, FALLAR EXPLÍCITAMENTE (CERO MOCKS)
     throw new ExternalServiceError(
-      'mindicador.cl',
+      'sii.cl / mindicador.cl',
       `No se pudo obtener el indicador ${standardCode} para la fecha ${targetDate} ni se encontraron registros históricos en la base de datos local.`,
       'INDICATOR_UNAVAILABLE',
       503,

@@ -107,6 +107,9 @@ const COMMON_ACCOUNT_MAPPINGS: Record<string, { codigo: string; nombre: string }
   'aportes patronales': { codigo: '5.2.04', nombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)' },
   'asignaciones no imponibles': { codigo: '5.2.05', nombre: 'Asignaciones No Imponibles (Colación / Movilización)' },
   'honorarios profesionales': { codigo: '5.2.06', nombre: 'Gastos de Honorarios Profesionales' },
+  'gasto iva no recuperable': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
+  'gasto iva no recuperable (art. 23 dl 825)': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
+  'iva no recuperable': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
 };
 
 /**

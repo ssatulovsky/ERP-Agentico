@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS `dtes_rcv` (
   KEY `idx_dtes_periodo` (`empresa_id`, `periodo`, `tipo_operacion`),
   KEY `idx_dtes_fecha` (`fecha_emision`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
+--> statement-breakpoint
 -- 6. TABLA: employees (Ficha Laboral y de Contrato DT)
 CREATE TABLE IF NOT EXISTS `employees` (
   `id` VARCHAR(36) NOT NULL,
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS `employees` (
   UNIQUE KEY `uq_employees_empresa_rut` (`empresa_id`, `rut`),
   KEY `idx_employees_empresa_activo` (`empresa_id`, `activo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
+--> statement-breakpoint
 -- 7. TABLA: payroll_settlements (Liquidaciones Mensuales de Sueldos)
 CREATE TABLE IF NOT EXISTS `payroll_settlements` (
   `id` VARCHAR(36) NOT NULL,

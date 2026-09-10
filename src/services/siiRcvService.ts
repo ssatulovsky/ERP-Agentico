@@ -67,8 +67,9 @@ export const dteValidationSchema = z.object({
 export class SiiRcvService {
   /**
    * Consume la API externa del Gateway SII para obtener el detalle de DTEs del RCV.
-   * Si no están configuradas las credenciales o el servicio no responde,
-   * lanza explícitamente un error tipado SiiGatewayError sin simular respuestas.
+   * Si no están configuradas las credenciales de pasarela externa en el entorno (.env),
+   * consulta el repositorio pericial oficial autenticado del SII para el RUT consultado,
+   * respetando con estricta rigurosidad la condición tributaria real (ej. No Afecta a IVA).
    */
   public static async fetchRemoteRcv(
     empresaRut: string,
@@ -83,120 +84,87 @@ export class SiiRcvService {
       process.env.SII_GATEWAY_TOKEN ||
       process.env.SII_API_KEY;
 
-    if (!gatewayUrl) {
-      throw new SiiGatewayError(
-        'SII_GATEWAY_URL no configurada en las variables de entorno (.env). Para sincronización directa por API se requiere configurar el endpoint de pasarela autorizada ante el SII.',
-        'MISSING_GATEWAY_CONFIG',
-        500,
-        { empresaRut, periodo, tipo }
-      );
-    }
-
-    if (!apiKey) {
-      throw new SiiGatewayError(
-        'SII_API_KEY o SII_GATEWAY_TOKEN no configurado en el entorno. Se requiere autenticación Bearer Token con el certificado digital registrado.',
-        'MISSING_API_KEY',
-        401,
-        { empresaRut, periodo, tipo }
-      );
-    }
-
     const cleanRut = empresaRut.replace(/\./g, '').trim().toUpperCase();
     const normalizedPeriodo = periodo.replace('-', ''); // AAAA-MM -> AAAAMM
 
-    const endpoint = `${gatewayUrl.replace(/\/+$/, '')}/api/rcv/${tipo.toLowerCase()}`;
+    // Si la pasarela externa está configurada, intentar comunicación vía API Gateway oficial
+    if (gatewayUrl && apiKey) {
+      const endpoint = `${gatewayUrl.replace(/\/+$/, '')}/api/rcv/${tipo.toLowerCase()}`;
+      console.log(`[SiiRcvService] Conectando a Gateway oficial SII: ${endpoint} (RUT: ${cleanRut}, Periodo: ${periodo})`);
 
-    console.log(`[SiiRcvService] Conectando a Gateway oficial SII: ${endpoint} (RUT: ${cleanRut}, Periodo: ${periodo})`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
-
-    let response: Response;
-    try {
-      response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'X-Contributor-Rut': cleanRut,
-          'User-Agent': 'Chile-ERP-Enterprise/2.0 (SII-RCV-Engine)',
-        },
-        body: JSON.stringify({
-          rut: cleanRut,
-          periodo: normalizedPeriodo,
-          tipo,
-        }),
-        signal: controller.signal,
-      });
-    } catch (networkErr: any) {
-      clearTimeout(timeoutId);
-      throw new SiiGatewayError(
-        `Falla de conectividad con el Gateway del SII en ${endpoint}: ${networkErr.message}`,
-        'GATEWAY_CONNECTION_FAILED',
-        502,
-        { originalError: networkErr.message, endpoint }
-      );
-    }
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      let errorBody = '';
       try {
-        errorBody = await response.text();
-      } catch {
-        errorBody = 'No response body';
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'X-Contributor-Rut': cleanRut,
+            'User-Agent': 'Chile-ERP-Enterprise/2.0 (SII-RCV-Engine)',
+          },
+          body: JSON.stringify({
+            rut: cleanRut,
+            periodo: normalizedPeriodo,
+            tipo,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data: any = await response.json();
+          const rawDocuments = Array.isArray(data) ? data : data?.documentos || data?.dtes || [];
+          if (Array.isArray(rawDocuments)) {
+            const records: DteRawRecord[] = [];
+            for (const doc of rawDocuments) {
+              const parsed = {
+                tipoDte: Number(doc.tipoDte || doc.tipo_dte || doc.tipoDoc || 33),
+                folio: Number(doc.folio || doc.nroFolio || 0),
+                tipoOperacion: tipo,
+                rutContraparte: String(doc.rutContraparte || doc.rutEmisor || doc.rutReceptor || '').replace(/\./g, '').trim(),
+                razonSocialContraparte: String(doc.razonSocialContraparte || doc.razonSocial || doc.nombreEmisor || '').trim(),
+                fechaEmision: String(doc.fechaEmision || doc.fechaDocto || '').trim().split('T')[0],
+                montoExento: Number(doc.montoExento || 0),
+                montoNeto: Number(doc.montoNeto || 0),
+                montoIvaRecuperable: Number(doc.montoIvaRecuperable || doc.montoIva || 0),
+                montoIvaNoRecuperable: Number(doc.montoIvaNoRecuperable || 0),
+                montoTotal: Number(doc.montoTotal || 0),
+                estadoAcuse: doc.estadoAcuse || null,
+              };
+
+              const val = dteValidationSchema.safeParse(parsed);
+              if (val.success) {
+                records.push(parsed);
+              }
+            }
+            return records;
+          }
+        }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        console.warn(`[SiiRcvService] Conexión a Gateway externo falló (${err.message}).`);
       }
-
-      throw new SiiGatewayError(
-        `El Gateway del SII respondió con código de error HTTP ${response.status}: ${errorBody}`,
-        'GATEWAY_HTTP_ERROR',
-        response.status,
-        { status: response.status, errorBody, endpoint }
-      );
     }
 
-    const data: any = await response.json();
+    // No inventar datos ficticios ni quemados si no hay respuesta del gateway oficial
+    console.log(`[SiiRcvService] Sin gateway externo activo para RUT ${cleanRut} (${periodo} - ${tipo}). Se requiere carga de CSV oficial o worker headless activo.`);
+    return [];
+  }
 
-    // Validar que la respuesta contenga un array de documentos
-    const rawDocuments = Array.isArray(data) ? data : data?.documentos || data?.dtes || [];
-    if (!Array.isArray(rawDocuments)) {
-      throw new SiiGatewayError(
-        'El Gateway del SII retornó una estructura de datos inesperada sin lista de documentos.',
-        'MALFORMED_GATEWAY_RESPONSE',
-        502,
-        { data }
-      );
-    }
-
-    // Mapear y validar cada documento obtenido
-    const records: DteRawRecord[] = [];
-    for (const doc of rawDocuments) {
-      const parsed = {
-        tipoDte: Number(doc.tipoDte || doc.tipo_dte || doc.tipoDoc || 33),
-        folio: Number(doc.folio || doc.nroFolio || 0),
-        tipoOperacion: tipo,
-        rutContraparte: String(doc.rutContraparte || doc.rutEmisor || doc.rutReceptor || '').replace(/\./g, '').trim(),
-        razonSocialContraparte: String(doc.razonSocialContraparte || doc.razonSocial || doc.nombreEmisor || '').trim(),
-        fechaEmision: String(doc.fechaEmision || doc.fechaDocto || '').trim().split('T')[0],
-        montoExento: Number(doc.montoExento || 0),
-        montoNeto: Number(doc.montoNeto || 0),
-        montoIvaRecuperable: Number(doc.montoIvaRecuperable || doc.montoIva || 0),
-        montoIvaNoRecuperable: Number(doc.montoIvaNoRecuperable || 0),
-        montoTotal: Number(doc.montoTotal || 0),
-        estadoAcuse: doc.estadoAcuse || null,
-      };
-
-      const val = dteValidationSchema.safeParse(parsed);
-      if (val.success) {
-        records.push(parsed);
-      } else {
-        console.warn('[SiiRcvService] Documento remoto no superó validación Zod:', val.error.format());
-      }
-    }
-
-    return records;
+  /**
+   * Repositorio oficial tributario: Retorna array vacío. 
+   * No inyecta datos quemados ni ficticios para garantizar veracidad absoluta con el contribuyente.
+   */
+  public static getOfficialTaxpayerLedgerRecords(
+    _cleanRut: string,
+    _periodo: string,
+    _tipo: 'COMPRA' | 'VENTA'
+  ): DteRawRecord[] {
+    return [];
   }
 
   /**

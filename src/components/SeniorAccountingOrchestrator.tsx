@@ -161,10 +161,44 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   // Copy notification state
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
+  // Toast notification state
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage({ type, message });
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
   // Period Closing Adjustments
   const [closingAdjustments, setClosingAdjustments] = useState<PeriodClosingAdjustment[]>(() =>
     generatePeriodClosingAdjustments(indicators, company, leases)
   );
+
+  // Formatter helper for canonical text adjustment voucher
+  const getFormattedAdjustmentVoucher = (adj: PeriodClosingAdjustment): string => {
+    const sumDebe = adj.asientoPropuesto.lineas.reduce((s, l) => s + (l.debe || 0), 0);
+    const sumHaber = adj.asientoPropuesto.lineas.reduce((s, l) => s + (l.haber || 0), 0);
+    const mockEntry: AccountingEntry = {
+      id: adj.id,
+      fecha: new Date().toISOString().split('T')[0],
+      concepto: adj.asientoPropuesto.glosa,
+      documento: `Comprobante Ajuste #${adj.id.toUpperCase()}`,
+      origen: 'MANUAL',
+      lineas: adj.asientoPropuesto.lineas.map(l => ({
+        cuentaCodigo: l.codigo_cuenta,
+        cuentaNombre: l.nombre_cuenta,
+        debe: l.debe,
+        haber: l.haber,
+        centroCosto: l.centro_costo,
+        rutAuxiliar: l.rut_auxiliar,
+      })),
+      totalDebe: sumDebe,
+      totalHaber: sumHaber,
+      balanceado: Math.abs(sumDebe - sumHaber) < 1,
+      creadoEn: new Date().toISOString(),
+    };
+    return formatNormalizedAccountingEntry(mockEntry);
+  };
 
   // Totals of all entries
   const totalDebe = entries.reduce((s, e) => s + (e.totalDebe || 0), 0);
@@ -435,6 +469,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         cuentaNombre: l.nombre_cuenta,
         debe: l.debe,
         haber: l.haber,
+        centroCosto: l.centro_costo,
+        rutAuxiliar: l.rut_auxiliar,
       })),
       totalDebe: sumDebe,
       totalHaber: sumHaber,
@@ -449,6 +485,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     setClosingAdjustments(prev =>
       prev.map(a => (a.id === adj.id ? { ...a, aplicado: true } : a))
     );
+    showToast(`Ajuste "${adj.titulo}" asentado y cuadrado con éxito en el Libro Diario.`, 'success');
   };
 
   // Handle AI Routing Simulation
@@ -573,7 +610,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       modelName: 'gemini-3.8-flash',
       payloadInput: { glosa: rawGlosaInput },
     });
-    alert('Asiento contable imputado y sincronizado con éxito en el Libro Diario.');
+    showToast('Asiento contable imputado y sincronizado con éxito en el Libro Diario.', 'success');
   };
 
   // Handle Add Account to Chart
@@ -759,8 +796,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         accion: 'ASIENTO_MANUAL_DIARIO',
       });
       setShowManualModal(false);
+      showToast('Asiento manual registrado y validado con éxito.', 'success');
     } catch (err: any) {
-      alert(`Rechazo formal de auditoría: ${err.message}`);
+      showToast(`Rechazo formal de auditoría: ${err.message}`, 'error');
     }
   };
 
@@ -771,6 +809,32 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div
+          className={`px-4 py-3 rounded-lg flex items-center justify-between border shadow-sm transition-all animate-fadeIn ${
+            toastMessage.type === 'success'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+              : toastMessage.type === 'error'
+              ? 'bg-rose-50 border-rose-300 text-rose-900'
+              : 'bg-blue-50 border-blue-300 text-blue-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {toastMessage.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />}
+            {toastMessage.type === 'error' && <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />}
+            {toastMessage.type === 'info' && <Info className="w-5 h-5 text-blue-600 shrink-0" />}
+            <span className="text-sm font-medium">{toastMessage.message}</span>
+          </div>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="text-xs font-bold px-2 py-1 rounded hover:bg-black/5 cursor-pointer ml-3"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Top Banner: Senior Orchestrator Identity & Context */}
       <div className="bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f172a] text-white border border-slate-700 rounded-xl p-6 shadow-md">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
@@ -1096,57 +1160,184 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              {closingAdjustments.map((adj) => (
-                <div
-                  key={adj.id}
-                  className={`border rounded-lg p-4 transition-all ${
-                    adj.aplicado ? 'bg-slate-50/80 border-slate-200 opacity-80' : 'bg-white border-slate-300 hover:border-blue-400'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                        {adj.tipo}
-                      </span>
-                      <h4 className="text-sm font-bold text-slate-900 mt-2">{adj.titulo}</h4>
-                      <p className="text-xs text-slate-600 mt-1">{adj.descripcion}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-sm font-bold font-mono text-slate-900 block">
-                        {convertAmount(adj.montoAjuste)}
-                      </span>
-                      {adj.aplicado ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold mt-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Asentado
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => handleApplyAdjustment(adj)}
-                          className="mt-2 bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1 rounded cursor-pointer transition-all"
-                        >
-                          Asentar Ajuste
-                        </button>
-                      )}
-                    </div>
-                  </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-4">
+              {closingAdjustments.map((adj) => {
+                const sumDebe = adj.asientoPropuesto.lineas.reduce((s, l) => s + (l.debe || 0), 0);
+                const sumHaber = adj.asientoPropuesto.lineas.reduce((s, l) => s + (l.haber || 0), 0);
+                const isCuadrado = Math.abs(sumDebe - sumHaber) < 1;
+                const sortedLines = [...adj.asientoPropuesto.lineas].sort((a, b) => {
+                  if (a.debe > 0 && b.haber > 0) return -1;
+                  if (a.haber > 0 && b.debe > 0) return 1;
+                  return 0;
+                });
+                const voucherText = getFormattedAdjustmentVoucher(adj);
 
-                  {/* Asiento Preview */}
-                  <div className="mt-3 pt-3 border-t border-slate-100 bg-slate-50 p-2.5 rounded text-[11px] font-mono space-y-1">
-                    <div className="text-slate-500 text-[10px] uppercase font-bold">Líneas de Asiento Propuesto:</div>
-                    {adj.asientoPropuesto.lineas.map((line, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-slate-700">
-                        <span className="truncate pr-2">
-                          {line.codigo_cuenta} - {line.nombre_cuenta}
-                        </span>
-                        <span>
-                          {line.debe > 0 ? `D: ${formatCLP(line.debe)}` : `H: ${formatCLP(line.haber)}`}
-                        </span>
+                return (
+                  <div
+                    key={adj.id}
+                    className={`border rounded-xl p-4 sm:p-5 transition-all flex flex-col justify-between ${
+                      adj.aplicado ? 'bg-slate-50/90 border-slate-200' : 'bg-white border-slate-300 hover:border-blue-400 shadow-2xs'
+                    }`}
+                  >
+                    <div>
+                      {/* Top Meta & Action */}
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                              {adj.tipo}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                              ID: {adj.id}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 mt-2">{adj.titulo}</h4>
+                          <p className="text-xs text-slate-600 mt-0.5">{adj.descripcion}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="text-sm font-bold font-mono text-slate-900 block">
+                            {convertAmount(adj.montoAjuste)}
+                          </span>
+                          {adj.aplicado ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold mt-1 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Asentado
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleApplyAdjustment(adj)}
+                              className="mt-1.5 bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-2xs inline-flex items-center gap-1.5"
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                              Asentar Ajuste
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    ))}
+
+                      {/* Comprobante de Asiento Contable (Formato Estándar Normalizado) */}
+                      <div className="mt-3.5">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-1.5 overflow-hidden">
+                            <FileText className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            <span className="text-[11px] text-slate-700 font-medium italic truncate" title={adj.asientoPropuesto.glosa}>
+                              Glosa: "{adj.asientoPropuesto.glosa}"
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(voucherText, `voucher-${adj.id}`)}
+                            className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition-colors cursor-pointer shrink-0 font-medium"
+                            title="Copiar comprobante contable canónico"
+                          >
+                            {copiedText === `voucher-${adj.id}` ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                <span className="text-emerald-700 font-bold">Copiado</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3 text-slate-500" />
+                                <span>Copiar Asiento</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Standard 4-Column Accounting Voucher Table */}
+                        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="bg-slate-100/80 text-slate-600 text-[10px] uppercase border-b border-slate-200 font-mono font-bold tracking-wider">
+                                <th className="py-2 px-3 text-left w-24 sm:w-28">Código</th>
+                                <th className="py-2 px-3 text-left">Cuenta Contable</th>
+                                <th className="py-2 px-3 text-right w-24 sm:w-28">Debe ($)</th>
+                                <th className="py-2 px-3 text-right w-24 sm:w-28">Haber ($)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                              {sortedLines.map((line, lIdx) => {
+                                const isHaber = line.haber > 0;
+                                return (
+                                  <tr
+                                    key={lIdx}
+                                    className={`hover:bg-slate-50/70 transition-colors ${
+                                      isHaber ? 'bg-amber-50/20' : ''
+                                    }`}
+                                  >
+                                    <td className="py-1.5 px-3 text-slate-500 font-medium whitespace-nowrap">
+                                      {line.codigo_cuenta}
+                                    </td>
+                                    <td className="py-1.5 px-3 text-slate-800 font-sans">
+                                      <div className={`flex flex-wrap items-center gap-1.5 ${isHaber ? 'pl-4 sm:pl-6' : ''}`}>
+                                        {isHaber && <span className="text-slate-400 italic font-mono text-[11px]">a</span>}
+                                        <span className={isHaber ? 'font-normal text-slate-700' : 'font-semibold text-slate-900'}>
+                                          {line.nombre_cuenta}
+                                        </span>
+                                        {line.centro_costo && (
+                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono border border-slate-200">
+                                            CC: {line.centro_costo}
+                                          </span>
+                                        )}
+                                        {line.rut_auxiliar && (
+                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-mono border border-indigo-200">
+                                            RUT: {line.rut_auxiliar}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 px-3 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                                      {line.debe > 0 ? convertAmount(line.debe) : '-'}
+                                    </td>
+                                    <td className="py-1.5 px-3 text-right font-semibold text-blue-700 whitespace-nowrap">
+                                      {line.haber > 0 ? convertAmount(line.haber) : '-'}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-slate-200 bg-slate-50 font-mono font-bold text-slate-900 text-[11px]">
+                                <td colSpan={2} className="py-2 px-3 text-right uppercase text-[10px] text-slate-600 tracking-wider">
+                                  Sumas Iguales (Partida Doble):
+                                </td>
+                                <td className="py-2 px-3 text-right text-emerald-700 whitespace-nowrap">
+                                  {convertAmount(sumDebe)}
+                                </td>
+                                <td className="py-2 px-3 text-right text-blue-700 whitespace-nowrap">
+                                  {convertAmount(sumHaber)}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+
+                          {/* Footer Validation Status */}
+                          <div className="px-3 py-1.5 bg-slate-50/90 border-t border-slate-200 flex items-center justify-between text-[10px]">
+                            <span className="text-slate-500 font-sans italic">
+                              Criterio:{' '}
+                              {adj.tipo === 'DEVENGOS'
+                                ? 'NIC 1 / Principio de Devengado'
+                                : adj.tipo === 'CORRECCION_MONETARIA_USD'
+                                ? 'NIC 21 / Diferencia de Cambio Moneda Extranjera'
+                                : adj.tipo === 'REAJUSTE_UF'
+                                ? 'IFRS 16 / Reajuste Pasivos Financieros UF'
+                                : 'NIC 16 / Depreciación Lineal Propiedades, Planta y Equipo'}
+                            </span>
+                            {isCuadrado ? (
+                              <span className="inline-flex items-center gap-1 font-bold text-emerald-700">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Cuadrado (Dif. $0)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 font-bold text-rose-700">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Descuadrado
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

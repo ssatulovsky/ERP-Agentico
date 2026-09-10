@@ -91,7 +91,7 @@ export default function App() {
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
   // Core Data States
-  const [dtes, setDtes] = useState<DteDocument[]>(seedDtes);
+  const [dtes, setDtes] = useState<DteDocument[]>([]);
   const [f29, setF29] = useState<F29Declaration>({
     ...seedF29,
     rutContribuyente: activeClient.rut,
@@ -155,42 +155,50 @@ export default function App() {
     }
   };
 
-  // Automated agent download routine for client
-  const handleDownloadClientDtes = (client: ClientCompany) => {
+  // Automated agent download routine for client via real Playwright
+  const handleDownloadClientDtes = async (client: ClientCompany) => {
     const timestamp = new Date().toLocaleString('es-CL');
-    
-    // Add realistic simulated DTEs downloaded from SII for this client
-    const newDownloadedDte: DteDocument = {
-      id: `dte-auto-${Date.now()}`,
-      tipoDte: '33',
-      folio: Math.floor(1000 + Math.random() * 9000),
-      tipoOperacion: 'COMPRA',
-      rutContraparte: '76.999.888-2',
-      razonSocialContraparte: 'SERVICIOS DIGITALES LATAM SPA',
-      fechaEmision: new Date().toISOString().split('T')[0],
-      fechaRecepcion: new Date().toISOString().split('T')[0],
-      montoExento: 0,
-      montoNeto: 480000,
-      montoIva: 91200,
-      montoTotal: 571200,
-      estadoSii: 'ACEPTADO',
-      estadoPago: 'PENDIENTE',
-      glosa: 'Servicios de infraestructura Cloud descargados por Agente SII',
-      cuentaContableDebe: 'Gasto Servidores & Cloud',
-      cuentaContableHaber: 'Proveedores Nacionales',
-    };
+    try {
+      const res = await fetch('/api/sii/run-playwright', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rut: client.rutAutenticacion || client.rut,
+          password: client.claveSii,
+          periodo: '2026-08',
+          tipo: 'ALL',
+        }),
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.documentos) && data.documentos.length > 0) {
+        handleAddMultipleDtes(data.documentos, true);
+        handleUpdateClient({
+          ...client,
+          estadoConexionSii: 'CONECTADO',
+          ultimaSincronizacionSii: timestamp,
+          ultimoMensajeSii: `Playwright descargó ${data.documentos.length} DTEs oficiales reales.`,
+        });
+      } else {
+        handleUpdateClient({
+          ...client,
+          estadoConexionSii: data.success ? 'CONECTADO' : 'ERROR_CREDENCIALES',
+          ultimaSincronizacionSii: timestamp,
+          ultimoMensajeSii: data.error || 'RCV consultado vía Chromium: sin nuevos documentos para el período.',
+        });
+      }
+    } catch (err: any) {
+      handleUpdateClient({
+        ...client,
+        estadoConexionSii: 'ERROR_CREDENCIALES',
+        ultimaSincronizacionSii: timestamp,
+        ultimoMensajeSii: `Error en RPA Playwright: ${err.message}`,
+      });
+    }
+  };
 
-    setDtes(prev => [newDownloadedDte, ...prev]);
-    const dteEntry = createPurchaseDteEntry(newDownloadedDte);
-    handleAddEntry(dteEntry);
-
-    // Update client sync timestamp
-    handleUpdateClient({
-      ...client,
-      estadoConexionSii: 'CONECTADO',
-      ultimaSincronizacionSii: timestamp,
-      ultimoMensajeSii: 'Descarga automática ejecutada por el Agente. 1 nuevo DTE procesado.',
-    });
+  // Handler to clear all mock/demo DTEs and start completely blank
+  const handleClearAllDtes = () => {
+    setDtes([]);
   };
 
   // Libro Diario Contable Persistente (PostgreSQL / Drizzle ORM API)
@@ -459,6 +467,7 @@ export default function App() {
               onUpdateDte={handleUpdateDte}
               onAddEntry={handleAddEntry}
               company={company}
+              onClearAllDtes={handleClearAllDtes}
               onSyncPendingToCashFlow={() => {
                 const pending = dtes.filter(d => d.estadoPago === 'PENDIENTE');
                 if (pending.length > 0) {

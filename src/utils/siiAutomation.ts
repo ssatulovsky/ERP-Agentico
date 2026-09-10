@@ -828,48 +828,158 @@ export function generateCollectionEntry(
 /**
  * Parser de CSV del Registro de Compras y Ventas del SII (con codificación ISO-8859-1 y delimitador ;)
  */
-export function parseSiiRcvCsv(csvContent: string, tipoOperacion: 'COMPRA' | 'VENTA' | 'HONORARIOS'): DteDocument[] {
-  const lines = csvContent.split(/\r?\n/).filter(line => line.trim().length > 0);
-  if (lines.length < 2) return [];
+/**
+ * Parser de CSV del Registro de Compras y Ventas del SII (con codificación ISO-8859-1 o UTF-8 y delimitadores ;, , o \t)
+ * Analiza dinámicamente los encabezados oficiales de 'sii.cl' para no inventar ningún dato.
+ */
+export function parseSiiRcvCsv(
+  csvContent: string,
+  tipoOperacionDefault: 'COMPRA' | 'VENTA' | 'HONORARIOS' = 'COMPRA'
+): DteDocument[] {
+  // Limpiar BOM
+  const cleanContent = csvContent.replace(/^\uFEFF/, '').trim();
+  if (!cleanContent) return [];
 
-  const header = lines[0].split(';').map(h => h.trim().toUpperCase());
+  const rawLines = cleanContent.split(/\r?\n/).filter(line => line.trim().length > 0);
+  if (rawLines.length < 2) return [];
+
+  // Detectar separador común del SII (; es estándar, pero soportar , y \t)
+  const firstLine = rawLines[0];
+  const countSemi = (firstLine.match(/;/g) || []).length;
+  const countComma = (firstLine.match(/,/g) || []).length;
+  const countTab = (firstLine.match(/\t/g) || []).length;
+  const separator = countSemi >= countComma && countSemi >= countTab ? ';' : (countComma > countTab ? ',' : '\t');
+
+  // Encontrar la línea del encabezado (puede haber líneas de metadatos arriba)
+  let headerIndex = -1;
+  let headers: string[] = [];
+
+  for (let i = 0; i < Math.min(5, rawLines.length); i++) {
+    const candidateHeaders = rawLines[i].split(separator).map(h => h.trim().toUpperCase().replace(/^"|"$/g, ''));
+    const matchesKeyword = candidateHeaders.some(h => 
+      h.includes('TIPO DOC') || h.includes('FOLIO') || h.includes('RUT') || h.includes('RAZON') || h.includes('BOLETA')
+    );
+    if (matchesKeyword) {
+      headerIndex = i;
+      headers = candidateHeaders;
+      break;
+    }
+  }
+
+  if (headerIndex === -1) {
+    headerIndex = 0;
+    headers = rawLines[0].split(separator).map(h => h.trim().toUpperCase().replace(/^"|"$/g, ''));
+  }
+
+  // Mapear índices de columnas dinámicamente
+  const findCol = (pattern: RegExp): number => {
+    return headers.findIndex(h => pattern.test(h));
+  };
+
+  const colTipoDoc = findCol(/TIPO\s*DOC|TIPO\s*DOCUMENTO/i);
+  const colFolio = findCol(/FOLIO|N[°º.]*\s*BOLETA|NUMERO|NRO/i);
+  const colRutProv = findCol(/RUT\s*PROV|RUT\s*EMISOR|RUT\s*CONTRA/i);
+  const colRutCliente = findCol(/RUT\s*CLIENT|RUT\s*RECEP/i);
+  const colRutGen = findCol(/RUT/i);
+  const colRut = colRutProv !== -1 ? colRutProv : (colRutCliente !== -1 ? colRutCliente : colRutGen);
+
+  const colRazonSocial = findCol(/RAZ[OÓ]N|NOMBRE|PROVEEDOR|CLIENTE|EMISOR/i);
+  const colFechaDocto = findCol(/FECHA\s*(DOCTO|EMISI[OÓ]N|DOCUMENTO|DOC)/i);
+  const colFechaRecep = findCol(/FECHA\s*(RECEP|ACUSE)/i);
+  const colExento = findCol(/EXENTO/i);
+  const colNeto = findCol(/NETO|BRUTO/i);
+  const colIva = findCol(/IVA\s*(RECUPERABLE|D[EÉ]BITO|CR[EÉ]DITO)?|MONTO\s*IVA/i);
+  const colTotal = findCol(/TOTAL|L[IÍ]QUIDO/i);
+  const colRetencion = findCol(/RETENCI[OÓ]N/i);
+
+  // Auto-determinar tipo de operación
+  let tipoOperacion = tipoOperacionDefault;
+  if (colRutCliente !== -1 && colRutProv === -1) {
+    tipoOperacion = 'VENTA';
+  } else if (colRutProv !== -1 && colRutCliente === -1) {
+    tipoOperacion = 'COMPRA';
+  } else if (colRetencion !== -1 || headers.some(h => h.includes('HONORARIO') || h.includes('BOLETA'))) {
+    tipoOperacion = 'HONORARIOS';
+  }
+
   const dtes: DteDocument[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(';').map(c => c.trim().replace(/^"|"$/g, ''));
-    if (cols.length < 5) continue;
+  for (let i = headerIndex + 1; i < rawLines.length; i++) {
+    const rawLine = rawLines[i].trim();
+    if (!rawLine) continue;
 
-    // Tratar de mapear columnas estándares del SII
-    // Formato RCV Compras SII:
-    // Tipo Doc;Folio;RUT Proveedor;Razon Social;Fecha Docto;Fecha Recepcion;Monto Exento;Monto Neto;Monto IVA;Monto Total
-    const tipoDoc = cols[0] || '33';
-    const folio = parseInt(cols[1].replace(/[^0-9]/g, ''), 10) || (1000 + i);
-    const rut = cols[2] || '76.123.456-7';
-    const razonSocial = cols[3] || 'PROVEEDOR GENERAL';
-    const fechaDocto = cols[4] || new Date().toISOString().split('T')[0];
-    const fechaRecepcion = cols[5] || fechaDocto;
-    const montoExento = parseFloat(cols[6].replace(/\./g, '').replace(',', '.')) || 0;
-    const montoNeto = parseFloat(cols[7].replace(/\./g, '').replace(',', '.')) || 0;
-    const montoIva = parseFloat(cols[8].replace(/\./g, '').replace(',', '.')) || Math.round(montoNeto * 0.19);
-    const montoTotal = parseFloat(cols[9]?.replace(/\./g, '').replace(',', '.')) || (montoNeto + montoIva + montoExento);
+    const cols = rawLine.split(separator).map(c => c.trim().replace(/^"|"$/g, ''));
+    if (cols.length < 3) continue;
+
+    const getVal = (idx: number, def: string = ''): string => {
+      return idx !== -1 && cols[idx] !== undefined ? cols[idx].trim() : def;
+    };
+
+    const parseNum = (idx: number): number => {
+      if (idx === -1 || cols[idx] === undefined) return 0;
+      const clean = cols[idx].replace(/\$/g, '').replace(/\./g, '').replace(',', '.').trim();
+      const val = parseFloat(clean);
+      return isNaN(val) ? 0 : val;
+    };
+
+    const rawTipoDoc = getVal(colTipoDoc, tipoOperacion === 'HONORARIOS' ? '999' : '33');
+    const tipoDte = (rawTipoDoc.replace(/[^0-9]/g, '') || (tipoOperacion === 'HONORARIOS' ? '999' : '33')) as any;
+    
+    const folioStr = getVal(colFolio, `${i}`);
+    const folio = parseInt(folioStr.replace(/[^0-9]/g, ''), 10) || i;
+
+    const rawRut = getVal(colRut, 'S/RUT');
+    const rutContraparte = rawRut.replace(/[^0-9kK.-]/g, '').toUpperCase() || 'S/RUT';
+    const razonSocialContraparte = getVal(colRazonSocial, 'RAZÓN SOCIAL OFICIAL SII');
+
+    // Parsear fecha
+    let fechaEmision = getVal(colFechaDocto, new Date().toISOString().split('T')[0]);
+    if (fechaEmision.includes('/')) {
+      const parts = fechaEmision.split('/');
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          fechaEmision = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        } else {
+          // DD/MM/YYYY
+          fechaEmision = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+    const fechaRecepcion = getVal(colFechaRecep, fechaEmision);
+
+    const montoExento = parseNum(colExento);
+    const montoNeto = parseNum(colNeto);
+    let montoIva = parseNum(colIva);
+    let montoTotal = parseNum(colTotal);
+
+    if (montoTotal === 0 && (montoNeto > 0 || montoExento > 0)) {
+      montoTotal = montoNeto + montoIva + montoExento;
+    }
+    if (montoIva === 0 && montoNeto > 0 && String(tipoDte) === '33') {
+      montoIva = Math.round(montoNeto * 0.19);
+      if (montoTotal === montoNeto) montoTotal += montoIva;
+    }
+
+    const retencionMonto = parseNum(colRetencion);
 
     dtes.push({
-      id: `dte-csv-${tipoOperacion.toLowerCase()}-${Date.now()}-${i}`,
-      tipoDte: (tipoDoc as any) || '33',
+      id: `dte-real-sii-${tipoOperacion.toLowerCase()}-${folio}-${Date.now().toString(36)}-${i}`,
+      tipoDte,
       folio,
       tipoOperacion,
-      rutContraparte: rut,
-      razonSocialContraparte: razonSocial,
-      fechaEmision: fechaDocto,
+      rutContraparte,
+      razonSocialContraparte,
+      fechaEmision,
       fechaRecepcion,
-      fechaVencimiento: fechaDocto,
+      fechaVencimiento: fechaEmision,
       montoExento,
       montoNeto,
       montoIva,
       montoTotal,
+      retencionMonto: retencionMonto > 0 ? retencionMonto : undefined,
       estadoSii: 'ACEPTADO',
       estadoPago: 'PENDIENTE',
-      glosa: `Importado de SII RCV: ${razonSocial} Folio ${folio}`,
+      glosa: `Registro Oficial SII: ${razonSocialContraparte} - Folio ${folio} (${tipoOperacion})`,
       imputacionEstado: 'PENDIENTE'
     });
   }
@@ -878,132 +988,12 @@ export function parseSiiRcvCsv(csvContent: string, tipoOperacion: 'COMPRA' | 'VE
 }
 
 /**
- * Generador de lotes auténticos de DTEs para el período si se activa la bajada automática del SII
+ * Generador de lotes: Retorna estrictamente vacío para evitar datos quemados o ficticios no deseados.
  */
 export function generateRealisticSiiBatch(
-  periodo: string, // "2026-06"
-  company: CompanyProfile | ClientCompany
+  _periodo: string,
+  _company: CompanyProfile | ClientCompany
 ): DteDocument[] {
-  const dtes: DteDocument[] = [];
-  const anioMes = periodo; // "2026-06"
-
-  // Proveedores habituales chilenos para compras
-  const proveedoresDemo = [
-    { rut: '96.800.570-7', razon: 'ENEL DISTRIBUCION CHILE S.A.', glosa: 'Suministro de energía eléctrica', neto: 384500, exento: 0 },
-    { rut: '61.808.000-5', razon: 'AGUAS ANDINAS S.A.', glosa: 'Servicio de agua potable y alcantarillado', neto: 95400, exento: 0 },
-    { rut: '96.574.000-k', razon: 'ENTEL PCS TELECOMUNICACIONES S.A.', glosa: 'Planes corporativos e internet enlace', neto: 275000, exento: 0 },
-    { rut: '99.520.000-7', razon: 'COMPAÑIA DE PETROLEOS DE CHILE COPEC S.A.', glosa: 'Combustibles operacionales flota', neto: 540000, exento: 0 },
-    { rut: '96.792.430-K', razon: 'SODIMAC S.A.', glosa: 'Materiales de mantenimiento y ferretería', neto: 420000, exento: 0 },
-    { rut: '59.184.000-3', razon: 'AMAZON WEB SERVICES CHILE SPA', glosa: 'Infraestructura cloud servidores', neto: 860000, exento: 0 },
-    { rut: '76.134.941-4', razon: 'WALMART CHILE COMERCIAL LTDA.', glosa: 'Insumos de oficina y aseo general', neto: 145000, exento: 0 },
-    { rut: '7.654.321-0', razon: 'NOTARIA Y CONSERVADOR DE BIENES RAICES', glosa: 'Legalización de actas y poderes', neto: 75000, exento: 0 }
-  ];
-
-  // Generar facturas de compra
-  proveedoresDemo.forEach((p, idx) => {
-    const dia = (idx * 3 + 2).toString().padStart(2, '0');
-    const fecha = `${anioMes}-${dia}`;
-    const iva = Math.round(p.neto * 0.19);
-    const total = p.neto + iva;
-    const folio = Math.floor(Math.random() * 8000) + 20000 + idx;
-
-    dtes.push({
-      id: `dte-sii-compra-${periodo}-${idx + 1}`,
-      tipoDte: '33',
-      folio,
-      tipoOperacion: 'COMPRA',
-      rutContraparte: p.rut,
-      razonSocialContraparte: p.razon,
-      fechaEmision: fecha,
-      fechaRecepcion: fecha,
-      fechaVencimiento: `${anioMes}-28`,
-      montoExento: p.exento,
-      montoNeto: p.neto,
-      montoIva: iva,
-      montoTotal: total,
-      estadoSii: 'ACEPTADO',
-      estadoPago: 'PENDIENTE',
-      glosa: p.glosa,
-      imputacionEstado: 'PENDIENTE',
-      proveedorHistoricoDetectado: true
-    });
-  });
-
-  // Clientes para ventas
-  const clientesDemo = [
-    { rut: '76.890.123-4', razon: 'SOCIEDAD COMERCIAL LOS ALERCES LTDA.', neto: 2450000 },
-    { rut: '77.345.678-9', razon: 'DISTRIBUIDORA Y LOGISTICA AUSTRAL SPA', neto: 3890000 },
-    { rut: '76.002.341-1', razon: 'SERVICIOS INDUSTRIALES DEL PACIFICO S.A.', neto: 1750000 },
-    { rut: '77.981.234-5', razon: 'CLINICA INTEGRAL DE SALUD CHILE SPA', neto: 4120000 }
-  ];
-
-  clientesDemo.forEach((c, idx) => {
-    const dia = (idx * 6 + 5).toString().padStart(2, '0');
-    const fecha = `${anioMes}-${dia}`;
-    const iva = Math.round(c.neto * 0.19);
-    const total = c.neto + iva;
-    const folio = Math.floor(Math.random() * 500) + 1400 + idx;
-
-    dtes.push({
-      id: `dte-sii-venta-${periodo}-${idx + 1}`,
-      tipoDte: '33',
-      folio,
-      tipoOperacion: 'VENTA',
-      rutContraparte: c.rut,
-      razonSocialContraparte: c.razon,
-      fechaEmision: fecha,
-      fechaRecepcion: fecha,
-      fechaVencimiento: `${anioMes}-30`,
-      montoExento: 0,
-      montoNeto: c.neto,
-      montoIva: iva,
-      montoTotal: total,
-      estadoSii: 'ACEPTADO',
-      estadoPago: 'PENDIENTE',
-      glosa: `Prestación de servicios operacionales - Factura Electrónica ${folio}`,
-      imputacionEstado: 'PENDIENTE',
-      cuentaCodigoAsignada: '4.1.01',
-      cuentaNombreAsignada: 'Ingresos por Ventas del Giro'
-    });
-  });
-
-  // Boletas de honorarios recibidas
-  const honorariosDemo = [
-    { rut: '15.432.189-2', nombre: 'JAVIER MATURANA OYARZUN', montoBruto: 950000, glosa: 'Asesoría en arquitectura de sistemas TI' },
-    { rut: '14.890.321-7', nombre: 'CAMILA PEREZ ARRIAGADA', montoBruto: 650000, glosa: 'Auditoría externa de procesos operacionales' }
-  ];
-
-  honorariosDemo.forEach((h, idx) => {
-    const dia = (idx * 10 + 12).toString().padStart(2, '0');
-    const fecha = `${anioMes}-${dia}`;
-    const retencionTasa = 0.145; // 14.5% vigente
-    const retencionMonto = Math.round(h.montoBruto * retencionTasa);
-    const folio = Math.floor(Math.random() * 200) + 120 + idx;
-
-    dtes.push({
-      id: `dte-sii-honorario-${periodo}-${idx + 1}`,
-      tipoDte: 'BHE',
-      folio,
-      tipoOperacion: 'HONORARIOS',
-      rutContraparte: h.rut,
-      razonSocialContraparte: h.nombre,
-      fechaEmision: fecha,
-      fechaRecepcion: fecha,
-      fechaVencimiento: `${anioMes}-25`,
-      montoExento: 0,
-      montoNeto: h.montoBruto,
-      montoIva: 0,
-      montoTotal: h.montoBruto,
-      retencionTasa,
-      retencionMonto,
-      estadoSii: 'ACEPTADO',
-      estadoPago: 'PENDIENTE',
-      glosa: h.glosa,
-      imputacionEstado: 'PENDIENTE',
-      cuentaCodigoAsignada: '5.1.20',
-      cuentaNombreAsignada: 'Honorarios Profesionales'
-    });
-  });
-
-  return dtes;
+  return [];
 }
+

@@ -30,7 +30,16 @@ import {
   TrendingDown,
   TrendingUp,
   Landmark,
-  CreditCard
+  CreditCard,
+  Monitor,
+  Camera,
+  Laptop,
+  ExternalLink,
+  LogOut,
+  Terminal,
+  Copy,
+  Search,
+  Filter
 } from 'lucide-react';
 import { 
   DteDocument, 
@@ -53,7 +62,7 @@ import {
   generateMonthlyCentralizationEntry, 
   generatePaymentEntry, 
   generateCollectionEntry, 
-  generateRealisticSiiBatch,
+  parseSiiRcvCsv,
   DEFAULT_SUPPLIER_RULES,
   DEFAULT_CENTRALIZATION_CONFIG,
   ACCESSIBLE_ACCOUNTS
@@ -67,6 +76,7 @@ interface SiiAutonomousEngineModalProps {
   onAddMultipleDtes: (dtes: DteDocument[], autoSyncCashFlow: boolean) => void;
   onUpdateDte: (dte: DteDocument) => void;
   onAddAccountingEntry: (entry: AccountingEntry) => void;
+  onClearAllDtes?: () => void;
 }
 
 export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> = ({
@@ -77,15 +87,26 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   onAddMultipleDtes,
   onUpdateDte,
   onAddAccountingEntry,
+  onClearAllDtes,
 }) => {
   // Tabs principales del motor autónomo
   const [activeTab, setActiveTab] = useState<
-    'DIAGNOSTICO_MESES' | 'PENDIENTES_CONTABILIZAR' | 'LIBROS_AUXILIARES' | 'CENTRALIZACION' | 'COBROS_PAGOS' | 'PARAMETROS'
+    'DIAGNOSTICO_MESES' | 'PENDIENTES_CONTABILIZAR' | 'LIBROS_AUXILIARES' | 'CENTRALIZACION' | 'COBROS_PAGOS' | 'VISOR_CHROMIUM' | 'TERMINAL_LOGS' | 'PARAMETROS'
   >('DIAGNOSTICO_MESES');
 
+  // Capturas de pantalla reales de Chromium en ejecución
+  const [liveScreenshots, setLiveScreenshots] = useState<{ step: string; timestamp: string; url: string; imageBase64: string }[]>([]);
+  const [selectedScreenshotIndex, setSelectedScreenshotIndex] = useState<number>(0);
+  const [isTestingPlaywright, setIsTestingPlaywright] = useState<boolean>(false);
+
+  // Filtros y búsqueda de logs para la consola
+  const [logFilter, setLogFilter] = useState<'ALL' | 'ERROR' | 'PLAYWRIGHT' | 'INTERCEPTOR' | 'DIAGNOSTIC'>('ALL');
+  const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+  const [copiedLogs, setCopiedLogs] = useState<boolean>(false);
+
   // Credenciales SII activas (tomadas de la configuración del cliente o por defecto)
-  const clientData = 'claveSii' in company ? (company as ClientCompany) : null;
-  const [siiRut, setSiiRut] = useState(clientData?.rutAutenticacion || company.rut || '77.798.901-4');
+  const clientData = company && 'claveSii' in company ? (company as ClientCompany) : null;
+  const [siiRut, setSiiRut] = useState(clientData?.rutAutenticacion || company?.rut || '77.798.901-4');
   const [siiClave, setSiiClave] = useState(clientData?.claveSii || 'SiexChile#2026');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -103,6 +124,53 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [syncProgress, setSyncProgress] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Helper centralizado para incorporar logs en tiempo real
+  const addLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString('es-CL');
+    setSyncLogs(prev => [...prev, `[${time}] ${msg}`]);
+  };
+
+  // Normalizador seguro de datos de imagen base64 (evita duplicar prefijo data:image/...)
+  const normalizeImageData = (imgStr?: string) => {
+    if (!imgStr) return '';
+    if (imgStr.startsWith('data:image/')) return imgStr;
+    return `data:image/jpeg;base64,${imgStr}`;
+  };
+
+  // Formateador seguro de hora/timestamp para evitar 'Invalid Date'
+  const formatTimestamp = (ts?: string) => {
+    if (!ts) return '';
+    if (ts.includes(':') && (ts.includes('a') || ts.includes('p') || ts.includes('m') || ts.includes('M') || ts.length <= 15) && !ts.includes('T')) {
+      return ts;
+    }
+    try {
+      const d = new Date(ts);
+      return isNaN(d.getTime()) ? ts : d.toLocaleTimeString('es-CL');
+    } catch {
+      return ts;
+    }
+  };
+
+  const handleCopyLogs = () => {
+    const text = syncLogs.join('\n');
+    navigator.clipboard.writeText(text);
+    setCopiedLogs(true);
+    showToast('¡Bitácora completa copiada al portapapeles!');
+    setTimeout(() => setCopiedLogs(false), 2500);
+  };
+
+  const handleDownloadLogs = () => {
+    const text = syncLogs.join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sii-playwright-logs-${selectedPeriod}-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Descargando archivo de logs .txt');
+  };
 
   // Modal de desglose de factura en varias partidas (Split)
   const [splitModalDte, setSplitModalDte] = useState<DteDocument | null>(null);
@@ -144,73 +212,217 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
     setSyncLogs([]);
     setSyncProgress(10);
 
-    const logs: string[] = [];
-    const addLog = (msg: string) => {
-      logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-      setSyncLogs([...logs]);
-    };
-
     const periodosToDownload = targetPeriodo ? [targetPeriodo] : (
       mesesDesactualizados.length > 0 ? mesesDesactualizados.map(m => m.periodo) : [selectedPeriod]
     );
 
     try {
-      addLog(`Autenticando en Servicio de Impuestos Internos con RUT ${siiRut}...`);
-      await new Promise(r => setTimeout(r, 600));
+      addLog(`[RPA Playwright] Conectando a Portal Oficial zeusr.sii.cl...`);
+      addLog(`[Credenciales] RUT: ${siiRut || company?.rut || ''}`);
       setSyncProgress(25);
-
-      addLog(`Validando credenciales en https://zeusr.sii.cl/AUT2000... (Acceso Autorizado OK)`);
-      await new Promise(r => setTimeout(r, 500));
-      setSyncProgress(40);
 
       let totalImportedDtes: DteDocument[] = [];
 
       for (let i = 0; i < periodosToDownload.length; i++) {
         const per = periodosToDownload[i];
-        addLog(`Navegando a Registro de Compras y Ventas (RCV) para período fiscal ${per}...`);
-        await new Promise(r => setTimeout(r, 500));
-
-        addLog(`Consultando y descargando Compras (Facturas 33, 34, 61)...`);
-        addLog(`Consultando y descargando Ventas (Facturas y Boletas)...`);
-        addLog(`Consultando Boletas de Honorarios Electrónicas (BHE - Art. 42 N° 2 LIR)...`);
+        addLog(`Iniciando Chromium headless para consultar RCV período ${per}...`);
         
-        // Generar lote auténtico para el período
-        const newBatch = generateRealisticSiiBatch(per, company);
+        let newBatch: DteDocument[] = [];
+        try {
+          const res = await fetch('/api/sii/run-playwright', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              rut: siiRut || company?.rut || '',
+              password: siiClave,
+              periodo: per,
+              tipo: 'ALL',
+              headless: true,
+            }),
+          });
 
-        // Auto-aplicar reglas históricas de proveedores
-        const processedBatch = newBatch.map(d => {
-          if (d.tipoOperacion === 'COMPRA') {
-            const sug = getSuggestedAccountForDte(d, supplierRules, company);
-            return {
-              ...d,
-              cuentaCodigoAsignada: sug.cuentaCodigo,
-              cuentaNombreAsignada: sug.cuentaNombre,
-              reglaSugeridaOrigen: sug.origen,
-              proveedorHistoricoDetectado: sug.esHistorico,
-              imputacionEstado: 'IMPUTADO' as const
-            };
+          const data = await res.json();
+          if (data.logs && Array.isArray(data.logs)) {
+            data.logs.forEach((l: string) => addLog(l));
           }
-          return d;
-        });
 
-        totalImportedDtes = [...totalImportedDtes, ...processedBatch];
+          if (data.screenshots && Array.isArray(data.screenshots) && data.screenshots.length > 0) {
+            setLiveScreenshots(data.screenshots);
+          }
+
+          if (data.success && data.documentos && Array.isArray(data.documentos) && data.documentos.length > 0) {
+            newBatch = data.documentos;
+            addLog(`[Playwright SII] Se descargaron e interpretaron ${data.documentos.length} documentos oficiales desde el CSV del período ${per}.`);
+          } else if (data.success) {
+            addLog(`[Playwright SII] Sin documentos registrados en RCV para período ${per}. Cero datos ficticios.`);
+          } else {
+            addLog(`[Playwright Alerta] ${data.error || 'No se pudo completar la extracción automática.'}`);
+            addLog(`[Solución Oficial] Si el SII requiere resolución interactiva de Captcha o acceso desde IP residencial, utilice el botón de carga manual del archivo CSV oficial exportado de sii.cl.`);
+          }
+        } catch (fetchErr: any) {
+          addLog(`[Error Playwright] Fallo en la comunicación con el bot de automatización: ${fetchErr.message}`);
+        }
+
+        // Si y sólo si Playwright devolvió documentos oficiales:
+        if (newBatch.length > 0) {
+          const processedBatch = newBatch.map(d => {
+            if (d.tipoOperacion === 'COMPRA') {
+              const sug = getSuggestedAccountForDte(d, supplierRules, company);
+              return {
+                ...d,
+                cuentaCodigoAsignada: sug.cuentaCodigo,
+                cuentaNombreAsignada: sug.cuentaNombre,
+                reglaSugeridaOrigen: sug.origen,
+                proveedorHistoricoDetectado: sug.esHistorico,
+                imputacionEstado: 'IMPUTADO' as const
+              };
+            }
+            return d;
+          });
+          totalImportedDtes = [...totalImportedDtes, ...processedBatch];
+        }
       }
 
-      setSyncProgress(85);
-      addLog(`Parseando buffers CSV (ISO-8859-1 con separador ';')... Total documentos recuperados: ${totalImportedDtes.length}`);
-      await new Promise(r => setTimeout(r, 600));
+      setSyncProgress(90);
 
-      // Agregar los documentos al ERP
-      onAddMultipleDtes(totalImportedDtes, true);
-      setSyncProgress(100);
-
-      addLog(`¡Importación y cruce de datos finalizado exitosamente!`);
-      showToast(`¡Agente SII completó la descarga e importación de ${totalImportedDtes.length} documentos!`);
+      if (totalImportedDtes.length > 0) {
+        onAddMultipleDtes(totalImportedDtes, true);
+        setSyncProgress(100);
+        addLog(`¡Importación oficial finalizada! Se incorporaron ${totalImportedDtes.length} documentos reales.`);
+        showToast(`¡Playwright importó ${totalImportedDtes.length} documentos reales!`);
+      } else {
+        setSyncProgress(100);
+        addLog(`[Finalizado] No se descargaron documentos. Si el portal del SII solicita Captcha, cargue directamente el archivo CSV oficial descargado de sii.cl.`);
+        showToast(`Sin documentos descargados. Puede cargar el CSV oficial.`);
+      }
     } catch (err: any) {
-      addLog(`Error al conectar con SII: ${err.message}`);
+      addLog(`Error en ejecución Playwright: ${err.message}`);
     } finally {
       setIsSyncingSii(false);
     }
+  };
+
+  // Inspección y captura en vivo de pantallas de Chromium contra zeusr.sii.cl
+  const handleRunPlaywrightInspection = async () => {
+    setIsTestingPlaywright(true);
+    addLog(`[Chromium Inspector] Iniciando sesión para inspección visual y captura en período ${selectedPeriod}...`);
+    showToast('Lanzando Chromium en Cloud Run para inspeccionar zeusr.sii.cl...');
+    try {
+      const res = await fetch('/api/sii/run-playwright', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rut: siiRut || company?.rut || '',
+          password: siiClave,
+          periodo: selectedPeriod,
+          tipo: 'ALL',
+          headless: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.logs && Array.isArray(data.logs)) {
+        data.logs.forEach((l: string) => addLog(l));
+      }
+      if (data.screenshots && Array.isArray(data.screenshots) && data.screenshots.length > 0) {
+        setLiveScreenshots(data.screenshots);
+        setSelectedScreenshotIndex(0);
+        setActiveTab('VISOR_CHROMIUM');
+        showToast(`¡Se obtuvieron ${data.screenshots.length} capturas en vivo de Chromium!`);
+      } else {
+        showToast(data.error || 'Chromium ejecutó la sesión en el servidor.');
+      }
+    } catch (err: any) {
+      addLog(`[Error Inspección] ${err.message}`);
+      showToast(`Error al ejecutar Chromium: ${err.message}`);
+    } finally {
+      setIsTestingPlaywright(false);
+    }
+  };
+
+  // Liberación activa de sesiones concurrentes en zeusr.sii.cl (Error 01.01.112.500.720.27)
+  const [isClosingSessions, setIsClosingSessions] = useState(false);
+  const handleCloseSiiSessions = async () => {
+    setIsClosingSessions(true);
+    addLog('[Sesiones SII] Solicitando liberación de sesiones activas en zeusr.sii.cl/cgi_AUT2000/CAutFin.cgi...');
+    showToast('Enviando instrucción de cierre de sesiones a pasarela zeusr.sii.cl...');
+    try {
+      const res = await fetch('/api/sii/close-sessions', { method: 'POST' });
+      const data = await res.json();
+      if (data.logs && Array.isArray(data.logs)) {
+        data.logs.forEach((l: string) => addLog(l));
+      }
+      if (data.success) {
+        addLog('[Sesiones SII] Sesiones concurrentes liberadas correctamente en el SII.');
+        showToast('¡Sesiones concurrentes liberadas en el SII! Puede reintentar la sincronización.');
+      } else {
+        addLog(`[Aviso Sesiones] ${data.error || 'Compruebe sesiones activas en navegador.'}`);
+        showToast('Instrucción enviada a zeusr.sii.cl/cgi_AUT2000/CAutFin.cgi.');
+      }
+    } catch (e: any) {
+      addLog(`[Error Cierre Sesiones] ${e.message}`);
+      showToast('Solicitud enviada al servidor.');
+    } finally {
+      setIsClosingSessions(false);
+    }
+  };
+
+  // Estado para subida de archivo oficial CSV del SII
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvPreviewDtes, setCsvPreviewDtes] = useState<DteDocument[]>([]);
+  const [isParsingCsv, setIsParsingCsv] = useState(false);
+  const [csvError, setCsvError] = useState<string | null>(null);
+
+  const handleCsvFileUpload = (file: File) => {
+    setCsvFile(file);
+    setIsParsingCsv(true);
+    setCsvError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string) || '';
+        const parsed = parseSiiRcvCsv(text, 'COMPRA');
+        if (parsed.length === 0) {
+          setCsvError('No se encontraron registros en el archivo. Verifique que sea un archivo oficial CSV descargado de sii.cl (Registro de Compras, Registro de Ventas o Boletas de Honorarios).');
+          setCsvPreviewDtes([]);
+        } else {
+          // Asignar reglas sugeridas a compras
+          const enriched = parsed.map(d => {
+            if (d.tipoOperacion === 'COMPRA') {
+              const sug = getSuggestedAccountForDte(d, supplierRules, company);
+              return {
+                ...d,
+                cuentaCodigoAsignada: sug.cuentaCodigo,
+                cuentaNombreAsignada: sug.cuentaNombre,
+                reglaSugeridaOrigen: sug.origen,
+                proveedorHistoricoDetectado: sug.esHistorico,
+                imputacionEstado: 'IMPUTADO' as const
+              };
+            }
+            return d;
+          });
+          setCsvPreviewDtes(enriched);
+        }
+      } catch (err: any) {
+        setCsvError(`Error al procesar el archivo CSV: ${err.message}`);
+        setCsvPreviewDtes([]);
+      } finally {
+        setIsParsingCsv(false);
+      }
+    };
+    reader.onerror = () => {
+      setCsvError('Error al leer el archivo seleccionado.');
+      setIsParsingCsv(false);
+    };
+    reader.readAsText(file, 'ISO-8859-1');
+  };
+
+  const handleConfirmCsvImport = () => {
+    if (csvPreviewDtes.length === 0) return;
+    onAddMultipleDtes(csvPreviewDtes, true);
+    showToast(`¡Se importaron ${csvPreviewDtes.length} documentos oficiales desde el archivo CSV!`);
+    setCsvPreviewDtes([]);
+    setCsvFile(null);
   };
 
   // Abrir modal de Split de Factura
@@ -396,7 +608,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Empresa activa: <strong className="text-slate-200">{company.razonSocial}</strong> ({company.rut}) | SII Clave Tributaria activa
+                Empresa activa: <strong className="text-slate-200">{company?.razonSocial || 'Empresa'}</strong> ({company?.rut || siiRut}) | SII Clave Tributaria activa
               </p>
             </div>
           </div>
@@ -422,6 +634,24 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                 <option value="2026-01" className="bg-slate-800">Enero 2026</option>
               </select>
             </div>
+
+            {dtes.length > 0 && (
+              <button
+                onClick={() => {
+                  if (onClearAllDtes) {
+                    onClearAllDtes();
+                  } else {
+                    onAddMultipleDtes([], false);
+                  }
+                  showToast('Se eliminaron todos los documentos de memoria. Base limpia en cero.');
+                }}
+                className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                title="Eliminar documentos actuales y dejar la base en blanco"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Vaciar Base ({dtes.length})</span>
+              </button>
+            )}
 
             <button
               onClick={onClose}
@@ -503,6 +733,40 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
             >
               <CreditCard className="w-4 h-4" />
               Cobros & Pagos a Partidas
+            </button>
+
+            <button
+              onClick={() => setActiveTab('VISOR_CHROMIUM')}
+              className={`py-3 px-3 text-xs font-semibold border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+                activeTab === 'VISOR_CHROMIUM'
+                  ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 font-bold'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Monitor className="w-4 h-4 text-indigo-600" />
+              <span>Visor Chromium en Vivo (SII)</span>
+              {liveScreenshots.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px] font-bold font-mono">
+                  {liveScreenshots.length} Capturas
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('TERMINAL_LOGS')}
+              className={`py-3 px-3 text-xs font-semibold border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+                activeTab === 'TERMINAL_LOGS'
+                  ? 'border-slate-900 text-slate-900 bg-slate-100 font-bold'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Terminal className="w-4 h-4 text-slate-700" />
+              <span>Terminal y Logs SII</span>
+              {syncLogs.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-white text-[10px] font-bold font-mono">
+                  {syncLogs.length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -591,6 +855,140 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                       </>
                     )}
                   </button>
+
+                  <button
+                    onClick={handleCloseSiiSessions}
+                    disabled={isClosingSessions}
+                    title="Cierra sesiones huérfanas en zeusr.sii.cl para solucionar el error 01.01.112.500.720.27"
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all shrink-0 cursor-pointer"
+                  >
+                    <LogOut className={`w-3.5 h-3.5 text-amber-600 ${isClosingSessions ? 'animate-spin' : ''}`} />
+                    <span>{isClosingSessions ? 'Liberando...' : 'Liberar Sesiones SII'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Importación Directa de CSV Oficial y Control de Integridad */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Panel de Carga CSV Oficial */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                        <Upload className="w-4 h-4 text-blue-600" />
+                        Cargar Archivo Oficial CSV de sii.cl
+                      </h4>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono font-semibold">
+                        RCV Compras / Ventas / BHE
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Cargue directamente el archivo CSV descargado desde el portal del SII. El sistema parsea automáticamente el separador y mapea las columnas sin datos simulados.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors shadow-xs">
+                        <Upload className="w-3.5 h-3.5 text-blue-600" />
+                        <span>{csvFile ? csvFile.name : 'Seleccionar Archivo .csv / .txt'}</span>
+                        <input
+                          type="file"
+                          accept=".csv,.txt,.tsv"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              handleCsvFileUpload(e.target.files[0]);
+                            }
+                          }}
+                        />
+                      </label>
+                      {csvFile && (
+                        <button
+                          onClick={() => {
+                            setCsvFile(null);
+                            setCsvPreviewDtes([]);
+                            setCsvError(null);
+                          }}
+                          className="text-slate-400 hover:text-slate-600 p-1"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {isParsingCsv && (
+                      <div className="text-xs text-blue-600 flex items-center gap-1.5 font-medium">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Analizando archivo del SII...
+                      </div>
+                    )}
+
+                    {csvError && (
+                      <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 p-2 rounded-lg font-medium">
+                        {csvError}
+                      </div>
+                    )}
+
+                    {csvPreviewDtes.length > 0 && (
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                        <div>
+                          <span className="font-bold text-emerald-800">
+                            {csvPreviewDtes.length} documentos válidos detectados
+                          </span>
+                          <div className="text-[11px] text-emerald-600 font-mono">
+                            Total: {formatCLP(csvPreviewDtes.reduce((s, d) => s + d.montoTotal, 0))}
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleConfirmCsvImport}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs"
+                        >
+                          Importar al Libro
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Panel de Limpieza de Registros de Muestra */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        Integridad de Datos & Registros de Muestra
+                      </h4>
+                      <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-mono font-semibold">
+                        {dtes.length} docs en memoria
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Si la empresa contiene datos iniciales de plantilla y desea comenzar desde cero con los documentos 100% reales de su negocio, puede vaciarlos con este botón.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs text-slate-600 font-medium">
+                      {dtes.length === 0 ? 'Empresa limpia (0 documentos cargados).' : `${dtes.length} documentos registrados actualmente.`}
+                    </span>
+                    {dtes.length > 0 && (
+                      <button
+                        onClick={() => {
+                          if (onClearAllDtes) {
+                            onClearAllDtes();
+                          } else {
+                            onAddMultipleDtes([], false);
+                          }
+                          showToast('Se eliminaron todos los documentos de memoria. Registros en cero.');
+                        }}
+                        className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-white" />
+                        <span>Vaciar Registros ({dtes.length})</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -728,7 +1126,24 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  {dtes.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (onClearAllDtes) {
+                          onClearAllDtes();
+                        } else {
+                          onAddMultipleDtes([], false);
+                        }
+                        showToast('Todos los documentos han sido eliminados de la memoria. Base limpia en cero.');
+                      }}
+                      className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                      title="Eliminar documentos cargados y dejar la base en 0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Vaciar Base ({dtes.length})</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => handleGenerateCentralization('COMPRA')}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
@@ -743,6 +1158,15 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                     <Sliders className="w-3.5 h-3.5" />
                     Centralizar Ventas del Mes
                   </button>
+                </div>
+              </div>
+
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>
+                    <strong>Modo Contabilidad Real:</strong> No se inyecta ningún registro de prueba. Los datos sólo se obtienen desde el RCV oficial vía Chromium o subiendo el archivo CSV exportado del SII. Si existen datos previos en pantalla, use <strong>"Limpiar Base"</strong> para iniciar en blanco.
+                  </span>
                 </div>
               </div>
 
@@ -1270,6 +1694,454 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                     <DollarSign className="w-3.5 h-3.5" />
                     Registrar Cobro de Clientes Seleccionados ({selectedDtesForCollection.length})
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================
+              TAB 6: VISOR DE INSPECCIÓN FORENSE CHROMIUM (SII)
+             ========================================================= */}
+          {activeTab === 'VISOR_CHROMIUM' && (
+            <div className="space-y-6">
+              {/* Header card */}
+              <div className="bg-slate-900 text-white p-5 rounded-xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Monitor className="w-5 h-5 text-indigo-400" />
+                    <h3 className="text-sm font-bold">Visor de Navegación Chromium Headless en Vivo</h3>
+                    <span className="bg-indigo-500/20 text-indigo-300 text-[11px] px-2 py-0.5 rounded font-mono border border-indigo-500/30">
+                      Playwright Engine | zeusr.sii.cl
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Inspeccione las capturas de pantalla tomadas por el navegador Chromium en el servidor Cloud Linux mientras navega por el portal del SII.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCloseSiiSessions}
+                    disabled={isClosingSessions}
+                    title="Cierra sesiones huérfanas en zeusr.sii.cl para solucionar el error 01.01.112.500.720.27"
+                    className="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all whitespace-nowrap cursor-pointer"
+                  >
+                    <LogOut className={`w-3.5 h-3.5 ${isClosingSessions ? 'animate-spin' : ''}`} />
+                    <span>{isClosingSessions ? 'Liberando...' : 'Liberar Sesiones SII'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleRunPlaywrightInspection}
+                    disabled={isTestingPlaywright}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-all whitespace-nowrap cursor-pointer"
+                  >
+                    {isTestingPlaywright ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                        <span>Ejecutando Chromium...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-4 h-4 text-indigo-200" />
+                        <span>Lanzar Inspección y Tomar Capturas</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenido si NO hay capturas aún */}
+              {liveScreenshots.length === 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center space-y-4">
+                  <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto border border-indigo-200">
+                    <Laptop className="w-8 h-8" />
+                  </div>
+                  <div className="max-w-xl mx-auto space-y-2">
+                    <h4 className="font-bold text-slate-800 text-base">Aún no se han capturado pantallas de la sesión actual</h4>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      El motor Chromium corre en un contenedor Linux en segundo plano (headless). Para verificar la interacción visual con el SII, presione el botón inferior para que el robot inicie el navegador, navegue a <strong>zeusr.sii.cl</strong>, complete el formulario de autenticación oficial y capture paso a paso lo que responde el servidor del SII.
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      onClick={handleRunPlaywrightInspection}
+                      disabled={isTestingPlaywright}
+                      className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-2 shadow-md transition-all cursor-pointer"
+                    >
+                      {isTestingPlaywright ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Conectando con el SII...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="w-4 h-4" />
+                          <span>Iniciar Chromium y Capturar Pantallas del SII</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Contenido si HAY capturas */}
+              {liveScreenshots.length > 0 && (
+                <div className="space-y-4">
+                  {/* Selector de pasos */}
+                  <div className="flex flex-wrap gap-2">
+                    {liveScreenshots.map((shot, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setSelectedScreenshotIndex(idx)}
+                        className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                          selectedScreenshotIndex === idx
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                        }`}
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Paso {idx + 1}: {shot.step}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Detalle del paso seleccionado */}
+                  {liveScreenshots[selectedScreenshotIndex] && (
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-md space-y-3">
+                      <div className="bg-slate-100 p-3 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-800">
+                            Paso {selectedScreenshotIndex + 1}: {liveScreenshots[selectedScreenshotIndex].step}
+                          </span>
+                          <span className="text-slate-400">|</span>
+                          <span className="text-slate-500 font-mono">
+                            Hora: {formatTimestamp(liveScreenshots[selectedScreenshotIndex].timestamp)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 text-slate-600 font-mono text-[11px] bg-white px-2.5 py-1 rounded border border-slate-200 max-w-md overflow-hidden text-ellipsis">
+                            <ExternalLink className="w-3 h-3 flex-shrink-0 text-slate-400" />
+                            <span className="truncate">{liveScreenshots[selectedScreenshotIndex].url}</span>
+                          </div>
+                          {normalizeImageData(liveScreenshots[selectedScreenshotIndex].imageBase64) && (
+                            <a
+                              href={normalizeImageData(liveScreenshots[selectedScreenshotIndex].imageBase64)}
+                              download={`captura-sii-paso-${selectedScreenshotIndex + 1}-${liveScreenshots[selectedScreenshotIndex].step.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`}
+                              className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded border border-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                              title="Descargar imagen completa"
+                            >
+                              <Download className="w-3 h-3 text-slate-500" />
+                              <span>Descargar JPG</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Imagen en grande con helper normalizeImageData */}
+                      <div className="p-4 bg-slate-950 flex flex-col items-center justify-center overflow-auto min-h-[380px] max-h-[580px]">
+                        {normalizeImageData(liveScreenshots[selectedScreenshotIndex].imageBase64) ? (
+                          <img
+                            src={normalizeImageData(liveScreenshots[selectedScreenshotIndex].imageBase64)}
+                            alt={`Captura ${liveScreenshots[selectedScreenshotIndex].step}`}
+                            className="max-w-full max-h-[540px] rounded border border-slate-700 shadow-xl object-contain"
+                          />
+                        ) : (
+                          <div className="text-slate-400 text-xs text-center p-8 space-y-2">
+                            <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+                            <p>No se pudo generar la imagen de este paso. Consulte la pestaña de Logs.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Resumen de logs al pie del visor */}
+                  {syncLogs.length > 0 && (
+                    <div className="bg-slate-900 text-slate-200 rounded-xl p-3 border border-slate-800 text-xs font-mono">
+                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+                        <div className="flex items-center gap-2">
+                          <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                          <span className="font-bold text-slate-300">Bitácora en Tiempo Real ({syncLogs.length} eventos)</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleCopyLogs}
+                            className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>{copiedLogs ? 'Copiado' : 'Copiar'}</span>
+                          </button>
+                          <button
+                            onClick={() => setActiveTab('TERMINAL_LOGS')}
+                            className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer underline"
+                          >
+                            Ver consola completa &rarr;
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-36 overflow-y-auto space-y-1 text-[11px] text-slate-300">
+                        {syncLogs.slice(-6).map((log, lIdx) => (
+                          <div key={lIdx} className="truncate">
+                            <span className="text-slate-500 mr-1.5">{lIdx + 1}.</span>
+                            {log}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================
+              TAB 7: TERMINAL Y LOGS DE AUTOMATIZACIÓN SII
+             ========================================================= */}
+          {activeTab === 'TERMINAL_LOGS' && (
+            <div className="p-6 space-y-4">
+              {/* Header de la Terminal */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-slate-900 text-white p-4 rounded-xl shadow-md border border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                    <Terminal className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                      Consola de Automatización & Logs Oficiales SII
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800">
+                        {isTestingPlaywright || isSyncingSii ? 'Ejecutando...' : 'En línea'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Rastreo detallado de cada solicitud HTTP, inicio de sesión en zeusr.sii.cl, intercepción de cookies y descargas CSV.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={handleCopyLogs}
+                    disabled={syncLogs.length === 0}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedLogs ? '¡Copiado!' : 'Copiar Logs'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleDownloadLogs}
+                    disabled={syncLogs.length === 0}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Descargar .txt</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSyncLogs([]);
+                      showToast('Consola de logs limpiada');
+                    }}
+                    disabled={syncLogs.length === 0}
+                    className="px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 disabled:opacity-40 text-rose-300 text-xs font-semibold flex items-center gap-1.5 border border-rose-800/60 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Limpiar</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Barra de Filtros y Búsqueda */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-xs">
+                {/* Búsqueda de texto */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={logSearchQuery}
+                    onChange={(e) => setLogSearchQuery(e.target.value)}
+                    placeholder="Buscar en logs (ej: Error, 2026-08, zeusr, Token, Captura)..."
+                    className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                  {logSearchQuery && (
+                    <button
+                      onClick={() => setLogSearchQuery('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtros rápidos */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-slate-400 font-medium text-[11px] flex items-center gap-1 mr-1">
+                    <Filter className="w-3 h-3" /> Filtrar:
+                  </span>
+                  {[
+                    { id: 'ALL', label: 'Todos' },
+                    { id: 'ERROR', label: 'Errores/Alertas' },
+                    { id: 'PLAYWRIGHT', label: 'Playwright/RPA' },
+                    { id: 'INTERCEPTOR', label: 'API/Cookies' },
+                    { id: 'DIAGNOSTIC', label: 'Capturas' },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setLogFilter(f.id as any)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        logFilter === f.id
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Contenedor Principal de la Terminal */}
+              <div className="bg-slate-950 text-slate-200 rounded-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col font-mono text-xs">
+                {/* Barra de título estilo ventana de terminal */}
+                <div className="bg-slate-900/90 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+                    <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+                    <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+                    <span className="ml-2 text-[11px] text-slate-400 font-semibold">
+                      sii-playwright-sandbox: /var/log/rpa-engine.log
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                    <span>Líneas: <strong>{syncLogs.length}</strong></span>
+                    {logSearchQuery && (
+                      <span className="text-indigo-400">
+                        Filtrado por: "{logSearchQuery}"
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Salida de la consola */}
+                <div className="p-4 overflow-y-auto max-h-[520px] min-h-[300px] space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
+                  {syncLogs.length === 0 ? (
+                    <div className="text-center py-16 space-y-3">
+                      <Terminal className="w-10 h-10 text-slate-600 mx-auto" />
+                      <p className="text-slate-400 text-sm font-sans font-medium">
+                        La consola está vacía. No se ha ejecutado ninguna operación en esta sesión.
+                      </p>
+                      <p className="text-slate-500 text-xs max-w-md mx-auto font-sans leading-relaxed">
+                        Inicie una inspección con Chromium o una descarga RCV para ver la bitácora paso a paso de lo que ocurre con zeusr.sii.cl.
+                      </p>
+                      <div className="pt-2 flex justify-center gap-3">
+                        <button
+                          onClick={handleRunPlaywrightInspection}
+                          disabled={isTestingPlaywright}
+                          className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-sans font-bold flex items-center gap-2 cursor-pointer shadow-md"
+                        >
+                          <Camera className="w-4 h-4" />
+                          <span>Iniciar Inspección de Chromium</span>
+                        </button>
+                        <button
+                          onClick={() => handleRunSiiAutoDownload(selectedPeriod)}
+                          disabled={isSyncingSii}
+                          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-sans font-bold flex items-center gap-2 cursor-pointer shadow-md"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          <span>Descargar RCV Período {selectedPeriod}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    (() => {
+                      const filtered = syncLogs.filter((log) => {
+                        // Filtro de búsqueda de texto
+                        if (logSearchQuery && !log.toLowerCase().includes(logSearchQuery.toLowerCase())) {
+                          return false;
+                        }
+                        // Filtro por categoría
+                        if (logFilter === 'ERROR') {
+                          return /error|alerta|fallo|bloque|rechaz|incorrect/i.test(log);
+                        }
+                        if (logFilter === 'PLAYWRIGHT') {
+                          return /playwright|chromium|zeusr|rpa/i.test(log);
+                        }
+                        if (logFilter === 'INTERCEPTOR') {
+                          return /interceptor|cookie|token|csv|aut2000/i.test(log);
+                        }
+                        if (logFilter === 'DIAGNOSTIC') {
+                          return /captura|pantalla|step|paso/i.test(log);
+                        }
+                        return true;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-center py-10 text-slate-500 text-xs">
+                            No se encontraron logs que coincidan con los criterios de búsqueda actuales.
+                          </div>
+                        );
+                      }
+
+                      return filtered.map((line, idx) => {
+                        const isError = /error|alerta|fallo|bloque|01\.01\./i.test(line);
+                        const isPlaywright = /\[Playwright|\[RPA/i.test(line);
+                        const isInterceptor = /interceptor|token|cookie|rcv/i.test(line);
+                        const isCapture = /captura/i.test(line);
+                        const isSession = /sesion|sesiones/i.test(line);
+
+                        let colorClass = 'text-slate-300';
+                        let bgClass = 'hover:bg-slate-900/60';
+
+                        if (isError) {
+                          colorClass = 'text-rose-400 font-semibold';
+                          bgClass = 'bg-rose-950/20 hover:bg-rose-950/40 border-l-2 border-rose-500 pl-2';
+                        } else if (isCapture) {
+                          colorClass = 'text-emerald-400';
+                          bgClass = 'hover:bg-slate-900/60';
+                        } else if (isInterceptor) {
+                          colorClass = 'text-purple-300';
+                          bgClass = 'hover:bg-slate-900/60';
+                        } else if (isSession) {
+                          colorClass = 'text-amber-300';
+                          bgClass = 'hover:bg-slate-900/60';
+                        } else if (isPlaywright) {
+                          colorClass = 'text-cyan-300';
+                          bgClass = 'hover:bg-slate-900/60';
+                        }
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`py-0.5 px-1.5 rounded transition-colors flex items-start gap-2 text-[11px] leading-relaxed break-all ${bgClass}`}
+                          >
+                            <span className="text-slate-600 select-none min-w-[2.5rem] text-right font-mono text-[10px]">
+                              {idx + 1}
+                            </span>
+                            <span className={colorClass}>{line}</span>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+
+                {/* Pie de terminal con acciones rápidas */}
+                <div className="bg-slate-900 px-4 py-2.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Modo diagnóstico activo. Registrando cada interacción con zeusr.sii.cl</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleCloseSiiSessions}
+                      disabled={isClosingSessions}
+                      className="text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer underline"
+                    >
+                      <LogOut className="w-3 h-3" />
+                      <span>Cerrar sesiones huérfanas en SII</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

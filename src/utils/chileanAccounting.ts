@@ -101,6 +101,7 @@ export const STANDARD_ACCOUNT_PLAN: AccountPlanItem[] = [
   { codigo: '5.2.09', nombre: 'Gastos Financieros por Arrendamiento (IFRS 16)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.10', nombre: 'Servicios Básicos (Luz, Agua, Telecomunicaciones)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.11', nombre: 'Software, Servidores y Licencias', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
 ];
 
 export const CHILE_CHART_OF_ACCOUNTS = STANDARD_ACCOUNT_PLAN;
@@ -433,9 +434,25 @@ export function createPayrollCentralizationEntry(
 }
 
 /**
- * Generate Accounting Entry for Sales Invoice DTE 33
+ * Generate Accounting Entry for Sales Invoice (DTE 33 / DTE 34)
  */
 export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
+  if (!dte) {
+    return {
+      id: `entry-dte-sale-default-${Date.now()}`,
+      fecha: new Date().toISOString().split('T')[0],
+      concepto: 'Venta Documento Tributario',
+      documento: 'DTE 34',
+      lineas: [],
+      totalDebe: 0,
+      totalHaber: 0,
+      balanceado: true,
+      origen: 'RCV_VENTA',
+      creadoEn: new Date().toISOString(),
+    };
+  }
+
+  const isExentoOrNoAfecto = dte.tipoDte === '34' || (dte.montoExento > 0 && dte.montoIva === 0);
   const lineas: AccountingEntryLine[] = [
     {
       cuentaCodigo: '1.1.03',
@@ -443,37 +460,54 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       debe: dte.montoTotal,
       haber: 0,
     },
-    {
-      cuentaCodigo: '4.1.01',
-      cuentaNombre: 'Ingresos por Ventas Afectas a IVA',
-      debe: 0,
-      haber: dte.montoNeto,
-    },
-    {
-      cuentaCodigo: '2.1.03',
-      cuentaNombre: 'IVA Débito Fiscal',
-      debe: 0,
-      haber: dte.montoIva,
-    },
   ];
 
-  if (dte.montoExento > 0) {
+  if (isExentoOrNoAfecto) {
     lineas.push({
       cuentaCodigo: '4.1.02',
-      cuentaNombre: 'Ingresos por Servicios Exentos',
+      cuentaNombre: 'Ingresos por Servicios Exentos y No Afectos a IVA',
       debe: 0,
-      haber: dte.montoExento,
+      haber: dte.montoExento || dte.montoTotal,
     });
+  } else {
+    if (dte.montoNeto > 0) {
+      lineas.push({
+        cuentaCodigo: '4.1.01',
+        cuentaNombre: 'Ingresos por Ventas Afectas a IVA',
+        debe: 0,
+        haber: dte.montoNeto,
+      });
+    }
+
+    if (dte.montoIva > 0) {
+      lineas.push({
+        cuentaCodigo: '2.1.03',
+        cuentaNombre: 'IVA Débito Fiscal',
+        debe: 0,
+        haber: dte.montoIva,
+      });
+    }
+
+    if (dte.montoExento > 0) {
+      lineas.push({
+        cuentaCodigo: '4.1.02',
+        cuentaNombre: 'Ingresos por Servicios Exentos',
+        debe: 0,
+        haber: dte.montoExento,
+      });
+    }
   }
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
+  const docTipoDesc = dte.tipoDte === '34' ? 'Factura No Afecta o Exenta (DTE 34)' : `DTE ${dte.tipoDte}`;
+
   return {
     id: `entry-dte-sale-${dte.id}`,
     fecha: dte.fechaEmision,
-    concepto: `Venta Factura Electrónica Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
-    documento: `DTE 33 N° ${dte.folio}`,
+    concepto: `Venta ${dte.tipoDte === '34' ? 'Factura No Afecta o Exenta' : 'Factura Electrónica'} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
+    documento: `${docTipoDesc} N° ${dte.folio}`,
     lineas,
     totalDebe,
     totalHaber,
@@ -487,6 +521,21 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
  * Generate Accounting Entry for Purchase Invoice DTE 33
  */
 export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
+  if (!dte) {
+    return {
+      id: `entry-dte-purch-default-${Date.now()}`,
+      fecha: new Date().toISOString().split('T')[0],
+      concepto: 'Compra Documento Tributario',
+      documento: 'DTE 33',
+      lineas: [],
+      totalDebe: 0,
+      totalHaber: 0,
+      balanceado: true,
+      origen: 'RCV_COMPRA',
+      creadoEn: new Date().toISOString(),
+    };
+  }
+
   const lineas: AccountingEntryLine[] = [
     {
       cuentaCodigo: '5.1.01',
@@ -538,14 +587,29 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
  * Generate Accounting Entry for Fee Receipt (Boleta de Honorarios)
  */
 export function createHonorariosEntry(bhe: DteDocument): AccountingEntry {
-  const retencion = bhe.retencionMonto || Math.round(bhe.montoTotal * (bhe.retencionTasa || 0.145));
-  const liquidoPorPagar = bhe.montoTotal - retencion;
+  if (!bhe) {
+    return {
+      id: `entry-bhe-default-${Date.now()}`,
+      fecha: new Date().toISOString().split('T')[0],
+      concepto: 'Boleta de Honorarios',
+      documento: 'BHE N° 0',
+      lineas: [],
+      totalDebe: 0,
+      totalHaber: 0,
+      balanceado: true,
+      origen: 'HONORARIOS',
+      creadoEn: new Date().toISOString(),
+    };
+  }
+
+  const retencion = bhe.retencionMonto || Math.round((bhe.montoTotal || 0) * (bhe.retencionTasa || 0.145));
+  const liquidoPorPagar = (bhe.montoTotal || 0) - retencion;
 
   const lineas: AccountingEntryLine[] = [
     {
       cuentaCodigo: '5.2.06',
       cuentaNombre: 'Gastos de Honorarios Profesionales',
-      debe: bhe.montoTotal,
+      debe: bhe.montoTotal || 0,
       haber: 0,
     },
     {
@@ -556,7 +620,7 @@ export function createHonorariosEntry(bhe: DteDocument): AccountingEntry {
     },
     {
       cuentaCodigo: '2.1.02',
-      cuentaNombre: `Honorarios por Pagar (${bhe.razonSocialContraparte})`,
+      cuentaNombre: `Honorarios por Pagar (${bhe.razonSocialContraparte || 'Honorarios'})`,
       debe: 0,
       haber: liquidoPorPagar,
     },

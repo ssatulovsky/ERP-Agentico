@@ -1600,12 +1600,12 @@ export function auditPeripheralModules(
  * 4. Depreciación de activo fijo bajo NIC 16
  */
 export function generatePeriodClosingAdjustments(
-  indicators: ChileIndicators,
-  empresa: CompanyProfile,
-  leases: LeaseContract[]
+  indicators?: Partial<ChileIndicators>,
+  empresa?: Partial<CompanyProfile>,
+  leases: LeaseContract[] = []
 ): PeriodClosingAdjustment[] {
-  const ufActual = indicators.uf || 39150.50;
-  const dolarActual = indicators.dolar || 955.20;
+  const ufActual = indicators?.uf || 39150.50;
+  const dolarActual = indicators?.dolar || 955.20;
   const dolarApertura = dolarActual - 12.50;
 
   // 1. Devengos
@@ -1679,7 +1679,8 @@ export function generatePeriodClosingAdjustments(
   };
 
   // 3. Reajuste UF en Contratos
-  const canonUfTotal = leases.reduce((s, l) => s + (l.montoMensualMoneda === 'UF' ? (l.montoCanonMensual || 45) : 45), 0);
+  const safeLeases = Array.isArray(leases) ? leases : [];
+  const canonUfTotal = safeLeases.reduce((s, l) => s + (l.montoMensualMoneda === 'UF' ? (l.montoCanonMensual || 45) : 45), 0);
   const reajusteUfMonto = Math.round(canonUfTotal * 180); // Variación UF del mes
 
   const adjReajusteUf: PeriodClosingAdjustment = {

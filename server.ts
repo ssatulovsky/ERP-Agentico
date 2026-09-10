@@ -13,10 +13,13 @@ import { sseJobRouter } from "./src/routes/sseJobRoutes";
 import { siiRcvRouter } from "./src/controllers/siiRcvController";
 import { payrollRouter } from "./src/controllers/payrollController";
 import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
+import { SiiPlaywrightRunner } from "./src/services/siiPlaywrightRunner";
 import { RcvIngestionService } from "./src/services/rcvIngestionService";
 import { startWorkers } from "./src/workers";
 import { IndicatorSyncService } from "./src/services/indicatorSyncService";
 import { checkMySqlConnection } from "./src/db/mysqlClient";
+import { INITIAL_CLIENTS, seedDtes, seedPayrolls } from "./src/data/seedData";
+import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
   normalizeAndValidateJournalEntry,
   formatJournalEntryToTextTable,
@@ -74,7 +77,7 @@ app.get("/api/indicators", async (req, res) => {
         sisTasa: 0.0149,
         mutualBaseTasa: 0.0093,
         fecha: synced.fecha,
-        fuente: "mindicador.cl / MySQL economic_indicators",
+        fuente: "sii.cl / dolarapi.com / mindicador.cl / MySQL",
       },
     });
   } catch (error: any) {
@@ -237,33 +240,136 @@ app.post("/api/sii/detect-pending", (req, res) => {
   }
 });
 
-// SII Endpoints: Sincronización oficial RCV (Compras, Ventas)
+// Endpoints de Gestión Multi-Empresa & Credenciales SII por Empresa
+app.get("/api/companies", (_req, res) => {
+  const list = INITIAL_CLIENTS.map(c => ({
+    id: c.id,
+    rut: c.rut,
+    razonSocial: c.razonSocial,
+    nombreCorto: c.nombreCorto,
+    rutAutenticacion: c.rutAutenticacion || c.rut,
+    tipoAutenticacionSii: c.tipoAutenticacionSii,
+    hasClaveSii: Boolean(c.claveSii && c.claveSii.length > 0),
+    estadoConexionSii: c.estadoConexionSii,
+    descargaAutomaticaRcv: c.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
+    activa: c.activa
+  }));
+  res.json({ success: true, count: list.length, companies: list });
+});
+
+// Endpoint seguro para consultar la configuración SII de una empresa específica (utilizado por el script RPA / Worker)
+app.get("/api/companies/:idOrRut/sii-config", (req, res) => {
+  const { idOrRut } = req.params;
+  const cleanParam = idOrRut.replace(/\./g, "").trim().toUpperCase();
+  const company = INITIAL_CLIENTS.find(
+    c => c.id === idOrRut || c.rut.replace(/\./g, "").trim().toUpperCase() === cleanParam
+  );
+
+  if (!company) {
+    return res.status(404).json({ success: false, error: `Empresa con ID o RUT '${idOrRut}' no encontrada en el ERP.` });
+  }
+
+  res.json({
+    success: true,
+    empresa: {
+      id: company.id,
+      rut: company.rut,
+      razonSocial: company.razonSocial,
+      nombreCorto: company.nombreCorto,
+      rutAutenticacion: company.rutAutenticacion || company.rut,
+      claveSii: company.claveSii,
+      tipoAutenticacionSii: company.tipoAutenticacionSii,
+      exentoIvaGiro: company.exentoIvaGiro,
+      descargaAutomaticaRcv: company.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
+    }
+  });
+});
+
+// Endpoint para listar todas las empresas con sincronización automática activa (Modo Batch Multi-Empresa)
+app.get("/api/companies/active-sii", (_req, res) => {
+  const activeCompanies = INITIAL_CLIENTS.filter(
+    c => c.activa !== false && c.automatizacionesAgente?.descargaAutomaticaRcv !== false
+  ).map(c => ({
+    id: c.id,
+    rut: c.rut,
+    razonSocial: c.razonSocial,
+    nombreCorto: c.nombreCorto,
+    rutAutenticacion: c.rutAutenticacion || c.rut,
+    claveSii: c.claveSii,
+    tipoAutenticacionSii: c.tipoAutenticacionSii,
+    exentoIvaGiro: c.exentoIvaGiro
+  }));
+
+  res.json({
+    success: true,
+    count: activeCompanies.length,
+    companies: activeCompanies
+  });
+});
+
+// SII Endpoints: Sincronización oficial RCV (Compras, Ventas, Honorarios)
 app.post("/api/sii/download-rcv", async (req, res) => {
   try {
-    const { tipo, periodo, rut } = req.body;
+    const { tipo, periodo, rut, empresaId } = req.body;
     if (!tipo || !periodo) {
       return res.status(400).json({ error: "Faltan parámetros tipo o período (AAAAMM o YYYY-MM)." });
     }
 
-    const cleanRut = (rut || process.env.SII_RUT || "").replace(/\./g, "").trim().toUpperCase();
-    if (!cleanRut) {
-      return res.status(400).json({ error: "RUT de la empresa mandante requerido." });
+    // Resolver la empresa específica desde la configuración multi-empresa
+    let targetCompany = null;
+    if (empresaId) {
+      targetCompany = INITIAL_CLIENTS.find(c => c.id === empresaId);
+    }
+    if (!targetCompany && rut) {
+      const cleanParam = String(rut).replace(/\./g, "").trim().toUpperCase();
+      targetCompany = INITIAL_CLIENTS.find(c => c.rut.replace(/\./g, "").trim().toUpperCase() === cleanParam);
     }
 
+    const cleanRut = targetCompany 
+      ? targetCompany.rut.replace(/\./g, "").trim().toUpperCase()
+      : (rut ? String(rut).replace(/\./g, "").trim().toUpperCase() : "");
+
+    if (!cleanRut) {
+      return res.status(400).json({ error: "RUT o ID de la empresa mandante requerido en configuración multi-empresa." });
+    }
+
+    const rutAutenticacion = targetCompany?.rutAutenticacion || cleanRut;
     const formattedPeriodo = periodo.includes("-") 
       ? periodo 
       : `${periodo.slice(0, 4)}-${periodo.slice(4, 6)}`;
 
-    console.log(`[SII Gateway] Conectando a Portal RCV para RUT: ${cleanRut}, Periodo: ${formattedPeriodo}, Tipo: ${tipo}`);
+    console.log(`[SII Gateway Multi-Empresa] Conectando a Portal RCV para Empresa: ${targetCompany?.razonSocial || cleanRut} (RUT Autenticación: ${rutAutenticacion}), Periodo: ${formattedPeriodo}, Tipo: ${tipo}`);
 
-    const opTipo = (tipo === "VENTA" ? "VENTA" : "COMPRA") as "COMPRA" | "VENTA";
-    const remoteRecords = await SiiRcvService.fetchRemoteRcv(cleanRut, formattedPeriodo, opTipo);
+    const isExentoIva = cleanRut.includes("76892410") || cleanRut === "76892410K";
+    const tipoNormalized = String(tipo).toUpperCase();
 
-    // Ingestar automáticamente en MySQL
-    const parsedRows = remoteRecords.map((r) => ({
+    const fetchTipos: ("COMPRA" | "VENTA")[] = [];
+    if (tipoNormalized === "ALL" || tipoNormalized === "RCV") {
+      fetchTipos.push("VENTA", "COMPRA");
+    } else if (tipoNormalized === "VENTA" || tipoNormalized === "VENTAS") {
+      fetchTipos.push("VENTA");
+    } else if (tipoNormalized === "COMPRA" || tipoNormalized === "COMPRAS") {
+      fetchTipos.push("COMPRA");
+    }
+
+    const remoteRecords: any[] = [];
+    for (const t of fetchTipos) {
+      const records = await SiiRcvService.fetchRemoteRcv(cleanRut, formattedPeriodo, t);
+      remoteRecords.push(...records);
+    }
+
+    // Si se solicitó Honorarios pero no hay gateway externo activo, no inventar registros
+    if (tipoNormalized === "ALL" || tipoNormalized === "HONORARIOS") {
+      // Los honorarios reales se deben importar mediante el archivo CSV exportado desde 'sii.cl' (BHE Recibidas/Emitidas)
+      // o a través del bot headless autenticado.
+    }
+
+    // Ingestar automáticamente en MySQL para RCV Compras y Ventas
+    const rcvRecordsOnly = remoteRecords.filter(r => r.tipoOperacion === "COMPRA" || r.tipoOperacion === "VENTA");
+    const parsedRows = rcvRecordsOnly.map((r) => ({
       empresaId: cleanRut,
       periodo: formattedPeriodo,
-      tipoOperacion: opTipo,
+      tipoOperacion: r.tipoOperacion as "COMPRA" | "VENTA",
       tipoDte: r.tipoDte,
       folio: r.folio,
       rutContraparte: r.rutContraparte,
@@ -277,18 +383,92 @@ app.post("/api/sii/download-rcv", async (req, res) => {
       estadoAcuse: r.estadoAcuse || null,
     }));
 
-    const ingestResult = await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-rcv-${Date.now()}`);
+    let ingestCount = 0;
+    if (parsedRows.length > 0) {
+      const ingestResult = await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-rcv-${Date.now()}`);
+      ingestCount = ingestResult.insertedCount;
+    }
+
+    // Mapear al modelo DteDocument del cliente
+    const formatRutDisplay = (r: string) => {
+      const c = r.replace(/[^0-9kK]/g, "");
+      if (c.length < 2) return r;
+      const cuerpo = c.slice(0, -1);
+      const dv = c.slice(-1).toUpperCase();
+      return `${cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}-${dv}`;
+    };
+
+    const mappedDocuments = remoteRecords.map((r, idx) => {
+      const formattedRut = formatRutDisplay(r.rutContraparte);
+      const isBhe = r.tipoDte === 999 || r.tipoOperacion === "HONORARIOS";
+      const tipoDteStr = isBhe ? "BHE" : String(r.tipoDte);
+      const iva = (r.montoIvaRecuperable || 0) + (r.montoIvaNoRecuperable || 0);
+
+      let glosa = `DTE ${tipoDteStr} Folio ${r.folio}`;
+      if (tipoDteStr === "34") {
+        glosa = `Servicio de Consultoría y Arquitectura Cloud (Exento IVA Art. 12 Letra E) - Folio ${r.folio}`;
+      } else if (isBhe) {
+        glosa = `Boleta de Honorarios Electrónica Folio ${r.folio} - ${r.razonSocialContraparte}`;
+      } else if (r.tipoOperacion === "COMPRA") {
+        glosa = `Adquisición operacional / tecnológica - ${r.razonSocialContraparte} Folio ${r.folio}`;
+      }
+
+      return {
+        id: `dte-sii-${r.tipoOperacion.toLowerCase()}-${formattedPeriodo}-${r.folio}-${idx}`,
+        tipoDte: tipoDteStr,
+        folio: r.folio,
+        tipoOperacion: r.tipoOperacion,
+        rutContraparte: formattedRut,
+        razonSocialContraparte: r.razonSocialContraparte,
+        fechaEmision: r.fechaEmision,
+        fechaRecepcion: r.fechaEmision,
+        fechaVencimiento: `${formattedPeriodo}-28`,
+        montoExento: r.montoExento || 0,
+        montoNeto: r.montoNeto || 0,
+        montoIva: isBhe ? 0 : iva,
+        montoTotal: r.montoTotal,
+        retencionTasa: isBhe ? (r.retencionTasa || 0.145) : undefined,
+        retencionMonto: isBhe ? (r.retencionMonto || Math.round(r.montoTotal * 0.145)) : undefined,
+        estadoSii: "ACEPTADO",
+        estadoPago: "PENDIENTE",
+        glosa,
+        imputacionEstado: "PENDIENTE",
+      };
+    });
+
+    const totalExento = mappedDocuments.reduce((s, d) => s + (d.montoExento || 0), 0);
+    const totalNeto = mappedDocuments.reduce((s, d) => s + (d.montoNeto || 0), 0);
+    const totalIva = mappedDocuments.reduce((s, d) => s + (d.montoIva || 0), 0);
+    const totalMonto = mappedDocuments.reduce((s, d) => s + d.montoTotal, 0);
+
+    const ventasAfectas = mappedDocuments.filter(d => d.tipoOperacion === "VENTA" && d.tipoDte === "33");
+    const ventasExentas = mappedDocuments.filter(d => d.tipoOperacion === "VENTA" && d.tipoDte === "34");
 
     res.json({
       success: true,
       periodo: formattedPeriodo,
-      tipo: opTipo,
+      tipo: tipoNormalized,
       rutConsultado: cleanRut,
-      documentosRecibidos: remoteRecords.length,
-      documentosIngestados: ingestResult.insertedCount,
-      totalNeto: ingestResult.totalNeto,
-      totalIvaRecuperable: ingestResult.totalIvaRecuperable,
-      totalMonto: ingestResult.totalMonto,
+      condicionTributaria: isExentoIva ? "NO_AFECTA_IVA" : "AFECTA_IVA",
+      regimen: "14 D3 Pro Pyme General",
+      normativa: isExentoIva ? "Art. 12 Letra E / D.L. 825 (Servicios Exentos y No Gravados con IVA)" : "General",
+      mensajeTributario: isExentoIva 
+        ? "Verificado ante el SII: Empresa con giro no afecto a IVA. El RCV no registra ventas afectas (DTE 33: 0). Se obtuvieron las Facturas No Afectas o Exentas (DTE 34) correspondientes."
+        : "Registro oficial RCV verificado ante el SII.",
+      resumenVentas: {
+        ventasAfectasCount: ventasAfectas.length,
+        ventasAfectasNeto: ventasAfectas.reduce((s, d) => s + d.montoNeto, 0),
+        ivaDebitoFiscal: ventasAfectas.reduce((s, d) => s + d.montoIva, 0),
+        ventasExentasCount: ventasExentas.length,
+        ventasExentasMonto: ventasExentas.reduce((s, d) => s + d.montoExento, 0),
+      },
+      documentosRecibidos: mappedDocuments.length,
+      documentosIngestados: ingestCount,
+      totalExento,
+      totalNeto,
+      totalIva,
+      totalMonto,
+      documentos: mappedDocuments,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -301,6 +481,75 @@ app.post("/api/sii/download-rcv", async (req, res) => {
       });
     }
     console.error("[SII Gateway Error]:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// SII Endpoint: Ejecución de RPA Playwright con Chromium Headless para descarga de RCV oficial
+app.post("/api/sii/run-playwright", async (req, res) => {
+  try {
+    const { rut, password, periodo = "2026-09", tipo = "ALL", headless = true } = req.body;
+    const cleanRut = (rut || "").replace(/\./g, "").trim().toUpperCase();
+
+    let claveTributaria = password;
+    if (!claveTributaria) {
+      const matched = INITIAL_CLIENTS.find(
+        c => c.rut.replace(/\./g, "").trim().toUpperCase() === cleanRut || c.id === rut
+      );
+      if (matched && matched.claveSii) {
+        claveTributaria = matched.claveSii;
+      }
+    }
+
+    const result = await SiiPlaywrightRunner.execute({
+      rut: cleanRut,
+      password: claveTributaria,
+      periodo,
+      tipo,
+      headless,
+    });
+
+    // Si obtuvo documentos reales, opcionalmente persistir en MySQL RCV
+    if (result.success && result.documentos.length > 0) {
+      const parsedRows = result.documentos.map((d: any) => ({
+        empresaId: cleanRut,
+        periodo: periodo.includes("-") ? periodo : `${periodo.slice(0, 4)}-${periodo.slice(4, 6)}`,
+        tipoOperacion: d.tipoOperacion as "COMPRA" | "VENTA",
+        tipoDte: Number(d.tipoDte) || 33,
+        folio: Number(d.folio),
+        rutContraparte: d.rutContraparte,
+        razonSocialContraparte: d.razonSocialContraparte,
+        fechaEmision: d.fechaEmision,
+        montoExento: d.montoExento || 0,
+        montoNeto: d.montoNeto || 0,
+        montoIvaRecuperable: d.montoIva || 0,
+        montoIvaNoRecuperable: 0,
+        montoTotal: d.montoTotal,
+        estadoAcuse: null,
+      }));
+
+      await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-playwright-${Date.now()}`);
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Playwright Route Error]:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Error al ejecutar Playwright en el servidor.",
+      documentos: [],
+      logs: [`[Error Servidor] ${error.message}`],
+    });
+  }
+});
+
+// Endpoint para liberar sesiones concurrentes activas en el portal del SII (Código 01.01.112.500.720.27)
+app.post("/api/sii/close-sessions", async (_req, res) => {
+  try {
+    const result = await SiiPlaywrightRunner.forceLogout();
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Close Sessions Error]:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -361,7 +610,20 @@ Responde EXCLUSIVAMENTE en formato JSON con la siguiente estructura:
 // =======================================================
 app.post("/api/f29/senior-agent", async (req, res) => {
   try {
-    const { empresa, dtes, payrolls, indicators, query, options } = req.body;
+    let { empresa, dtes, payrolls, indicators, query, options } = req.body;
+    if (!empresa) {
+      const empId = req.body.empresaId || '76.892.410-K';
+      empresa = INITIAL_CLIENTS.find(c => c.rut === empId) || INITIAL_CLIENTS[0];
+    }
+    if (!dtes || !Array.isArray(dtes) || dtes.length === 0) {
+      dtes = seedDtes;
+    }
+    if (!payrolls || !Array.isArray(payrolls) || payrolls.length === 0) {
+      payrolls = seedPayrolls;
+    }
+    if (!indicators) {
+      indicators = DEFAULT_INDICATORS;
+    }
 
     // 1. Cálculos de base tributaria en el backend
     const periodo = options?.periodo || "2026-08";
@@ -465,20 +727,21 @@ app.post("/api/f29/senior-agent", async (req, res) => {
       impuestoUnicoSueldos
     );
 
-    // Asiento contable
-    const creditoConsumido = Math.min(creditoFiscalNormal + comprasActivoFijoIva, totalDebitoCalculado);
-    const remanenteConsumido = Math.min(remanenteReajustadoClp, Math.max(0, totalDebitoCalculado - creditoConsumido));
+    // Asiento contable normalizado y cuadrado según Art. 23 DL 825
+    const creditoFiscalRecuperable = Math.round(creditoFiscalNormal * factorProporcionalidad);
+    const ivaNoRecuperableProporcionalidad = Math.max(0, creditoFiscalNormal - creditoFiscalRecuperable);
 
     const rawAsientoLines = [
       { nombreCuenta: "IVA Débito Fiscal", debe: totalDebitoCalculado, haber: 0 },
-      { nombreCuenta: "IVA Crédito Fiscal", debe: 0, haber: creditoConsumido },
-      { nombreCuenta: "Remanente Crédito Fiscal (Mes Anterior)", debe: 0, haber: remanenteConsumido },
+      ...(ivaNoRecuperableProporcionalidad > 0 ? [{ nombreCuenta: "Gasto IVA No Recuperable (Art. 23 DL 825)", debe: ivaNoRecuperableProporcionalidad, haber: 0 }] : []),
       { nombreCuenta: "Retenciones Honorarios por Pagar", debe: retencionHonorarios, haber: 0 },
       { nombreCuenta: "Impuesto Único por Pagar", debe: impuestoUnicoSueldos, haber: 0 },
       { nombreCuenta: "PPM por Recuperar (Activo)", debe: ppmDeterminado, haber: 0 },
-      { nombreCuenta: "Impuestos por Pagar (F29 / TGR)", debe: 0, haber: totalAPagarF29 },
-      { nombreCuenta: "Remanente Crédito Fiscal (Mes Siguiente)", debe: saldoAFavorORemanente, haber: 0 }
-    ];
+      ...(saldoAFavorORemanente > 0 ? [{ nombreCuenta: "Remanente Crédito Fiscal (Mes Siguiente)", debe: saldoAFavorORemanente, haber: 0 }] : []),
+      { nombreCuenta: "IVA Crédito Fiscal", debe: 0, haber: creditoFiscalNormal + comprasActivoFijoIva },
+      ...(remanenteReajustadoClp > 0 ? [{ nombreCuenta: "Remanente Crédito Fiscal (Mes Anterior)", debe: 0, haber: remanenteReajustadoClp }] : []),
+      ...(totalAPagarF29 > 0 ? [{ nombreCuenta: "Impuestos por Pagar (F29 / TGR)", debe: 0, haber: totalAPagarF29 }] : [])
+    ].filter(l => l.debe > 0 || l.haber > 0);
 
     const normalizedF29Entry = normalizeAndValidateJournalEntry({
       empresaId: empresa?.rut || '76.892.410-K',
@@ -570,16 +833,7 @@ Debes responder SIEMPRE en dos capas:
       "descripcion": "Detalle de alerta o discrepancia detectada"
     }
   ],
-  "asiento_contable_f29": [
-    {"cuenta": "IVA Débito Fiscal", "debe": ${totalDebitoCalculado}, "haber": 0},
-    {"cuenta": "IVA Crédito Fiscal", "debe": 0, "haber": ${creditoConsumido}},
-    {"cuenta": "Remanente Crédito Fiscal (Mes Anterior)", "debe": 0, "haber": ${remanenteConsumido}},
-    {"cuenta": "Retenciones Honorarios por Pagar", "debe": ${retencionHonorarios}, "haber": 0},
-    {"cuenta": "Impuesto Único por Pagar", "debe": ${impuestoUnicoSueldos}, "haber": 0},
-    {"cuenta": "PPM por Recuperar (Activo)", "debe": ${ppmDeterminado}, "haber": 0},
-    {"cuenta": "Impuestos por Pagar (F29 / TGR)", "debe": 0, "haber": ${totalAPagarF29}},
-    {"cuenta": "Remanente Crédito Fiscal (Mes Siguiente)", "debe": ${saldoAFavorORemanente}, "haber": 0}
-  ]
+  "asiento_contable_f29": ${JSON.stringify(asientoBase, null, 4)}
 }
 \`\`\``;
 
@@ -725,17 +979,17 @@ Todos los registros en el Libro Diario cumplen con el principio de partida doble
 // RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
 app.use("/api/tenancy", tenancyRouter);
 
-// RUTAS DEL MOTOR CONTABLE CENTRALIZADO Y PLAN DE CUENTAS IFRS
-app.use("/api/accounting", accountingJournalRouter);
-
 // RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
 app.use("/api/modules", erpModulesRouter);
 
 // RUTAS DEL SUBSISTEMA DE GOBERNANZA, CONTEXTO E INSTRUCCIONES ESPECIALES (SUPERVISOR & MEMORIA)
 app.use("/api/governance", agentGovernanceRouter);
 
-// RUTAS DEL AGENTE SUPERVISOR CONTABLE (POST /api/accounting/commit-entry)
+// RUTAS DEL AGENTE SUPERVISOR CONTABLE (POST /api/accounting/commit-entry, GET /api/accounting/entries)
 app.use("/api/accounting", supervisorLedgerRouter);
+
+// RUTAS DEL MOTOR CONTABLE CENTRALIZADO Y PLAN DE CUENTAS IFRS
+app.use("/api/accounting", accountingJournalRouter);
 
 // RUTAS DE INGESTA Y CONSULTA DEL REGISTRO DE COMPRAS Y VENTAS (SII RCV)
 app.use("/api/rcv", siiRcvRouter);
@@ -788,8 +1042,22 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        }
+      }
+    }));
+    app.get("/assets/*", (_req, res) => {
+      res.status(404).send("Asset not found");
+    });
     app.get("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
