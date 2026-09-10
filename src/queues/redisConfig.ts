@@ -19,12 +19,34 @@ export interface AppRedisConfig {
 }
 
 /**
- * Determina si las variables de entorno de Redis están efectivamente configuradas.
+ * Determina si las variables de entorno de Redis están efectivamente configuradas y son válidas.
+ * Si no están configuradas o contienen valores de plantilla/placeholder (ej. tu-cluster.upstash.io),
+ * el sistema conmuta limpiamente al modo en memoria sin arrojar advertencias de conexión fallida.
  */
 export function isRedisConfigured(): boolean {
-  const hasHost = Boolean(process.env.REDIS_HOST && process.env.REDIS_HOST.trim() !== '');
-  const hasUrl = Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim() !== '');
-  return hasHost || hasUrl;
+  if (process.env.DISABLE_REDIS === 'true' || process.env.REDIS_ENABLED === 'false') {
+    return false;
+  }
+
+  const rawUrl = (process.env.REDIS_URL || '').replace(/['"]/g, '').trim();
+  const rawHost = (process.env.REDIS_HOST || '').trim();
+
+  // Filtrar URLs de ejemplo o placeholders predeterminados
+  const isPlaceholderUrl =
+    rawUrl.includes('tu-cluster') ||
+    rawUrl.includes('tu_password') ||
+    rawUrl.includes('example.com') ||
+    rawUrl.includes('placeholder') ||
+    rawUrl.includes('changeme');
+
+  const hasValidUrl = Boolean(rawUrl && !isPlaceholderUrl);
+
+  // En entornos contenerizados o Cloud Run sin daemon local de redis,
+  // 127.0.0.1 o localhost solo se intenta si se activa explícitamente REDIS_LOCAL_ENABLED=true
+  const isLocalHost = rawHost === '127.0.0.1' || rawHost === 'localhost';
+  const hasValidHost = Boolean(rawHost && (!isLocalHost || process.env.REDIS_LOCAL_ENABLED === 'true'));
+
+  return hasValidUrl || hasValidHost;
 }
 
 /**
@@ -35,7 +57,7 @@ export function getRedisEnvConfig(): AppRedisConfig {
   const port = process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : 6379;
   const password = process.env.REDIS_PASSWORD || undefined;
   const tls = process.env.REDIS_TLS === 'true';
-  const url = process.env.REDIS_URL || undefined;
+  const url = process.env.REDIS_URL ? process.env.REDIS_URL.replace(/['"]/g, '').trim() : undefined;
 
   return { host, port, password, tls, url };
 }
@@ -72,6 +94,20 @@ export function getRedisConnectionOptions(): RedisOptions {
     connectTimeout: 5000,
   };
 
+  // Si existe una URL válida configurada, parsear sus componentes para IORedis
+  if (env.url && !env.url.includes('tu-cluster') && !env.url.includes('tu_password')) {
+    try {
+      const parsed = new URL(env.url);
+      baseOptions.host = parsed.hostname;
+      baseOptions.port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'rediss:' ? 6380 : 6379);
+      if (parsed.username) baseOptions.username = parsed.username;
+      if (parsed.password) baseOptions.password = parsed.password;
+      if (parsed.protocol === 'rediss:') baseOptions.tls = {};
+    } catch {
+      // Usar baseOptions por defecto
+    }
+  }
+
   return baseOptions;
 }
 
@@ -80,8 +116,9 @@ export function getRedisConnectionOptions(): RedisOptions {
  */
 export function createRedisClient(customLabel = 'QueueClient'): Redis {
   const options = getRedisConnectionOptions();
-  const client = process.env.REDIS_URL
-    ? new Redis(process.env.REDIS_URL, {
+  const rawUrl = process.env.REDIS_URL ? process.env.REDIS_URL.replace(/['"]/g, '').trim() : '';
+  const client = rawUrl && !rawUrl.includes('tu-cluster') && !rawUrl.includes('tu_password')
+    ? new Redis(rawUrl, {
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
         lazyConnect: true,

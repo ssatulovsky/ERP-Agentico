@@ -134,6 +134,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [clientForm, setClientForm] = useState<ClientCompany>(defaultClientForm);
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [modalShowClave, setModalShowClave] = useState(false);
+  const [useCustomAuthRut, setUseCustomAuthRut] = useState(false);
 
   // Open Modal to Add
   const handleOpenAddModal = () => {
@@ -145,6 +146,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
     setFormErrors([]);
     setTestResult(null);
     setModalShowClave(false);
+    setUseCustomAuthRut(false);
     setIsClientModalOpen(true);
   };
 
@@ -155,6 +157,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
     setFormErrors([]);
     setTestResult(null);
     setModalShowClave(false);
+    setUseCustomAuthRut(Boolean(client.rutAutenticacion && client.rutAutenticacion !== client.rut));
     setIsClientModalOpen(true);
   };
 
@@ -1006,8 +1009,15 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                     <input
                       type="text"
                       value={clientForm.rut}
-                      onChange={(e) => setClientForm({ ...clientForm, rut: e.target.value })}
-                      placeholder="76.892.410-K"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setClientForm((prev) => ({
+                          ...prev,
+                          rut: val,
+                          rutAutenticacion: useCustomAuthRut ? prev.rutAutenticacion : val,
+                        }));
+                      }}
+                      placeholder="77.798.901-4"
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 focus:outline-none focus:border-blue-500"
                       required
                     />
@@ -1118,21 +1128,47 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                     </span>
                   </div>
 
-                  {/* RUT de Autenticación */}
-                  <div>
-                    <label className="block font-bold text-slate-800 mb-1">
-                      RUT de Autenticación en SII:
+                  {/* RUT de Autenticación SII (Vinculado automáticamente) */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700">RUT para acceso al portal SII:</span>
+                      <span className="font-mono font-bold text-blue-700 bg-white px-2.5 py-1 rounded border border-blue-200">
+                        {clientForm.rut ? clientForm.rut : 'Heredado del RUT de la empresa'}
+                      </span>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer pt-1 border-t border-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={useCustomAuthRut}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setUseCustomAuthRut(checked);
+                          if (!checked) {
+                            setClientForm((prev) => ({ ...prev, rutAutenticacion: prev.rut }));
+                          }
+                        }}
+                        className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                      />
+                      <span>Ingresar con RUT de Representante Legal o apoderado distinto al de la empresa</span>
                     </label>
-                    <input
-                      type="text"
-                      value={clientForm.rutAutenticacion || clientForm.rut}
-                      onChange={(e) => setClientForm({ ...clientForm, rutAutenticacion: e.target.value })}
-                      placeholder="RUT Empresa o Representante"
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2.5 font-mono text-slate-900 font-bold focus:outline-none focus:border-blue-600"
-                    />
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      Por defecto coincide con el RUT de la empresa o con el Representante Legal.
-                    </span>
+
+                    {useCustomAuthRut && (
+                      <div className="pt-2">
+                        <label className="block text-xs font-bold text-slate-800 mb-1">
+                          RUT del Representante Legal o Apoderado:
+                        </label>
+                        <input
+                          type="text"
+                          value={clientForm.rutAutenticacion}
+                          onChange={(e) => setClientForm({ ...clientForm, rutAutenticacion: e.target.value })}
+                          placeholder="Ej: 15.678.901-2"
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-900 font-bold focus:outline-none focus:border-blue-600 text-xs"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-1 block">
+                          Solo necesario si la clave tributaria pertenece a una persona natural con mandato.
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Método de Acceso */}

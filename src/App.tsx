@@ -98,7 +98,9 @@ export default function App() {
     razonSocial: activeClient.razonSocial,
     tasaPpm: activeClient.tasaPpm || 0.01,
   });
-  const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(seedPayrolls);
+  const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
+    return activeClient.id === 'client-innovagile' ? [] : seedPayrolls;
+  });
   const [leases, setLeases] = useState<LeaseContract[]>(seedLeases);
   const [movements, setMovements] = useState<CashFlowMovement[]>(seedMovements);
 
@@ -118,6 +120,10 @@ export default function App() {
     if (!selected) return;
     setActiveClientId(clientId);
     setCompany(selected);
+    if (selected.id === 'client-innovagile') {
+      setDtes([]);
+      setPayrolls([]);
+    }
     setF29(prev => ({
       ...prev,
       rutContribuyente: selected.rut,

@@ -305,9 +305,12 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       `Verificando empresa '${empresaId}', régimen tributario y candados de idempotencia.`
     );
 
+    const cleanLookup = empresaId.replace(/[^0-9kK]/g, '').toUpperCase();
     const clientCompany =
-      INITIAL_CLIENTS.find((c) => c.id === empresaId || c.rut === empresaId) ||
-      INITIAL_CLIENTS[0];
+      INITIAL_CLIENTS.find((c) => {
+        const cClean = c.rut.replace(/[^0-9kK]/g, '').toUpperCase();
+        return c.id === empresaId || c.rut === empresaId || (cleanLookup.length >= 7 && cClean === cleanLookup);
+      }) || INITIAL_CLIENTS[0];
 
     if (!clientCompany) {
       throw new Error(`Empresa con identificador '${empresaId}' no encontrada en el sistema.`);
@@ -705,6 +708,25 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       );
     }
 
+    // Si el período no genera tributación efectiva ni movimientos de IVA/PPM/Retención,
+    // se crea un registro de orden de control tributario (sin movimiento / $0 determinado).
+    if (lineasContables.length === 0) {
+      lineasContables.push(
+        {
+          codigoCuenta: '9.9.99.01',
+          nombreCuenta: 'Cuentas de Orden - Declaración F29 Sin Movimiento',
+          debe: 1,
+          haber: 0,
+        },
+        {
+          codigoCuenta: '9.9.99.02',
+          nombreCuenta: 'Cuentas de Orden Per-Contra - F29 Sin Movimiento',
+          debe: 0,
+          haber: 1,
+        }
+      );
+    }
+
     // Normalización canónica formal según Código de Comercio e IFRS:
     // - Bloque 1: Cuentas cargadas (DEBE) ordenadas
     // - Bloque 2: Cuentas abonadas (HABER) ordenadas
@@ -834,9 +856,22 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       auditLogId: verifiedEntryResult.auditLogId,
       tiempoEjecucionMs: tiempoTotalMs,
       payloadGenerado: {
-        casillas,
+        periodo,
+        empresaId,
+        debitoFiscal: casillas.c538 || 0,
+        creditoFiscal: casillas.c537 || 0,
+        remanenteMesAnterior: casillas.c077 || 0,
+        ivaDeterminado: casillas.c089 || 0,
+        postergado: postergacionAplica,
+        montoPpm: casillas.c062 || 0,
+        tasaPpm: companyProfile.tasaPpm || 0.01,
+        retencionHonorarios: casillas.c151 || 0,
+        totalImpuestoPagar: casillas.c091 || 0,
+        asientoContableId: verifiedEntryResult.entry.id,
         asientoId: verifiedEntryResult.entry.id,
+        auditLogId: verifiedEntryResult.auditLogId,
         supervisorSignature: verifiedEntryResult.supervisorSignature,
+        casillas,
       },
     };
 

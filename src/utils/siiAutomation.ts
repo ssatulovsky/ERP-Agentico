@@ -120,7 +120,9 @@ export const DEFAULT_CENTRALIZATION_CONFIG: SiiCentralizationConfig = {
   cuentaVentasActivo: { codigo: '1.1.03', nombre: 'Clientes Nacionales' },
   cuentaIvaCredito: { codigo: '1.1.08', nombre: 'IVA Crédito Fiscal' },
   cuentaIvaDebito: { codigo: '2.1.04', nombre: 'IVA Débito Fiscal' },
-  cuentaVentasIngreso: { codigo: '4.1.01', nombre: 'Ingresos por Ventas del Giro' },
+  cuentaVentasIngreso: { codigo: '4.1.01', nombre: 'Ingresos por Ventas del Giro (Afectas)' },
+  cuentaVentasExentasIngreso: { codigo: '4.1.02', nombre: 'Ingresos por Servicios Exentos del Giro' },
+  cuentaComprasExentasGasto: { codigo: '5.1.98', nombre: 'Gastos y Adquisiciones Exentas' },
   cuentaHonorariosGasto: { codigo: '5.1.20', nombre: 'Honorarios Profesionales' },
   cuentaRetencionHonorarios: { codigo: '2.1.06', nombre: 'Retenciones Impuesto 2da Categoría (14.5%)' },
   cuentaBancoPago: { codigo: '1.1.01', nombre: 'Banco Santander - Cuenta Corriente' },
@@ -141,8 +143,8 @@ export const ACCESSIBLE_ACCOUNTS = [
   { codigo: '2.1.02', nombre: 'Cuentas por Pagar Comerciales', tipo: 'PASIVO' },
   { codigo: '2.1.04', nombre: 'IVA Débito Fiscal', tipo: 'PASIVO' },
   { codigo: '2.1.06', nombre: 'Retenciones Impuesto 2da Categoría BHE', tipo: 'PASIVO' },
-  { codigo: '4.1.01', nombre: 'Ingresos por Ventas del Giro', tipo: 'INGRESO' },
-  { codigo: '4.1.02', nombre: 'Ingresos por Prestación de Servicios', tipo: 'INGRESO' },
+  { codigo: '4.1.01', nombre: 'Ingresos por Ventas del Giro (Afectas)', tipo: 'INGRESO' },
+  { codigo: '4.1.02', nombre: 'Ingresos por Servicios Exentos del Giro', tipo: 'INGRESO' },
   { codigo: '5.1.01', nombre: 'Costo de Ventas y Mercaderías', tipo: 'COSTO' },
   { codigo: '5.1.02', nombre: 'Gasto de Arriendos Operacionales', tipo: 'GASTO' },
   { codigo: '5.1.04', nombre: 'Gasto Telecomunicaciones e Internet', tipo: 'GASTO' },
@@ -158,6 +160,7 @@ export const ACCESSIBLE_ACCOUNTS = [
   { codigo: '5.1.18', nombre: 'Software, Nube y Licencias TI', tipo: 'GASTO' },
   { codigo: '5.1.20', nombre: 'Honorarios Profesionales', tipo: 'GASTO' },
   { codigo: '5.1.25', nombre: 'Servicios de Seguridad y Vigilancia', tipo: 'GASTO' },
+  { codigo: '5.1.98', nombre: 'Gastos y Adquisiciones Exentas', tipo: 'GASTO' },
   { codigo: '5.1.99', nombre: 'Otros Gastos Generales de Administración', tipo: 'GASTO' }
 ];
 
@@ -592,7 +595,8 @@ export function generateMonthlyCentralizationEntry(
           if (!debePorCuenta[cod]) {
             debePorCuenta[cod] = { nombre: p.cuentaNombre || 'Gasto Operacional', monto: 0 };
           }
-          debePorCuenta[cod].monto += (p.montoNeto * factor);
+          const montoPartida = ((p.montoNeto || 0) + (p.montoExento || 0)) * factor;
+          debePorCuenta[cod].monto += montoPartida;
         });
       } else {
         // Imputación simple asignada o sugerida
@@ -607,14 +611,17 @@ export function generateMonthlyCentralizationEntry(
         }
 
         if (!codigoFinal) {
-          codigoFinal = '5.1.99';
-          nombreFinal = 'Otros Gastos de Administración';
+          const esPuraExenta = (dte.montoExento > 0 && dte.montoNeto === 0);
+          codigoFinal = esPuraExenta ? (config.cuentaComprasExentasGasto?.codigo || '5.1.98') : '5.1.99';
+          nombreFinal = esPuraExenta ? (config.cuentaComprasExentasGasto?.nombre || 'Gastos y Adquisiciones Exentas') : 'Otros Gastos de Administración';
         }
+
+        const montoBase = ((dte.montoNeto || 0) + (dte.montoExento || 0)) * factor;
 
         if (!debePorCuenta[codigoFinal]) {
           debePorCuenta[codigoFinal] = { nombre: nombreFinal || 'Gasto Operacional', monto: 0 };
         }
-        debePorCuenta[codigoFinal].monto += (dte.montoNeto * factor);
+        debePorCuenta[codigoFinal].monto += montoBase;
       }
     });
 
@@ -659,12 +666,14 @@ export function generateMonthlyCentralizationEntry(
   } else {
     // ----------------------------------------------------
     // CENTRALIZACIÓN DE VENTAS:
-    // DEBE: Clientes Nacionales (1.1.03) por Total Facturado
-    // HABER: Ingresos por Ventas del Giro (4.1.01) por Monto Neto
-    // HABER: IVA Débito Fiscal (2.1.04) por Monto IVA
+    // DEBE: Clientes Nacionales (1.1.03) por Total Facturado (Bruto)
+    // HABER: Ingresos por Ventas del Giro (4.1.01) por Monto Neto Afecto
+    // HABER: Ingresos por Servicios / Ventas Exentas (4.1.02) por Monto Exento
+    // HABER: IVA Débito Fiscal (2.1.04) por Monto IVA Débito
     // ----------------------------------------------------
     let totalBrutoClientes = 0;
     let totalNetoVentas = 0;
+    let totalExentoVentas = 0;
     let totalIvaDebito = 0;
 
     dtesFiltrados.forEach(dte => {
@@ -673,6 +682,7 @@ export function generateMonthlyCentralizationEntry(
 
       totalBrutoClientes += dte.montoTotal * factor;
       totalNetoVentas += dte.montoNeto * factor;
+      totalExentoVentas += (dte.montoExento || 0) * factor;
       totalIvaDebito += dte.montoIva * factor;
     });
 
@@ -680,25 +690,76 @@ export function generateMonthlyCentralizationEntry(
     lines.push({
       cuentaCodigo: config.cuentaVentasActivo.codigo,
       cuentaNombre: config.cuentaVentasActivo.nombre,
-      debe: Math.round(totalBrutoClientes),
-      haber: 0
+      debe: totalBrutoClientes < 0 ? 0 : Math.round(totalBrutoClientes),
+      haber: totalBrutoClientes < 0 ? Math.round(Math.abs(totalBrutoClientes)) : 0
     });
 
-    // 2. HABER: Ventas Netas del Giro
-    lines.push({
-      cuentaCodigo: config.cuentaVentasIngreso.codigo,
-      cuentaNombre: config.cuentaVentasIngreso.nombre,
-      debe: 0,
-      haber: Math.round(totalNetoVentas)
-    });
+    // 2. HABER: Ventas Netas del Giro (Afectas)
+    if (totalNetoVentas > 0) {
+      lines.push({
+        cuentaCodigo: config.cuentaVentasIngreso.codigo,
+        cuentaNombre: config.cuentaVentasIngreso.nombre,
+        debe: 0,
+        haber: Math.round(totalNetoVentas)
+      });
+    } else if (totalNetoVentas < 0) {
+      lines.push({
+        cuentaCodigo: config.cuentaVentasIngreso.codigo,
+        cuentaNombre: config.cuentaVentasIngreso.nombre,
+        debe: Math.round(Math.abs(totalNetoVentas)),
+        haber: 0
+      });
+    }
 
-    // 3. HABER: IVA Débito Fiscal
+    // 3. HABER: Ventas / Servicios Exentos del Giro
+    if (totalExentoVentas > 0) {
+      const cuentaExenta = config.cuentaVentasExentasIngreso || {
+        codigo: '4.1.02',
+        nombre: 'Ingresos por Servicios Exentos del Giro'
+      };
+      lines.push({
+        cuentaCodigo: cuentaExenta.codigo,
+        cuentaNombre: cuentaExenta.nombre,
+        debe: 0,
+        haber: Math.round(totalExentoVentas)
+      });
+    } else if (totalExentoVentas < 0) {
+      const cuentaExenta = config.cuentaVentasExentasIngreso || {
+        codigo: '4.1.02',
+        nombre: 'Ingresos por Servicios Exentos del Giro'
+      };
+      lines.push({
+        cuentaCodigo: cuentaExenta.codigo,
+        cuentaNombre: cuentaExenta.nombre,
+        debe: Math.round(Math.abs(totalExentoVentas)),
+        haber: 0
+      });
+    }
+
+    // Si tanto neto como exento son 0, incluir línea con 0
+    if (totalNetoVentas === 0 && totalExentoVentas === 0) {
+      lines.push({
+        cuentaCodigo: config.cuentaVentasIngreso.codigo,
+        cuentaNombre: config.cuentaVentasIngreso.nombre,
+        debe: 0,
+        haber: 0
+      });
+    }
+
+    // 4. HABER: IVA Débito Fiscal
     if (totalIvaDebito > 0) {
       lines.push({
         cuentaCodigo: config.cuentaIvaDebito.codigo,
         cuentaNombre: config.cuentaIvaDebito.nombre,
         debe: 0,
         haber: Math.round(totalIvaDebito)
+      });
+    } else if (totalIvaDebito < 0) {
+      lines.push({
+        cuentaCodigo: config.cuentaIvaDebito.codigo,
+        cuentaNombre: config.cuentaIvaDebito.nombre,
+        debe: Math.round(Math.abs(totalIvaDebito)),
+        haber: 0
       });
     }
   }

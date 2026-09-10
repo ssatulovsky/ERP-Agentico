@@ -16,6 +16,7 @@ import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
 import { SiiPlaywrightRunner } from "./src/services/siiPlaywrightRunner";
 import { RcvIngestionService } from "./src/services/rcvIngestionService";
 import { startWorkers } from "./src/workers";
+import { isRedisConfigured } from "./src/queues/redisConfig";
 import { IndicatorSyncService } from "./src/services/indicatorSyncService";
 import { checkMySqlConnection } from "./src/db/mysqlClient";
 import { INITIAL_CLIENTS, seedDtes, seedPayrolls } from "./src/data/seedData";
@@ -612,14 +613,14 @@ app.post("/api/f29/senior-agent", async (req, res) => {
   try {
     let { empresa, dtes, payrolls, indicators, query, options } = req.body;
     if (!empresa) {
-      const empId = req.body.empresaId || '76.892.410-K';
+      const empId = req.body.empresaId || '77.798.901-4';
       empresa = INITIAL_CLIENTS.find(c => c.rut === empId) || INITIAL_CLIENTS[0];
     }
-    if (!dtes || !Array.isArray(dtes) || dtes.length === 0) {
-      dtes = seedDtes;
+    if (dtes === undefined || !Array.isArray(dtes)) {
+      dtes = [];
     }
-    if (!payrolls || !Array.isArray(payrolls) || payrolls.length === 0) {
-      payrolls = seedPayrolls;
+    if (payrolls === undefined || !Array.isArray(payrolls)) {
+      payrolls = [];
     }
     if (!indicators) {
       indicators = DEFAULT_INDICATORS;
@@ -744,7 +745,7 @@ app.post("/api/f29/senior-agent", async (req, res) => {
     ].filter(l => l.debe > 0 || l.haber > 0);
 
     const normalizedF29Entry = normalizeAndValidateJournalEntry({
-      empresaId: empresa?.rut || '76.892.410-K',
+      empresaId: empresa?.rut || '77.798.901-4',
       periodo,
       fecha: `${periodo}-20`,
       glosaGeneral: `Liquidación y Centralización F29 Período ${periodo} - ${empresa?.razonSocial || 'Empresa'}`,
@@ -813,7 +814,7 @@ Debes responder SIEMPRE en dos capas:
    - Bloque de código JSON con los códigos exactos del F29 y el asiento contable de centralización de impuestos con la siguiente estructura:
 \`\`\`json
 {
-  "empresa_id": "${empresa?.rut || '76.892.410-K'}",
+  "empresa_id": "${empresa?.rut || '77.798.901-4'}",
   "periodo_tributario": "${periodo}",
   "estado_liquidacion": "PRE_DECLARACION",
   "f29_mapeo": {
@@ -1029,9 +1030,9 @@ async function startServer() {
     });
 
   // Inicialización de workers de procesamiento en segundo plano (BullMQ)
-  if (process.env.REDIS_HOST || process.env.REDIS_URL) {
+  if (isRedisConfigured()) {
     startWorkers().catch((wErr) => {
-      console.warn("[Server] Aviso: Workers BullMQ no iniciados automáticamente (Redis no disponible):", wErr.message);
+      console.info("[Server] Aviso workers BullMQ:", wErr.message);
     });
   }
   if (process.env.NODE_ENV !== "production") {

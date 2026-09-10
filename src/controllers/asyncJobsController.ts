@@ -141,30 +141,34 @@ asyncJobsRouter.post(
       const existingJob = await f29Queue.getJob(deduplicationKey);
       if (existingJob && !forceRecompute) {
         const rawState = await existingJob.getState();
-        const apiStatus = mapBullMQStateToApiStatus(rawState);
-        const statusUrl = `/api/jobs/${QUEUE_NAMES.F29_SETTLEMENT}/${existingJob.id}`;
+        if (rawState !== 'failed') {
+          const apiStatus = mapBullMQStateToApiStatus(rawState);
+          const statusUrl = `/api/jobs/${QUEUE_NAMES.F29_SETTLEMENT}/${existingJob.id}`;
 
-        console.log(`[API:F29:Idempotency] [${traceId}] Trabajo existente detectado: ${existingJob.id} (${apiStatus})`);
+          console.log(`[API:F29:Idempotency] [${traceId}] Trabajo existente detectado: ${existingJob.id} (${apiStatus})`);
 
-        res.setHeader('Location', statusUrl);
-        res.status(202).json({
-          success: true,
-          status: 'ACCEPTED',
-          code: 'JOB_ALREADY_EXISTS',
-          traceId,
-          message: 'Existe un cálculo de liquidación F29 registrado o en ejecución para este periodo.',
-          data: {
-            jobId: existingJob.id,
-            queue: QUEUE_NAMES.F29_SETTLEMENT,
-            status: apiStatus,
-            statusUrl,
-            empresaId,
-            periodo,
-            isExisting: true,
-            createdAt: new Date(existingJob.timestamp).toISOString(),
-          },
-        });
-        return;
+          res.setHeader('Location', statusUrl);
+          res.status(202).json({
+            success: true,
+            status: 'ACCEPTED',
+            code: 'JOB_ALREADY_EXISTS',
+            traceId,
+            message: 'Existe un cálculo de liquidación F29 registrado o en ejecución para este periodo.',
+            data: {
+              jobId: existingJob.id,
+              queue: QUEUE_NAMES.F29_SETTLEMENT,
+              status: apiStatus,
+              statusUrl,
+              empresaId,
+              periodo,
+              isExisting: true,
+              createdAt: new Date(existingJob.timestamp).toISOString(),
+            },
+          });
+          return;
+        }
+        console.log(`[API:F29:Idempotency] [${traceId}] Trabajo previo ${existingJob.id} falló. Permitiendo reintentar cálculo.`);
+        try { await existingJob.remove(); } catch (_) {}
       }
 
       console.log(`[API:F29:Dispatch] [${traceId}] Encolando liquidación F29 para empresa ${empresaId} (${periodo})`);
@@ -230,28 +234,32 @@ asyncJobsRouter.post(
       const existingJob = await f29Queue.getJob(deduplicationKey);
       if (existingJob && !forceRecompute) {
         const rawState = await existingJob.getState();
-        const apiStatus = mapBullMQStateToApiStatus(rawState);
-        const statusUrl = `/api/jobs/${QUEUE_NAMES.F29_SETTLEMENT}/${existingJob.id}`;
+        if (rawState !== 'failed') {
+          const apiStatus = mapBullMQStateToApiStatus(rawState);
+          const statusUrl = `/api/jobs/${QUEUE_NAMES.F29_SETTLEMENT}/${existingJob.id}`;
 
-        res.setHeader('Location', statusUrl);
-        res.status(202).json({
-          success: true,
-          status: 'ACCEPTED',
-          code: 'JOB_ALREADY_EXISTS',
-          traceId,
-          message: 'Existe un cálculo de liquidación F29 registrado o en ejecución para este periodo.',
-          data: {
-            jobId: existingJob.id,
-            queue: QUEUE_NAMES.F29_SETTLEMENT,
-            status: apiStatus,
-            statusUrl,
-            empresaId,
-            periodo,
-            isExisting: true,
-            createdAt: new Date(existingJob.timestamp).toISOString(),
-          },
-        });
-        return;
+          res.setHeader('Location', statusUrl);
+          res.status(202).json({
+            success: true,
+            status: 'ACCEPTED',
+            code: 'JOB_ALREADY_EXISTS',
+            traceId,
+            message: 'Existe un cálculo de liquidación F29 registrado o en ejecución para este periodo.',
+            data: {
+              jobId: existingJob.id,
+              queue: QUEUE_NAMES.F29_SETTLEMENT,
+              status: apiStatus,
+              statusUrl,
+              empresaId,
+              periodo,
+              isExisting: true,
+              createdAt: new Date(existingJob.timestamp).toISOString(),
+            },
+          });
+          return;
+        }
+        console.log(`[API:F29:Idempotency] [${traceId}] Reintentando trabajo previo fallido ${existingJob.id}`);
+        try { await existingJob.remove(); } catch (_) {}
       }
 
       const job = await scheduleF29Settlement({

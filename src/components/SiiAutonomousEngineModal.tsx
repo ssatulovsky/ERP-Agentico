@@ -1460,10 +1460,10 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   Define contra qué cuentas contables se centralizan las compras (Proveedores) y las ventas (Clientes).
                 </p>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">
-                      Cuenta Pasivo Compras (Contraparte Proveedores):
+                      Cuenta Pasivo Compras (Proveedores):
                     </label>
                     <select
                       value={centralizationConfig.cuentaComprasPasivo.codigo}
@@ -1485,7 +1485,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
 
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">
-                      Cuenta Activo Ventas (Contraparte Clientes):
+                      Cuenta Activo Ventas (Clientes):
                     </label>
                     <select
                       value={centralizationConfig.cuentaVentasActivo.codigo}
@@ -1501,7 +1501,51 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-medium outline-none"
                     >
                       <option value="1.1.03">1.1.03 - Clientes Nacionales</option>
-                      <option value="1.1.01">1.1.01 - Banco Santander Cta Cte (Ventas de Contado)</option>
+                      <option value="1.1.01">1.1.01 - Banco Santander Cta Cte (Contado)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">
+                      Cuenta Ventas Exentas / Servicios:
+                    </label>
+                    <select
+                      value={centralizationConfig.cuentaVentasExentasIngreso?.codigo || '4.1.02'}
+                      onChange={(e) => {
+                        const acc = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === e.target.value);
+                        if (acc) {
+                          setCentralizationConfig({
+                            ...centralizationConfig,
+                            cuentaVentasExentasIngreso: { codigo: acc.codigo, nombre: acc.nombre }
+                          });
+                        }
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-medium outline-none"
+                    >
+                      <option value="4.1.02">4.1.02 - Ingresos por Servicios Exentos del Giro</option>
+                      <option value="4.1.01">4.1.01 - Ingresos por Ventas del Giro (Afectas)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">
+                      Cuenta Compras Exentas (Gasto Base):
+                    </label>
+                    <select
+                      value={centralizationConfig.cuentaComprasExentasGasto?.codigo || '5.1.98'}
+                      onChange={(e) => {
+                        const acc = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === e.target.value);
+                        if (acc) {
+                          setCentralizationConfig({
+                            ...centralizationConfig,
+                            cuentaComprasExentasGasto: { codigo: acc.codigo, nombre: acc.nombre }
+                          });
+                        }
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-medium outline-none"
+                    >
+                      <option value="5.1.98">5.1.98 - Gastos y Adquisiciones Exentas</option>
+                      <option value="5.1.99">5.1.99 - Otros Gastos Generales de Adm.</option>
                     </select>
                   </div>
                 </div>
@@ -1510,67 +1554,87 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
               {/* Botones de Generación de Centralizaciones */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Centralización Compras */}
-                <div className="border border-slate-200 rounded-xl p-5 space-y-3">
+                <div className="border border-slate-200 rounded-xl p-5 space-y-3 bg-white shadow-sm">
                   <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-slate-800 text-sm">Centralización Libro de Compras</h4>
+                    <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span>
+                      Centralización Libro de Compras
+                    </h4>
                     <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[11px] font-bold">
                       {libroCompras.totalDocumentos} Facturas
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Genera el asiento cargando las cuentas de gasto/mercaderías imputadas y el IVA Crédito Fiscal al DEBE, contra la cuenta <strong>{centralizationConfig.cuentaComprasPasivo.nombre}</strong> al HABER.
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Genera el asiento cargando las cuentas de gasto/mercaderías imputadas (afectas y exentas) y el IVA Crédito Fiscal al <strong>DEBE</strong>, contra la cuenta <strong>{centralizationConfig.cuentaComprasPasivo.nombre} ({centralizationConfig.cuentaComprasPasivo.codigo})</strong> al <strong>HABER</strong>.
                   </p>
-                  <div className="bg-slate-50 p-3 rounded-lg text-xs font-mono space-y-1">
+                  <div className="bg-slate-50 p-3 rounded-lg text-xs font-mono space-y-1.5 border border-slate-100">
                     <div className="flex justify-between">
-                      <span>Total Neto Compras:</span>
-                      <strong>{formatCLP(libroCompras.totalNeto)}</strong>
+                      <span className="text-slate-600">Total Neto Afecto Compras:</span>
+                      <strong className="text-slate-800">{formatCLP(libroCompras.totalNeto)}</strong>
                     </div>
                     <div className="flex justify-between">
-                      <span>Total IVA Crédito (1.1.08):</span>
-                      <strong className="text-blue-700">{formatCLP(libroCompras.totalIvaRecuperable)}</strong>
+                      <span className="text-amber-700">Total Compras Exentas:</span>
+                      <strong className={libroCompras.totalExento > 0 ? "text-amber-700 font-bold" : "text-slate-400"}>
+                        {formatCLP(libroCompras.totalExento)}
+                      </strong>
                     </div>
-                    <div className="flex justify-between pt-1 border-t border-slate-200">
-                      <span>Total a Proveedores ({centralizationConfig.cuentaComprasPasivo.codigo}):</span>
-                      <strong className="text-slate-900">{formatCLP(libroCompras.totalBruto)}</strong>
+                    <div className="flex justify-between">
+                      <span className="text-blue-700">Total IVA Crédito (1.1.08):</span>
+                      <strong className="text-blue-700 font-bold">{formatCLP(libroCompras.totalIvaRecuperable)}</strong>
+                    </div>
+                    <div className="flex justify-between pt-1.5 border-t border-slate-200">
+                      <span className="text-slate-900 font-semibold">Total a Proveedores ({centralizationConfig.cuentaComprasPasivo.codigo}):</span>
+                      <strong className="text-slate-950 font-black">{formatCLP(libroCompras.totalBruto)}</strong>
                     </div>
                   </div>
                   <button
                     onClick={() => handleGenerateCentralization('COMPRA')}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
+                    <Sliders className="w-3.5 h-3.5" />
                     Generar Asiento Centralización Compras ({selectedPeriod})
                   </button>
                 </div>
 
                 {/* Centralización Ventas */}
-                <div className="border border-slate-200 rounded-xl p-5 space-y-3">
+                <div className="border border-slate-200 rounded-xl p-5 space-y-3 bg-white shadow-sm">
                   <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-slate-800 text-sm">Centralización Libro de Ventas</h4>
+                    <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>
+                      Centralización Libro de Ventas
+                    </h4>
                     <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[11px] font-bold">
                       {libroVentas.totalDocumentos} Facturas
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Genera el asiento cargando la cuenta <strong>{centralizationConfig.cuentaVentasActivo.nombre}</strong> al DEBE, contra Ventas del Giro (4.1.01) e IVA Débito Fiscal (2.1.04) al HABER.
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Genera el asiento cargando la cuenta <strong>{centralizationConfig.cuentaVentasActivo.nombre} ({centralizationConfig.cuentaVentasActivo.codigo})</strong> al <strong>DEBE</strong>, contra Ventas del Giro (4.1.01), Servicios/Ventas Exentas ({centralizationConfig.cuentaVentasExentasIngreso?.codigo || '4.1.02'}) e IVA Débito Fiscal (2.1.04) al <strong>HABER</strong>.
                   </p>
-                  <div className="bg-slate-50 p-3 rounded-lg text-xs font-mono space-y-1">
+                  <div className="bg-slate-50 p-3 rounded-lg text-xs font-mono space-y-1.5 border border-slate-100">
                     <div className="flex justify-between">
-                      <span>Total Clientes ({centralizationConfig.cuentaVentasActivo.codigo}):</span>
-                      <strong className="text-slate-900">{formatCLP(libroVentas.totalBruto)}</strong>
+                      <span className="text-slate-900 font-semibold">Total Clientes ({centralizationConfig.cuentaVentasActivo.codigo}):</span>
+                      <strong className="text-slate-950 font-black">{formatCLP(libroVentas.totalBruto)}</strong>
                     </div>
                     <div className="flex justify-between">
-                      <span>Ventas Netas (4.1.01):</span>
-                      <strong>{formatCLP(libroVentas.totalNeto)}</strong>
+                      <span className="text-slate-600">Ventas Netas Afectas (4.1.01):</span>
+                      <strong className="text-slate-800">{formatCLP(libroVentas.totalNeto)}</strong>
                     </div>
-                    <div className="flex justify-between pt-1 border-t border-slate-200">
-                      <span>IVA Débito Fiscal (2.1.04):</span>
-                      <strong className="text-emerald-700">{formatCLP(libroVentas.totalIvaDebito)}</strong>
+                    <div className="flex justify-between bg-amber-50/60 -mx-1 px-1 py-0.5 rounded">
+                      <span className="text-amber-800 font-medium">Ventas / Servicios Exentos ({centralizationConfig.cuentaVentasExentasIngreso?.codigo || '4.1.02'}):</span>
+                      <strong className={libroVentas.totalExento > 0 ? "text-amber-800 font-bold" : "text-slate-400"}>
+                        {formatCLP(libroVentas.totalExento)}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between pt-1.5 border-t border-slate-200">
+                      <span className="text-emerald-700">IVA Débito Fiscal (2.1.04):</span>
+                      <strong className="text-emerald-700 font-bold">{formatCLP(libroVentas.totalIvaDebito)}</strong>
                     </div>
                   </div>
                   <button
                     onClick={() => handleGenerateCentralization('VENTA')}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
+                    <Sliders className="w-3.5 h-3.5" />
                     Generar Asiento Centralización Ventas ({selectedPeriod})
                   </button>
                 </div>

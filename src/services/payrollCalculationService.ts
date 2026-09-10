@@ -166,6 +166,17 @@ export class PayrollCalculationService {
    */
   public static async getOrSeedEmployees(empresaId: string): Promise<EmployeeRecord[]> {
     const cleanEmpresaId = empresaId.replace(/\./g, '').trim().toUpperCase();
+
+    // InnovAgile y empresas sin nómina precargada inician estrictamente limpias sin empleados mock
+    const isCleanCompany =
+      cleanEmpresaId.includes('77798901') ||
+      cleanEmpresaId.includes('76892410') ||
+      cleanEmpresaId === 'CLIENT-INNOVAGILE';
+
+    if (isCleanCompany) {
+      return [];
+    }
+
     const db = getMysqlDb();
 
     if (isRealMysqlConnected) {
@@ -178,8 +189,8 @@ export class PayrollCalculationService {
         return records;
       }
 
-      // Sembrar colaboradores iniciales si no existen registros previos
-      console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa: ${cleanEmpresaId}`);
+      // Sembrar colaboradores iniciales solo para empresas demo
+      console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa demo: ${cleanEmpresaId}`);
       for (const emp of SEED_EMPLOYEES_DATA) {
         const id = crypto.randomUUID();
         await db.insert(employees).values({
@@ -200,7 +211,7 @@ export class PayrollCalculationService {
         .where(and(eq(employees.empresaId, cleanEmpresaId), eq(employees.activo, true)));
     }
 
-    // Si está en modo contingencia (sin MySQL en ejecución local)
+    // Si está en modo contingencia y no es InnovAgile
     return SEED_EMPLOYEES_DATA.map((e, idx) => ({
       id: `emp-local-${idx + 1}`,
       empresaId: cleanEmpresaId,
@@ -378,7 +389,27 @@ export class PayrollCalculationService {
     const activeEmployees = await this.getOrSeedEmployees(cleanEmpresaId);
 
     if (activeEmployees.length === 0) {
-      throw new Error(`SIN_TRABAJADORES: No existen trabajadores activos registrados para la empresa ${cleanEmpresaId}.`);
+      console.log(`[PayrollService] Empresa ${cleanEmpresaId} no posee trabajadores activos registrados. Nómina en 0 para F29.`);
+      return {
+        empresaId: cleanEmpresaId,
+        periodo,
+        totalTrabajadores: 0,
+        totalHaberesImponibles: 0,
+        totalHaberesNoImponibles: 0,
+        totalHaberesBrutos: 0,
+        totalAfp: 0,
+        totalSalud: 0,
+        totalAfcTrabajador: 0,
+        totalImpuestoUnico: 0,
+        totalDescuentos: 0,
+        totalSueldosLiquidos: 0,
+        totalAfcEmpleador: 0,
+        totalSisEmpleador: 0,
+        totalMutualEmpleador: 0,
+        costoTotalEmpresa: 0,
+        asientoCentralizacionId: '',
+        detalles: [],
+      };
     }
 
     // 3. Procesar liquidación pericial de cada colaborador

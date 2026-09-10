@@ -1016,7 +1016,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
       {/* PESTAÑA 5: MONITOR ASÍNCRONO DE COLA (BULLMQ + SSE + POLLING HOOK) */}
       {activeSubTab === 'queue_tracker' && (
         <div className="space-y-6">
-          <F29SettlementTrackerExample />
+          <F29SettlementTrackerExample company={company} periodo={selectedPeriod} />
         </div>
       )}
 

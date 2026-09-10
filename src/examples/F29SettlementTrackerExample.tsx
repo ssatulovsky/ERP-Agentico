@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Calculator,
   RotateCcw,
@@ -19,6 +19,12 @@ import {
 import { useJobMonitor } from '../hooks/useJobMonitor';
 import type { AgentJobResult, F29SettlementOutput } from '../queues/types';
 import type { JobProgress } from '../hooks/types/jobMonitoring.types';
+import type { CompanyProfile, ClientCompany } from '../types';
+
+export interface F29SettlementTrackerExampleProps {
+  company?: CompanyProfile | ClientCompany;
+  periodo?: string;
+}
 
 /**
  * Componente visual de ejemplo para monitorear el ciclo de vida reactivo
@@ -31,12 +37,28 @@ import type { JobProgress } from '../hooks/types/jobMonitoring.types';
  * 4. Presentación accesible de estados ('idle', 'enqueued', 'processing', 'completed', 'failed', 'timeout').
  * 5. Visualización del resultado contable (`f29_mapeo` y asientos asociados).
  */
-export const F29SettlementTrackerExample: React.FC = () => {
-  // Parámetros del formulario de liquidación F29
-  const [empresaId, setEmpresaId] = useState<string>('76.892.410-K');
-  const [periodo, setPeriodo] = useState<string>('2026-09');
+export const F29SettlementTrackerExample: React.FC<F29SettlementTrackerExampleProps> = ({
+  company,
+  periodo: initialPeriodo,
+}) => {
+  // Parámetros del formulario de liquidación F29 sincronizados con la empresa activa
+  const [empresaId, setEmpresaId] = useState<string>(company?.rut || '77.798.901-4');
+  const [periodo, setPeriodo] = useState<string>(initialPeriodo || '2026-09');
   const [aplicarPostergacionIva, setAplicarPostergacionIva] = useState<boolean>(false);
   const [forceRecompute, setForceRecompute] = useState<boolean>(true);
+
+  // Sincronizar automáticamente si cambia la empresa o período en el contexto principal
+  useEffect(() => {
+    if (company?.rut) {
+      setEmpresaId(company.rut);
+    }
+  }, [company?.rut]);
+
+  useEffect(() => {
+    if (initialPeriodo) {
+      setPeriodo(initialPeriodo);
+    }
+  }, [initialPeriodo]);
 
   // Modo de monitoreo configurable
   const [monitorMode, setMonitorMode] = useState<'auto' | 'sse' | 'polling'>('auto');
@@ -120,8 +142,8 @@ export const F29SettlementTrackerExample: React.FC = () => {
     }
   };
 
-  // Helper para tipar la carga útil de salida generada
-  const f29Output = (result?.payloadGenerado as F29SettlementOutput | undefined) || undefined;
+  // Helper para tipar la carga útil de salida generada con tolerancia a estructuras anidadas
+  const f29Output = (result?.payloadGenerado as any) || (result as any) || undefined;
 
   return (
     <div id="f29-settlement-tracker-container" className="w-full max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
@@ -190,23 +212,37 @@ export const F29SettlementTrackerExample: React.FC = () => {
         {/* Formulario de Despacho (POST /api/jobs/f29/settle) */}
         <div id="f29-dispatch-card" className="lg:col-span-5 bg-white border border-neutral-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-base font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-neutral-600" />
-              Parámetros de Liquidación
-            </h3>
+            <div className="mb-4">
+              <h3 className="text-base font-semibold text-neutral-900 flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-neutral-600" />
+                Parámetros de Liquidación F29
+              </h3>
+              {company && (
+                <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800">{company.razonSocial}</span>
+                    <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">{company.rut}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Autenticación SII configurada con RUT {company.rutAutenticacion || company.rut}</span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <form id="f29-dispatch-form" onSubmit={handleEnqueueF29} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  RUT / Identificador de Empresa
+                  RUT / Identificador de Empresa (Heredado de sesión)
                 </label>
                 <input
                   id="empresaId-input"
                   type="text"
                   value={empresaId}
                   onChange={(e) => setEmpresaId(e.target.value)}
-                  placeholder="Ej. 76.892.410-K"
-                  className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ej. 77.798.901-4"
+                  className="w-full px-3 py-2 text-sm font-mono border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50"
                   required
                 />
               </div>
@@ -411,7 +447,7 @@ export const F29SettlementTrackerExample: React.FC = () => {
                     Liquidación F29 Determinada con Éxito
                   </h4>
                   <span className="text-[11px] font-mono text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
-                    Asiento: {f29Output.asientoContableId}
+                    Asiento: {f29Output.asientoContableId || f29Output.asientoId || 'Generado'}
                   </span>
                 </div>
 
@@ -419,37 +455,37 @@ export const F29SettlementTrackerExample: React.FC = () => {
                   <div className="p-2.5 bg-white rounded border border-emerald-100">
                     <span className="text-neutral-500 block">Débito Fiscal (IVA Vtas):</span>
                     <strong className="text-neutral-900 font-mono text-sm">
-                      ${f29Output.debitoFiscal.toLocaleString('es-CL')}
+                      ${Number(f29Output.debitoFiscal ?? f29Output.casillas?.c538_debitoFiscal ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                   <div className="p-2.5 bg-white rounded border border-emerald-100">
                     <span className="text-neutral-500 block">Crédito Fiscal (IVA Compras):</span>
                     <strong className="text-neutral-900 font-mono text-sm">
-                      ${f29Output.creditoFiscal.toLocaleString('es-CL')}
+                      ${Number(f29Output.creditoFiscal ?? f29Output.casillas?.c537_totalCreditoFiscal ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                   <div className="p-2.5 bg-white rounded border border-emerald-100">
                     <span className="text-neutral-500 block">IVA Determinado:</span>
                     <strong className="text-neutral-900 font-mono text-sm">
-                      ${f29Output.ivaDeterminado.toLocaleString('es-CL')}
+                      ${Number(f29Output.ivaDeterminado ?? f29Output.casillas?.c089_impuestoDeterminado ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                   <div className="p-2.5 bg-white rounded border border-emerald-100">
-                    <span className="text-neutral-500 block">PPM (Tasa {(f29Output.tasaPpm * 100).toFixed(2)}%):</span>
+                    <span className="text-neutral-500 block">PPM (Tasa {Number((f29Output.tasaPpm ?? 0.01) * 100).toFixed(2)}%):</span>
                     <strong className="text-neutral-900 font-mono text-sm">
-                      ${f29Output.montoPpm.toLocaleString('es-CL')}
+                      ${Number(f29Output.montoPpm ?? f29Output.casillas?.c062_ppmDeterminado ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                   <div className="p-2.5 bg-white rounded border border-emerald-100">
                     <span className="text-neutral-500 block">Retención Honorarios:</span>
                     <strong className="text-neutral-900 font-mono text-sm">
-                      ${f29Output.retencionHonorarios.toLocaleString('es-CL')}
+                      ${Number(f29Output.retencionHonorarios ?? f29Output.casillas?.c151_retencionSegundaCategoria ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                   <div className="p-2.5 bg-blue-50/80 rounded border border-blue-200">
                     <span className="text-blue-800 font-medium block">Total Impuesto a Pagar:</span>
                     <strong className="text-blue-900 font-mono text-sm font-bold">
-                      ${f29Output.totalImpuestoPagar.toLocaleString('es-CL')}
+                      ${Number(f29Output.totalImpuestoPagar ?? f29Output.casillas?.c091_totalAPagar ?? 0).toLocaleString('es-CL')}
                     </strong>
                   </div>
                 </div>
@@ -457,7 +493,7 @@ export const F29SettlementTrackerExample: React.FC = () => {
                 <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px] text-emerald-800">
                   <span className="flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Firma Contable: <code className="font-mono">{f29Output.supervisorSignature.slice(0, 16)}...</code>
+                    Firma Contable: <code className="font-mono">{String(f29Output.supervisorSignature || 'SUPERVISOR-FIRMA-OK').slice(0, 16)}...</code>
                   </span>
                   <span>Tiempo Worker: <strong>{result?.tiempoEjecucionMs ?? 0}ms</strong></span>
                 </div>

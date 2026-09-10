@@ -307,12 +307,18 @@ export function calculatePreF29(
 
   // 1. Débito Fiscal IVA
   if (totalDebitoCalculado > 0) {
-    rawLinesForNormalization.push({ nombreCuenta: 'IVA Débito Fiscal', debe: totalDebitoCalculado, haber: 0 });
+    rawLinesForNormalization.push({ 
+      codigoCuenta: '2.1.03',
+      nombreCuenta: 'IVA Débito Fiscal', 
+      debe: totalDebitoCalculado, 
+      haber: 0 
+    });
   }
 
   // 2. Gasto IVA No Recuperable por Proporcionalidad (Art. 23 N° 3 DL 825)
   if (ivaNoRecuperableProporcionalidad > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '5.2.12',
       nombreCuenta: 'Gasto IVA No Recuperable (Art. 23 DL 825)',
       debe: ivaNoRecuperableProporcionalidad,
       haber: 0
@@ -322,6 +328,7 @@ export function calculatePreF29(
   // 3. Retenciones Honorarios 2da Categoría
   if (retencionHonorariosSegundaCat > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '2.1.04',
       nombreCuenta: 'Retenciones Honorarios por Pagar',
       debe: retencionHonorariosSegundaCat,
       haber: 0
@@ -331,6 +338,7 @@ export function calculatePreF29(
   // 4. Impuesto Único de Segunda Categoría
   if (impuestoUnicoTrabajadoresSueldos > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '2.1.05',
       nombreCuenta: 'Impuesto Único por Pagar',
       debe: impuestoUnicoTrabajadoresSueldos,
       haber: 0
@@ -340,7 +348,8 @@ export function calculatePreF29(
   // 5. PPM por Recuperar (Activo)
   if (ppmDeterminado > 0) {
     rawLinesForNormalization.push({
-      nombreCuenta: 'PPM por Recuperar (Activo)',
+      codigoCuenta: '1.1.07',
+      nombreCuenta: 'PPM Pagos Provisorios Mensuales por Recuperar',
       debe: ppmDeterminado,
       haber: 0
     });
@@ -349,6 +358,7 @@ export function calculatePreF29(
   // 6. Remanente Crédito Fiscal Mes Siguiente (si sobró crédito a favor)
   if (saldoAFavorORemanente > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '1.1.06',
       nombreCuenta: 'Remanente Crédito Fiscal (Mes Siguiente)',
       debe: saldoAFavorORemanente,
       haber: 0
@@ -359,6 +369,7 @@ export function calculatePreF29(
   const creditoMesTotal = creditoFiscalNormal + comprasActivoFijoIva;
   if (creditoMesTotal > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '1.1.05',
       nombreCuenta: 'IVA Crédito Fiscal',
       debe: 0,
       haber: creditoMesTotal
@@ -368,6 +379,7 @@ export function calculatePreF29(
   // 8. Remanente Mes Anterior consumido/compensado
   if (remanenteReajustadoClp > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '1.1.06',
       nombreCuenta: 'Remanente Crédito Fiscal (Mes Anterior)',
       debe: 0,
       haber: remanenteReajustadoClp
@@ -377,10 +389,30 @@ export function calculatePreF29(
   // 9. Total a Pagar F29 (TGR)
   if (totalAPagarF29 > 0) {
     rawLinesForNormalization.push({
+      codigoCuenta: '2.1.06',
       nombreCuenta: 'Impuestos por Pagar (F29 / TGR)',
       debe: 0,
       haber: totalAPagarF29
     });
+  }
+
+  // Si la empresa no presenta movimientos tributarios con cargo o abono ($0 determinado),
+  // se incluye registro memorial de control formal para cumplir con la partida doble canónica.
+  if (rawLinesForNormalization.length === 0) {
+    rawLinesForNormalization.push(
+      {
+        codigoCuenta: '9.9.99.01',
+        nombreCuenta: 'Cuentas de Orden - Declaración F29 Sin Movimiento',
+        debe: 1,
+        haber: 0,
+      },
+      {
+        codigoCuenta: '9.9.99.02',
+        nombreCuenta: 'Cuentas de Orden Per-Contra - F29 Sin Movimiento Aceptado',
+        debe: 0,
+        haber: 1,
+      }
+    );
   }
 
   // Ejecución de la normalización canónica (Bloque 1: DEBE > 0, Bloque 2: HABER > 0)
@@ -509,6 +541,23 @@ export function convertF29AsientoToAccountingEntry(
         haber: Math.round(item.haber)
       };
     });
+
+  if (lineas.length === 0) {
+    lineas.push(
+      {
+        cuentaCodigo: '9.9.99.01',
+        cuentaNombre: 'Cuentas de Orden - Declaración F29 Sin Movimiento',
+        debe: 1,
+        haber: 0,
+      },
+      {
+        cuentaCodigo: '9.9.99.02',
+        cuentaNombre: 'Cuentas de Orden Per-Contra - F29 Sin Movimiento Aceptado',
+        debe: 0,
+        haber: 1,
+      }
+    );
+  }
 
   const normalized = normalizeAndValidateJournalEntry({
     empresaId: company.rut,

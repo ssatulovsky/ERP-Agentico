@@ -195,6 +195,7 @@ export interface DteSplitItem {
   cuentaNombre: string;
   concepto: string;
   montoNeto: number;
+  montoExento?: number;
   porcentaje?: number;
 }
 
@@ -215,7 +216,9 @@ export interface SiiCentralizationConfig {
   cuentaVentasActivo: { codigo: string; nombre: string }; // Ej: 1.1.03 Clientes Nacionales
   cuentaIvaCredito: { codigo: string; nombre: string }; // 1.1.08 IVA Crédito Fiscal
   cuentaIvaDebito: { codigo: string; nombre: string }; // 2.1.04 IVA Débito Fiscal
-  cuentaVentasIngreso: { codigo: string; nombre: string }; // 4.1.01 Ventas del Giro
+  cuentaVentasIngreso: { codigo: string; nombre: string }; // 4.1.01 Ventas del Giro (Afectas)
+  cuentaVentasExentasIngreso?: { codigo: string; nombre: string }; // 4.1.02 Ventas / Servicios Exentos
+  cuentaComprasExentasGasto?: { codigo: string; nombre: string }; // 5.1.98 Gastos y Adquisiciones Exentas
   cuentaHonorariosGasto: { codigo: string; nombre: string }; // 5.1.20 Honorarios Profesionales
   cuentaRetencionHonorarios: { codigo: string; nombre: string }; // 2.1.06 Retención Honorarios
   cuentaBancoPago: { codigo: string; nombre: string }; // 1.1.01 Banco Santander
