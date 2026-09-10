@@ -20,6 +20,7 @@ import { useJobMonitor } from '../hooks/useJobMonitor';
 import type { AgentJobResult, F29SettlementOutput } from '../queues/types';
 import type { JobProgress } from '../hooks/types/jobMonitoring.types';
 import type { CompanyProfile, ClientCompany } from '../types';
+import { StandardJournalEntryTable } from '../components/accounting/StandardJournalEntryTable';
 
 export interface F29SettlementTrackerExampleProps {
   company?: CompanyProfile | ClientCompany;
@@ -497,6 +498,37 @@ export const F29SettlementTrackerExample: React.FC<F29SettlementTrackerExamplePr
                   </span>
                   <span>Tiempo Worker: <strong>{result?.tiempoEjecucionMs ?? 0}ms</strong></span>
                 </div>
+
+                {/* Asiento Oficial F29 en Formato Estándar Canónico */}
+                {result?.comprobanteContable && (
+                  <div className="mt-3 pt-3 border-t border-emerald-200">
+                    <h5 className="text-xs font-bold text-slate-800 mb-2">
+                      Comprobante Contable F29 Centralizado (Libro Diario)
+                    </h5>
+                    <StandardJournalEntryTable
+                      entry={{
+                        id: result.comprobanteContable.asientoId,
+                        folio: result.comprobanteContable.asientoId,
+                        periodo: periodo,
+                        empresaId: company?.rut,
+                        glosaGeneral: result.comprobanteContable.concepto,
+                        documentoRef: `F29 SII Folio Electrónico`,
+                        origenModulo: 'F29_CENTRALIZACION',
+                        lineas: result.comprobanteContable.lineasContables.map((l) => ({
+                          codigoCuenta: l.codigoCuenta,
+                          nombreCuenta: l.nombreCuenta,
+                          debe: l.debe,
+                          haber: l.haber,
+                        })),
+                        totalDebe: result.comprobanteContable.totalDebe,
+                        totalHaber: result.comprobanteContable.totalHaber,
+                        supervisorSignature: result.comprobanteContable.supervisorSignature,
+                      }}
+                      showGlosaHeader={true}
+                      showCopyButton={true}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

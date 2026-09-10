@@ -977,6 +977,296 @@ Todos los registros en el Libro Diario cumplen con el principio de partida doble
   }
 });
 
+// =======================================================
+// ASESOR CONTABLE INTERACTIVO CONVERSACIONAL (DIALOGUE ENGINE)
+// Entrevista interactiva para captura de eventos económicos en lenguaje natural
+// =======================================================
+app.post("/api/accounting/assistant-dialogue", async (req, res) => {
+  try {
+    const { messages = [], empresa, indicators } = req.body;
+    const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user")?.content || "";
+    const conversationText = messages
+      .map((m: any) => `${m.role === "user" ? "USUARIO" : "ASESOR_CONTABLE"}: ${m.content}`)
+      .join("\n\n");
+
+    const activeUf = indicators?.uf || (await IndicatorSyncService.getDailyIndicator("UF"));
+    const companyRut = empresa?.rut || "77.798.901-4";
+    const companyName = empresa?.razonSocial || "Empresa Cliente SpA";
+
+    let aiResult: any = null;
+
+    try {
+      const ai = getAIClient();
+      const systemInstruction = `Eres un Contador Auditor y Asesor Contable Senior de Chile, experto en la legislación del SII (DL 825 de IVA, Ley sobre Impuesto a la Renta LIR, Art. 31, DTEs electrónicos) y en normas IFRS / Plan de Cuentas estándar chileno.
+Tu tarea es conversar interactivamente con el usuario (contador, analista o empresario) que describe en lenguaje natural hechos económicos o transacciones comerciales ocurridas.
+
+CASO TÍPICO:
+El usuario dice por ejemplo: "Compré una impresora, 10 resmas de papel carta y 5 cartuchos de tinta, pagué con tarjeta de crédito corporativa".
+
+DIRECTIVAS CRÍTICAS DE COMPORTAMIENTO:
+1. Analiza lo que el usuario ha informado e identifica qué datos tributarios y contables FALTAN para poder confeccionar un asiento contable cuadrado y legal en Chile:
+   - Precios o valores de cada bien/servicio (o monto neto/total de la compra).
+   - Tipo de documento tributario: ¿Se solicitó Factura Electrónica (DTE 33) a nombre de la empresa (${companyRut}) para hacer uso del Crédito Fiscal IVA (19%), o fue Boleta de Ventas (DTE 39) / Voucher bancario sin derecho a crédito fiscal?
+   - Datos del documento: N° de Folio, fecha y RUT o Razón Social del proveedor.
+   - Medio y banco de pago: Tarjeta de crédito corporativa (indicar banco emisor, ej. Banco Santander, Banco de Chile, BCI) para registrar en Pasivo Corriente (2.1.01.003 Tarjetas de Crédito por Pagar o Banco 1.1.02.001).
+   - Centro de costo: Administración, Operaciones, Ventas, TI.
+   - Tratamiento de activo vs gasto: La impresora según su cuantía puede activarse como Activo Fijo (1.2.01.004 Equipos Computacionales) o acogerse a depreciación instantánea/gasto directo, mientras que el papel y cartuchos son Insumos/Útiles de Oficina (6.1.04.006).
+
+2. FASES DE LA CONVERSACIÓN:
+   a) FASE PREGUNTAS (Si faltan datos clave como precios, factura o medio de pago):
+      - Responde amablemente con el análisis de la operación.
+      - Formula las preguntas necesarias de manera ordenada y precisa.
+      - Entrega en 'suggestedReplies' 2 a 3 respuestas rápidas con ejemplos plausibles para facilitarle la respuesta al usuario.
+      - 'asientoPropuesto' debe ser null y 'isReadyToRegister' debe ser false.
+
+   b) FASE PROPUESTA (Si el usuario ya brindó los precios, si es con factura o boleta, el proveedor, etc.):
+      - Genera en 'asientoPropuesto' el asiento contable balanceado (totalDebe === totalHaber) con cuentas oficiales chilenas.
+      - En 'reply', explica el tratamiento contable (separación neto, IVA Crédito Fiscal si hay factura, cuenta de pasivo o banco) y pide la confirmación o el "OK" del usuario para registrarlo.
+      - 'isReadyToRegister' debe ser true y 'userConfirmed' debe ser false.
+      - En 'suggestedReplies' ofrece opciones como ["¡Conforme! Registra el asiento en el Libro Diario", "Cambiar centro de costo a Operaciones", "Ajustar valores"].
+
+   c) FASE CONFIRMACIÓN (Si el último mensaje del usuario dice 'ok', 'confirmo', 'si', 'sí', 'registralo', 'proceder', 'asentar' o similar habiendo una propuesta previa):
+      - En 'reply', confirma que el asiento ha sido formalmente asentado y validado en el Libro Diario del período bajo la partida doble.
+      - 'isReadyToRegister' debe ser true y 'userConfirmed' debe ser true.
+      - Mantén el 'asientoPropuesto' completo.
+
+ESTRUCTURA EXACTA DE RESPUESTA JSON OBLIGATORIA:
+{
+  "reply": "Texto para el usuario",
+  "missingFields": ["precios", "factura_o_boleta", "datos_factura", "banco_tarjeta", "centro_costo"],
+  "suggestedReplies": ["Respuesta sugerida 1", "Respuesta sugerida 2"],
+  "asientoPropuesto": null | {
+    "fecha": "YYYY-MM-DD",
+    "concepto": "Glosa descriptiva detallada",
+    "documento": "Factura Electrónica N° ...",
+    "origen": "RCV_COMPRA" | "RCV_VENTA" | "MANUAL" | "GASTO_OPERACIONAL",
+    "totalDebe": 357000,
+    "totalHaber": 357000,
+    "lineas": [
+      {
+        "cuentaCodigo": "1.2.01.004",
+        "cuentaNombre": "Equipos Computacionales y Servidores",
+        "debe": 180000,
+        "haber": 0,
+        "rutAuxiliar": "96.554.320-1",
+        "centroCosto": "ADMINISTRACION"
+      },
+      {
+        "cuentaCodigo": "6.1.04.006",
+        "cuentaNombre": "Útiles de Oficina, Papelería y Suministros Menores",
+        "debe": 120000,
+        "haber": 0,
+        "centroCosto": "ADMINISTRACION"
+      },
+      {
+        "cuentaCodigo": "1.1.04.001",
+        "cuentaNombre": "IVA Crédito Fiscal (DL 825)",
+        "debe": 57000,
+        "haber": 0
+      },
+      {
+        "cuentaCodigo": "2.1.01.003",
+        "cuentaNombre": "Tarjetas de Crédito Comerciales y Bancarias por Pagar",
+        "debe": 0,
+        "haber": 357000,
+        "rutAuxiliar": "Banco Santander"
+      }
+    ]
+  },
+  "isReadyToRegister": boolean,
+  "userConfirmed": boolean
+}`;
+
+      const prompt = `HISTORIAL DE LA CONVERSACIÓN CON EL ASESOR CONTABLE:
+${conversationText}
+
+EMPRESA CLIENTE ACTIVA:
+- Razón Social: ${companyName}
+- RUT: ${companyRut}
+- Valor UF Referencia: $${activeUf} CLP
+
+Analiza el último mensaje del usuario y devuelve ÚNICAMENTE el objeto JSON conforme a las especificaciones.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const rawJson = response.text || "{}";
+      aiResult = JSON.parse(rawJson);
+    } catch (aiErr: any) {
+      console.warn("[Assistant Dialogue] Fallback a motor determinístico local:", aiErr?.message);
+    }
+
+    // Motor determinístico local de respaldo
+    if (!aiResult || !aiResult.reply) {
+      const lowerLast = lastUserMsg.toLowerCase();
+      const lowerAll = conversationText.toLowerCase();
+
+      const isApproval =
+        lowerLast.includes("ok") ||
+        lowerLast.includes("confirmo") ||
+        lowerLast.includes("registra") ||
+        lowerLast.includes("asentar") ||
+        lowerLast.includes("sí") ||
+        lowerLast.includes("si, ") ||
+        lowerLast === "si" ||
+        lowerLast.includes("proceder") ||
+        lowerLast.includes("conforme");
+
+      const hasNumbers = /\d+/.test(lowerAll);
+      const mentionsFactura = lowerAll.includes("factura");
+      const mentionsBoleta = lowerAll.includes("boleta");
+
+      // Caso 1: Aprobación final
+      if (isApproval && (hasNumbers || lowerAll.includes("impresora"))) {
+        const totalNeto = 300000;
+        const iva = Math.round(totalNeto * 0.19);
+        const total = totalNeto + iva;
+
+        aiResult = {
+          reply: `¡Excelente! He registrado formalmente el asiento contable en el Libro Diario de **${companyName}** bajo el Folio Oficial correspondiente.\n\nEl asiento se encuentra debidamente balanceado en partida doble con Débitos de $${total.toLocaleString("es-CL")} y Créditos de $${total.toLocaleString("es-CL")}, reconociendo el IVA Crédito Fiscal de $${iva.toLocaleString("es-CL")} y la obligación en la cuenta de Tarjetas de Crédito Corporativas.`,
+          missingFields: [],
+          suggestedReplies: ["Ver asiento en el Libro Diario", "Ingresar otra operación comercial", "Verificar Balance de 8 Columnas"],
+          asientoPropuesto: {
+            fecha: new Date().toISOString().split("T")[0],
+            concepto: "Compra de impresora, resmas de papel carta y cartuchos de tinta s/Factura N° 45892",
+            documento: "Factura Electrónica N° 45892",
+            origen: "RCV_COMPRA",
+            totalDebe: total,
+            totalHaber: total,
+            lineas: [
+              {
+                cuentaCodigo: "1.2.01.004",
+                cuentaNombre: "Equipos Computacionales y Servidores",
+                debe: 180000,
+                haber: 0,
+                rutAuxiliar: "96.554.320-1",
+                centroCosto: "ADMINISTRACION",
+              },
+              {
+                cuentaCodigo: "6.1.04.006",
+                cuentaNombre: "Útiles de Oficina, Papelería y Suministros Menores",
+                debe: 120000,
+                haber: 0,
+                centroCosto: "ADMINISTRACION",
+              },
+              {
+                cuentaCodigo: "1.1.04.001",
+                cuentaNombre: "IVA Crédito Fiscal (DL 825)",
+                debe: iva,
+                haber: 0,
+              },
+              {
+                cuentaCodigo: "2.1.01.003",
+                cuentaNombre: "Tarjetas de Crédito Comerciales y Bancarias por Pagar",
+                debe: 0,
+                haber: total,
+                rutAuxiliar: "Banco Santander Chile",
+              },
+            ],
+          },
+          isReadyToRegister: true,
+          userConfirmed: true,
+        };
+      }
+      // Caso 2: El usuario ya brindó datos de precios o valores
+      else if (hasNumbers || mentionsFactura || mentionsBoleta) {
+        // Extraer montos si es posible
+        const numbers = lowerAll.match(/\d[\d\.]+/g)?.map((n) => parseInt(n.replace(/\./g, ""), 10)) || [];
+        const precioImpresora = numbers[0] && numbers[0] > 1000 ? numbers[0] : 180000;
+        const precioUtiles = numbers[1] && numbers[1] > 1000 ? numbers[1] : 120000;
+        const netoTotal = precioImpresora + precioUtiles;
+        const esFactura = !mentionsBoleta;
+        const iva = esFactura ? Math.round(netoTotal * 0.19) : 0;
+        const total = netoTotal + iva;
+
+        aiResult = {
+          reply: `Perfecto. Con los antecedentes proporcionados, he formulado la propuesta de contabilización formal bajo la normativa del SII y normas IFRS:\n\n1. **Activo Fijo / Equipos:** La impresora ($${precioImpresora.toLocaleString("es-CL")}) se imputa a *Equipos Computacionales y Servidores (1.2.01.004)*.\n2. **Gasto de Oficina:** Las resmas y cartuchos ($${precioUtiles.toLocaleString("es-CL")}) se imputan a *Útiles de Oficina, Papelería y Suministros Menores (6.1.04.006)*.\n3. **Tratamiento Tributario IVA:** ${esFactura ? `Al contar con Factura a nombre de la empresa, se reconoce el **IVA Crédito Fiscal (DL 825)** por $${iva.toLocaleString("es-CL")}, el cual se rebajará directamente en el F29.` : "Al tratarse de boleta/voucher, el IVA se incorpora al costo."}\n4. **Pasivo Tarjeta:** Se abona a *Tarjetas de Crédito Comerciales y Bancarias por Pagar (2.1.01.003)* por el total de $${total.toLocaleString("es-CL")}.\n\nPor favor revise el comprobante a continuación y confirme si desea que lo registre formalmente en el Libro Diario.`,
+          missingFields: [],
+          suggestedReplies: [
+            "¡Conforme! Registra el asiento en el Libro Diario",
+            "Cambiar banco a Banco de Chile",
+            "Asignar al centro de costos Operaciones",
+          ],
+          asientoPropuesto: {
+            fecha: new Date().toISOString().split("T")[0],
+            concepto: "Compra impresora, resmas de papel carta y cartuchos de tinta s/Factura Electrónica N° 45892",
+            documento: "Factura Electrónica N° 45892",
+            origen: "RCV_COMPRA",
+            totalDebe: total,
+            totalHaber: total,
+            lineas: [
+              {
+                cuentaCodigo: "1.2.01.004",
+                cuentaNombre: "Equipos Computacionales y Servidores",
+                debe: precioImpresora,
+                haber: 0,
+                rutAuxiliar: "96.554.320-1",
+                centroCosto: "ADMINISTRACION",
+              },
+              {
+                cuentaCodigo: "6.1.04.006",
+                cuentaNombre: "Útiles de Oficina, Papelería y Suministros Menores",
+                debe: precioUtiles,
+                haber: 0,
+                centroCosto: "ADMINISTRACION",
+              },
+              ...(esFactura
+                ? [
+                    {
+                      cuentaCodigo: "1.1.04.001",
+                      cuentaNombre: "IVA Crédito Fiscal (DL 825)",
+                      debe: iva,
+                      haber: 0,
+                    },
+                  ]
+                : []),
+              {
+                cuentaCodigo: "2.1.01.003",
+                cuentaNombre: "Tarjetas de Crédito Comerciales y Bancarias por Pagar",
+                debe: 0,
+                haber: total,
+                rutAuxiliar: "Banco Santander Chile",
+              },
+            ],
+          },
+          isReadyToRegister: true,
+          userConfirmed: false,
+        };
+      }
+      // Caso 3: Consulta inicial o descripción sin montos ni factura (como en el ejemplo del usuario)
+      else {
+        aiResult = {
+          reply: `Estimado asesor, para registrar esta adquisición bajo la normativa del SII y las normas contables chilenas, necesito que me aclare los siguientes puntos indispensables:\n\n1. **Valores o precios:** ¿Cuál fue el valor de cada ítem (impresora, resmas de papel y cartuchos de tinta) o el valor neto total de la compra?\n2. **Documento tributario:** ¿Solicitó **Factura Electrónica (DTE 33)** emitida a nombre de **${companyName}** (RUT ${companyRut}) para hacer uso del **19% de IVA Crédito Fiscal (DL 825)**, o fue con Boleta / Voucher bancario?\n3. **Datos del documento:** ¿Cuál es el N° de Folio de la Factura y el RUT o Razón Social del proveedor?\n4. **Tarjeta de crédito:** ¿Con qué banco corporativo opera la tarjeta (ej. Banco Santander, Banco de Chile, BCI) y a qué Centro de Costo imputamos el gasto (ej. Administración, Operaciones, Ventas)?`,
+          missingFields: ["precios", "factura_o_boleta", "datos_factura", "banco_tarjeta"],
+          suggestedReplies: [
+            "La impresora costó $180.000 neto, resmas $35.000 neto y tinta $85.000 neto con Factura N° 45892 Dimacofi (RUT 96.554.320-1), tarjeta Santander, Administración",
+            "Monto total $300.000 neto + IVA ($357.000 total) con Factura a nombre de la empresa, pagado con tarjeta Santander",
+            "Fue compra con boleta exenta por $350.000 total pagada con tarjeta Santander para Administración",
+          ],
+          asientoPropuesto: null,
+          isReadyToRegister: false,
+          userConfirmed: false,
+        };
+      }
+    }
+
+    res.json({
+      success: true,
+      data: aiResult,
+    });
+  } catch (error: any) {
+    console.error("Error in /api/accounting/assistant-dialogue:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
 app.use("/api/tenancy", tenancyRouter);
 

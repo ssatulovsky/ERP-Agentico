@@ -67,6 +67,20 @@ export interface AgentJobResult {
   payloadGenerado: unknown;
   tiempoEjecucionMs: number;
   error?: string;
+  f29Output?: F29SettlementOutput;
+  comprobanteContable?: {
+    asientoId: string;
+    concepto: string;
+    totalDebe: number;
+    totalHaber: number;
+    lineasContables: Array<{
+      codigoCuenta: string;
+      nombreCuenta: string;
+      debe: number;
+      haber: number;
+    }>;
+    supervisorSignature?: string;
+  };
 }
 
 /**

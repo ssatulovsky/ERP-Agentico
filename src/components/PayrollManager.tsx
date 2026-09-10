@@ -24,6 +24,7 @@ import {
   calculatePayroll,
   createPayrollCentralizationEntry
 } from '../utils/chileanAccounting';
+import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
 
 interface PayrollManagerProps {
   payrolls: EmployeePayroll[];
@@ -711,50 +712,32 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
         </div>
       )}
 
-      {/* MODAL: Visor Asiento de Centralización de Remuneraciones */}
+      {/* MODAL: Visor Asiento de Centralización de Remuneraciones en Formato Estándar Oficial */}
       {viewEntryModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-lg w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150">
-            <div className="px-6 py-4 bg-[#0f172a] text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold text-white text-sm sm:text-base">
-                  Asiento de Centralización de Remuneraciones Normalizado
-                </h3>
-              </div>
-              <button
-                onClick={() => setViewEntryModal(null)}
-                className="text-slate-300 hover:text-white text-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="bg-[#1e293b] p-4 rounded-md border-l-4 border-[#2563eb] overflow-x-auto">
-                <pre className="font-mono text-xs text-[#cbd5e1] leading-relaxed">
-                  {formatNormalizedAccountingEntry(viewEntryModal)}
-                </pre>
-              </div>
-
-              <div className="flex items-center justify-between text-xs pt-2">
-                <span className="text-emerald-700 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Asiento Balanceado (Debe = Haber)
-                </span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => copyNormalizedText(viewEntryModal)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#2563eb] hover:bg-blue-600 text-white rounded-md font-semibold transition-colors cursor-pointer shadow-xs"
-                  >
-                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    <span>{copied ? '¡Copiado al Portapapeles!' : 'Copiar Formato Normalizado'}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <StandardJournalEntryModal
+          isOpen={!!viewEntryModal}
+          onClose={() => setViewEntryModal(null)}
+          title="Asiento de Centralización de Remuneraciones"
+          subtitle={`Folio N° ${viewEntryModal.id} • Fecha ${viewEntryModal.fecha}`}
+          entry={{
+            id: viewEntryModal.id,
+            fecha: viewEntryModal.fecha,
+            glosaGeneral: viewEntryModal.concepto,
+            documentoRef: viewEntryModal.documento,
+            origenModulo: viewEntryModal.origen || 'REMUNERACIONES',
+            lineas: viewEntryModal.lineas.map((l) => ({
+              codigoCuenta: l.cuentaCodigo,
+              nombreCuenta: l.cuentaNombre,
+              debe: l.debe,
+              haber: l.haber,
+              rutAuxiliar: l.rutAuxiliar,
+              centroCosto: l.centroCosto,
+            })),
+            totalDebe: viewEntryModal.totalDebe,
+            totalHaber: viewEntryModal.totalHaber,
+            supervisorSignature: viewEntryModal.supervisorSignature,
+          }}
+        />
       )}
     </div>
   );

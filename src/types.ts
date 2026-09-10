@@ -516,6 +516,8 @@ export interface AccountingEntryLine {
   cuentaNombre: string;
   debe: number;
   haber: number;
+  rutAuxiliar?: string;
+  centroCosto?: string;
 }
 
 export interface AccountingEntry {
@@ -526,9 +528,10 @@ export interface AccountingEntry {
   lineas: AccountingEntryLine[];
   totalDebe: number;
   totalHaber: number;
-  balanceado: boolean;
-  origen: 'RCV_VENTA' | 'RCV_COMPRA' | 'HONORARIOS' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'ARRIENDO_IFRS16' | 'CAJA_BANCO' | 'INVENTARIO' | 'MANUAL';
-  creadoEn: string;
+  balanceado?: boolean;
+  origen?: 'RCV_VENTA' | 'RCV_COMPRA' | 'HONORARIOS' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'ARRIENDO_IFRS16' | 'CAJA_BANCO' | 'INVENTARIO' | 'MANUAL' | string;
+  creadoEn?: string;
+  supervisorSignature?: string;
 }
 
 export interface AccountPlanItem {

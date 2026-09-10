@@ -38,6 +38,7 @@ import {
   calculateImpuestoUnico,
   createPayrollCentralizationEntry 
 } from '../utils/chileanAccounting';
+import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
 
 interface PayrollSimulatorProps {
   indicators: ChileIndicators;
@@ -1483,51 +1484,36 @@ export const PayrollSimulator: React.FC<PayrollSimulatorProps> = ({
         </div>
       )}
 
-      {/* MODAL: Visor Asiento Contable Normalizado */}
-      {showEntryModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-lg w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150">
-            <div className="px-6 py-4 bg-[#0f172a] text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold text-white text-sm sm:text-base">
-                  Asiento de Centralización de Remuneraciones (Formato Normalizado)
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowEntryModal(false)}
-                className="text-slate-300 hover:text-white text-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="bg-[#1e293b] p-4 rounded-md border-l-4 border-[#2563eb] overflow-x-auto">
-                <pre className="font-mono text-xs text-[#cbd5e1] leading-relaxed">
-                  {formatNormalizedAccountingEntry(createPayrollCentralizationEntry([simulatedPayroll], new Date().toISOString().substring(0, 7)))}
-                </pre>
-              </div>
-
-              <div className="flex items-center justify-between text-xs pt-2">
-                <span className="text-emerald-700 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Asiento Cuadrado (Debe = Haber)
-                </span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => copyNormalizedText(createPayrollCentralizationEntry([simulatedPayroll], new Date().toISOString().substring(0, 7)))}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#2563eb] hover:bg-blue-600 text-white rounded-md font-semibold transition-colors cursor-pointer shadow-xs"
-                  >
-                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    <span>{copied ? '¡Copiado al Portapapeles!' : 'Copiar Formato Normalizado'}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: Visor Asiento Contable Normalizado en Formato Estándar Oficial */}
+      {showEntryModal && (() => {
+        const entry = createPayrollCentralizationEntry([simulatedPayroll], new Date().toISOString().substring(0, 7));
+        return (
+          <StandardJournalEntryModal
+            isOpen={showEntryModal}
+            onClose={() => setShowEntryModal(false)}
+            title="Asiento de Centralización de Remuneraciones"
+            subtitle={`Folio N° ${entry.id} • Fecha ${entry.fecha}`}
+            entry={{
+              id: entry.id,
+              fecha: entry.fecha,
+              glosaGeneral: entry.concepto,
+              documentoRef: entry.documento,
+              origenModulo: entry.origen || 'REMUNERACIONES',
+              lineas: entry.lineas.map((l) => ({
+                codigoCuenta: l.cuentaCodigo,
+                nombreCuenta: l.cuentaNombre,
+                debe: l.debe,
+                haber: l.haber,
+                rutAuxiliar: l.rutAuxiliar,
+                centroCosto: l.centroCosto,
+              })),
+              totalDebe: entry.totalDebe,
+              totalHaber: entry.totalHaber,
+              supervisorSignature: entry.supervisorSignature,
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };

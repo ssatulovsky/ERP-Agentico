@@ -47,6 +47,7 @@ import {
   convertF29AsientoToAccountingEntry
 } from '../utils/f29SeniorEngine';
 import { JournalEntryView } from './accounting/JournalEntryView';
+import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
 import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
 
 interface F29SeniorAgentProps {
@@ -679,11 +680,24 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                   documentoRef: `F29-SII-${selectedPeriod}`,
                   origenModulo: 'F29_CENTRALIZACION',
                   creadoPorAgente: 'ENGINE_F29_SENIOR',
-                  lineas: seniorResult.asiento_contable_f29.map((item) => ({
-                    nombreCuenta: item.cuenta,
-                    debe: item.debe,
-                    haber: item.haber,
-                  })),
+                  lineas: seniorResult.asiento_contable_f29.map((item) => {
+                    let codigoCuenta = '2.1.06';
+                    if (item.cuenta.includes('IVA Débito')) codigoCuenta = '2.1.03';
+                    else if (item.cuenta.includes('IVA Crédito')) codigoCuenta = '1.1.05';
+                    else if (item.cuenta.includes('Remanente')) codigoCuenta = '1.1.06';
+                    else if (item.cuenta.includes('Honorarios')) codigoCuenta = '2.1.04';
+                    else if (item.cuenta.includes('Impuesto Único')) codigoCuenta = '2.1.05';
+                    else if (item.cuenta.includes('PPM')) codigoCuenta = '1.1.07';
+                    else if (item.cuenta.includes('Impuestos por Pagar') || item.cuenta.includes('TGR')) codigoCuenta = '2.1.06';
+                    else if (item.cuenta.includes('Orden')) codigoCuenta = '9.9.99.01';
+
+                    return {
+                      codigoCuenta,
+                      nombreCuenta: item.cuenta,
+                      debe: item.debe,
+                      haber: item.haber,
+                    };
+                  }),
                 }}
                 onApprove={handleAddF29AccountingEntry}
                 showExportButton={true}
@@ -1020,44 +1034,34 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
         </div>
       )}
 
-      {/* Modal de confirmación de Asiento Contable generado */}
+      {/* Modal de confirmación de Asiento Contable generado con Formato Canónico Estándar */}
       {showEntrySuccessModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center gap-3 text-emerald-600">
-              <CheckCircle2 className="w-6 h-6" />
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">
-                  Asiento F29 Registrado con Éxito en el Libro Diario
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Folio N° {showEntrySuccessModal.id} • Período {selectedPeriod}
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 font-mono text-xs text-slate-700 space-y-1.5 max-h-48 overflow-y-auto">
-              <div className="font-bold text-slate-900 mb-1">{showEntrySuccessModal.concepto}</div>
-              {showEntrySuccessModal.lineas.map((l, i) => (
-                <div key={i} className="flex justify-between text-[11px]">
-                  <span className="truncate pr-2">{l.cuentaNombre}</span>
-                  <span className="shrink-0 font-bold">
-                    {l.debe > 0 ? `D: ${formatNumberCL(l.debe)}` : `H: ${formatNumberCL(l.haber)}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setShowEntrySuccessModal(null)}
-                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer"
-              >
-                Entendido
-              </button>
-            </div>
-          </div>
-        </div>
+        <StandardJournalEntryModal
+          isOpen={!!showEntrySuccessModal}
+          onClose={() => setShowEntrySuccessModal(null)}
+          title="Asiento F29 Registrado con Éxito en el Libro Diario"
+          subtitle={`Folio N° ${showEntrySuccessModal.id} • Período ${selectedPeriod}`}
+          entry={{
+            id: showEntrySuccessModal.id,
+            empresaId: company.rut,
+            periodo: selectedPeriod,
+            fecha: showEntrySuccessModal.fecha,
+            glosaGeneral: showEntrySuccessModal.concepto,
+            documentoRef: showEntrySuccessModal.documento,
+            origenModulo: 'F29_CENTRALIZACION',
+            lineas: showEntrySuccessModal.lineas.map((l) => ({
+              codigoCuenta: l.cuentaCodigo,
+              nombreCuenta: l.cuentaNombre,
+              debe: l.debe,
+              haber: l.haber,
+              rutAuxiliar: l.rutAuxiliar,
+              centroCosto: l.centroCosto,
+            })),
+            totalDebe: showEntrySuccessModal.totalDebe,
+            totalHaber: showEntrySuccessModal.totalHaber,
+            supervisorSignature: showEntrySuccessModal.supervisorSignature,
+          }}
+        />
       )}
     </div>
   );

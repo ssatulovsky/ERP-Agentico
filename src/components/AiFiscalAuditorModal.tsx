@@ -26,6 +26,7 @@ import {
   formatCLP, 
   formatNormalizedAccountingEntry 
 } from '../utils/chileanAccounting';
+import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
 
 interface AiFiscalAuditorModalProps {
   isOpen: boolean;
@@ -283,87 +284,15 @@ Conozco a cabalidad la legislación del **SII**, **Dirección del Trabajo (DT)**
 
         {/* TAB 2: CONSULTORÍA Y GENERADOR DE ASIENTOS */}
         {activeTab === 'CHAT' && (
-          <div className="flex-1 flex flex-col overflow-hidden bg-[#f8fafc]">
-            {/* Message Stream */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
-              {messages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex items-start gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  {msg.role === 'assistant' && (
-                    <div className="w-7 h-7 rounded-md bg-blue-100 border border-blue-200 text-[#2563eb] flex items-center justify-center shrink-0">
-                      <Bot className="w-4 h-4" />
-                    </div>
-                  )}
-
-                  <div
-                    className={`max-w-2xl rounded-lg p-4 space-y-3 ${
-                      msg.role === 'user'
-                        ? 'bg-[#2563eb] text-white ml-12 shadow-xs'
-                        : 'bg-white border border-slate-200 text-slate-800 mr-12 shadow-[0_1px_3px_rgba(0,0,0,0.05)]'
-                    }`}
-                  >
-                    <div className="whitespace-pre-line leading-relaxed font-sans">
-                      {msg.content}
-                    </div>
-
-                    {/* If response contains a generated normalized accounting entry */}
-                    {msg.generatedEntry && (
-                      <div className="mt-3 bg-[#1e293b] p-3.5 rounded-md border-l-4 border-[#2563eb] space-y-2 font-mono">
-                        <pre className="text-[#cbd5e1] text-[11px] overflow-x-auto leading-relaxed">
-                          {formatNormalizedAccountingEntry(msg.generatedEntry)}
-                        </pre>
-                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-700">
-                          <button
-                            onClick={() => copyText(formatNormalizedAccountingEntry(msg.generatedEntry!), idx)}
-                            className="flex items-center gap-1 text-[11px] text-slate-300 hover:text-white bg-slate-800 px-2.5 py-1 rounded cursor-pointer"
-                          >
-                            {copiedIndex === idx ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                            <span>{copiedIndex === idx ? 'Copiado' : 'Copiar Asiento'}</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              onAddEntry(msg.generatedEntry!);
-                              alert('¡Asiento contable añadido con éxito al Libro Diario!');
-                            }}
-                            className="flex items-center gap-1 text-[11px] text-white bg-[#2563eb] hover:bg-blue-600 px-2.5 py-1 rounded cursor-pointer font-semibold shadow-xs"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Insertar en Libro Diario</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {isThinking && (
-                <div className="flex items-center gap-2 text-slate-500 text-xs pl-10 font-medium">
-                  <Sparkles className="w-4 h-4 text-[#2563eb] animate-spin" />
-                  <span>El Agente Senior está analizando la normativa chilena...</span>
-                </div>
-              )}
-            </div>
-
-            {/* Prompt Input Form */}
-            <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-200 bg-white shrink-0 flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="Consulte sobre leyes del SII, F29, Art 50 o pida un asiento (Ej: Asiento de compra de maquinaria por $5M con factura a 60 días)..."
-                value={inputPrompt}
-                onChange={(e) => setInputPrompt(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-300 rounded-md px-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#2563eb]"
-              />
-              <button
-                type="submit"
-                disabled={!inputPrompt.trim() || isThinking}
-                className="p-2.5 bg-[#2563eb] hover:bg-blue-600 text-white rounded-md transition-all shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
+          <div className="flex-1 overflow-hidden flex flex-col bg-[#f8fafc]">
+            <AccountingEventAssistant
+              company={company}
+              firm={firm}
+              indicators={indicators}
+              onCommitEntry={(entry) => onAddEntry(entry)}
+              onViewLedger={onClose}
+              className="h-full border-none rounded-none shadow-none"
+            />
           </div>
         )}
       </div>

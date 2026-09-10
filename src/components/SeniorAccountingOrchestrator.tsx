@@ -63,6 +63,7 @@ import {
   findAccountInChart,
 } from '../utils/accountingOrchestratorEngine';
 import { seedF29 } from '../data/seedData';
+import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -102,6 +103,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 }) => {
   // Navigation tabs of the orchestrator
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'IFRS' | 'AI_ROUTING'>('AUDIT');
+  const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
   const [currencyMode, setCurrencyMode] = useState<'CLP' | 'UF' | 'USD'>('CLP');
@@ -1057,7 +1059,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           }`}
         >
           <Bot className="w-4 h-4 text-purple-400" />
-          <span>Terminal Asesora & Routing IA</span>
+          <span>Asesor Contable IA & Routing</span>
         </button>
       </div>
 
@@ -2128,109 +2130,157 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
       {/* VIEW 7: CONSOLA ASESORA IA & ROUTING DE ASIENTOS (DOS CAPAS) */}
       {activeTab === 'AI_ROUTING' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-6">
-          <div className="pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <span className="bg-purple-100 text-purple-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
-                DOS CAPAS: HUMANA + JSON ERP TRANSACCIONAL
-              </span>
-              <h3 className="text-base font-bold text-slate-900 mt-1 flex items-center gap-2">
-                <Bot className="w-5 h-5 text-purple-600" />
-                Terminal Asesora de Routing Contable & Imputaciones IA
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Ingresa cualquier glosa cruda, factura o contrato para que el Agente Orquestador determine las cuentas exactas, centro de costo y emita la propuesta transaccional.
-              </p>
-            </div>
+        <div className="space-y-6">
+          {/* Sub-navigation Switcher between Conversational Assistant and Direct Glosa Terminal */}
+          <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200 w-fit">
+            <button
+              onClick={() => setAiRoutingSubTab('CONVERSACIONAL')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                aiRoutingSubTab === 'CONVERSACIONAL'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Bot className="w-4 h-4" />
+              <span>Asistente Conversacional & Asientos IA</span>
+            </button>
+            <button
+              onClick={() => setAiRoutingSubTab('GLOSA_DIRECTA')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                aiRoutingSubTab === 'GLOSA_DIRECTA'
+                  ? 'bg-[#0f172a] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Terminal de Glosa Cruda (JSON ERP)</span>
+            </button>
           </div>
 
-          {/* Glosa Input Form */}
-          <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl space-y-3">
-            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
-              Glosa u Operación Económica Cruda
-            </label>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              <input
-                type="text"
-                value={rawGlosaInput}
-                onChange={(e) => setRawGlosaInput(e.target.value)}
-                placeholder="Ej: Pago arriendo de oficina en Las Condes según contrato UF..."
-                className="flex-1 text-xs bg-white border border-slate-300 rounded-lg p-2.5 focus:outline-none focus:border-blue-500 font-sans"
-              />
-              <div className="w-48">
-                <input
-                  type="number"
-                  value={rawMontoInput}
-                  onChange={(e) => setRawMontoInput(Number(e.target.value))}
-                  placeholder="Monto $ CLP"
-                  className="w-full text-xs bg-white border border-slate-300 rounded-lg p-2.5 font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <button
-                onClick={handleSimulateAiRouting}
-                disabled={isAiLoading}
-                className="bg-[#2563eb] hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs shrink-0"
-              >
-                {isAiLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Analizando Imputación...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Ejecutar Routing IA</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+          {/* MODO 1: ASISTENTE CONVERSACIONAL DE CONTABILIZACIÓN */}
+          {aiRoutingSubTab === 'CONVERSACIONAL' && (
+            <AccountingEventAssistant
+              company={company}
+              firm={firm}
+              indicators={indicators}
+              onCommitEntry={(entry) =>
+                dispatchEntry(entry, {
+                  agenteNombre: 'ASESOR_CONTABLE_IA',
+                  accion: 'CONTABILIZACION_CONVERSACIONAL',
+                  modelName: 'gemini-3.8-flash',
+                })
+              }
+              onViewLedger={() => setActiveTab('DIARIO')}
+            />
+          )}
 
-          {/* AI Response Display (2 Layers) */}
-          {aiProposalResponse && (
-            <div className="space-y-4 pt-2">
-              {/* Capa 1: Capa Humana */}
-              <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-5">
-                <div className="flex items-center gap-2 text-xs font-bold text-blue-900 uppercase font-mono mb-2">
-                  <Info className="w-4 h-4 text-blue-600" />
-                  CAPA HUMANA · EXPLICACIÓN TÉCNICA Y NORMATIVA CHILENA
-                </div>
-                <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-sans">
-                  {aiProposalResponse.humanLayer}
+          {/* MODO 2: TERMINAL DIRECTA DE ROUTING DE GLOSA */}
+          {aiRoutingSubTab === 'GLOSA_DIRECTA' && (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-6">
+              <div className="pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="bg-purple-100 text-purple-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
+                    DOS CAPAS: HUMANA + JSON ERP TRANSACCIONAL
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900 mt-1 flex items-center gap-2">
+                    <Bot className="w-5 h-5 text-purple-600" />
+                    Terminal Asesora de Routing Contable & Imputaciones IA
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Ingresa cualquier glosa cruda, factura o contrato para que el Agente Orquestador determine las cuentas exactas, centro de costo y emita la propuesta transaccional.
+                  </p>
                 </div>
               </div>
 
-              {/* Capa 2: Capa Transaccional JSON */}
-              <div className="bg-[#0f172a] text-slate-200 rounded-xl p-5 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-2 text-xs font-bold text-purple-400 font-mono">
-                    <FileSpreadsheet className="w-4 h-4" />
-                    CAPA TRANSACCIONAL ERP (JSON PROTOCOL A)
+              {/* Glosa Input Form */}
+              <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl space-y-3">
+                <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                  Glosa u Operación Económica Cruda
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <input
+                    type="text"
+                    value={rawGlosaInput}
+                    onChange={(e) => setRawGlosaInput(e.target.value)}
+                    placeholder="Ej: Pago arriendo de oficina en Las Condes según contrato UF..."
+                    className="flex-1 text-xs bg-white border border-slate-300 rounded-lg p-2.5 focus:outline-none focus:border-blue-500 font-sans"
+                  />
+                  <div className="w-48">
+                    <input
+                      type="number"
+                      value={rawMontoInput}
+                      onChange={(e) => setRawMontoInput(Number(e.target.value))}
+                      placeholder="Monto $ CLP"
+                      className="w-full text-xs bg-white border border-slate-300 rounded-lg p-2.5 font-mono focus:outline-none focus:border-blue-500"
+                    />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() =>
-                        handleCopyText(JSON.stringify(aiProposalResponse.transactionalLayer, null, 2), 'ai_json')
-                      }
-                      className="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer font-mono bg-slate-800 px-2.5 py-1 rounded"
-                    >
-                      {copiedText === 'ai_json' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>Copiar JSON</span>
-                    </button>
-                    <button
-                      onClick={handleCommitAiProposal}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Asentar en Libro Diario</span>
-                    </button>
+                  <button
+                    onClick={handleSimulateAiRouting}
+                    disabled={isAiLoading}
+                    className="bg-[#2563eb] hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs shrink-0"
+                  >
+                    {isAiLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Analizando Imputación...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Ejecutar Routing IA</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* AI Response Display (2 Layers) */}
+              {aiProposalResponse && (
+                <div className="space-y-4 pt-2">
+                  {/* Capa 1: Capa Humana */}
+                  <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-blue-900 uppercase font-mono mb-2">
+                      <Info className="w-4 h-4 text-blue-600" />
+                      CAPA HUMANA · EXPLICACIÓN TÉCNICA Y NORMATIVA CHILENA
+                    </div>
+                    <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-sans">
+                      {aiProposalResponse.humanLayer}
+                    </div>
+                  </div>
+
+                  {/* Capa 2: Capa Transaccional JSON */}
+                  <div className="bg-[#0f172a] text-slate-200 rounded-xl p-5 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                      <div className="flex items-center gap-2 text-xs font-bold text-purple-400 font-mono">
+                        <FileSpreadsheet className="w-4 h-4" />
+                        CAPA TRANSACCIONAL ERP (JSON PROTOCOL A)
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            handleCopyText(JSON.stringify(aiProposalResponse.transactionalLayer, null, 2), 'ai_json')
+                          }
+                          className="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer font-mono bg-slate-800 px-2.5 py-1 rounded"
+                        >
+                          {copiedText === 'ai_json' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>Copiar JSON</span>
+                        </button>
+                        <button
+                          onClick={handleCommitAiProposal}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Asentar en Libro Diario</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <pre className="text-xs font-mono text-emerald-400 overflow-x-auto max-h-96 p-2">
+                      {JSON.stringify(aiProposalResponse.transactionalLayer, null, 2)}
+                    </pre>
                   </div>
                 </div>
-
-                <pre className="text-xs font-mono text-emerald-400 overflow-x-auto max-h-96 p-2">
-                  {JSON.stringify(aiProposalResponse.transactionalLayer, null, 2)}
-                </pre>
-              </div>
+              )}
             </div>
           )}
         </div>
