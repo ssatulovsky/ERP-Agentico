@@ -30,41 +30,43 @@ interface F29SimulatorProps {
 export const F29Simulator: React.FC<F29SimulatorProps> = ({
   f29,
   onUpdateF29,
-  dtes,
-  payrolls,
+  dtes = [],
+  payrolls = [],
   company,
   onAddEntry,
 }) => {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const [copied, setCopied] = useState(false);
   const [viewEntryModal, setViewEntryModal] = useState<AccountingEntry | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
   // RCV Calculations for reconciliation
-  const rcvVentasNeto = dtes
+  const rcvVentasNeto = safeDtes
     .filter(d => d.tipoOperacion === 'VENTA' && d.tipoDte !== '34')
     .reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoNeto : d.montoNeto), 0);
   
-  const rcvDebitoFiscal = dtes
+  const rcvDebitoFiscal = safeDtes
     .filter(d => d.tipoOperacion === 'VENTA')
     .reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoIva : d.montoIva), 0);
 
-  const rcvVentasExentas = dtes
+  const rcvVentasExentas = safeDtes
     .filter(d => d.tipoOperacion === 'VENTA' && d.tipoDte === '34')
-    .reduce((s, d) => s + d.montoExento, 0);
+    .reduce((s, d) => s + (d.montoExento || 0), 0);
 
-  const rcvComprasNeto = dtes
+  const rcvComprasNeto = safeDtes
     .filter(d => d.tipoOperacion === 'COMPRA')
-    .reduce((s, d) => s + d.montoNeto, 0);
+    .reduce((s, d) => s + (d.montoNeto || 0), 0);
 
-  const rcvCreditoFiscal = dtes
+  const rcvCreditoFiscal = safeDtes
     .filter(d => d.tipoOperacion === 'COMPRA')
-    .reduce((s, d) => s + d.montoIva, 0);
+    .reduce((s, d) => s + (d.montoIva || 0), 0);
 
-  const rcvHonorariosRetencion = dtes
+  const rcvHonorariosRetencion = safeDtes
     .filter(d => d.tipoOperacion === 'HONORARIOS')
-    .reduce((s, d) => s + (d.retencionMonto || Math.round(d.montoTotal * (d.retencionTasa || 0.145))), 0);
+    .reduce((s, d) => s + (d.retencionMonto || Math.round((d.montoTotal || 0) * (d.retencionTasa || 0.145))), 0);
 
-  const payrollImpuestoUnico = payrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
+  const payrollImpuestoUnico = safePayrolls.reduce((s, p) => s + (p.impuestoUnicoMonto || 0), 0);
 
   // Inconsistency checks
   const diffDebito = Math.abs(f29.debitoFiscalIva - rcvDebitoFiscal);

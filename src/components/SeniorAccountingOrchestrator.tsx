@@ -63,9 +63,20 @@ import {
   AccountGroupDefinition,
   BalanceGroupingMode,
   GroupedBalanceReport,
+  ClientCompany,
 } from '../types';
 import { formatCLP, formatNumberCL, formatNormalizedAccountingEntry } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
+import {
+  downloadBalance8ColPdf,
+  downloadBalance8ColExcel,
+  downloadBalance8ColCsv,
+  downloadFinancialStatementsPdf,
+  downloadFinancialStatementsExcel,
+  downloadLibroDiarioPdf,
+  downloadLibroDiarioExcel,
+  downloadLibroMayorPdf,
+} from '../utils/reportGenerators';
 import {
   CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS,
   buildOfficial8ColumnBalance,
@@ -116,7 +127,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   company,
   firm,
   indicators,
-  entries,
+  entries = [],
   onAddEntry,
   commitEntry,
   isLedgerLoading = false,
@@ -128,6 +139,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   leases = [],
   bankStatements = [],
 }) => {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
+  const safeBankStatements = Array.isArray(bankStatements) ? bankStatements : [];
+  const safeLeases = Array.isArray(leases) ? leases : [];
   // Navigation tabs of the orchestrator
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'IFRS' | 'AI_ROUTING'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
@@ -243,14 +259,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   };
 
   // Totals of all entries
-  const totalDebe = entries.reduce((s, e) => s + (e.totalDebe || 0), 0);
-  const totalHaber = entries.reduce((s, e) => s + (e.totalHaber || 0), 0);
+  const totalDebe = safeEntries.reduce((s, e) => s + (e.totalDebe || 0), 0);
+  const totalHaber = safeEntries.reduce((s, e) => s + (e.totalHaber || 0), 0);
   const isAllBalanced = Math.abs(totalDebe - totalHaber) < 1;
 
   // 8-Columns Balance computation
   const balance8Col: Balance8ColumnasReport = useMemo(() => {
-    return buildOfficial8ColumnBalance(entries, company, '2026-12-31', chartOfAccounts);
-  }, [entries, company, chartOfAccounts]);
+    return buildOfficial8ColumnBalance(safeEntries, company, '2026-12-31', chartOfAccounts);
+  }, [safeEntries, company, chartOfAccounts]);
 
   // Reporte de Balance Agrupado con subtotales por grupo y subgrupo (Tradicional CMF, Fiscal SII, Casa Matriz HQ, Personalizado)
   const groupedBalanceReport: GroupedBalanceReport = useMemo(() => {
@@ -264,8 +280,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Audit items across peripheral modules
   const auditItems: OrchestratorAuditItem[] = useMemo(() => {
-    return auditPeripheralModules(entries, dtes, payrolls, f29, bankStatements, leases);
-  }, [entries, dtes, payrolls, f29, bankStatements, leases]);
+    return auditPeripheralModules(safeEntries, safeDtes, safePayrolls, f29, safeBankStatements, safeLeases);
+  }, [safeEntries, safeDtes, safePayrolls, f29, safeBankStatements, safeLeases]);
 
   const totalInTransit = auditItems.reduce((s, i) => s + i.enTransito, 0);
 
@@ -316,7 +332,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     const today = new Date().toISOString().split('T')[0];
 
     if (modulo === 'VENTAS') {
-      const salesDtes = dtes.filter(d => d.tipoOperacion === 'VENTA');
+      const salesDtes = safeDtes.filter(d => d.tipoOperacion === 'VENTA');
       const totalVentaNeto = salesDtes.reduce((s, d) => s + (d.montoNeto || 0), 0);
       const totalVentaIva = salesDtes.reduce((s, d) => s + (d.montoIva || 0), 0);
       const totalVentaTotal = salesDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
@@ -354,7 +370,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       };
       dispatchEntry(entry, { agenteNombre: 'AGENTE_RCV', accion: 'CENTRALIZACION_RCV_VENTAS' });
     } else if (modulo === 'COMPRAS') {
-      const purchaseDtes = dtes.filter(d => d.tipoOperacion === 'COMPRA');
+      const purchaseDtes = safeDtes.filter(d => d.tipoOperacion === 'COMPRA');
       const totalCompraNeto = purchaseDtes.reduce((s, d) => s + (d.montoNeto || 0), 0);
       const totalCompraIva = purchaseDtes.reduce((s, d) => s + (d.montoIva || 0), 0);
       const totalCompraTotal = purchaseDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
@@ -392,13 +408,13 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       };
       dispatchEntry(entry, { agenteNombre: 'AGENTE_RCV', accion: 'CENTRALIZACION_RCV_COMPRAS' });
     } else if (modulo === 'RRHH') {
-      const totalSueldoLiquido = payrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
-      const totalImposiciones = payrolls.reduce((s, p) => s + p.totalDescuentosLegales, 0);
-      const totalAportePatronal = payrolls.reduce(
+      const totalSueldoLiquido = safePayrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
+      const totalImposiciones = safePayrolls.reduce((s, p) => s + p.totalDescuentosLegales, 0);
+      const totalAportePatronal = safePayrolls.reduce(
         (s, p) => s + p.sisEmpleadorMonto + p.mutualEmpleadorMonto + p.afcEmpleadorMonto,
         0
       );
-      const totalCostoEmpresa = payrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
+      const totalCostoEmpresa = safePayrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
 
       const entry: AccountingEntry = {
         id: `centraliza-rrhh-${Date.now()}`,
@@ -1547,6 +1563,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
             <div className="flex items-center gap-2">
               <button
+                onClick={() => downloadLibroDiarioPdf(filteredEntries, company as ClientCompany)}
+                className="bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                title="Descargar Libro Diario Oficial en PDF timbrado"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>PDF</span>
+              </button>
+
+              <button
+                onClick={() => downloadLibroDiarioExcel(filteredEntries, company as ClientCompany)}
+                className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                title="Descargar Libro Diario en formato Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Excel</span>
+              </button>
+
+              <button
                 onClick={() => {
                   const allFormatted = filteredEntries.map(formatNormalizedAccountingEntry).join('\n\n');
                   handleCopyText(allFormatted, 'diario_all');
@@ -1676,19 +1710,30 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </p>
             </div>
 
-            {/* Account Selector */}
-            <div className="w-full sm:w-80">
-              <select
-                value={selectedMayorAccountCode}
-                onChange={(e) => setSelectedMayorAccountCode(e.target.value)}
-                className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 font-mono focus:outline-none focus:border-blue-500"
+            {/* Mayor Action Buttons & Account Selector */}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                onClick={() => downloadLibroMayorPdf(safeEntries, company as ClientCompany)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Libro Mayor analítico de todas las cuentas en PDF oficial"
               >
-                {chartOfAccounts.map((acc) => (
-                  <option key={acc.codigo} value={acc.codigo}>
-                    {acc.codigo} - {acc.nombre}
-                  </option>
-                ))}
-              </select>
+                <Download className="w-3.5 h-3.5" />
+                <span>Descargar Mayor (PDF)</span>
+              </button>
+
+              <div className="w-full sm:w-72">
+                <select
+                  value={selectedMayorAccountCode}
+                  onChange={(e) => setSelectedMayorAccountCode(e.target.value)}
+                  className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 font-mono focus:outline-none focus:border-blue-500"
+                >
+                  {chartOfAccounts.map((acc) => (
+                    <option key={acc.codigo} value={acc.codigo}>
+                      {acc.codigo} - {acc.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -2043,6 +2088,32 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </div>
 
               <button
+                onClick={() => downloadBalance8ColExcel(balance8Col, company as ClientCompany)}
+                className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Balance 8 Columnas en formato Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Exportar Excel</span>
+              </button>
+
+              <button
+                onClick={() => downloadBalance8ColPdf(balance8Col, company as ClientCompany)}
+                className="bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Balance Tributario 8 Columnas oficial en PDF timbrado"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Descargar PDF</span>
+              </button>
+
+              <button
+                onClick={() => downloadBalance8ColCsv(balance8Col)}
+                className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Balance en formato CSV"
+              >
+                <span>CSV</span>
+              </button>
+
+              <button
                 onClick={() => {
                   const jsonReport = JSON.stringify(isGroupedView ? groupedBalanceReport : balance8Col, null, 2);
                   handleCopyText(jsonReport, 'balance_json');
@@ -2236,6 +2307,37 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       {/* VIEW 6: ESTADOS FINANCIEROS IFRS / CMF */}
       {activeTab === 'IFRS' && (
         <div className="space-y-6">
+          {/* Top Action Bar: Header & Download Buttons */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <PieChart className="w-5 h-5 text-rose-500" />
+                <span>Estados Financieros Clasificados (NIIF / IFRS)</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Estado de Situación Financiera clasificado (NIC 1) y Estado de Resultados por Función.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => downloadFinancialStatementsPdf(ifrsStatements, company as ClientCompany)}
+                className="bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Estados Financieros en formato PDF formal con pie de firma"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Descargar PDF (IFRS)</span>
+              </button>
+              <button
+                onClick={() => downloadFinancialStatementsExcel(ifrsStatements, company as ClientCompany)}
+                className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Estados Financieros en formato Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Exportar Excel</span>
+              </button>
+            </div>
+          </div>
+
           {/* Ratios Strip */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">

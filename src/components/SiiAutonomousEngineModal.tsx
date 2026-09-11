@@ -83,12 +83,13 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   isOpen,
   onClose,
   company,
-  dtes,
+  dtes = [],
   onAddMultipleDtes,
   onUpdateDte,
   onAddAccountingEntry,
   onClearAllDtes,
 }) => {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
   // Tabs principales del motor autónomo
   const [activeTab, setActiveTab] = useState<
     'DIAGNOSTICO_MESES' | 'PENDIENTES_CONTABILIZAR' | 'LIBROS_AUXILIARES' | 'CENTRALIZACION' | 'COBROS_PAGOS' | 'VISOR_CHROMIUM' | 'TERMINAL_LOGS' | 'PARAMETROS'
@@ -183,20 +184,20 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
 
   // Diagnóstico automático de meses sin actualizar
   const diagnostics = useMemo(() => {
-    return detectPendingSiiMonths(dtes, 2026, 9);
-  }, [dtes]);
+    return detectPendingSiiMonths(safeDtes, 2026, 9);
+  }, [safeDtes]);
 
   const mesesDesactualizados = useMemo(() => {
-    return diagnostics.filter(d => d.estado === 'DESACTUALIZADO' || d.estado === 'PARCIAL');
+    return (diagnostics || []).filter(d => d.estado === 'DESACTUALIZADO' || d.estado === 'PARCIAL');
   }, [diagnostics]);
 
   // Movimientos pendientes de contabilizar
   const pendingToAccountDtes = useMemo(() => {
-    return dtes.filter(d => {
+    return safeDtes.filter(d => {
       // Si no ha sido centralizado aún
       return !d.asientoCentralizacionId && (d.imputacionEstado !== 'CENTRALIZADO');
     });
-  }, [dtes]);
+  }, [safeDtes]);
 
   // Toast Helper
   const showToast = (msg: string) => {
@@ -491,7 +492,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
       const result = generateMonthlyCentralizationEntry(
         selectedPeriod,
         tipo,
-        dtes,
+        safeDtes,
         centralizationConfig,
         company,
         supplierRules
@@ -501,7 +502,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
 
       // Marcar los DTEs involucrados como centralizados
       result.dtesAfectadosIds.forEach(id => {
-        const doc = dtes.find(d => d.id === id);
+        const doc = safeDtes.find(d => d.id === id);
         if (doc) {
           onUpdateDte({
             ...doc,
@@ -524,7 +525,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
       return;
     }
 
-    const docsToPay = dtes.filter(d => selectedDtesForPayment.includes(d.id));
+    const docsToPay = safeDtes.filter(d => selectedDtesForPayment.includes(d.id));
     const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
       codigo: '1.1.01',
       nombre: 'Banco Santander - Cta Cte'
@@ -558,7 +559,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
       return;
     }
 
-    const docsToCollect = dtes.filter(d => selectedDtesForCollection.includes(d.id));
+    const docsToCollect = safeDtes.filter(d => selectedDtesForCollection.includes(d.id));
     const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
       codigo: '1.1.01',
       nombre: 'Banco Santander - Cta Cte'
@@ -586,9 +587,9 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   };
 
   // Libros Auxiliares Calculados para el período seleccionado
-  const libroCompras = useMemo(() => generateLibroCompras(dtes, selectedPeriod), [dtes, selectedPeriod]);
-  const libroVentas = useMemo(() => generateLibroVentas(dtes, selectedPeriod), [dtes, selectedPeriod]);
-  const libroHonorarios = useMemo(() => generateLibroHonorarios(dtes, selectedPeriod), [dtes, selectedPeriod]);
+  const libroCompras = useMemo(() => generateLibroCompras(safeDtes, selectedPeriod), [safeDtes, selectedPeriod]);
+  const libroVentas = useMemo(() => generateLibroVentas(safeDtes, selectedPeriod), [safeDtes, selectedPeriod]);
+  const libroHonorarios = useMemo(() => generateLibroHonorarios(safeDtes, selectedPeriod), [safeDtes, selectedPeriod]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">

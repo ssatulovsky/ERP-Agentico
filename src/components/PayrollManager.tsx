@@ -14,9 +14,11 @@ import {
   Shield,
   X,
   Edit2,
-  Trash2
+  Trash2,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
-import { EmployeePayroll, ChileIndicators, AccountingEntry, CompanyProfile } from '../types';
+import { EmployeePayroll, ChileIndicators, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
 import { 
   formatCLP, 
   formatNumberCL, 
@@ -24,6 +26,7 @@ import {
   calculatePayroll,
   createPayrollCentralizationEntry
 } from '../utils/chileanAccounting';
+import { downloadPayrollPdf, downloadPayrollExcel, downloadPreviredCsv } from '../utils/reportGenerators';
 import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
 
 interface PayrollManagerProps {
@@ -221,6 +224,32 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => downloadPayrollPdf(payrolls, company as ClientCompany)}
+            className="flex items-center gap-1.5 bg-rose-700 hover:bg-rose-800 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Descargar Libro de Remuneraciones oficial timbrado en PDF"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Libro Remuneraciones (PDF)</span>
+          </button>
+
+          <button
+            onClick={() => downloadPayrollExcel(payrolls, company as ClientCompany)}
+            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Descargar nómina detallada en formato Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Excel</span>
+          </button>
+
+          <button
+            onClick={() => downloadPreviredCsv(payrolls, company as ClientCompany)}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Descargar archivo estructurado compatible con Previred (.csv)"
+          >
+            <span>Previred CSV</span>
+          </button>
+
           <button
             onClick={handleGenerateCentralizationEntry}
             className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer shadow-xs"

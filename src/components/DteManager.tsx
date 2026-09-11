@@ -21,7 +21,8 @@ import {
   Bot,
   Sparkles,
   Split,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
 import { DteDocument, DteType, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
 import { 
@@ -32,6 +33,7 @@ import {
   createPurchaseDteEntry,
   createHonorariosEntry
 } from '../utils/chileanAccounting';
+import { downloadRcvCsv, downloadRcvExcel, downloadRcvPdf } from '../utils/reportGenerators';
 import { SiiIntegrationModal } from './SiiIntegrationModal';
 import { SiiAutonomousEngineModal } from './SiiAutonomousEngineModal';
 
@@ -47,7 +49,7 @@ interface DteManagerProps {
 }
 
 export const DteManager: React.FC<DteManagerProps> = ({
-  dtes,
+  dtes = [],
   onAddDte,
   onAddMultipleDtes,
   onUpdateDte,
@@ -56,6 +58,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
   onSyncPendingToCashFlow,
   onClearAllDtes
 }) => {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
   const [activeSubTab, setActiveSubTab] = useState<'TODOS' | 'VENTA' | 'COMPRA' | 'HONORARIOS' | 'PENDIENTES_CONTABILIZAR'>('TODOS');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('TODOS');
@@ -95,7 +98,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
   });
 
   // Filtered DTEs
-  const filteredDtes = dtes.filter((d) => {
+  const filteredDtes = safeDtes.filter((d) => {
     let matchesTab = true;
     if (activeSubTab === 'PENDIENTES_CONTABILIZAR') {
       matchesTab = !d.asientoCentralizacionId && (d.imputacionEstado !== 'CENTRALIZADO');
@@ -113,13 +116,13 @@ export const DteManager: React.FC<DteManagerProps> = ({
   });
 
   // Calculate totals
-  const totalVentasNeto = dtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoNeto : d.montoNeto), 0);
-  const totalDebitoFiscal = dtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoIva : d.montoIva), 0);
-  const totalComprasNeto = dtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoNeto, 0);
-  const totalCreditoFiscal = dtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoIva, 0);
-  const totalHonorariosBruto = dtes.filter(d => d.tipoOperacion === 'HONORARIOS').reduce((s, d) => s + d.montoTotal, 0);
-  const totalRetencionHonorarios = dtes.filter(d => d.tipoOperacion === 'HONORARIOS').reduce((s, d) => s + (d.retencionMonto || (d.montoTotal * (d.retencionTasa || 0.145))), 0);
-  const pendingPaymentDtes = dtes.filter(d => d.estadoPago === 'PENDIENTE');
+  const totalVentasNeto = safeDtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoNeto : d.montoNeto), 0);
+  const totalDebitoFiscal = safeDtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoIva : d.montoIva), 0);
+  const totalComprasNeto = safeDtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoNeto, 0);
+  const totalCreditoFiscal = safeDtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoIva, 0);
+  const totalHonorariosBruto = safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS').reduce((s, d) => s + d.montoTotal, 0);
+  const totalRetencionHonorarios = safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS').reduce((s, d) => s + (d.retencionMonto || (d.montoTotal * (d.retencionTasa || 0.145))), 0);
+  const pendingPaymentDtes = safeDtes.filter(d => d.estadoPago === 'PENDIENTE');
 
   // Handle Net change in manual DTE form
   const handleNetoChange = (neto: number, tipoDte: DteType) => {
@@ -510,6 +513,39 @@ export const DteManager: React.FC<DteManagerProps> = ({
               <span>Vaciar Base ({dtes.length})</span>
             </button>
           )}
+
+          {/* Export Reports Group (CSV, Excel, PDF) */}
+          <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-md px-2 py-1 shadow-xs">
+            <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1 mr-1">
+              <Download className="w-3.5 h-3.5 text-slate-400" />
+              Exportar RCV:
+            </span>
+            <button
+              onClick={() => downloadRcvCsv(safeDtes, activeSubTab === 'TODOS' || activeSubTab === 'PENDIENTES_CONTABILIZAR' ? 'ALL' : activeSubTab)}
+              className="px-2 py-0.5 rounded text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer"
+              title="Descargar Registro Compra-Venta-Honorarios en formato CSV compatible con SII"
+            >
+              CSV
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              onClick={() => downloadRcvExcel(safeDtes, company as ClientCompany)}
+              className="px-2 py-0.5 rounded text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors cursor-pointer flex items-center gap-1"
+              title="Descargar RCV completo en formato Excel (.xlsx) con pestañas"
+            >
+              <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+              <span>Excel</span>
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              onClick={() => downloadRcvPdf(safeDtes, company as ClientCompany)}
+              className="px-2 py-0.5 rounded text-xs font-bold text-slate-700 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer flex items-center gap-1"
+              title="Descargar Informe Oficial RCV en PDF timbrado"
+            >
+              <FileText className="w-3 h-3 text-rose-600" />
+              <span>PDF</span>
+            </button>
+          </div>
 
           <button
             onClick={() => setShowIngestModal(true)}

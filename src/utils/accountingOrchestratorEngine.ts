@@ -1495,17 +1495,24 @@ export function buildIFRSFinancialStatements(balance8Col: Balance8ColumnasReport
  * Detecta qué operaciones están contabilizadas y cuáles están en tránsito.
  */
 export function auditPeripheralModules(
-  entries: AccountingEntry[],
-  dtes: DteDocument[],
-  payrolls: EmployeePayroll[],
-  f29: F29Declaration,
-  bankMovements: BankStatementMovement[],
-  leases: LeaseContract[]
+  entries: AccountingEntry[] = [],
+  dtes: DteDocument[] = [],
+  payrolls: EmployeePayroll[] = [],
+  f29?: F29Declaration,
+  bankMovements: BankStatementMovement[] = [],
+  leases: LeaseContract[] = []
 ): OrchestratorAuditItem[] {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
+  const safeBankMovements = Array.isArray(bankMovements) ? bankMovements : [];
+  const safeLeases = Array.isArray(leases) ? leases : [];
+  const safeF29Total = f29?.totalAPagar || 0;
+
   // 1. RCV Ventas
-  const salesDtes = dtes.filter(d => d.tipoOperacion === 'VENTA');
-  const salesMonto = salesDtes.reduce((s, d) => s + d.montoTotal, 0);
-  const salesEntries = entries.filter(e => {
+  const salesDtes = safeDtes.filter(d => d.tipoOperacion === 'VENTA');
+  const salesMonto = salesDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
+  const salesEntries = safeEntries.filter(e => {
     const origin = (e.origen || '').toUpperCase();
     const doc = (e.documento || '').toLowerCase();
     const conc = (e.concepto || '').toLowerCase();
@@ -1548,9 +1555,9 @@ export function auditPeripheralModules(
   const salesPending = Math.max(0, salesDtes.length - salesBookedCount);
 
   // 2. RCV Compras
-  const purchaseDtes = dtes.filter(d => d.tipoOperacion === 'COMPRA');
-  const purchaseMonto = purchaseDtes.reduce((s, d) => s + d.montoTotal, 0);
-  const purchaseEntries = entries.filter(e => {
+  const purchaseDtes = safeDtes.filter(d => d.tipoOperacion === 'COMPRA');
+  const purchaseMonto = purchaseDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
+  const purchaseEntries = safeEntries.filter(e => {
     const origin = (e.origen || '').toUpperCase();
     const doc = (e.documento || '').toLowerCase();
     const conc = (e.concepto || '').toLowerCase();
@@ -1592,9 +1599,9 @@ export function auditPeripheralModules(
   const purchasePending = Math.max(0, purchaseDtes.length - purchaseBookedCount);
 
   // 3. Boletas de Honorarios
-  const bhes = dtes.filter(d => d.tipoOperacion === 'HONORARIOS');
-  const bheMonto = bhes.reduce((s, d) => s + d.montoTotal, 0);
-  const bheEntries = entries.filter(e => {
+  const bhes = safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS');
+  const bheMonto = bhes.reduce((s, d) => s + (d.montoTotal || 0), 0);
+  const bheEntries = safeEntries.filter(e => {
     const origin = (e.origen || '').toUpperCase();
     const doc = (e.documento || '').toLowerCase();
     const conc = (e.concepto || '').toLowerCase();
@@ -1621,29 +1628,29 @@ export function auditPeripheralModules(
   const bhePending = Math.max(0, bhes.length - bheBookedCount);
 
   // 4. Centralización Nómina RRHH
-  const totalPayrolls = payrolls.length;
-  const payrollsMonto = payrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
-  const payrollEntries = entries.filter(e => e.origen === 'REMUNERACIONES');
+  const totalPayrolls = safePayrolls.length;
+  const payrollsMonto = safePayrolls.reduce((s, p) => s + (p.costoTotalEmpresa || 0), 0);
+  const payrollEntries = safeEntries.filter(e => e.origen === 'REMUNERACIONES');
   const hasPayrollBooked = payrollEntries.length > 0;
   const payrollBookedCount = hasPayrollBooked ? totalPayrolls : 0;
   const payrollPending = Math.max(0, totalPayrolls - payrollBookedCount);
 
   // 5. F29 Impuestos Mensuales
-  const f29Monto = f29.totalAPagar || 0;
-  const f29Entries = entries.filter(e => e.origen === 'F29_TRIBUTARIO');
+  const f29Monto = safeF29Total;
+  const f29Entries = safeEntries.filter(e => e.origen === 'F29_TRIBUTARIO');
   const f29BookedCount = f29Entries.length > 0 ? 1 : 0;
   const f29Pending = f29BookedCount === 1 ? 0 : 1;
 
   // 6. Bancos y Tesorería
-  const totalBankMovs = bankMovements.length;
-  const bankMonto = bankMovements.reduce((s, m) => s + ((m.cargo || 0) + (m.abono || 0)), 0);
-  const bankBookedCount = entries.filter(e => e.origen === 'CAJA_BANCO').length;
-  const bankPending = bankMovements.filter(m => m.estado === 'PENDIENTE' || m.estado === 'NOVEDAD').length;
+  const totalBankMovs = safeBankMovements.length;
+  const bankMonto = safeBankMovements.reduce((s, m) => s + ((m.cargo || 0) + (m.abono || 0)), 0);
+  const bankBookedCount = safeEntries.filter(e => e.origen === 'CAJA_BANCO').length;
+  const bankPending = safeBankMovements.filter(m => m.estado === 'PENDIENTE' || m.estado === 'NOVEDAD').length;
 
   // 7. Arriendos IFRS 16
-  const totalLeases = leases.length;
-  const leasesMonto = leases.reduce((s, l) => s + (l.montoMensualClp || 0), 0);
-  const leaseEntries = entries.filter(e => e.origen === 'ARRIENDO_IFRS16' || e.documento?.includes('IFRS16') || e.concepto?.includes('IFRS 16') || e.concepto?.includes('Arrendamiento'));
+  const totalLeases = safeLeases.length;
+  const leasesMonto = safeLeases.reduce((s, l) => s + (l.montoMensualClp || 0), 0);
+  const leaseEntries = safeEntries.filter(e => e.origen === 'ARRIENDO_IFRS16' || e.documento?.includes('IFRS16') || e.concepto?.includes('IFRS 16') || e.concepto?.includes('Arrendamiento'));
   const leasesBookedCount = leaseEntries.length > 0 ? totalLeases : 0;
   const leasesPending = Math.max(0, totalLeases - leasesBookedCount);
 

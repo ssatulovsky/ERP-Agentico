@@ -52,8 +52,11 @@ import {
   Send,
   Building2,
   Check,
-  AlertCircle
+  AlertCircle,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
+import { downloadInventoryPdf, downloadInventoryExcel } from '../utils/reportGenerators';
 
 interface InventoryAgentModuleProps {
   company: CompanyProfile;
@@ -76,16 +79,21 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
   firm,
   activeClient,
   onUpdateClient,
-  warehouses,
+  warehouses = [],
   onUpdateWarehouses,
-  inventoryItems,
+  inventoryItems = [],
   onUpdateInventoryItems,
-  transfers,
+  transfers = [],
   onUpdateTransfers,
-  requisitions,
+  requisitions = [],
   onUpdateRequisitions,
   onAddAccountingEntry
 }) => {
+  const safeWarehouses = Array.isArray(warehouses) ? warehouses : [];
+  const safeInventoryItems = Array.isArray(inventoryItems) ? inventoryItems : [];
+  const safeTransfers = Array.isArray(transfers) ? transfers : [];
+  const safeRequisitions = Array.isArray(requisitions) ? requisitions : [];
+
   // Navigation tabs inside Inventory module
   const [activeSubTab, setActiveSubTab] = useState<'stock' | 'transfers' | 'requisitions' | 'warehouses'>('stock');
 
@@ -105,9 +113,9 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // New Transfer form state
-  const [newTransferOrigen, setNewTransferOrigen] = useState<string>(warehouses[0]?.id || '');
-  const [newTransferDestino, setNewTransferDestino] = useState<string>(warehouses[1]?.id || '');
-  const [newTransferItemId, setNewTransferItemId] = useState<string>(inventoryItems[0]?.id || '');
+  const [newTransferOrigen, setNewTransferOrigen] = useState<string>(safeWarehouses[0]?.id || '');
+  const [newTransferDestino, setNewTransferDestino] = useState<string>(safeWarehouses[1]?.id || '');
+  const [newTransferItemId, setNewTransferItemId] = useState<string>(safeInventoryItems[0]?.id || '');
   const [newTransferCantidad, setNewTransferCantidad] = useState<number>(10);
   const [newTransferPatente, setNewTransferPatente] = useState<string>('KJ-PR-88');
   const [newTransferChofer, setNewTransferChofer] = useState<string>('Manuel Valdivia Reyes');
@@ -151,24 +159,24 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
 
   // Filter items by client company (or general catalog)
   const clientWarehouses = useMemo(() => {
-    const direct = warehouses.filter(w => w.empresaId === activeClient.id);
-    return direct.length > 0 ? direct : warehouses;
-  }, [warehouses, activeClient.id]);
+    const direct = safeWarehouses.filter(w => w.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : safeWarehouses;
+  }, [safeWarehouses, activeClient.id]);
 
   const clientItems = useMemo(() => {
-    const direct = inventoryItems.filter(i => i.empresaId === activeClient.id);
-    return direct.length > 0 ? direct : inventoryItems;
-  }, [inventoryItems, activeClient.id]);
+    const direct = safeInventoryItems.filter(i => i.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : safeInventoryItems;
+  }, [safeInventoryItems, activeClient.id]);
 
   const clientTransfers = useMemo(() => {
-    const direct = transfers.filter(t => t.empresaId === activeClient.id);
-    return direct.length > 0 ? direct : transfers;
-  }, [transfers, activeClient.id]);
+    const direct = safeTransfers.filter(t => t.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : safeTransfers;
+  }, [safeTransfers, activeClient.id]);
 
   const clientRequisitions = useMemo(() => {
-    const direct = requisitions.filter(r => r.empresaId === activeClient.id);
-    return direct.length > 0 ? direct : requisitions;
-  }, [requisitions, activeClient.id]);
+    const direct = safeRequisitions.filter(r => r.empresaId === activeClient.id);
+    return direct.length > 0 ? direct : safeRequisitions;
+  }, [safeRequisitions, activeClient.id]);
 
   // Filtered Stock Items
   const filteredItems = useMemo(() => {
@@ -752,6 +760,27 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
 
         {/* Action Buttons according to tab */}
         <div className="flex items-center gap-2">
+          {/* Inventory Valuation & Stock Reports */}
+          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-1 shadow-2xs">
+            <button
+              onClick={() => downloadInventoryExcel(clientItems, activeClient)}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-slate-700 hover:text-emerald-700 hover:bg-emerald-50 rounded text-xs font-semibold transition-colors cursor-pointer"
+              title="Descargar inventario valorizado PMP en formato Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Excel PMP</span>
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              onClick={() => downloadInventoryPdf(clientItems, clientWarehouses, activeClient)}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-slate-700 hover:text-rose-700 hover:bg-rose-50 rounded text-xs font-semibold transition-colors cursor-pointer"
+              title="Descargar Informe Oficial de Existencias y Valoración PMP en PDF"
+            >
+              <Download className="w-3.5 h-3.5 text-rose-600" />
+              <span>Informe PDF</span>
+            </button>
+          </div>
+
           {activeSubTab === 'transfers' && (
             <button
               onClick={() => setIsTransferModalOpen(true)}

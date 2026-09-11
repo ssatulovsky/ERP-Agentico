@@ -453,23 +453,23 @@ export async function checkMySqlConnection(): Promise<boolean> {
     const errorCode = err.code || 'UNKNOWN_ERROR';
 
     if (errorCode === 'ECONNREFUSED') {
-      console.error(
-        `[MySQL 8.0 Error] Conexión rechazada (ECONNREFUSED) en host/puerto configurado: ${err.address || poolConfig.host}:${err.port || poolConfig.port}. Verifique que el servicio mysqld esté en ejecución.`
+      console.warn(
+        `[MySQL 8.0] Servidor MySQL local no detectado en ${err.address || poolConfig.host}:${err.port || poolConfig.port}. Activando modo de contingencia en memoria resiliente.`
       );
     } else if (errorCode === 'ER_ACCESS_DENIED_ERROR') {
-      console.error(
-        `[MySQL 8.0 Error] Acceso denegado (ER_ACCESS_DENIED_ERROR) para el usuario '${poolConfig.user}'. Verifique usuario y contraseña.`
+      console.warn(
+        `[MySQL 8.0] Acceso denegado (ER_ACCESS_DENIED_ERROR) para el usuario '${poolConfig.user}'. Continuando en modo contingencia.`
       );
     } else if (errorCode === 'ER_BAD_DB_ERROR') {
-      console.error(
-        `[MySQL 8.0 Error] Base de datos no encontrada (ER_BAD_DB_ERROR): '${poolConfig.database}'. Asegúrese de haber creado la base de datos.`
+      console.warn(
+        `[MySQL 8.0] Base de datos no encontrada (ER_BAD_DB_ERROR): '${poolConfig.database}'. Continuando en modo contingencia.`
       );
     } else if (errorCode === 'PROTOCOL_CONNECTION_LOST') {
-      console.error('[MySQL 8.0 Error] Conexión perdida con el servidor MySQL (PROTOCOL_CONNECTION_LOST).');
+      console.warn('[MySQL 8.0] Conexión perdida con el servidor MySQL (PROTOCOL_CONNECTION_LOST).');
     } else if (errorCode === 'ETIMEDOUT') {
-      console.error('[MySQL 8.0 Error] Tiempo de espera agotado al conectar al servidor MySQL (ETIMEDOUT).');
+      console.warn('[MySQL 8.0] Tiempo de espera agotado al conectar al servidor MySQL (ETIMEDOUT).');
     } else {
-      console.error(`[MySQL 8.0 Error] Fallo al verificar conexión: [${errorCode}] ${err.message}`);
+      console.warn(`[MySQL 8.0] Verificación de conexión: [${errorCode}] ${err.message}. Continuando en modo contingencia.`);
     }
 
     return false;

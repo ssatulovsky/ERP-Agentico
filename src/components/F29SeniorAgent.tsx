@@ -24,7 +24,8 @@ import {
   CheckCircle,
   Percent,
   Sliders,
-  ArrowRight
+  ArrowRight,
+  Download
 } from 'lucide-react';
 import {
   F29Declaration,
@@ -32,6 +33,7 @@ import {
   EmployeePayroll,
   AccountingEntry,
   CompanyProfile,
+  ClientCompany,
   ChileIndicators,
   F29SeniorResult,
   F29AlertaFiscal
@@ -42,6 +44,7 @@ import {
   formatNormalizedAccountingEntry,
   DEFAULT_INDICATORS
 } from '../utils/chileanAccounting';
+import { downloadF29Pdf, downloadF29Csv } from '../utils/reportGenerators';
 import {
   calculatePreF29,
   convertF29AsientoToAccountingEntry
@@ -323,6 +326,23 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                 <option value="2026-09">2026-09 (Septiembre)</option>
               </select>
             </div>
+
+            <button
+              onClick={() => downloadF29Pdf(f29, company as ClientCompany, indicators)}
+              className="flex items-center gap-1.5 bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors shadow-xs cursor-pointer"
+              title="Descargar Formulario 29 / Declaración en PDF timbrado oficial"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Descargar F29 (PDF)</span>
+            </button>
+
+            <button
+              onClick={() => downloadF29Csv(f29)}
+              className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-semibold px-3 py-2 rounded-lg transition-colors shadow-xs cursor-pointer"
+              title="Descargar códigos y montos de casilleros F29 en CSV"
+            >
+              <span>CSV Códigos</span>
+            </button>
 
             <button
               onClick={handleAddF29AccountingEntry}

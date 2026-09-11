@@ -45,6 +45,7 @@ import {
   BankNovedadType
 } from '../types';
 import { formatCLP, formatNumberCL } from '../utils/chileanAccounting';
+import { downloadBankReconciliationPdf, downloadBankReconciliationExcel } from '../utils/reportGenerators';
 
 interface BankReconciliationProps {
   company: CompanyProfile;
@@ -65,16 +66,20 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   company,
   firm,
   activeClient,
-  bankAccounts,
+  bankAccounts = [],
   onUpdateBankAccounts,
-  bankMovements,
+  bankMovements = [],
   onUpdateBankMovements,
-  cashFlowMovements,
-  accountingEntries,
+  cashFlowMovements = [],
+  accountingEntries = [],
   onRegisterNovedad,
   onRegisterAllNovedades,
   onResetBankMovements,
 }) => {
+  const safeBankMovements = Array.isArray(bankMovements) ? bankMovements : [];
+  const safeBankAccounts = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const safeCashFlowMovements = Array.isArray(cashFlowMovements) ? cashFlowMovements : [];
+  const safeAccountingEntries = Array.isArray(accountingEntries) ? accountingEntries : [];
   // Active bank account
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
     bankAccounts[0]?.id || 'bank-acc-1'
@@ -123,8 +128,8 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
 
   // Filter movements for the current account
   const accountMovements = useMemo(() => {
-    return bankMovements.filter(m => m.cuentaId === currentAccount.id || !m.cuentaId);
-  }, [bankMovements, currentAccount.id]);
+    return safeBankMovements.filter(m => m.cuentaId === currentAccount.id || !m.cuentaId);
+  }, [safeBankMovements, currentAccount.id]);
 
   // Calculated Novedades (Bank charges/credits not yet in accounting)
   const pendingNovedades = useMemo(() => {
@@ -287,7 +292,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       // Reconcile any remaining pending movements
       const updated = accountMovements.map(m => {
         if (m.estado === 'PENDIENTE') {
-          const matchingCf = cashFlowMovements.find(
+          const matchingCf = safeCashFlowMovements.find(
             cf => Math.abs(cf.montoTotal - (m.abono || m.cargo)) < 10
           );
           if (matchingCf) {
@@ -335,7 +340,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       setShowSyncSuccess(true);
       
       // Update account sync timestamp
-      const updatedAccounts = bankAccounts.map(acc => {
+      const updatedAccounts = safeBankAccounts.map(acc => {
         if (acc.id === currentAccount.id) {
           return {
             ...acc,
@@ -507,13 +512,13 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           {/* Top Quick Actions */}
           <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-auto">
             {/* Account Switcher if multiple */}
-            {bankAccounts.length > 1 && (
+            {safeBankAccounts.length > 1 && (
               <select
                 value={selectedAccountId}
                 onChange={(e) => setSelectedAccountId(e.target.value)}
                 className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-2 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {bankAccounts.map(acc => (
+                {safeBankAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
                     {acc.banco} ({acc.numeroCuenta})
                   </option>
@@ -571,6 +576,25 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             >
               <Printer className="w-3.5 h-3.5 text-slate-500" />
               <span>Acta CMF</span>
+            </button>
+
+            {/* Download PDF & Excel Bank Reconciliation Reports */}
+            <button
+              onClick={() => downloadBankReconciliationPdf(currentAccount, safeBankMovements, summary.saldoSegunLibroBanco, (activeClient || company) as ClientCompany)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer"
+              title="Descargar Acta y Resumen de Conciliación Bancaria en PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Acta PDF</span>
+            </button>
+
+            <button
+              onClick={() => downloadBankReconciliationExcel(currentAccount, safeBankMovements, (activeClient || company) as ClientCompany)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer"
+              title="Descargar Cartola y Conciliación Bancaria en formato Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Excel</span>
             </button>
 
             {/* Reset Demo State Button */}

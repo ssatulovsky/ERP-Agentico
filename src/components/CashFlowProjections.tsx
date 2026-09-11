@@ -33,12 +33,15 @@ interface CashFlowProjectionsProps {
 }
 
 export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
-  movements,
+  movements = [],
   onAddMovement,
   onUpdateMovement,
-  dtes,
+  dtes = [],
   indicators,
 }) => {
+  const safeMovements = Array.isArray(movements) ? movements : [];
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+
   const [scenario, setScenario] = useState<'BASE' | 'OPTIMISTA' | 'ESTRESADO'>('BASE');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'INGRESO' | 'EGRESO'>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -61,11 +64,11 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
   });
 
   // Calculate totals
-  const totalIngresos = movements
+  const totalIngresos = safeMovements
     .filter(m => m.tipo === 'INGRESO')
     .reduce((s, m) => s + m.montoTotal, 0);
 
-  const totalEgresos = movements
+  const totalEgresos = safeMovements
     .filter(m => m.tipo === 'EGRESO')
     .reduce((s, m) => s + m.montoTotal, 0);
 
@@ -114,9 +117,9 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
   ];
 
   // Inconsistency detection between RCV & Cash Flow
-  const pendingSalesDtes = dtes.filter(d => d.tipoOperacion === 'VENTA' && d.estadoPago === 'PENDIENTE');
+  const pendingSalesDtes = safeDtes.filter(d => d.tipoOperacion === 'VENTA' && d.estadoPago === 'PENDIENTE');
   const dtesNotInCashFlow = pendingSalesDtes.filter(
-    d => !movements.some(m => m.dteFolioAsociado === d.folio || m.concepto.includes(d.folio.toString()))
+    d => !safeMovements.some(m => m.dteFolioAsociado === d.folio || m.concepto.includes(d.folio.toString()))
   );
 
   const handleSyncDtesToCashflow = () => {
@@ -173,7 +176,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
   };
 
   // Filtered movements
-  const filteredMovements = movements.filter((m) => {
+  const filteredMovements = safeMovements.filter((m) => {
     const matchesType = typeFilter === 'ALL' || m.tipo === typeFilter;
     const matchesStatus = statusFilter === 'ALL' || m.estado === statusFilter;
     const matchesSearch = 

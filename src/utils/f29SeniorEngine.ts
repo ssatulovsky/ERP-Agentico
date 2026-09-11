@@ -31,19 +31,21 @@ export interface PreF29Options {
  */
 export function calculatePreF29(
   company: CompanyProfile,
-  dtes: DteDocument[],
-  payrolls: EmployeePayroll[],
+  dtes: DteDocument[] = [],
+  payrolls: EmployeePayroll[] = [],
   indicators: ChileIndicators,
   options: PreF29Options = {}
 ): F29SeniorResult {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const periodo = options.periodo || '2026-08';
-  const utmActual = options.utmActual || indicators.utm || 68320;
+  const utmActual = options.utmActual || indicators?.utm || 68320;
   // Si no se especifica UTM anterior, se aproxima con variación IPC mensual (~0.4%)
   const utmAnterior = options.utmAnterior || Math.round(utmActual / 1.004);
 
   // 1. DÉBITO FISCAL IVA (LÍNEAS DE VENTAS Y SERVICIOS)
   // Facturas de Venta afectas (DTE 33), Notas de Débito (DTE 56) y Boletas Afectas (DTE 39)
-  const salesDtes = dtes.filter(d => d.tipoOperacion === 'VENTA');
+  const salesDtes = safeDtes.filter(d => d.tipoOperacion === 'VENTA');
   
   let facturasVentaAfectasNeto = 0;
   let debitoFacturasIva = 0;
@@ -73,7 +75,7 @@ export function calculatePreF29(
   const totalDebitoCalculado = Math.max(0, debitoFacturasIva + boletasVentaAfectasIva - notasCreditoDeduccionDebito);
 
   // 2. CRÉDITO FISCAL IVA (LÍNEAS DE COMPRAS Y SERVICIOS RECIBIDOS)
-  const purchaseDtes = dtes.filter(d => d.tipoOperacion === 'COMPRA');
+  const purchaseDtes = safeDtes.filter(d => d.tipoOperacion === 'COMPRA');
 
   let comprasInternasAfectasNeto = 0;
   let creditoFiscalNormal = 0;
@@ -155,8 +157,8 @@ export function calculatePreF29(
   // 4. RETENCIONES OBLIGATORIAS
   // 4.1 Segunda Categoría Honorarios (Código 151)
   // Tasa legal progresiva vigente para 2025/2026: 14.5% (Ley 21.133)
-  const honorariosDtes = dtes.filter(d => d.tipoOperacion === 'HONORARIOS');
-  const honorariosTasaAplicada = indicators.retencionHonorariosTasa || 0.145;
+  const honorariosDtes = safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS');
+  const honorariosTasaAplicada = indicators?.retencionHonorariosTasa || 0.145;
   
   const honorariosBrutoTotal = honorariosDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
   const retencionHonorariosSegundaCat = honorariosDtes.reduce((s, d) => {
@@ -164,7 +166,7 @@ export function calculatePreF29(
   }, 0);
 
   // 4.2 Impuesto Único de Segunda Categoría sobre Sueldos (Código 048)
-  const impuestoUnicoTrabajadoresSueldos = payrolls.reduce((s, p) => s + (p.impuestoUnicoMonto || 0), 0);
+  const impuestoUnicoTrabajadoresSueldos = safePayrolls.reduce((s, p) => s + (p.impuestoUnicoMonto || 0), 0);
 
   // 4.3 Otras retenciones (Cambio de Sujeto y No Residentes)
   const cambioSujetoIva = 0;

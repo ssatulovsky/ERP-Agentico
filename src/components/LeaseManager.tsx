@@ -8,7 +8,9 @@ import {
   Check, 
   Layers, 
   X,
-  TrendingDown
+  TrendingDown,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
 import { LeaseContract, ChileIndicators, AccountingEntry } from '../types';
 import { 
@@ -17,6 +19,7 @@ import {
   createLeaseIfrs16Entry,
   createSimpleLeaseExpenseEntry
 } from '../utils/chileanAccounting';
+import { downloadLeasesPdf, downloadLeasesExcel } from '../utils/reportGenerators';
 
 interface LeaseManagerProps {
   leases: LeaseContract[];
@@ -180,13 +183,33 @@ export const LeaseManager: React.FC<LeaseManagerProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 bg-[#2563eb] hover:bg-blue-600 text-white px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Registrar Contrato de Arriendo</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => downloadLeasesPdf(leases, undefined, indicators)}
+            className="flex items-center gap-1.5 bg-rose-700 hover:bg-rose-800 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Descargar Cartera de Contratos y Activos ROU (IFRS 16) en PDF"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Informe IFRS 16 (PDF)</span>
+          </button>
+
+          <button
+            onClick={() => downloadLeasesExcel(leases, undefined, indicators)}
+            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Descargar Contratos de Arrendamiento en formato Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Excel</span>
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 bg-[#2563eb] hover:bg-blue-600 text-white px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Registrar Contrato de Arriendo</span>
+          </button>
+        </div>
       </div>
 
       {/* Leases List Table */}
