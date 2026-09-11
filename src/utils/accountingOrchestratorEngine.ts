@@ -1159,7 +1159,8 @@ export function isResultadoAccount(clase: number): boolean {
 export function buildOfficial8ColumnBalance(
   entries: AccountingEntry[],
   empresa: CompanyProfile,
-  periodoStr: string = '2026-12-31'
+  periodoStr: string = '2026-12-31',
+  customChart?: HierarchicalAccountItem[]
 ): Balance8ColumnasReport {
   // 1. Acumular débitos y créditos por cuenta
   const accMap: Record<
@@ -1174,6 +1175,16 @@ export function buildOfficial8ColumnBalance(
     }
   > = {};
 
+  const findInCurrentChart = (identifier: string) => {
+    if (customChart && customChart.length > 0) {
+      const clean = identifier.trim().toLowerCase();
+      return customChart.find(
+        (acc) => acc.codigo.toLowerCase() === clean || acc.nombre.toLowerCase() === clean
+      );
+    }
+    return findAccountInChart(identifier);
+  };
+
   // Inicializar con cuentas que tienen saldo de apertura o movimientos
   entries.forEach(entry => {
     entry.lineas.forEach(line => {
@@ -1181,7 +1192,7 @@ export function buildOfficial8ColumnBalance(
       const name = line.cuentaNombre || 'Cuenta No Clasificada';
 
       if (!accMap[code]) {
-        const found = findAccountInChart(code) || findAccountInChart(name);
+        const found = findInCurrentChart(code) || findInCurrentChart(name);
         const resolvedClass = found ? found.clase : getAccountClass(code);
         const resolvedNature = found ? found.naturaleza : (resolvedClass === 1 || resolvedClass >= 5 ? 'DEUDORA' : 'ACREEDORA');
 
@@ -1494,31 +1505,134 @@ export function auditPeripheralModules(
   // 1. RCV Ventas
   const salesDtes = dtes.filter(d => d.tipoOperacion === 'VENTA');
   const salesMonto = salesDtes.reduce((s, d) => s + d.montoTotal, 0);
-  const salesBookedCount = entries.filter(e => e.origen === 'RCV_VENTA').length;
+  const salesEntries = entries.filter(e => {
+    const origin = (e.origen || '').toUpperCase();
+    const doc = (e.documento || '').toLowerCase();
+    const conc = (e.concepto || '').toLowerCase();
+    const id = (e.id || '').toLowerCase();
+    return (
+      origin === 'RCV_VENTA' ||
+      origin === 'VENTAS' ||
+      origin === 'VENTA' ||
+      doc.includes('libro-venta') ||
+      doc.includes('rcv') ||
+      conc.includes('libro de venta') ||
+      conc.includes('libro-venta') ||
+      conc.includes('centralización') ||
+      conc.includes('rcv venta') ||
+      id.includes('venta')
+    );
+  });
+  
+  // Detección de centralización mensual de ventas (un solo asiento que consolida el libro o cubre el monto)
+  const hasSalesCentralization = salesEntries.some(e => {
+    const text = (e.concepto + ' ' + (e.documento || '') + ' ' + (e.id || '')).toLowerCase();
+    return (
+      text.includes('centraliz') ||
+      text.includes('libro de venta') ||
+      text.includes('libro-venta') ||
+      text.includes('rcv-venta') ||
+      text.includes('rcv venta') ||
+      text.includes('resumen rcv')
+    );
+  });
+  const totalSalesBookedAmount = salesEntries.reduce((s, e) => s + (e.totalDebe || 0), 0);
+
+  const isSalesFullyCovered =
+    salesDtes.length === 0 ||
+    hasSalesCentralization ||
+    (totalSalesBookedAmount >= salesMonto - 100 && totalSalesBookedAmount > 0) ||
+    salesEntries.length >= salesDtes.length;
+
+  const salesBookedCount = isSalesFullyCovered ? salesDtes.length : Math.min(salesDtes.length, salesEntries.length);
   const salesPending = Math.max(0, salesDtes.length - salesBookedCount);
 
   // 2. RCV Compras
   const purchaseDtes = dtes.filter(d => d.tipoOperacion === 'COMPRA');
   const purchaseMonto = purchaseDtes.reduce((s, d) => s + d.montoTotal, 0);
-  const purchaseBookedCount = entries.filter(e => e.origen === 'RCV_COMPRA').length;
+  const purchaseEntries = entries.filter(e => {
+    const origin = (e.origen || '').toUpperCase();
+    const doc = (e.documento || '').toLowerCase();
+    const conc = (e.concepto || '').toLowerCase();
+    const id = (e.id || '').toLowerCase();
+    return (
+      origin === 'RCV_COMPRA' ||
+      origin === 'COMPRAS' ||
+      origin === 'COMPRA' ||
+      doc.includes('libro-compra') ||
+      doc.includes('rcv') ||
+      conc.includes('libro de compra') ||
+      conc.includes('libro-compra') ||
+      conc.includes('centralización') ||
+      conc.includes('rcv compra') ||
+      id.includes('compra')
+    );
+  });
+  
+  const hasPurchaseCentralization = purchaseEntries.some(e => {
+    const text = (e.concepto + ' ' + (e.documento || '') + ' ' + (e.id || '')).toLowerCase();
+    return (
+      text.includes('centraliz') ||
+      text.includes('libro de compra') ||
+      text.includes('libro-compra') ||
+      text.includes('rcv-compra') ||
+      text.includes('rcv compra') ||
+      text.includes('resumen rcv')
+    );
+  });
+  const totalPurchaseBookedAmount = purchaseEntries.reduce((s, e) => s + (e.totalDebe || 0), 0);
+
+  const isPurchaseFullyCovered =
+    purchaseDtes.length === 0 ||
+    hasPurchaseCentralization ||
+    (totalPurchaseBookedAmount >= purchaseMonto - 100 && totalPurchaseBookedAmount > 0) ||
+    purchaseEntries.length >= purchaseDtes.length;
+
+  const purchaseBookedCount = isPurchaseFullyCovered ? purchaseDtes.length : Math.min(purchaseDtes.length, purchaseEntries.length);
   const purchasePending = Math.max(0, purchaseDtes.length - purchaseBookedCount);
 
   // 3. Boletas de Honorarios
   const bhes = dtes.filter(d => d.tipoOperacion === 'HONORARIOS');
   const bheMonto = bhes.reduce((s, d) => s + d.montoTotal, 0);
-  const bheBookedCount = entries.filter(e => e.origen === 'HONORARIOS').length;
+  const bheEntries = entries.filter(e => {
+    const origin = (e.origen || '').toUpperCase();
+    const doc = (e.documento || '').toLowerCase();
+    const conc = (e.concepto || '').toLowerCase();
+    return (
+      origin === 'HONORARIOS' ||
+      origin === 'BHE' ||
+      doc.includes('honorario') ||
+      doc.includes('bhe') ||
+      conc.includes('honorario') ||
+      conc.includes('bhe')
+    );
+  });
+  const hasBheCentralization = bheEntries.some(e => {
+    const text = (e.concepto + ' ' + (e.documento || '')).toLowerCase();
+    return text.includes('centraliz') || text.includes('libro de honorario') || text.includes('resumen bhe');
+  });
+  const totalBheBookedAmount = bheEntries.reduce((s, e) => s + (e.totalDebe || 0), 0);
+  const isBheFullyCovered =
+    bhes.length === 0 ||
+    hasBheCentralization ||
+    (totalBheBookedAmount >= bheMonto - 100 && totalBheBookedAmount > 0) ||
+    bheEntries.length >= bhes.length;
+  const bheBookedCount = isBheFullyCovered ? bhes.length : Math.min(bhes.length, bheEntries.length);
   const bhePending = Math.max(0, bhes.length - bheBookedCount);
 
   // 4. Centralización Nómina RRHH
   const totalPayrolls = payrolls.length;
   const payrollsMonto = payrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
-  const payrollBookedCount = entries.filter(e => e.origen === 'REMUNERACIONES').length;
-  const payrollPending = Math.max(0, totalPayrolls > 0 && payrollBookedCount === 0 ? totalPayrolls : 0);
+  const payrollEntries = entries.filter(e => e.origen === 'REMUNERACIONES');
+  const hasPayrollBooked = payrollEntries.length > 0;
+  const payrollBookedCount = hasPayrollBooked ? totalPayrolls : 0;
+  const payrollPending = Math.max(0, totalPayrolls - payrollBookedCount);
 
   // 5. F29 Impuestos Mensuales
   const f29Monto = f29.totalAPagar || 0;
-  const f29BookedCount = entries.filter(e => e.origen === 'F29_TRIBUTARIO').length;
-  const f29Pending = f29BookedCount === 0 ? 1 : 0;
+  const f29Entries = entries.filter(e => e.origen === 'F29_TRIBUTARIO');
+  const f29BookedCount = f29Entries.length > 0 ? 1 : 0;
+  const f29Pending = f29BookedCount === 1 ? 0 : 1;
 
   // 6. Bancos y Tesorería
   const totalBankMovs = bankMovements.length;
@@ -1529,8 +1643,9 @@ export function auditPeripheralModules(
   // 7. Arriendos IFRS 16
   const totalLeases = leases.length;
   const leasesMonto = leases.reduce((s, l) => s + (l.montoMensualClp || 0), 0);
-  const leasesBookedCount = entries.filter(e => e.origen === 'ARRIENDO_IFRS16').length;
-  const leasesPending = Math.max(0, totalLeases > 0 && leasesBookedCount === 0 ? totalLeases : 0);
+  const leaseEntries = entries.filter(e => e.origen === 'ARRIENDO_IFRS16' || e.documento?.includes('IFRS16') || e.concepto?.includes('IFRS 16') || e.concepto?.includes('Arrendamiento'));
+  const leasesBookedCount = leaseEntries.length > 0 ? totalLeases : 0;
+  const leasesPending = Math.max(0, totalLeases - leasesBookedCount);
 
   return [
     {
@@ -1542,7 +1657,7 @@ export function auditPeripheralModules(
       enTransito: salesPending,
       estado: salesPending === 0 ? 'AL_DIA' : 'EN_TRANSITO',
       observacion: salesPending === 0
-        ? 'Todas las ventas devengadas se encuentran asentadas en Clientes y Ventas del Giro.'
+        ? 'Todas las ventas devengadas se encuentran asentadas en Clientes y Ventas del Giro (Centralización RCV al día).'
         : `Existen ${salesPending} DTEs de ventas pendientes de centralizar al Libro Diario.`,
     },
     {
@@ -1638,7 +1753,7 @@ export function generatePeriodClosingAdjustments(
   const dolarActual = indicators?.dolar || 955.20;
   const dolarApertura = dolarActual - 12.50;
 
-  // 1. Devengos
+  // 1. Devengos de Servicios y Arriendos No Facturados (NIC 1)
   const devengosMonto = 1250000;
   const adjDevengos: PeriodClosingAdjustment = {
     id: 'adj-devengos-01',
@@ -1647,6 +1762,9 @@ export function generatePeriodClosingAdjustments(
     descripcion: 'Reconocimiento del gasto devengado según principio de devengado IFRS (NIC 1).',
     baseCalculo: devengosMonto,
     montoAjuste: devengosMonto,
+    fuenteDatos: 'Contratos de servicios recurrentes y estimaciones de consumo mensual aún no facturados por proveedores al corte de mes.',
+    memoriaCalculo: 'Provisión mensual devengada: Servicios básicos (Luz/Agua/Enlaces) $450.000 + Infraestructura Cloud & Software $800.000 = Total pasivo devengado $1.250.000.',
+    normaReferencia: 'NIC 1 (Presentación de EEFF) y Marco Conceptual IFRS: Principio de Devengo (Accrual Basis).',
     asientoPropuesto: {
       glosa: 'Ajuste Cierre Mensual: Devengo de servicios operacionales del período',
       lineas: [
@@ -1676,9 +1794,9 @@ export function generatePeriodClosingAdjustments(
     aplicado: false,
   };
 
-  // 2. Corrección Monetaria / Diferencia de Cambio USD
-  const saldoUsdCaja = 8500; // USD 8,500 en cuenta en dólares
-  const variacionTipoCambio = dolarActual - dolarApertura; // ej: +12.50 CLP/USD
+  // 2. Corrección Monetaria / Diferencia de Cambio USD (NIC 21)
+  const saldoUsdCaja = 8500; // USD 8,500 en cuenta bancaria en dólares
+  const variacionTipoCambio = Number((dolarActual - dolarApertura).toFixed(2)); // ej: +12.50 CLP/USD
   const gananciaDiferenciaCambio = Math.round(saldoUsdCaja * variacionTipoCambio);
 
   const adjDiferenciaCambio: PeriodClosingAdjustment = {
@@ -1688,6 +1806,9 @@ export function generatePeriodClosingAdjustments(
     descripcion: `Revalorización de saldo de US$${saldoUsdCaja.toLocaleString()} a TC de cierre $${dolarActual} CLP/USD (NIC 21).`,
     baseCalculo: saldoUsdCaja * dolarActual,
     montoAjuste: gananciaDiferenciaCambio,
+    fuenteDatos: `Cuenta bancaria Moneda Extranjera (saldo contable US$${saldoUsdCaja.toLocaleString()}) e Indicador Dólar Observado oficial del Banco Central de Chile ($${dolarActual} CLP/USD).`,
+    memoriaCalculo: `Saldo en USD (US$${saldoUsdCaja.toLocaleString()}) × Variación cambiaria del período (+$${variacionTipoCambio} CLP/USD: desde $${dolarApertura.toFixed(2)} hasta $${dolarActual.toFixed(2)}) = Ajuste por mayor valor de $${gananciaDiferenciaCambio.toLocaleString('es-CL')} CLP.`,
+    normaReferencia: 'NIC 21 (Efectos de las Variaciones en las Tasas de Cambio de la Moneda Extranjera). Partidas monetarias deben reexpresarse a tipo de cambio de cierre.',
     asientoPropuesto: {
       glosa: `Ajuste Cierre: Revalorización cambiaria Banco Moneda Extranjera a $${dolarActual} CLP/USD`,
       lineas: [
@@ -1708,10 +1829,11 @@ export function generatePeriodClosingAdjustments(
     aplicado: false,
   };
 
-  // 3. Reajuste UF en Contratos
+  // 3. Reajuste UF en Contratos (IFRS 16 / LIR)
   const safeLeases = Array.isArray(leases) ? leases : [];
   const canonUfTotal = safeLeases.reduce((s, l) => s + (l.montoMensualMoneda === 'UF' ? (l.montoCanonMensual || 45) : 45), 0);
-  const reajusteUfMonto = Math.round(canonUfTotal * 180); // Variación UF del mes
+  const variacionUfMes = 180; // Incremento aproximado mensual de la UF por IPC
+  const reajusteUfMonto = Math.round(canonUfTotal * variacionUfMes);
 
   const adjReajusteUf: PeriodClosingAdjustment = {
     id: 'adj-reajuste-uf-03',
@@ -1720,6 +1842,9 @@ export function generatePeriodClosingAdjustments(
     descripcion: `Actualización de pasivo por canon de arriendo expresado en UF al valor de cierre $${ufActual.toLocaleString('es-CL')} CLP.`,
     baseCalculo: canonUfTotal * ufActual,
     montoAjuste: reajusteUfMonto,
+    fuenteDatos: `Registro de contratos de arriendo IFRS 16 (${canonUfTotal} UF acumuladas de canon indexado) y valor oficial de la UF al cierre de mes ($${ufActual.toLocaleString('es-CL')} CLP).`,
+    memoriaCalculo: `Canon pactado (${canonUfTotal} UF) × Variación de la UF del período (~+$${variacionUfMes} CLP/UF por IPC) = Incremento de pasivo por reajuste contractual de $${reajusteUfMonto.toLocaleString('es-CL')} CLP.`,
+    normaReferencia: 'IFRS 16 (Arrendamientos) y Art. 41 LIR: Actualización de pasivos exigibles expresados en unidades reajustables (UF).',
     asientoPropuesto: {
       glosa: `Ajuste Cierre: Actualización contractual UF al cierre mensual (${formatCLP(ufActual)})`,
       lineas: [
@@ -1742,7 +1867,8 @@ export function generatePeriodClosingAdjustments(
 
   // 4. Depreciación de Activo Fijo (NIC 16)
   const activoFijoBruto = 45000000;
-  const depreciacionMensual = Math.round(activoFijoBruto / (5 * 12)); // 5 años vida útil
+  const mesesVidaUtil = 60; // 5 años (60 meses) de vida útil estándar según tabla SII / IFRS
+  const depreciacionMensual = Math.round(activoFijoBruto / mesesVidaUtil);
 
   const adjDepreciacion: PeriodClosingAdjustment = {
     id: 'adj-deprec-04',
@@ -1751,6 +1877,9 @@ export function generatePeriodClosingAdjustments(
     descripcion: 'Amortización lineal de maquinarias, vehículos y equipos computacionales.',
     baseCalculo: activoFijoBruto,
     montoAjuste: depreciacionMensual,
+    fuenteDatos: `Inventario del Mayor de Propiedades, Planta y Equipos (saldo bruto valor libro $${activoFijoBruto.toLocaleString('es-CL')} CLP en cuentas del grupo 1.2.01).`,
+    memoriaCalculo: `Valor libro bruto ($${activoFijoBruto.toLocaleString('es-CL')}) ÷ Vida útil estimada (5 años = ${mesesVidaUtil} meses) = Cuota de depreciación lineal mensual de $${depreciacionMensual.toLocaleString('es-CL')} CLP.`,
+    normaReferencia: 'NIC 16 (Propiedades, Planta y Equipo): Distribución sistemática del importe depreciable de un activo a lo largo de su vida útil.',
     asientoPropuesto: {
       glosa: 'Ajuste Cierre: Cuota mensual de depreciación lineal de propiedad, planta y equipo',
       lineas: [

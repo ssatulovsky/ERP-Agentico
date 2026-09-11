@@ -30,7 +30,18 @@ import {
   Boxes,
   Users,
   Receipt,
-  FileText
+  FileText,
+  Edit2,
+  Edit3,
+  Trash2,
+  FolderTree,
+  FileUp,
+  Globe,
+  Building,
+  CheckSquare,
+  ListTree,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -49,6 +60,9 @@ import {
   OrchestratorAuditItem,
   AccountingProposalResponse,
   PeriodClosingAdjustment,
+  AccountGroupDefinition,
+  BalanceGroupingMode,
+  GroupedBalanceReport,
 } from '../types';
 import { formatCLP, formatNumberCL, formatNormalizedAccountingEntry } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
@@ -62,8 +76,21 @@ import {
   buildTransactionalAccountingProposalJSON,
   findAccountInChart,
 } from '../utils/accountingOrchestratorEngine';
+import {
+  loadCompanyChartOfAccounts,
+  saveCompanyChartOfAccounts,
+  loadCompanyGroups,
+  saveCompanyGroups,
+  resetCompanyChartToDefault,
+  buildGroupedBalanceReport,
+} from '../utils/companyChartOfAccountsService';
+import { AccountEditModal } from './accounting/AccountEditModal';
+import { GroupManagerModal } from './accounting/GroupManagerModal';
+import { ImportExportChartModal } from './accounting/ImportExportChartModal';
+import { GroupedBalanceView } from './accounting/GroupedBalanceView';
 import { seedF29 } from '../data/seedData';
 import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
+import { EditClosingAdjustmentModal } from './accounting/EditClosingAdjustmentModal';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -118,19 +145,31 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   // Plan de cuentas filter & search
   const [planClassFilter, setPlanClassFilter] = useState<number | 'TODOS'>('TODOS');
   const [planSearchTerm, setPlanSearchTerm] = useState<string>('');
-  const [chartOfAccounts, setChartOfAccounts] = useState<HierarchicalAccountItem[]>(CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS);
-  const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
-  const [newAccountForm, setNewAccountForm] = useState({
-    codigo: '',
-    nombre: '',
-    clase: 6,
-    tipo: 'GASTO' as const,
-    clasificacion: 'OPERACIONAL' as const,
-    naturaleza: 'DEUDORA' as const,
-    requiereAuxiliarRut: false,
-    requiereCentroCosto: true,
-    esConciliableBancaria: false,
-  });
+  
+  // Plan de Cuentas Jerárquico Custom por Empresa y Gestión de Grupos
+  const [chartOfAccounts, setChartOfAccounts] = useState<HierarchicalAccountItem[]>(() =>
+    loadCompanyChartOfAccounts(company.rut)
+  );
+  const [chartGroups, setChartGroups] = useState<AccountGroupDefinition[]>(() =>
+    loadCompanyGroups(company.rut)
+  );
+
+  // Sincronizar plan de cuentas y grupos al cambiar de empresa
+  React.useEffect(() => {
+    setChartOfAccounts(loadCompanyChartOfAccounts(company.rut));
+    setChartGroups(loadCompanyGroups(company.rut));
+  }, [company.rut]);
+
+  // Modales de Plan de Cuentas
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountToEdit, setAccountToEdit] = useState<HierarchicalAccountItem | null>(null);
+  const [subaccountParentCode, setSubaccountParentCode] = useState<string | undefined>(undefined);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [importExportModalOpen, setImportExportModalOpen] = useState(false);
+
+  // Modo de agrupación de Balance (Tradicional CMF, Fiscal SII, Casa Matriz HQ, Personalizado)
+  const [balanceGroupingMode, setBalanceGroupingMode] = useState<BalanceGroupingMode>('TRADICIONAL_CMF');
+  const [isGroupedView, setIsGroupedView] = useState<boolean>(true);
 
   // Modal for Manual Entry
   const [showManualModal, setShowManualModal] = useState<boolean>(false);
@@ -175,6 +214,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [closingAdjustments, setClosingAdjustments] = useState<PeriodClosingAdjustment[]>(() =>
     generatePeriodClosingAdjustments(indicators, company, leases)
   );
+  const [editingAdjustment, setEditingAdjustment] = useState<PeriodClosingAdjustment | null>(null);
 
   // Formatter helper for canonical text adjustment voucher
   const getFormattedAdjustmentVoucher = (adj: PeriodClosingAdjustment): string => {
@@ -209,8 +249,13 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // 8-Columns Balance computation
   const balance8Col: Balance8ColumnasReport = useMemo(() => {
-    return buildOfficial8ColumnBalance(entries, company, '2026-12-31');
-  }, [entries, company]);
+    return buildOfficial8ColumnBalance(entries, company, '2026-12-31', chartOfAccounts);
+  }, [entries, company, chartOfAccounts]);
+
+  // Reporte de Balance Agrupado con subtotales por grupo y subgrupo (Tradicional CMF, Fiscal SII, Casa Matriz HQ, Personalizado)
+  const groupedBalanceReport: GroupedBalanceReport = useMemo(() => {
+    return buildGroupedBalanceReport(balance8Col, chartOfAccounts, chartGroups, balanceGroupingMode);
+  }, [balance8Col, chartOfAccounts, chartGroups, balanceGroupingMode]);
 
   // IFRS Financial Statements
   const ifrsStatements = useMemo(() => {
@@ -492,7 +537,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Handle AI Routing Simulation
   const handleSimulateAiRouting = async () => {
-    if (!rawGlosaInput.trim()) return;
+    if (!rawGlosaInput.trim()) {
+      showToast('Por favor ingrese la descripción o glosa de la operación económica.', 'info');
+      return;
+    }
+    if (!rawMontoInput || rawMontoInput <= 0) {
+      showToast('Debe ingresar el monto real en dinero ($ CLP) de la transacción para formular la imputación contable.', 'info');
+      return;
+    }
     setIsAiLoading(true);
 
     try {
@@ -525,30 +577,52 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
       // Fallback deterministic if no JSON extracted
       if (!extractedJSON) {
-        const isCompra = rawGlosaInput.toLowerCase().includes('compra') || rawGlosaInput.toLowerCase().includes('proveedor');
+        const isCompra = rawGlosaInput.toLowerCase().includes('compra') || rawGlosaInput.toLowerCase().includes('proveedor') || rawGlosaInput.toLowerCase().includes('pago');
+        const isVenta = rawGlosaInput.toLowerCase().includes('venta') || rawGlosaInput.toLowerCase().includes('cliente') || rawGlosaInput.toLowerCase().includes('factura emitida');
         const iva = Math.round(rawMontoInput * 0.19);
         const neto = rawMontoInput;
         const total = neto + iva;
 
+        // Clasificación inteligente según texto de glosa real
+        let cuentaCod = '6.1.04.006';
+        let cuentaNom = 'Gastos Operacionales Generales';
+        const lowerGlosa = rawGlosaInput.toLowerCase();
+        if (lowerGlosa.includes('software') || lowerGlosa.includes('licencia') || lowerGlosa.includes('cloud') || lowerGlosa.includes('servidor')) {
+          cuentaCod = '6.1.04.002';
+          cuentaNom = 'Software, Servidores Cloud y Licencias';
+        } else if (lowerGlosa.includes('arriendo') || lowerGlosa.includes('alquiler')) {
+          cuentaCod = '6.1.04.001';
+          cuentaNom = 'Arriendos de Inmuebles y Oficinas';
+        } else if (lowerGlosa.includes('honorario') || lowerGlosa.includes('asesor')) {
+          cuentaCod = '6.1.03.001';
+          cuentaNom = 'Honorarios Profesionales de Terceros';
+        } else if (lowerGlosa.includes('impresora') || lowerGlosa.includes('computador') || lowerGlosa.includes('equipo')) {
+          cuentaCod = '1.2.01.004';
+          cuentaNom = 'Equipos Computacionales y Servidores';
+        } else if (lowerGlosa.includes('papel') || lowerGlosa.includes('tinta') || lowerGlosa.includes('utiles')) {
+          cuentaCod = '6.1.04.006';
+          cuentaNom = 'Útiles de Oficina, Papelería y Suministros Menores';
+        }
+
         extractedJSON = {
           empresa_id: company.rut || '77.798.901-4',
           accion: 'propuesta_asiento',
-          origen_modulo: isCompra ? 'COMPRAS' : 'VENTAS',
+          origen_modulo: isVenta ? 'VENTAS' : (isCompra ? 'COMPRAS' : 'MANUAL'),
           periodo: new Date().toISOString().substring(0, 7),
           asiento: {
             fecha: new Date().toISOString().split('T')[0],
-            tipo_comprobante: isCompra ? 'EGRESO' : 'INGRESO',
+            tipo_comprobante: isVenta ? 'INGRESO' : (isCompra ? 'EGRESO' : 'TRASPASO'),
             glosa_general: rawGlosaInput,
             cuadre_valido: true,
             total_debe: total,
             total_haber: total,
             lineas: [
               {
-                codigo_cuenta: '6.1.04.002',
-                nombre_cuenta: 'Software, Servidores Cloud y Licencias',
+                codigo_cuenta: cuentaCod,
+                nombre_cuenta: cuentaNom,
                 debe: neto,
                 haber: 0,
-                centro_costo: 'TECNOLOGIA',
+                centro_costo: 'ADMINISTRACION',
               },
               {
                 codigo_cuenta: '1.1.04.001',
@@ -561,12 +635,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 nombre_cuenta: 'Proveedores Nacionales (Cuentas por Pagar)',
                 debe: 0,
                 haber: total,
-                rut_auxiliar: '76.889.012-3',
+                rut_auxiliar: company.rut || 'Pendiente de RUT Auxiliar',
               },
             ],
           },
           alertas_auditoria: [
-            'Asiento validado: IVA Crédito Fiscal cumple con requisitos de respaldo en RCV según Art. 23 DL 825.',
+            'Asiento formulado con montos reales suministrados: IVA Crédito Fiscal sujeto a respaldo de DTE en RCV según Art. 23 DL 825.',
           ],
         };
       }
@@ -615,40 +689,94 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     showToast('Asiento contable imputado y sincronizado con éxito en el Libro Diario.', 'success');
   };
 
-  // Handle Add Account to Chart
-  const handleCreateNewAccount = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAccountForm.codigo || !newAccountForm.nombre) return;
+  // Manejadores del Plan de Cuentas Personalizado por Empresa
+  const handleOpenCreateAccountModal = () => {
+    setAccountToEdit(null);
+    setSubaccountParentCode(undefined);
+    setAccountModalOpen(true);
+  };
 
-    const newAcc: HierarchicalAccountItem = {
-      codigo: newAccountForm.codigo,
-      nombre: newAccountForm.nombre,
-      clase: newAccountForm.clase as any,
-      grupo: newAccountForm.codigo.split('.').slice(0, 2).join('.'),
-      subgrupo: newAccountForm.codigo.split('.').slice(0, 3).join('.'),
-      nivel: 5,
-      tipo: newAccountForm.tipo,
-      clasificacion: newAccountForm.clasificacion,
-      naturaleza: newAccountForm.naturaleza,
-      requiereAuxiliarRut: newAccountForm.requiereAuxiliarRut,
-      requiereCentroCosto: newAccountForm.requiereCentroCosto,
-      esConciliableBancaria: newAccountForm.esConciliableBancaria,
-      activa: true,
-    };
+  const handleOpenEditAccountModal = (acc: HierarchicalAccountItem) => {
+    setAccountToEdit(acc);
+    setSubaccountParentCode(undefined);
+    setAccountModalOpen(true);
+  };
 
-    setChartOfAccounts(prev => [...prev, newAcc]);
-    setShowAddAccountModal(false);
-    setNewAccountForm({
-      codigo: '',
-      nombre: '',
-      clase: 6,
-      tipo: 'GASTO',
-      clasificacion: 'OPERACIONAL',
-      naturaleza: 'DEUDORA',
-      requiereAuxiliarRut: false,
-      requiereCentroCosto: true,
-      esConciliableBancaria: false,
+  const handleOpenSubaccountModal = (parentAcc: HierarchicalAccountItem) => {
+    setAccountToEdit(null);
+    setSubaccountParentCode(parentAcc.codigo);
+    setAccountModalOpen(true);
+  };
+
+  // Guardar (crear o editar) cuenta contable
+  const handleSaveAccount = (account: HierarchicalAccountItem) => {
+    const existingIndex = chartOfAccounts.findIndex((a) => a.codigo === account.codigo);
+    let updated: HierarchicalAccountItem[];
+    if (existingIndex >= 0) {
+      updated = [...chartOfAccounts];
+      updated[existingIndex] = account;
+      showToast(`Cuenta "${account.codigo} - ${account.nombre}" actualizada con éxito.`, 'success');
+    } else {
+      updated = [...chartOfAccounts, account];
+      showToast(`Cuenta "${account.codigo} - ${account.nombre}" creada y agregada al plan.`, 'success');
+    }
+    setChartOfAccounts(updated);
+    saveCompanyChartOfAccounts(company.rut, updated);
+  };
+
+  // Eliminar cuenta contable con validación de asientos
+  const handleDeleteAccount = (acc: HierarchicalAccountItem) => {
+    const entriesWithAccount = entries.filter((e) =>
+      e.lineas.some((l) => l.cuentaCodigo === acc.codigo)
+    );
+    if (entriesWithAccount.length > 0) {
+      alert(
+        `No se puede eliminar la cuenta ${acc.codigo} porque registra ${entriesWithAccount.length} movimiento(s) en el Libro Diario. Debe reclasificar o anular dichos asientos antes de eliminarla.`
+      );
+      return;
+    }
+
+    if (confirm(`¿Confirma que desea eliminar permanentemente la cuenta contable "${acc.codigo} - ${acc.nombre}" del plan de la empresa?`)) {
+      const updated = chartOfAccounts.filter((a) => a.codigo !== acc.codigo);
+      setChartOfAccounts(updated);
+      saveCompanyChartOfAccounts(company.rut, updated);
+      showToast(`Cuenta "${acc.codigo}" eliminada del plan de cuentas.`, 'info');
+    }
+  };
+
+  // Guardar cambios en Grupos y Subgrupos
+  const handleSaveGroups = (updatedGroups: AccountGroupDefinition[]) => {
+    setChartGroups(updatedGroups);
+    saveCompanyGroups(company.rut, updatedGroups);
+
+    // Sincronizar nombres de grupo y subgrupo en las cuentas existentes
+    const grpMap = new Map(updatedGroups.map((g) => [g.codigo, g.nombre]));
+    const updatedAccounts = chartOfAccounts.map((a) => {
+      const gName = grpMap.get(a.grupo) || a.nombreGrupo;
+      const sName = grpMap.get(a.subgrupo) || a.nombreSubgrupo;
+      return { ...a, nombreGrupo: gName, nombreSubgrupo: sName };
     });
+    setChartOfAccounts(updatedAccounts);
+    saveCompanyChartOfAccounts(company.rut, updatedAccounts);
+    showToast('Estructura de grupos y subgrupos actualizada y sincronizada.', 'success');
+  };
+
+  // Restaurar al estándar CMF
+  const handleResetChartToDefault = () => {
+    if (confirm(`¿Desea restaurar el plan de cuentas de "${company.razonSocial}" al catálogo base oficial chileno (CMF / SII)? Esta acción sobreescribirá personalizaciones.`)) {
+      const def = resetCompanyChartToDefault(company.rut);
+      setChartOfAccounts(def);
+      const defGroups = loadCompanyGroups(company.rut);
+      setChartGroups(defGroups);
+      showToast('Plan de cuentas restaurado al catálogo estándar chileno.', 'success');
+    }
+  };
+
+  // Importar plan desde archivo o JSON
+  const handleImportChart = (imported: HierarchicalAccountItem[]) => {
+    setChartOfAccounts(imported);
+    saveCompanyChartOfAccounts(company.rut, imported);
+    showToast(`Plan de cuentas importado (${imported.length} cuentas cargadas).`, 'success');
   };
 
   // Filtered Chart of Accounts
@@ -1173,12 +1301,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   return 0;
                 });
                 const voucherText = getFormattedAdjustmentVoucher(adj);
+                const isApplied = adj.aplicado || entries.some(e =>
+                  (e.concepto && e.concepto.trim() === adj.asientoPropuesto.glosa.trim()) ||
+                  (e.documento && e.documento.toUpperCase().includes(adj.id.toUpperCase()))
+                );
 
                 return (
                   <div
                     key={adj.id}
                     className={`border rounded-xl p-4 sm:p-5 transition-all flex flex-col justify-between ${
-                      adj.aplicado ? 'bg-slate-50/90 border-slate-200' : 'bg-white border-slate-300 hover:border-blue-400 shadow-2xs'
+                      isApplied ? 'bg-slate-50/90 border-slate-200' : 'bg-white border-slate-300 hover:border-blue-400 shadow-2xs'
                     }`}
                   >
                     <div>
@@ -1192,26 +1324,60 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                             <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                               ID: {adj.id}
                             </span>
+                            {adj.normaReferencia && (
+                              <span className="text-[10px] font-mono font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                {adj.normaReferencia.split(':')[0]}
+                              </span>
+                            )}
                           </div>
                           <h4 className="text-sm font-bold text-slate-900 mt-2">{adj.titulo}</h4>
                           <p className="text-xs text-slate-600 mt-0.5">{adj.descripcion}</p>
+
+                          {/* Memoria de Cálculo & Datos de Origen */}
+                          {(adj.fuenteDatos || adj.memoriaCalculo) && (
+                            <div className="mt-2.5 p-2.5 rounded-lg bg-slate-100/70 border border-slate-200 text-[11px] space-y-1 text-slate-700">
+                              {adj.fuenteDatos && (
+                                <div>
+                                  <span className="font-semibold text-slate-800">Origen de datos:</span>{' '}
+                                  <span className="text-slate-600">{adj.fuenteDatos}</span>
+                                </div>
+                              )}
+                              {adj.memoriaCalculo && (
+                                <div>
+                                  <span className="font-semibold text-slate-800">Cálculo aplicado:</span>{' '}
+                                  <span className="font-mono text-[10.5px] text-slate-700">{adj.memoriaCalculo}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <div className="text-right shrink-0">
                           <span className="text-sm font-bold font-mono text-slate-900 block">
                             {convertAmount(adj.montoAjuste)}
                           </span>
-                          {adj.aplicado ? (
+                          {isApplied ? (
                             <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold mt-1 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
                               <CheckCircle2 className="w-3.5 h-3.5" /> Asentado
                             </span>
                           ) : (
-                            <button
-                              onClick={() => handleApplyAdjustment(adj)}
-                              className="mt-1.5 bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-2xs inline-flex items-center gap-1.5"
-                            >
-                              <BookOpen className="w-3.5 h-3.5" />
-                              Asentar Ajuste
-                            </button>
+                            <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingAdjustment(adj)}
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-all border border-slate-300 inline-flex items-center gap-1"
+                                title="Personalizar glosa, cuentas o montos reales según la empresa"
+                              >
+                                <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                                <span>Personalizar</span>
+                              </button>
+                              <button
+                                onClick={() => handleApplyAdjustment(adj)}
+                                className="bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-2xs inline-flex items-center gap-1.5"
+                              >
+                                <BookOpen className="w-3.5 h-3.5" />
+                                <span>Asentar Ajuste</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1607,56 +1773,98 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         </div>
       )}
 
-      {/* VIEW 4: PLAN DE CUENTAS JERÁRQUICO */}
+      {/* VIEW 4: PLAN DE CUENTAS JERÁRQUICO CUSTOM POR EMPRESA */}
       {activeTab === 'PLAN_CUENTAS' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
+                  PLAN CUSTOM POR EMPRESA
+                </span>
+                <span className="text-xs text-slate-500 font-medium">
+                  {company.razonSocial} (RUT: {company.rut})
+                </span>
+              </div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-amber-600" />
-                Plan de Cuentas Jerárquico Chileno (5 Niveles · Clases 1 a 7)
+                Catálogo y Plan de Cuentas Jerárquico Personalizado
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Estructura normalizada según CMF y SII: Clase, Grupo, Subgrupo, Cuenta y Subcuenta analítica con atributos.
+                Edite cuentas, subcuentas analíticas, y configure agrupaciones y subagrupaciones para balances fiscales (SII F22) y casa matriz internacional.
               </p>
             </div>
 
-            <button
-              onClick={() => setShowAddAccountModal(true)}
-              className="bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Nueva Cuenta Contable</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleOpenCreateAccountModal}
+                className="bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Plus className="w-4 h-4 text-emerald-400" />
+                <span>Nueva Cuenta Contable</span>
+              </button>
+
+              <button
+                onClick={() => setGroupModalOpen(true)}
+                className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Administrar grupos de Nivel 2 y subgrupos de Nivel 3 del plan"
+              >
+                <FolderTree className="w-4 h-4 text-amber-600" />
+                <span>Gestionar Grupos / Subgrupos</span>
+              </button>
+
+              <button
+                onClick={() => setImportExportModalOpen(true)}
+                className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Exportar plan a Excel/JSON o importar un catálogo completo"
+              >
+                <Download className="w-4 h-4 text-blue-600" />
+                <span>Importar / Exportar</span>
+              </button>
+
+              <button
+                onClick={handleResetChartToDefault}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold p-2 rounded-lg cursor-pointer transition-colors"
+                title="Restaurar al plan base estándar chileno CMF / SII"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Filter Bar */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="Buscar por código o nombre de cuenta..."
-                value={planSearchTerm}
-                onChange={(e) => setPlanSearchTerm(e.target.value)}
-                className="pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 w-72"
-              />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Buscar por código, nombre o grupo..."
+                  value={planSearchTerm}
+                  onChange={(e) => setPlanSearchTerm(e.target.value)}
+                  className="pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 w-72"
+                />
+              </div>
+
+              <select
+                value={planClassFilter}
+                onChange={(e) => setPlanClassFilter(e.target.value === 'TODOS' ? 'TODOS' : Number(e.target.value))}
+                className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 font-medium"
+              >
+                <option value="TODOS">Todas las Clases (1 a 7)</option>
+                <option value="1">Clase 1: ACTIVO (Corriente y No Corriente)</option>
+                <option value="2">Clase 2: PASIVO (Corriente y No Corriente)</option>
+                <option value="3">Clase 3: PATRIMONIO NETO</option>
+                <option value="4">Clase 4: INGRESOS DE LA OPERACIÓN</option>
+                <option value="5">Clase 5: COSTOS DE EXPLOTACIÓN</option>
+                <option value="6">Clase 6: GASTOS DE ADMINISTRACIÓN Y VENTAS</option>
+                <option value="7">Clase 7: OTROS INGRESOS / GASTOS NO OPERACIONALES</option>
+              </select>
             </div>
 
-            <select
-              value={planClassFilter}
-              onChange={(e) => setPlanClassFilter(e.target.value === 'TODOS' ? 'TODOS' : Number(e.target.value))}
-              className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500"
-            >
-              <option value="TODOS">Todas las Clases (1 a 7)</option>
-              <option value="1">Clase 1: ACTIVO (Corriente y No Corriente)</option>
-              <option value="2">Clase 2: PASIVO (Corriente y No Corriente)</option>
-              <option value="3">Clase 3: PATRIMONIO NETO</option>
-              <option value="4">Clase 4: INGRESOS DE LA OPERACIÓN</option>
-              <option value="5">Clase 5: COSTOS DE EXPLOTACIÓN</option>
-              <option value="6">Clase 6: GASTOS DE ADMINISTRACIÓN Y VENTAS</option>
-              <option value="7">Clase 7: OTROS INGRESOS / GASTOS NO OPERACIONALES</option>
-            </select>
+            <span className="text-xs text-slate-500 font-mono">
+              Mostrando <strong>{filteredPlan.length}</strong> de <strong>{chartOfAccounts.length}</strong> cuentas
+            </span>
           </div>
 
           {/* Accounts Table */}
@@ -1664,226 +1872,364 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             <table className="w-full text-xs text-left">
               <thead>
                 <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase text-[11px]">
-                  <th className="py-2.5 px-4 font-mono">Código</th>
-                  <th className="py-2.5 px-4">Nombre de la Cuenta</th>
-                  <th className="py-2.5 px-4">Clase</th>
-                  <th className="py-2.5 px-4">Tipo</th>
-                  <th className="py-2.5 px-4 text-center">Naturaleza</th>
-                  <th className="py-2.5 px-4 text-center">Auxiliar RUT</th>
-                  <th className="py-2.5 px-4 text-center">C. Costo</th>
-                  <th className="py-2.5 px-4 text-center">Conciliable</th>
+                  <th className="py-2.5 px-3 font-mono w-32">Código</th>
+                  <th className="py-2.5 px-3">Nombre de la Cuenta</th>
+                  <th className="py-2.5 px-3">Jerarquía (Grupo / Subgrupo)</th>
+                  <th className="py-2.5 px-2 text-center">Naturaleza</th>
+                  <th className="py-2.5 px-3">Mapeo Fiscal SII</th>
+                  <th className="py-2.5 px-3">Casa Matriz HQ</th>
+                  <th className="py-2.5 px-2 text-center">Exigencias</th>
+                  <th className="py-2.5 px-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
-                {filteredPlan.map((acc) => (
-                  <tr key={acc.codigo} className="hover:bg-slate-50/70">
-                    <td className="py-2 px-4 font-bold text-slate-800">{acc.codigo}</td>
-                    <td className="py-2 px-4 font-sans font-medium text-slate-900">{acc.nombre}</td>
-                    <td className="py-2 px-4 font-sans text-slate-600">
-                      Clase {acc.clase}
-                    </td>
-                    <td className="py-2 px-4 font-sans text-slate-600">{acc.tipo}</td>
-                    <td className="py-2 px-4 text-center">
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                        acc.naturaleza === 'DEUDORA' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'
-                      }`}>
-                        {acc.naturaleza}
-                      </span>
-                    </td>
-                    <td className="py-2 px-4 text-center">
-                      {acc.requiereAuxiliarRut ? (
-                        <span className="text-emerald-700 font-bold">Sí</span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="py-2 px-4 text-center">
-                      {acc.requiereCentroCosto ? (
-                        <span className="text-blue-700 font-bold">Sí</span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="py-2 px-4 text-center">
-                      {acc.esConciliableBancaria ? (
-                        <span className="text-indigo-700 font-bold">Banco</span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
+                {filteredPlan.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-400 font-sans">
+                      No se encontraron cuentas contables con los filtros especificados.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredPlan.map((acc) => (
+                    <tr key={acc.codigo} className="hover:bg-slate-50/80 transition-colors group">
+                      <td className="py-2 px-3 font-bold text-slate-900">{acc.codigo}</td>
+                      <td className="py-2 px-3 font-sans font-semibold text-slate-900">
+                        {acc.nombre}
+                        {acc.agrupacionPersonalizada && (
+                          <span className="ml-1.5 text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-normal">
+                            {acc.agrupacionPersonalizada}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 font-sans text-slate-500 text-[11px]">
+                        <span className="font-mono text-slate-700">{acc.grupo}</span> {acc.nombreGrupo || ''}
+                        <br />
+                        <span className="text-slate-400 font-mono text-[10px]">└─ {acc.subgrupo}</span>{' '}
+                        <span className="text-[10px] text-slate-600">{acc.nombreSubgrupo || ''}</span>
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            acc.naturaleza === 'DEUDORA'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-blue-50 text-blue-700'
+                          }`}
+                        >
+                          {acc.naturaleza}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 font-sans text-slate-600 text-[11px] max-w-[150px] truncate" title={acc.agrupacionFiscal || 'No asignado'}>
+                        {acc.agrupacionFiscal ? (
+                          <span className="bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                            {acc.agrupacionFiscal}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">-</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 font-sans text-slate-600 text-[11px] max-w-[150px] truncate" title={acc.agrupacionMatrizExtranjera || 'No asignado'}>
+                        {acc.agrupacionMatrizExtranjera ? (
+                          <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                            {acc.agrupacionMatrizExtranjera}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">-</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-center font-sans">
+                        <div className="flex items-center justify-center gap-1">
+                          {acc.requiereAuxiliarRut && (
+                            <span className="text-[9px] bg-slate-100 text-slate-700 px-1 rounded font-bold" title="Exige RUT Auxiliar">
+                              RUT
+                            </span>
+                          )}
+                          {acc.requiereCentroCosto && (
+                            <span className="text-[9px] bg-blue-100 text-blue-800 px-1 rounded font-bold" title="Exige Centro de Costo">
+                              CC
+                            </span>
+                          )}
+                          {acc.esConciliableBancaria && (
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 rounded font-bold" title="Conciliable Banco">
+                              BCO
+                            </span>
+                          )}
+                          {!acc.requiereAuxiliarRut && !acc.requiereCentroCosto && !acc.esConciliableBancaria && (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </div>
+                      </td>
+                      {/* Botones de Acción para Editar, Crear Subcuenta o Eliminar */}
+                      <td className="py-2 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1 font-sans">
+                          <button
+                            onClick={() => handleOpenSubaccountModal(acc)}
+                            className="p-1 rounded hover:bg-blue-50 text-blue-600 cursor-pointer"
+                            title={`Crear subcuenta hija de ${acc.codigo}`}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenEditAccountModal(acc)}
+                            className="p-1 rounded hover:bg-slate-200 text-slate-700 cursor-pointer"
+                            title={`Editar cuenta ${acc.codigo}`}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAccount(acc)}
+                            className="p-1 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-600 cursor-pointer"
+                            title={`Eliminar cuenta ${acc.codigo}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* VIEW 5: BALANCE GENERAL TRIBUTARIO DE 8 COLUMNAS (SII) */}
+      {/* VIEW 5: BALANCE GENERAL TRIBUTARIO DE 8 COLUMNAS Y BALANCES AGRUPADOS */}
       {activeTab === 'BALANCE_8COL' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mb-1">
                 <span className="bg-blue-100 text-blue-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
                   FORMATO OFICIAL SII CHILE
                 </span>
                 <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
                   PARTIDA DOBLE GARANTIZADA
                 </span>
+                <span className="bg-purple-100 text-purple-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
+                  AGRUPACIONES DINÁMICAS
+                </span>
               </div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1 flex items-center gap-2">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
                 <Table className="w-5 h-5 text-blue-600" />
-                Balance General Tributario de 8 Columnas
+                Balance Tributario 8 Columnas y Estados Agrupados por Rubro
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Col 1 & 2: Débitos y Créditos · Col 3 & 4: Saldos Deudor/Acreedor · Col 5 & 6: Inventario (Activo/Pasivo) · Col 7 & 8: Resultado (Pérdida/Ganancia).
+                Genere el balance con sumas por grupos/subgrupos según normativa tradicional chilena CMF, formato tributario SII (F22), casa matriz en el extranjero o agrupaciones custom.
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="bg-slate-100 p-1 rounded-lg flex items-center gap-1 text-xs">
+                <button
+                  onClick={() => setIsGroupedView(true)}
+                  className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                    isGroupedView
+                      ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Vista Agrupada
+                </button>
+                <button
+                  onClick={() => setIsGroupedView(false)}
+                  className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                    !isGroupedView
+                      ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tabla Plana (8 Col)
+                </button>
+              </div>
+
               <button
                 onClick={() => {
-                  const jsonReport = JSON.stringify(balance8Col, null, 2);
+                  const jsonReport = JSON.stringify(isGroupedView ? groupedBalanceReport : balance8Col, null, 2);
                   handleCopyText(jsonReport, 'balance_json');
                 }}
-                className="bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="bg-[#0f172a] hover:bg-slate-800 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 {copiedText === 'balance_json' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Download className="w-3.5 h-3.5" />}
-                <span>Copiar JSON ERP (Tipo B)</span>
+                <span>Copiar JSON ERP</span>
               </button>
             </div>
           </div>
 
-          {/* 8 Column Table */}
-          <div className="overflow-x-auto border border-slate-200 rounded-lg">
-            <table className="w-full text-xs text-right border-collapse">
-              <thead>
-                {/* Main Header */}
-                <tr className="bg-[#0f172a] text-white text-[11px] font-semibold uppercase tracking-wider">
-                  <th rowSpan={2} className="py-2.5 px-3 text-left border-r border-slate-700">Código</th>
-                  <th rowSpan={2} className="py-2.5 px-3 text-left border-r border-slate-700">Cuenta Contable</th>
-                  <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-slate-800">1-2. Sumas</th>
-                  <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-slate-800">3-4. Saldos</th>
-                  <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-blue-900/60">5-6. Inventario</th>
-                  <th colSpan={2} className="py-2 px-3 text-center bg-emerald-900/60">7-8. Resultado</th>
-                </tr>
-                {/* Sub Header */}
-                <tr className="bg-slate-100 text-slate-700 text-[10px] font-bold uppercase border-b border-slate-300">
-                  <th className="py-1.5 px-2.5 border-r border-slate-200">Débito ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200">Crédito ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200">Deudor ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200">Acreedor ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200 bg-blue-50 text-blue-900">Activo ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200 bg-blue-50 text-blue-900">Pasivo ($)</th>
-                  <th className="py-1.5 px-2.5 border-r border-slate-200 bg-rose-50 text-rose-900">Pérdida ($)</th>
-                  <th className="py-1.5 px-2.5 bg-emerald-50 text-emerald-900">Ganancia ($)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {balance8Col.cuentas.map((c) => (
-                  <tr key={c.codigo} className="hover:bg-slate-50/70">
-                    <td className="py-2 px-3 text-left font-bold text-slate-800 border-r border-slate-100">{c.codigo}</td>
-                    <td className="py-2 px-3 text-left font-sans text-slate-900 border-r border-slate-100 truncate max-w-xs">{c.nombre}</td>
-                    {/* Sumas */}
-                    <td className="py-2 px-2.5 text-slate-700 border-r border-slate-100">{c.debitos > 0 ? convertAmount(c.debitos) : '-'}</td>
-                    <td className="py-2 px-2.5 text-slate-700 border-r border-slate-100">{c.creditos > 0 ? convertAmount(c.creditos) : '-'}</td>
-                    {/* Saldos */}
-                    <td className="py-2 px-2.5 text-emerald-800 font-semibold border-r border-slate-100">{c.saldo_deudor > 0 ? convertAmount(c.saldo_deudor) : '-'}</td>
-                    <td className="py-2 px-2.5 text-blue-800 font-semibold border-r border-slate-100">{c.saldo_acreedor > 0 ? convertAmount(c.saldo_acreedor) : '-'}</td>
-                    {/* Inventario */}
-                    <td className="py-2 px-2.5 text-blue-900 font-bold bg-blue-50/30 border-r border-slate-100">{c.activo > 0 ? convertAmount(c.activo) : '-'}</td>
-                    <td className="py-2 px-2.5 text-blue-900 font-bold bg-blue-50/30 border-r border-slate-100">{c.pasivo > 0 ? convertAmount(c.pasivo) : '-'}</td>
-                    {/* Resultado */}
-                    <td className="py-2 px-2.5 text-rose-800 font-bold bg-rose-50/30 border-r border-slate-100">{c.perdida > 0 ? convertAmount(c.perdida) : '-'}</td>
-                    <td className="py-2 px-2.5 text-emerald-800 font-bold bg-emerald-50/30">{c.ganancia > 0 ? convertAmount(c.ganancia) : '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="font-mono text-[11px] font-bold">
-                {/* Subtotales */}
-                <tr className="bg-slate-100 text-slate-900 border-t-2 border-slate-300">
-                  <td colSpan={2} className="py-2.5 px-3 text-left uppercase text-[11px] border-r border-slate-200">
-                    Subtotales de Columnas:
-                  </td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 text-emerald-800">{convertAmount(balance8Col.totales.total_debitos)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 text-blue-800">{convertAmount(balance8Col.totales.total_creditos)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 text-emerald-800">{convertAmount(balance8Col.totales.total_saldo_deudor)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 text-blue-800">{convertAmount(balance8Col.totales.total_saldo_acreedor)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 bg-blue-100/50 text-blue-950">{convertAmount(balance8Col.totales.total_activo)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 bg-blue-100/50 text-blue-950">{convertAmount(balance8Col.totales.total_pasivo)}</td>
-                  <td className="py-2.5 px-2.5 border-r border-slate-200 bg-rose-100/50 text-rose-950">{convertAmount(balance8Col.totales.total_perdida)}</td>
-                  <td className="py-2.5 px-2.5 bg-emerald-100/50 text-emerald-950">{convertAmount(balance8Col.totales.total_ganancia)}</td>
-                </tr>
+          {/* Selector de Modo de Agrupación para el Balance */}
+          <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-bold text-slate-800">Criterio de Agrupación del Balance:</span>
+            </div>
 
-                {/* Línea Oficial de Utilidad / Pérdida del Ejercicio con Cuadre Simétrico */}
-                <tr className="bg-amber-50 text-amber-900 border-t border-amber-200 font-bold">
-                  <td colSpan={2} className="py-2.5 px-3 text-left uppercase text-[11px] border-r border-amber-200 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>
-                      {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? 'Utilidad del Ejercicio Actual' : 'Pérdida del Ejercicio Actual'}
-                    </span>
-                  </td>
-                  <td colSpan={4} className="py-2.5 px-2.5 text-center text-slate-400 border-r border-amber-200 font-sans text-xs">
-                    (Cuadre simétrico entre Inventario y Resultado)
-                  </td>
-                  {/* Inventario Balance Line */}
-                  <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
-                    {balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
-                  </td>
-                  <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
-                    {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
-                  </td>
-                  {/* Resultado Balance Line */}
-                  <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
-                    {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
-                  </td>
-                  <td className="py-2.5 px-2.5 text-amber-950">
-                    {balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
-                  </td>
-                </tr>
-
-                {/* Totales Iguales Finales */}
-                <tr className="bg-[#0f172a] text-white text-[11px] border-t-2 border-slate-900 font-mono">
-                  <td colSpan={2} className="py-3 px-3 text-left uppercase text-[11px] border-r border-slate-700">
-                    Totales Iguales Cuadrados:
-                  </td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-emerald-400">{convertAmount(balance8Col.totales.total_debitos)}</td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-blue-400">{convertAmount(balance8Col.totales.total_creditos)}</td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-emerald-400">{convertAmount(balance8Col.totales.total_saldo_deudor)}</td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-blue-400">{convertAmount(balance8Col.totales.total_saldo_acreedor)}</td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-blue-300">
-                    {convertAmount(
-                      balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA'
-                        ? balance8Col.totales.total_activo + balance8Col.resultado_del_ejercicio.monto
-                        : balance8Col.totales.total_activo
-                    )}
-                  </td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-blue-300">
-                    {convertAmount(
-                      balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD'
-                        ? balance8Col.totales.total_pasivo + balance8Col.resultado_del_ejercicio.monto
-                        : balance8Col.totales.total_pasivo
-                    )}
-                  </td>
-                  <td className="py-3 px-2.5 border-r border-slate-700 text-rose-300">
-                    {convertAmount(
-                      balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD'
-                        ? balance8Col.totales.total_perdida + balance8Col.resultado_del_ejercicio.monto
-                        : balance8Col.totales.total_perdida
-                    )}
-                  </td>
-                  <td className="py-3 px-2.5 text-emerald-300">
-                    {convertAmount(
-                      balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA'
-                        ? balance8Col.totales.total_ganancia + balance8Col.resultado_del_ejercicio.monto
-                        : balance8Col.totales.total_ganancia
-                    )}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  { id: 'TRADICIONAL_CMF', label: '🏛️ Tradicional CMF (5 Niveles)' },
+                  { id: 'FISCAL_SII', label: '💼 Fiscal SII (F22 / RLI)' },
+                  { id: 'CASA_MATRIZ_HQ', label: '🌐 Casa Matriz (HQ US GAAP / IFRS)' },
+                  { id: 'PERSONALIZADO', label: '⚙️ Agrupación Personalizada' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => {
+                    setBalanceGroupingMode(opt.id);
+                    setIsGroupedView(true);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    balanceGroupingMode === opt.id
+                      ? 'bg-[#0f172a] text-white shadow-2xs font-bold'
+                      : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Render de Balance Agrupado vs Tabla Plana */}
+          {isGroupedView ? (
+            <GroupedBalanceView
+              report={groupedBalanceReport}
+              convertAmount={convertAmount}
+              onCopyJSON={() => {
+                const jsonReport = JSON.stringify(groupedBalanceReport, null, 2);
+                handleCopyText(jsonReport, 'balance_json');
+              }}
+              copiedText={copiedText}
+            />
+          ) : (
+            <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              <table className="w-full text-xs text-right border-collapse">
+                <thead>
+                  {/* Main Header */}
+                  <tr className="bg-[#0f172a] text-white text-[11px] font-semibold uppercase tracking-wider">
+                    <th rowSpan={2} className="py-2.5 px-3 text-left border-r border-slate-700">Código</th>
+                    <th rowSpan={2} className="py-2.5 px-3 text-left border-r border-slate-700">Cuenta Contable</th>
+                    <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-slate-800">1-2. Sumas</th>
+                    <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-slate-800">3-4. Saldos</th>
+                    <th colSpan={2} className="py-2 px-3 text-center border-r border-slate-700 bg-blue-900/60">5-6. Inventario</th>
+                    <th colSpan={2} className="py-2 px-3 text-center bg-emerald-900/60">7-8. Resultado</th>
+                  </tr>
+                  {/* Sub Header */}
+                  <tr className="bg-slate-100 text-slate-700 text-[10px] font-bold uppercase border-b border-slate-300">
+                    <th className="py-1.5 px-2.5 border-r border-slate-200">Débito ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200">Crédito ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200">Deudor ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200">Acreedor ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200 bg-blue-50 text-blue-900">Activo ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200 bg-blue-50 text-blue-900">Pasivo ($)</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200 bg-rose-50 text-rose-900">Pérdida ($)</th>
+                    <th className="py-1.5 px-2.5 bg-emerald-50 text-emerald-900">Ganancia ($)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                  {balance8Col.cuentas.map((c) => (
+                    <tr key={c.codigo} className="hover:bg-slate-50/70">
+                      <td className="py-2 px-3 text-left font-bold text-slate-800 border-r border-slate-100">{c.codigo}</td>
+                      <td className="py-2 px-3 text-left font-sans text-slate-900 border-r border-slate-100 truncate max-w-xs">{c.nombre}</td>
+                      {/* Sumas */}
+                      <td className="py-2 px-2.5 text-slate-700 border-r border-slate-100">{c.debitos > 0 ? convertAmount(c.debitos) : '-'}</td>
+                      <td className="py-2 px-2.5 text-slate-700 border-r border-slate-100">{c.creditos > 0 ? convertAmount(c.creditos) : '-'}</td>
+                      {/* Saldos */}
+                      <td className="py-2 px-2.5 text-emerald-800 font-semibold border-r border-slate-100">{c.saldo_deudor > 0 ? convertAmount(c.saldo_deudor) : '-'}</td>
+                      <td className="py-2 px-2.5 text-blue-800 font-semibold border-r border-slate-100">{c.saldo_acreedor > 0 ? convertAmount(c.saldo_acreedor) : '-'}</td>
+                      {/* Inventario */}
+                      <td className="py-2 px-2.5 text-blue-900 font-bold bg-blue-50/30 border-r border-slate-100">{c.activo > 0 ? convertAmount(c.activo) : '-'}</td>
+                      <td className="py-2 px-2.5 text-blue-900 font-bold bg-blue-50/30 border-r border-slate-100">{c.pasivo > 0 ? convertAmount(c.pasivo) : '-'}</td>
+                      {/* Resultado */}
+                      <td className="py-2 px-2.5 text-rose-800 font-bold bg-rose-50/30 border-r border-slate-100">{c.perdida > 0 ? convertAmount(c.perdida) : '-'}</td>
+                      <td className="py-2 px-2.5 text-emerald-800 font-bold bg-emerald-50/30">{c.ganancia > 0 ? convertAmount(c.ganancia) : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="font-mono text-[11px] font-bold">
+                  {/* Subtotales */}
+                  <tr className="bg-slate-100 text-slate-900 border-t-2 border-slate-300">
+                    <td colSpan={2} className="py-2.5 px-3 text-left uppercase text-[11px] border-r border-slate-200">
+                      Subtotales de Columnas:
+                    </td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 text-emerald-800">{convertAmount(balance8Col.totales.total_debitos)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 text-blue-800">{convertAmount(balance8Col.totales.total_creditos)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 text-emerald-800">{convertAmount(balance8Col.totales.total_saldo_deudor)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 text-blue-800">{convertAmount(balance8Col.totales.total_saldo_acreedor)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 bg-blue-100/50 text-blue-950">{convertAmount(balance8Col.totales.total_activo)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 bg-blue-100/50 text-blue-950">{convertAmount(balance8Col.totales.total_pasivo)}</td>
+                    <td className="py-2.5 px-2.5 border-r border-slate-200 bg-rose-100/50 text-rose-950">{convertAmount(balance8Col.totales.total_perdida)}</td>
+                    <td className="py-2.5 px-2.5 bg-emerald-100/50 text-emerald-950">{convertAmount(balance8Col.totales.total_ganancia)}</td>
+                  </tr>
+
+                  {/* Línea Oficial de Utilidad / Pérdida del Ejercicio con Cuadre Simétrico */}
+                  <tr className="bg-amber-50 text-amber-900 border-t border-amber-200 font-bold">
+                    <td colSpan={2} className="py-2.5 px-3 text-left uppercase text-[11px] border-r border-amber-200 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                      <span>
+                        {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? 'Utilidad del Ejercicio Actual' : 'Pérdida del Ejercicio Actual'}
+                      </span>
+                    </td>
+                    <td colSpan={4} className="py-2.5 px-2.5 text-center text-slate-400 border-r border-amber-200 font-sans text-xs">
+                      (Cuadre simétrico entre Inventario y Resultado)
+                    </td>
+                    {/* Inventario Balance Line */}
+                    <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
+                      {balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
+                    </td>
+                    <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
+                      {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
+                    </td>
+                    {/* Resultado Balance Line */}
+                    <td className="py-2.5 px-2.5 border-r border-amber-200 text-amber-950">
+                      {balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
+                    </td>
+                    <td className="py-2.5 px-2.5 text-amber-950">
+                      {balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA' ? convertAmount(balance8Col.resultado_del_ejercicio.monto) : '-'}
+                    </td>
+                  </tr>
+
+                  {/* Totales Iguales Finales */}
+                  <tr className="bg-[#0f172a] text-white text-[11px] border-t-2 border-slate-900 font-mono">
+                    <td colSpan={2} className="py-3 px-3 text-left uppercase text-[11px] border-r border-slate-700">
+                      Totales Iguales Cuadrados:
+                    </td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-emerald-400">{convertAmount(balance8Col.totales.total_debitos)}</td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-blue-400">{convertAmount(balance8Col.totales.total_creditos)}</td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-emerald-400">{convertAmount(balance8Col.totales.total_saldo_deudor)}</td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-blue-400">{convertAmount(balance8Col.totales.total_saldo_acreedor)}</td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-blue-300">
+                      {convertAmount(
+                        balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA'
+                          ? balance8Col.totales.total_activo + balance8Col.resultado_del_ejercicio.monto
+                          : balance8Col.totales.total_activo
+                      )}
+                    </td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-blue-300">
+                      {convertAmount(
+                        balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD'
+                          ? balance8Col.totales.total_pasivo + balance8Col.resultado_del_ejercicio.monto
+                          : balance8Col.totales.total_pasivo
+                      )}
+                    </td>
+                    <td className="py-3 px-2.5 border-r border-slate-700 text-rose-300">
+                      {convertAmount(
+                        balance8Col.resultado_del_ejercicio.tipo === 'UTILIDAD'
+                          ? balance8Col.totales.total_perdida + balance8Col.resultado_del_ejercicio.monto
+                          : balance8Col.totales.total_perdida
+                      )}
+                    </td>
+                    <td className="py-3 px-2.5 text-emerald-300">
+                      {convertAmount(
+                        balance8Col.resultado_del_ejercicio.tipo === 'PERDIDA'
+                          ? balance8Col.totales.total_ganancia + balance8Col.resultado_del_ejercicio.monto
+                          : balance8Col.totales.total_ganancia
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -2452,148 +2798,51 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         </div>
       )}
 
-      {/* MODAL: NUEVA CUENTA AL PLAN DE CUENTAS */}
-      {showAddAccountModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-amber-600" />
-                Crear Nueva Cuenta Contable Jerárquica
-              </h3>
-              <button
-                onClick={() => setShowAddAccountModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
+      {/* MODAL: CREAR / EDITAR CUENTA O SUBCUENTA CONTABLE */}
+      <AccountEditModal
+        isOpen={accountModalOpen}
+        onClose={() => {
+          setAccountModalOpen(false);
+          setAccountToEdit(null);
+          setSubaccountParentCode(undefined);
+        }}
+        onSave={handleSaveAccount}
+        accountToEdit={accountToEdit}
+        parentAccountCode={subaccountParentCode}
+        existingAccounts={chartOfAccounts}
+        groups={chartGroups}
+      />
 
-            <form onSubmit={handleCreateNewAccount} className="space-y-3 text-xs">
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">Clase</label>
-                <select
-                  value={newAccountForm.clase}
-                  onChange={(e) => {
-                    const c = Number(e.target.value) as any;
-                    setNewAccountForm({
-                      ...newAccountForm,
-                      clase: c,
-                      naturaleza: c === 1 || c >= 5 ? 'DEUDORA' : 'ACREEDORA',
-                      tipo: c === 1 ? 'ACTIVO' : c === 2 ? 'PASIVO' : c === 3 ? 'PATRIMONIO' : c === 4 ? 'INGRESO' : c === 5 ? 'COSTO' : 'GASTO',
-                    });
-                  }}
-                  className="w-full bg-slate-50 border border-slate-300 rounded p-2"
-                >
-                  <option value={1}>1. ACTIVO</option>
-                  <option value={2}>2. PASIVO</option>
-                  <option value={3}>3. PATRIMONIO</option>
-                  <option value={4}>4. INGRESOS</option>
-                  <option value={5}>5. COSTOS</option>
-                  <option value={6}>6. GASTOS DE ADMINISTRACIÓN Y VENTAS</option>
-                  <option value={7}>7. OTROS INGRESOS / GASTOS</option>
-                </select>
-              </div>
+      {/* MODAL: GESTOR DE GRUPOS Y SUBGRUPOS */}
+      <GroupManagerModal
+        isOpen={groupModalOpen}
+        onClose={() => setGroupModalOpen(false)}
+        groups={chartGroups}
+        onSaveGroups={handleSaveGroups}
+      />
 
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">Código Jerárquico (Nivel 5: X.X.XX.XXX)</label>
-                <input
-                  type="text"
-                  placeholder="Ej: 6.1.04.007"
-                  value={newAccountForm.codigo}
-                  onChange={(e) => setNewAccountForm({ ...newAccountForm, codigo: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-300 rounded p-2 font-mono"
-                  required
-                />
-              </div>
+      {/* MODAL: IMPORTAR / EXPORTAR PLAN DE CUENTAS */}
+      <ImportExportChartModal
+        isOpen={importExportModalOpen}
+        onClose={() => setImportExportModalOpen(false)}
+        accounts={chartOfAccounts}
+        company={company}
+        onImport={handleImportChart}
+      />
 
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">Nombre de la Cuenta</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Gastos de Telecomunicaciones e Internet Fibra"
-                  value={newAccountForm.nombre}
-                  onChange={(e) => setNewAccountForm({ ...newAccountForm, nombre: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-300 rounded p-2"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Naturaleza</label>
-                  <select
-                    value={newAccountForm.naturaleza}
-                    onChange={(e) => setNewAccountForm({ ...newAccountForm, naturaleza: e.target.value as any })}
-                    className="w-full bg-slate-50 border border-slate-300 rounded p-2"
-                  >
-                    <option value="DEUDORA">DEUDORA</option>
-                    <option value="ACREEDORA">ACREEDORA</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Clasificación</label>
-                  <select
-                    value={newAccountForm.clasificacion}
-                    onChange={(e) => setNewAccountForm({ ...newAccountForm, clasificacion: e.target.value as any })}
-                    className="w-full bg-slate-50 border border-slate-300 rounded p-2"
-                  >
-                    <option value="OPERACIONAL">OPERACIONAL</option>
-                    <option value="NO_OPERACIONAL">NO OPERACIONAL</option>
-                    <option value="CIRCULANTE">CIRCULANTE</option>
-                    <option value="NO_CIRCULANTE">NO CIRCULANTE</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newAccountForm.requiereAuxiliarRut}
-                    onChange={(e) => setNewAccountForm({ ...newAccountForm, requiereAuxiliarRut: e.target.checked })}
-                    className="rounded"
-                  />
-                  <span>Requiere Análisis Auxiliar (por RUT de cliente/proveedor)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newAccountForm.requiereCentroCosto}
-                    onChange={(e) => setNewAccountForm({ ...newAccountForm, requiereCentroCosto: e.target.checked })}
-                    className="rounded"
-                  />
-                  <span>Requiere Asignación de Centro de Costo</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newAccountForm.esConciliableBancaria}
-                    onChange={(e) => setNewAccountForm({ ...newAccountForm, esConciliableBancaria: e.target.checked })}
-                    className="rounded"
-                  />
-                  <span>Cuenta Conciliable Bancaria</span>
-                </label>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setShowAddAccountModal(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded text-xs font-semibold cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#2563eb] hover:bg-blue-600 text-white rounded text-xs font-bold cursor-pointer"
-                >
-                  Crear Cuenta
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* MODAL: EDITAR / PERSONALIZAR CIFRAS REALES DEL AJUSTE DE CIERRE */}
+      {editingAdjustment && (
+        <EditClosingAdjustmentModal
+          isOpen={!!editingAdjustment}
+          adjustment={editingAdjustment}
+          onClose={() => setEditingAdjustment(null)}
+          onSave={(updatedAdj) => {
+            setClosingAdjustments(prev =>
+              prev.map(a => (a.id === updatedAdj.id ? updatedAdj : a))
+            );
+            showToast(`Ajuste "${updatedAdj.titulo}" actualizado con cifras personalizadas.`, 'success');
+          }}
+        />
       )}
     </div>
   );

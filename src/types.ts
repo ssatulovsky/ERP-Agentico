@@ -562,6 +562,55 @@ export interface HierarchicalAccountItem {
   requiereCentroCosto: boolean;
   esConciliableBancaria: boolean;
   activa: boolean;
+  // Campos de personalización por empresa y presentación
+  nombreGrupo?: string;
+  nombreSubgrupo?: string;
+  agrupacionFiscal?: string;
+  subagrupacionFiscal?: string;
+  agrupacionMatrizExtranjera?: string;
+  subagrupacionMatrizExtranjera?: string;
+  agrupacionPersonalizada?: string;
+  subagrupacionPersonalizada?: string;
+  empresaRut?: string;
+}
+
+export interface AccountGroupDefinition {
+  id: string;
+  codigo: string; // ej: '1.1', '1.1.01', etc.
+  nombre: string;
+  clase: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  nivel: 2 | 3; // 2 = Grupo (1.1), 3 = Subgrupo (1.1.01)
+  padreCodigo?: string; // Código del grupo padre para un subgrupo
+  descripcion?: string;
+}
+
+export type BalanceGroupingMode =
+  | 'TRADICIONAL_CMF'
+  | 'AGRUPACION_FISCAL_SII'
+  | 'FISCAL_SII'
+  | 'CASA_MATRIZ_EXTRANJERA'
+  | 'CASA_MATRIZ_HQ'
+  | 'PERSONALIZADA'
+  | 'PERSONALIZADO';
+
+export interface GroupedBalanceItem {
+  id: string;
+  codigo: string;
+  titulo: string;
+  nivel: number;
+  esGrupo: boolean;
+  cuentas: TrialBalance8ColAccount[];
+  subgrupos: GroupedBalanceItem[];
+  totales: TrialBalance8ColTotals;
+}
+
+export interface GroupedBalanceReport {
+  modo: BalanceGroupingMode;
+  nombreEsquema: string;
+  descripcionEsquema: string;
+  grupos: GroupedBalanceItem[];
+  totalesGenerales: TrialBalance8ColTotals;
+  resultado_del_ejercicio: ResultadoEjercicio8Col;
 }
 
 // 8 Columns Balance (Chilean Official Format SII / CMF)
@@ -661,6 +710,9 @@ export interface PeriodClosingAdjustment {
     lineas: AccountingProposalLine[];
   };
   aplicado: boolean;
+  fuenteDatos?: string;
+  memoriaCalculo?: string;
+  normaReferencia?: string;
 }
 
 export interface ChileIndicators {

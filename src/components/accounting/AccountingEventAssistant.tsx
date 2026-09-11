@@ -165,14 +165,12 @@ Usted puede describir en lenguaje natural cualquier hecho económico, gasto, com
         {
           id: `ai-err-${Date.now()}`,
           role: 'assistant',
-          content: `Para registrar la operación con exactitud tributaria según el SII:
-1. Indique los precios netos o totales de cada producto.
-2. Si cuenta con Factura Electrónica (DTE 33) a nombre de ${company.razonSocial} (RUT ${company.rut}) para recuperar el 19% de IVA Crédito Fiscal.
-3. El N° de Factura, RUT del proveedor y medio de pago exacto.`,
+          content: `Estimado(a), para registrar la operación con estricta veracidad legal y tributaria según el SII e IFRS, requiero los siguientes datos reales indispensables:\n\n1. **Valores o precios reales en dinero ($):** No se pueden asumir cifras ficticias; indique los precios o el monto neto / total.\n2. **Documento tributario:** Indique si cuenta con Factura Electrónica a nombre de ${company.razonSocial} (${company.rut}) para IVA Crédito Fiscal (19%) o Boleta / Voucher.\n3. **Entidad bancaria:** Indique a qué banco pertenece la tarjeta corporativa o cuenta utilizada.\n4. **Proveedor y Centro de Costo:** Folio, RUT emisor y departamento asignado.`,
           timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          missingFields: ['precios_o_monto_dinero', 'documento_sii_factura_o_boleta', 'banco_tarjeta_credito', 'folio_y_rut_proveedor'],
           suggestedReplies: [
-            'Impresora $180.000 neto, resmas $35.000 neto, tintas $85.000 neto con Factura N° 45892 Dimacofi (RUT 96.554.320-1), tarjeta Santander',
-            'Fue compra con boleta exenta por $350.000 total',
+            'La impresora costó $220.000 neto, resmas $40.000 neto y tinta $70.000 neto. Factura N° 12450 Dimacofi RUT 96.554.320-1. Tarjeta Banco de Chile. Administración.',
+            'Monto total de la compra $350.000 neto + IVA con Factura pagada con tarjeta Santander para Operaciones',
           ],
         },
       ]);
@@ -276,17 +274,29 @@ Usted puede describir en lenguaje natural cualquier hecho económico, gasto, com
       <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto text-xs text-slate-600">
         <span className="font-bold text-slate-800 shrink-0 flex items-center gap-1 text-[11px] uppercase tracking-wider font-mono">
           <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-          Ejemplo Requerido:
+          Probar Indagación:
         </span>
         <button
           onClick={() =>
             handleSendMessage(
-              'Compre una impresora, 10 resmas de papel carta y 5 cartuchos de tinta, pague con tarjeta de crédito coorporativa'
+              'Compre una impresora, 10 resmas de papel carta y 5 cartuchos de tinta, pague con tarjeta de crédito corporativa'
             )
           }
-          className="bg-white border border-slate-300 hover:border-purple-400 hover:bg-purple-50 text-slate-700 hover:text-purple-900 px-3 py-1 rounded-full text-xs font-medium shrink-0 transition-colors shadow-2xs cursor-pointer"
+          className="bg-white border border-slate-300 hover:border-amber-400 hover:bg-amber-50 text-slate-700 hover:text-amber-900 px-3 py-1 rounded-full text-xs font-medium shrink-0 transition-colors shadow-2xs cursor-pointer"
+          title="Prueba de relato sin precios ni banco: El asistente indaga los datos reales obligatorios"
         >
-          "Compre una impresora, 10 resmas de papel carta y 5 cartuchos de tinta, pague con tarjeta de crédito coorporativa"
+          1. Relato inicial sin precios (Exige indagación de valores y banco)
+        </button>
+        <button
+          onClick={() =>
+            handleSendMessage(
+              'La impresora costó $220.000 neto, resmas $40.000 neto y tinta $70.000 neto. Factura N° 12450 Dimacofi RUT 96.554.320-1. Tarjeta Banco Santander. Administración.'
+            )
+          }
+          className="bg-white border border-slate-300 hover:border-emerald-400 hover:bg-emerald-50 text-slate-700 hover:text-emerald-900 px-3 py-1 rounded-full text-xs font-medium shrink-0 transition-colors shadow-2xs cursor-pointer"
+          title="Entrega de datos reales indispensables: Genera la propuesta con los datos reales suministrados"
+        >
+          2. Respuesta con datos reales (Precios, Factura, Banco Santander)
         </button>
       </div>
 
@@ -335,27 +345,31 @@ Usted puede describir en lenguaje natural cualquier hecho económico, gasto, com
 
                 {/* Si faltan datos indispensables, mostrar checklist visual */}
                 {isAi && msg.missingFields && msg.missingFields.length > 0 && !msg.proposedEntry && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-2">
+                  <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 space-y-2.5">
                     <div className="flex items-center gap-2 text-xs font-bold text-amber-900 font-mono">
-                      <HelpCircle className="w-4 h-4 text-amber-600" />
-                      INFORMACIÓN TRIBUTARIA Y ECONÓMICA REQUERIDA PARA ASIENTO:
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      VALIDACIÓN ESTRICTA: ANTECEDENTES REALES REQUERIDOS (NO ASUMIR DATOS)
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-700">
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                        <span>Precios individuales o desglose neto / total</span>
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                        <span className="font-medium text-slate-900">Precios reales en dinero ($):</span>
+                        <span className="text-slate-600 text-[11px]">(cantidades no son montos)</span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                        <span>¿Factura con IVA (DTE 33) o Boleta / Voucher?</span>
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                        <span className="font-medium text-slate-900">Tipo de Documento:</span>
+                        <span className="text-slate-600 text-[11px]">(Factura DTE 33 o Boleta DTE 39)</span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                        <span>N° Folio y RUT / Razón Social Proveedor</span>
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                        <span className="font-medium text-slate-900">Banco de la Tarjeta / Medio:</span>
+                        <span className="text-slate-600 text-[11px]">(Banco de Chile, Santander, etc.)</span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                        <span>Banco de la Tarjeta Corporativa y Centro de Costo</span>
+                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+                        <span className="font-medium text-slate-900">Proveedor & Centro de Costo:</span>
+                        <span className="text-slate-600 text-[11px]">(Folio, RUT y departamento)</span>
                       </div>
                     </div>
                   </div>
