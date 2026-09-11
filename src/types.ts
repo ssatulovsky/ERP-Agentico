@@ -187,6 +187,10 @@ export interface BankReconciliationSummary {
   totalPendientes: number;
   totalNovedades: number;
   novedadesResueltas: number;
+  saldoBancoAjustado?: number;
+  saldoLibroMayorAjustado?: number;
+  diferenciaAuditoria?: number;
+  netoNovedadesPendientes?: number;
 }
 
 export interface DteSplitItem {

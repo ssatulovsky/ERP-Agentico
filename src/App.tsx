@@ -339,9 +339,54 @@ export default function App() {
 
   // Bulk Register all pending Bank Novelties
   const handleRegisterAllBankNovedades = (novedades: BankStatementMovement[]) => {
-    novedades.forEach(nov => {
-      handleRegisterBankNovedad(nov);
+    if (!novedades || novedades.length === 0) return;
+    const bankAcc = bankAccounts.find(a => a.id === novedades[0].cuentaId) || bankAccounts[0];
+    const bankName = bankAcc ? bankAcc.banco : 'Banco Santander Chile';
+
+    const newCashFlowMovs: CashFlowMovement[] = [];
+    const resolvedMap = new Map<string, string>(); // movId -> entryId
+
+    novedades.forEach(movement => {
+      const newEntry = createBankNovedadEntry(movement, bankName);
+      handleAddEntry(newEntry);
+      resolvedMap.set(movement.id, newEntry.id);
+
+      const total = movement.abono > 0 ? movement.abono : movement.cargo;
+      newCashFlowMovs.push({
+        id: `cf-bank-nov-${movement.id}-${Date.now()}`,
+        fechaEstimada: movement.fecha,
+        fechaReal: movement.fecha,
+        concepto: `Novedad Bancaria (${bankName}): ${movement.glosaBancaria}`,
+        contraparte: bankName,
+        montoNeto: total,
+        montoIva: 0,
+        montoTotal: total,
+        moneda: 'CLP',
+        tipo: movement.abono > 0 ? 'INGRESO' : 'EGRESO',
+        categoria: movement.abono > 0 ? 'VENTAS_OPERACIONALES' : 'OTRO',
+        estado: movement.abono > 0 ? 'COBRADO' : 'PAGADO',
+        dteFolioAsociado: movement.dteFolioAsociado,
+      });
     });
+
+    setMovements(prev => [...newCashFlowMovs, ...prev]);
+    setBankMovements(prev => prev.map(m => {
+      if (resolvedMap.has(m.id)) {
+        return {
+          ...m,
+          estado: 'CONCILIADO' as const,
+          novedadRegistrada: true,
+          asientoGeneradoId: resolvedMap.get(m.id),
+          matchCerteza: 100,
+        };
+      }
+      return m;
+    }));
+  };
+
+  // Reset demo movements to initial state with novelties for testing
+  const handleResetBankMovements = () => {
+    setBankMovements(seedBankMovements);
   };
 
   // Discrepancy detector for quick alerts
@@ -496,6 +541,7 @@ export default function App() {
               accountingEntries={entries}
               onRegisterNovedad={handleRegisterBankNovedad}
               onRegisterAllNovedades={handleRegisterAllBankNovedades}
+              onResetBankMovements={handleResetBankMovements}
             />
           )}
 
