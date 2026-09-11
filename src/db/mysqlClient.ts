@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from './mysqlSchema';
+import { diskPersistence } from '../services/diskPersistenceService';
 import dotenv from 'dotenv';
 
 dotenv.config({ override: true });
@@ -290,18 +291,27 @@ const mockTx: any = {
         }
         if (table === schema.accountingEntries) {
           inMemoryEntries.push({ ...val, createdAt: new Date() });
+          diskPersistence.addAccountingEntry({ ...val }, []);
           return [{ insertId: val.id }];
         }
         if (table === schema.accountingEntryLines) {
           if (Array.isArray(val)) {
-            val.forEach((item, idx) => inMemoryLines.push({ ...item, id: item.id || `line-${Date.now()}-${idx}` }));
+            val.forEach((item, idx) => {
+              const line = { ...item, id: item.id || `line-${Date.now()}-${idx}` };
+              inMemoryLines.push(line);
+              diskPersistence.getLinesForEntry(line.entryId).push(line);
+            });
           } else {
-            inMemoryLines.push({ ...val, id: val.id || `line-${Date.now()}` });
+            const line = { ...val, id: val.id || `line-${Date.now()}` };
+            inMemoryLines.push(line);
+            diskPersistence.getLinesForEntry(line.entryId).push(line);
           }
+          diskPersistence.scheduleFlush();
           return [{ insertId: 1 }];
         }
         if (table === schema.agentAuditLogs) {
           inMemoryAuditLogs.push({ ...val, createdAt: new Date() });
+          diskPersistence.addAuditLog({ ...val });
           return [{ insertId: val.id }];
         }
         if (table === schema.dtesRcv) {
@@ -320,6 +330,7 @@ const mockTx: any = {
             } else {
               inMemoryDtesRcv.push({ ...row, createdAt: new Date() });
             }
+            diskPersistence.addDte(row);
           }
           return [{ insertId: 1 }];
         }
@@ -473,6 +484,34 @@ export async function checkMySqlConnection(): Promise<boolean> {
     }
 
     return false;
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+}
+
+/**
+ * Verifica la existencia de las tablas maestras en MySQL 8.0 y ejecuta la inicialización
+ * DDL si aún no han sido creadas, sincronizando además cualquier dato pendiente desde disco.
+ */
+export async function ensureMysqlSchemaInitialized(): Promise<void> {
+  if (!isRealMysqlConnected) {
+    return;
+  }
+  let connection: mysql.PoolConnection | null = null;
+  try {
+    connection = await pool.getConnection();
+    const [rows]: [any[], any] = await connection.query("SHOW TABLES LIKE 'accounting_entries';");
+    if (!rows || rows.length === 0) {
+      console.log('[MySQL 8.0] Tablas principales no encontradas. Ejecutando creación automática del esquema...');
+      const { initializeMysqlDatabase } = await import('../scripts/initMysqlDb');
+      await initializeMysqlDatabase();
+    }
+    // Sincronizar datos de disco a MySQL
+    await diskPersistence.syncDiskToMysql();
+  } catch (err: any) {
+    console.warn(`[MySQL 8.0] Aviso durante auto-inicialización de esquema: ${err.message}`);
   } finally {
     if (connection) {
       connection.release();

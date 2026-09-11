@@ -9,6 +9,7 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "db:init:mysql": "tsx src/scripts/initMysqlDb.ts",
     "db:migrate:mysql": "tsx src/scripts/migrateMysql.ts",
     "lint": "tsc --noEmit"
   },

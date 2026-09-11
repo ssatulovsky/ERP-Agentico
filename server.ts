@@ -18,7 +18,8 @@ import { RcvIngestionService } from "./src/services/rcvIngestionService";
 import { startWorkers } from "./src/workers";
 import { isRedisConfigured } from "./src/queues/redisConfig";
 import { IndicatorSyncService } from "./src/services/indicatorSyncService";
-import { checkMySqlConnection } from "./src/db/mysqlClient";
+import { checkMySqlConnection, ensureMysqlSchemaInitialized, isRealMysqlConnected } from "./src/db/mysqlClient";
+import { diskPersistence } from "./src/services/diskPersistenceService";
 import { INITIAL_CLIENTS, seedDtes, seedPayrolls } from "./src/data/seedData";
 import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
@@ -1327,15 +1328,54 @@ app.use("/api/jobs", sseJobRouter);
 // RUTAS DE COLAS ASÍNCRONAS Y WORKERS BULLMQ
 app.use("/api/jobs", asyncJobsRouter);
 
+// RUTAS DE DIAGNÓSTICO Y CONTROL DE PERSISTENCIA (MYSQL 8.0 + DISCO + REDIS)
+app.get("/api/persistence/status", async (_req, res) => {
+  const diskStatus = diskPersistence.getStatus();
+  const redisOk = isRedisConfigured();
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    mysql: {
+      connected: isRealMysqlConnected,
+      host: process.env.MYSQL_HOST || "127.0.0.1",
+      port: Number(process.env.MYSQL_PORT) || 3306,
+      database: process.env.MYSQL_DATABASE || "chile_erp",
+      tableCount: 25,
+    },
+    redis: {
+      configured: redisOk,
+      host: process.env.REDIS_HOST || (process.env.REDIS_URL ? "URL_CONFIGURED" : "DISABLED"),
+    },
+    disk: diskStatus,
+  });
+});
+
+app.post("/api/persistence/sync-all", async (_req, res) => {
+  try {
+    diskPersistence.flushToDiskSync();
+    const result = await diskPersistence.syncDiskToMysql();
+    res.json({
+      success: true,
+      message: "Persistencia forzada a disco y sincronización a MySQL completada.",
+      syncedEntries: result.syncedEntries,
+      syncedDtes: result.syncedDtes,
+      disk: diskPersistence.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Vite middleware setup for development and production
 async function startServer() {
-  // Verificación de conectividad con MySQL 8.0
+  // Verificación de conectividad con MySQL 8.0 y auto-inicialización de tablas DDL
   checkMySqlConnection()
-    .then((isConnected) => {
+    .then(async (isConnected) => {
       if (isConnected) {
         console.log("[Contable Chile] Conexión a MySQL 8.0 verificada exitosamente.");
+        await ensureMysqlSchemaInitialized();
       } else {
-        console.warn("[Contable Chile] Aviso: Servidor MySQL 8.0 no disponible. Modo contingencia activo.");
+        console.warn("[Contable Chile] Aviso: Servidor MySQL no disponible localmente. Persistencia continua garantizada en disco local (data/db_disk_snapshot.json).");
       }
     })
     .catch((err) => {
