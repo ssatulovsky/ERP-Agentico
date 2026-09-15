@@ -28,6 +28,31 @@ export interface CompanyProfile {
   afpMutualTasa: number; // ej: 0.93% base + adicional
   bancoPrincipal: string;
   numeroCuenta: string;
+  // Parámetros de Ejercicio Fiscal y Cierre Contable (Art. 16 Código Tributario)
+  mesCierreEjercicio?: number; // 12 = Diciembre (regla general SII), 6 = Junio (temporadas/agro/filiales extranjeras), etc.
+  diaCierreEjercicio?: number; // 31, 30, etc.
+  ejercicioActivo?: number; // ej: 2026
+  fechaInicioEjercicio?: string; // ej: "2026-01-01"
+  fechaFinEjercicio?: string; // ej: "2026-12-31"
+  periodosCerrados?: string[]; // ej: ["2026-01", "2026-02"]
+  bloqueoPeriodoCerrado?: boolean; // Si true, prohíbe asientos en períodos cerrados o fuera de fecha
+  resolucionSiiCierreEspecial?: string; // Resolución exenta del Director Regional SII en caso de cierre distinto al 31/12
+}
+
+export interface PeriodLockValidationResult {
+  permitido: boolean;
+  motivo?: string;
+  codigoError?: 'PERIODO_CERRADO' | 'EJERCICIO_ANTERIOR' | 'EJERCICIO_FUTURO' | 'FUERA_DE_RANGO';
+  sugerencia?: string;
+}
+
+export interface CatchUpPeriodConfig {
+  periodo: string; // "2026-01"
+  fechaDevengoRemuneraciones: string; // "2026-01-31"
+  fechaPagoSueldos: string; // "2026-02-05"
+  fechaPagoPrevired: string; // "2026-02-13"
+  fechaDevengoF29: string; // "2026-01-31"
+  fechaPagoF29: string; // "2026-02-20"
 }
 
 // Configuración del Estudio Contable (Cliente Principal que opera la App)
@@ -52,6 +77,8 @@ export interface AccountingFirmProfile {
     liquidacionPrevisional: boolean;
     proyeccionFlujo: boolean;
     gestionInventarios: boolean;
+    activoFijo?: boolean;
+    costeoProduccion?: boolean;
   };
 }
 
@@ -90,6 +117,19 @@ export interface ClientCompany extends CompanyProfile {
     alertaStockCritico: boolean;
     controlGuiasDespacho52: boolean;
   };
+  // Módulos especializados de Activo Fijo y Costeo de Producción
+  administraActivoFijo?: boolean;
+  operaCosteoProduccion?: boolean;
+  // Ficha de Onboarding & Datos Superadministración ERP Daibuda
+  codigoAuxiliar?: string;
+  nombreFantasia?: string;
+  emailDte?: string;
+  notasInternas?: string;
+  inactivo?: boolean;
+  contrato?: ClientContractInfo;
+  contabilidadConfig?: ClientAccountingConfig;
+  comercialConfig?: ClientCommercialConfig;
+  ubicacionConfig?: ClientLocationInfo;
 }
 
 export type BankName = 
@@ -664,7 +704,7 @@ export interface Balance8ColumnasReport {
 
 // Orchestrator Audit & Peripheral Coordination
 export interface OrchestratorAuditItem {
-  modulo: 'VENTAS' | 'COMPRAS' | 'HONORARIOS' | 'RRHH' | 'F29' | 'TESORERIA' | 'INVENTARIO' | 'ARRIENDO';
+  modulo: 'VENTAS' | 'COMPRAS' | 'HONORARIOS' | 'RRHH' | 'F29' | 'TESORERIA' | 'INVENTARIO' | 'ARRIENDO' | 'ACTIVO_FIJO' | 'PRODUCCION' | 'RRHH_PERSONAS';
   nombre: string;
   totalDocumentos: number;
   montoTotal: number;
@@ -1226,4 +1266,449 @@ export interface GeneratedLaborCertificate {
   hashFirmaDigital: string;
   validoHasta: string;
 }
+
+// ============================================================================
+// AGENTE 1: ADMINISTRACIÓN DEL ACTIVO FIJO (NIC 16 / ART. 31 N° 5 & ART. 41 LIR)
+// ============================================================================
+
+export type FixedAssetCategory =
+  | 'MAQUINARIA_EQUIPOS'
+  | 'INSTALACIONES_REDES'
+  | 'TECNOLOGIA_COMPUTO'
+  | 'VEHICULOS'
+  | 'MUEBLES_UTILES'
+  | 'INFRAESTRUCTURA_EDIFICIOS'
+  | 'HERRAMIENTAS_ESPECIALES';
+
+export type FixedAssetStatus =
+  | 'OPERATIVO'
+  | 'MANTENCION'
+  | 'EN_TRANSITO'
+  | 'DADO_DE_BAJA'
+  | 'ENAJENADO';
+
+export type DepreciationMethod =
+  | 'LINEAL_IFRS'
+  | 'ACELERADA_TRIBUTARIA'
+  | 'INSTANTANEA_PYME'
+  | 'UNIDADES_PRODUCCION';
+
+export interface FixedAsset {
+  id: string;
+  empresaId: string;
+  codigoPlaca: string; // ej: "AF-2026-001"
+  codigoQr?: string;
+  nombre: string;
+  descripcion: string;
+  categoria: FixedAssetCategory;
+  cuentaContableActivo: string; // ej: '1.2.05'
+  cuentaContableDepreciacion: string; // ej: '1.2.99'
+  cuentaContableGasto: string; // ej: '5.2.08' (o CIF '5.1.04')
+  fechaAdquisicion: string; // YYYY-MM-DD
+  fechaInicioUso: string;
+  proveedorRut?: string;
+  proveedorRazonSocial?: string;
+  folioDteCompra?: number; // Folio Factura Electrónica DTE 33
+  // Valores Históricos
+  valorAdquisicionOriginal: number; // Costo histórico de adquisición ($ CLP)
+  valorResidualFinanciero: number; // Valor residual IFRS ($ CLP)
+  // Vida Útil
+  vidaUtilMesesFinanciera: number; // Vida útil técnica IFRS (meses)
+  vidaUtilMesesTributaria: number; // Vida útil tributaria según Circular SII (meses)
+  mesesDepreciados: number;
+  vidaUtilRestanteMeses: number;
+  metodoDepreciacion: DepreciationMethod;
+  // Parámetros Financieros (IFRS / NIC 16)
+  depreciacionAcumuladaFinanciera: number;
+  valorLibroFinanciero: number; // valorAdquisicionOriginal - depreciacionAcumuladaFinanciera
+  cuotaDepreciacionMensualFinanciera: number;
+  // Parámetros Tributarios Chilenos (Art. 31 N° 5 & Art. 41 LIR)
+  factorCorreccionMonetariaAcum: number; // IPC acumulado
+  correccionMonetariaAcumulada: number; // Reajuste Art. 41 LIR
+  depreciacionAcumuladaTributaria: number;
+  valorTributarioNeto: number;
+  cuotaDepreciacionMensualTributaria: number;
+  // Control Operativo & Físico
+  ubicacionFisica: string; // ej: "Centro de Cultivo Hornopirén #3", "Taller de Redes Quellón", "Bodega Central"
+  responsableCustodio: string; // ej: "Juan Pablo Soto - Jefe de Mantenimiento"
+  estado: FixedAssetStatus;
+  numeroSerie?: string;
+  marcaModelo?: string;
+  esFabrilProduccion?: boolean; // Si genera cuota de depreciación imputable a CIF (Costos Indirectos)
+  ultimaInspeccionFecha?: string;
+  proximaMantencionFecha?: string;
+  notasTecnicas?: string;
+  asientoAltaId?: string;
+}
+
+export interface FixedAssetDepreciationRun {
+  id: string;
+  empresaId: string;
+  periodo: string; // YYYY-MM
+  fechaEjecucion: string;
+  totalActivosProcesados: number;
+  totalDepreciacionFinancieraMes: number;
+  totalDepreciacionTributariaMes: number;
+  totalCorreccionMonetariaMes: number;
+  totalDepreciacionFabrilCifMes: number; // Imputable a Costos Indirectos de Fabricación
+  asientoGeneradoId?: string;
+  detallePorActivo: Array<{
+    activoId: string;
+    codigoPlaca: string;
+    nombre: string;
+    depreciacionFinanciera: number;
+    depreciacionTributaria: number;
+    correccionMonetaria: number;
+    nuevoValorLibro: number;
+  }>;
+}
+
+export interface FixedAssetTableReportItem {
+  id: string;
+  codigoPlaca: string;
+  nombre: string;
+  categoria: FixedAssetCategory;
+  fechaAdquisicion: string;
+  valorInicial: number;
+  adiciones: number;
+  bajas: number;
+  correccionMonetaria: number;
+  depreciacionEjercicio: number;
+  depreciacionAcumulada: number;
+  valorNetoFinanciero: number;
+  valorNetoTributario: number;
+  estado: FixedAssetStatus;
+}
+
+// ============================================================================
+// AGENTE 2: PRODUCCIÓN Y SISTEMA DE COSTEO DE PRODUCTOS (NIC 2 / COSTEO REAL Y NORMAL)
+// ============================================================================
+
+export type ProductionOrderStatus =
+  | 'PLANIFICADA'
+  | 'EN_PROCESO'
+  | 'CONTROL_CALIDAD'
+  | 'TERMINADA'
+  | 'LIQUIDADA'
+  | 'ANULADA';
+
+export type ProductionProductCategory =
+  | 'SALMONIDOS_PROCESADOS'
+  | 'REDES_Y_FONDEOS'
+  | 'ALIMENTO_Y_SUPLEMENTOS'
+  | 'PRODUCTOS_MANUFACTURADOS'
+  | 'SERVICIOS_INDUSTRIALES';
+
+export type CifAllocationBase =
+  | 'HORAS_HOMBRE_MOD'
+  | 'HORAS_MAQUINA'
+  | 'COSTO_PRIMO'
+  | 'UNIDADES_PRODUCIDAS';
+
+export interface BillOfMaterialItem {
+  id: string;
+  insumoId: string;
+  insumoCodigo: string;
+  insumoNombre: string;
+  unidadMedida: string;
+  cantidadPorUnidad: number;
+  costoUnitarioEstimado: number;
+  porcentajeMermaTolerada: number;
+}
+
+export interface DirectMaterialConsumption {
+  id: string;
+  ordenProduccionId: string;
+  fecha: string;
+  insumoId: string;
+  insumoCodigo: string;
+  insumoNombre: string;
+  bodegaOrigenId: string;
+  bodegaOrigenNombre: string;
+  cantidadConsumida: number;
+  unidadMedida: string;
+  costoUnitarioPMP: number; // Costo Medio Ponderado Art. 30 LIR
+  costoTotalConsumo: number;
+  folioGuiaDespacho52?: number; // Guía electrónica de despacho interna
+  asientoId?: string;
+}
+
+export interface DirectLaborEntry {
+  id: string;
+  ordenProduccionId: string;
+  fecha: string;
+  trabajadorRut: string;
+  trabajadorNombre: string;
+  cargo: string;
+  horasTrabajadas: number;
+  tarifaHoraCostoEmpresa: number; // Incluye base, imposiciones patronales proporcionales
+  costoTotalMOD: number;
+  etapaProceso: string; // ej: "Corte y Armado", "Eviscerado", "Fileteo", "Termofusión"
+  asientoId?: string;
+}
+
+export interface IndirectCostPoolItem {
+  id: string;
+  periodo: string; // YYYY-MM
+  concepto: string;
+  categoriaCif:
+    | 'ENERGIA_COMBUSTIBLE'
+    | 'DEPRECIACION_MAQUINARIA'
+    | 'MANTENCION_FABRIL'
+    | 'MANO_OBRA_INDIRECTA'
+    | 'ARRIENDO_PLANTA'
+    | 'SEGUROS_EPP';
+  montoTotalPeriodo: number;
+  cuentaContableGasto: string;
+  dteFolioAsociado?: number;
+}
+
+export interface ProductionOrder {
+  id: string;
+  empresaId: string;
+  folioOP: string; // ej: "OP-2026-108"
+  descripcion: string;
+  productoCodigo: string;
+  productoNombre: string;
+  categoria: ProductionProductCategory;
+  unidadMedida: string; // ej: "UNID", "KG", "METROS"
+  fechaInicio: string;
+  fechaEstimadaTermino: string;
+  fechaRealTermino?: string;
+  estado: ProductionOrderStatus;
+  cantidadObjetivo: number;
+  cantidadProducidaReal: number;
+  cantidadMerma: number;
+  bodegaDestinoId?: string;
+  bodegaDestinoNombre?: string;
+  // Componentes del Costo de Fabricación
+  costoDirectoMateriales: number; // MPD acumulado ($ CLP)
+  costoDirectoManoObra: number; // MOD acumulado ($ CLP)
+  costoPrimo: number; // MPD + MOD
+  baseProrrateoCif: CifAllocationBase;
+  tasaCifAplicada: number; // $/HH, $/HM o % sobre costo primo
+  costoIndirectoCif: number; // CIF aplicado ($ CLP)
+  costoTotalProduccion: number; // MPD + MOD + CIF
+  costoUnitarioReal: number; // costoTotalProduccion / cantidadProducidaReal
+  precioVentaEstimado: number;
+  margenBrutoUnitarioEstimado: number; // % o $
+  // Trazabilidad de Consumos
+  consumosMateriales: DirectMaterialConsumption[];
+  manoDeObraRegistros: DirectLaborEntry[];
+  // Asientos Contables Generados en Libro Diario
+  asientosGenerados: {
+    consumoMpdAsientoId?: string;
+    aplicacionModAsientoId?: string;
+    aplicacionCifAsientoId?: string;
+    liquidacionPtAsientoId?: string;
+    costoVentasAsientoId?: string;
+  };
+}
+
+export interface CostOfGoodsManufacturedReport {
+  periodo: string;
+  inventarioInicialWip: number;
+  consumoMpd: number;
+  manoObraDirecta: number;
+  costosIndirectosCif: number;
+  costoIncurridoFabricacion: number;
+  inventarioFinalWip: number;
+  costoProductosTerminados: number;
+  inventarioInicialPt: number;
+  inventarioFinalPt: number;
+  costoDeVentas: number;
+}
+
+// ==========================================
+// PLANES DE CONTRATACIÓN ERP & SUPERADMINISTRACIÓN
+// ==========================================
+
+export interface ErpSubscriptionPlan {
+  id: string;
+  nombre: string;
+  precioMensualClp: number;
+  limiteUsuarios: number;
+  limiteEmpresasContables: number;
+  modulosIncluidos: string[];
+  referenciaTexto: string;
+  nivelSoporteDefecto: 'Básico' | 'Avanzado' | 'Dedicado 24/7';
+  destacado?: boolean;
+}
+
+export interface ClientContractInfo {
+  planId: string;
+  nombrePlan: string;
+  licenciasContratadas: number;
+  limiteUsuarios: number;
+  limiteEmpresas: number;
+  precioMensualNeto: number;
+  modulosIncluidos: string[];
+  numeroContrato: string;
+  tipoContrato: 'Mensual' | 'Trimestral' | 'Semestral' | 'Anual';
+  fechaContrato: string; // YYYY-MM-DD
+  duracionDias: number; // 365
+  diasTolerancia: number; // 5
+  fechaExpiracion: string; // YYYY-MM-DD
+  ejecutivoAsignado: string;
+  nivelSoporte: 'Básico' | 'Avanzado' | 'Dedicado 24/7';
+}
+
+export interface ClientLocationInfo {
+  direccion: string;
+  pais: string; // "Chile"
+  region: string;
+  ciudad: string;
+  comuna: string;
+}
+
+export interface ClientAccountingConfig {
+  grupoImpuesto: string;
+  cuentaCliente: string; // ej: '1.1.03'
+  cuentaVentas: string; // ej: '4.1.01'
+  cuentaDescVentas: string; // ej: '4.1.02'
+  cuentaRecepcionMercaderias: string; // ej: '2.1.04'
+  cuentaDescPagos: string; // ej: '5.2.01'
+}
+
+export interface ClientCommercialConfig {
+  tipoVenta: 'Contado' | 'Crédito';
+  estadoCredito: 'Sin Crédito' | 'Con Crédito' | 'Bloqueado';
+  montoCredito: number;
+  terminosPago: string;
+  areaVentas: string;
+  vendedor: string;
+  centroCosto: string;
+  descuentoPorcentaje: number;
+  descProntoPagoPorcentaje: number;
+}
+
+// ==========================================
+// CONFIGURACIÓN DE SISTEMA Y CONTABILIDAD GENERAL (Page 10)
+// ==========================================
+
+export interface SystemGeneralParameters {
+  tenantId: string;
+  // Mayor General
+  intervaloDiasVencimiento: number;
+  cuentaResultadosAcumulados: string;
+  cuentaGananciaPerdidaAno: string;
+  cuentaVariacionTipoCambio: string;
+  cuentaCargosBancarios: string;
+  monedaNacional?: string;
+  toleranciaCentavosAsiento?: number;
+  cuentaAjusteSencillo?: string;
+  cuentaDiferenciaCambioGanancia?: string;
+  cuentaDiferenciaCambioPerdida?: string;
+  cuentaResultadoEjercicio?: string;
+  // Art. 16 Código Tributario (Cierre de Ejercicio)
+  mesCierreEjercicio: number;
+  diaCierreEjercicio: number;
+  ejercicioActivo: number;
+  bloqueoPeriodoCerrado: boolean;
+  resolucionSiiCierreEspecial?: string;
+  // Clientes y Ventas
+  limiteCreditoDefecto: number;
+  envioAcumuladoLotes: boolean;
+  textoLegalFactura: string;
+  cuentaGastosEnvio: string;
+  // Clientes y Ventas por Defecto
+  cuentasPorCobrarDefecto: string;
+  cuentaVentasDefecto: string;
+  cuentaDescuentoVentasDefecto: string;
+  cuentaDescuentoProntoPagoDefecto: string;
+  despachoRequeridoDias: number;
+  // Centro de Costos por Defecto
+  centroCostosRequeridosDespuesDias: number;
+  // Proveedores y Compradores
+  rangoToleranciaEntregaSobreRecepcionPorc: number;
+  rangoToleranciaFacturaSobreCargaPorc: number;
+  cuentaPagableDefecto: string;
+  cuentaDescuentoComprasDefecto: string;
+  cuentaGuiaEntradaDefecto: string;
+  // Inventario
+  permitirInventarioNegativo: boolean;
+  // Productos por Defecto
+  cuentaInventarioDefecto: string;
+  cuentaCostoVentaDefecto: string;
+  cuentaAjustesInventarioDefecto: string;
+  cuentaCostosEnsambleArticulosDefecto: string;
+  // Fabricación por Defecto
+  ordenTrabajoRequeridaDespuesDias: number;
+}
+
+// ==========================================
+// PLAN DE CUENTAS IFRS JERÁRQUICO (Pages 8-9)
+// ==========================================
+
+export interface AccountGroupClassification {
+  codigo: string;
+  codPadre: string;
+  tipoCuenta: 'ACTIVO' | 'PASIVO' | 'PATRIMONIO' | 'RESULTADO';
+  descripcion: string;
+}
+
+export interface AccountCreationDefinition {
+  codigo: string;
+  nombre: string;
+  clasificacion: 'ACTIVO' | 'PASIVO' | 'PATRIMONIO' | 'RESULTADO';
+  agrupacion: string;
+  codigoE?: string;
+  codigoS?: string;
+  codigoFlujoEfectivo?: string;
+  notas?: string;
+  // 11 toggles de atributos y controles de imputación
+  atributos?: {
+    activo: boolean;
+    auxiliar: boolean;
+    multimoneda: boolean;
+    moneda: string;
+    docRef: boolean;
+    conciliacion: boolean;
+    ifrs: boolean;
+    centroCosto: boolean;
+    dimension2: boolean;
+    detHabita: boolean;
+    proyecto: boolean;
+  };
+  activo?: boolean;
+  auxiliar?: boolean;
+  multimoneda?: boolean;
+  moneda?: string;
+  docRef?: boolean;
+  conciliacion?: boolean;
+  ifrs?: boolean;
+  centroCosto?: boolean;
+  dimension2?: boolean;
+  detHabita?: boolean;
+  proyecto?: boolean;
+}
+
+// ==========================================
+// MAESTRO DE AUXILIARES DE CLIENTES (Page 11)
+// ==========================================
+
+export interface ClientAuxiliaryMasterRecord {
+  id: string;
+  rutCompleto: string;
+  codigoAuxiliar: string;
+  razonSocial: string;
+  nombreFantasia: string;
+  giroComercial: string;
+  inactivo: boolean;
+  telefonoPrincipal: string;
+  emailContacto: string;
+  nombreContacto: string;
+  emailDte: string;
+  direccion?: string;
+  region?: string;
+  ciudad?: string;
+  comuna?: string;
+  tipoAuxiliar?: 'CLIENTE' | 'PROVEEDOR' | 'AMBOS';
+  sucursales?: { id: string; nombre: string; direccion: string; comuna: string }[];
+  limiteCredito?: number;
+  terminosPago?: string;
+  vendedor?: string;
+  descuentoPorcentaje?: number;
+}
+
 

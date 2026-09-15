@@ -31,13 +31,21 @@ import {
   Eye,
   X,
   UserCheck,
-  AlertCircle
+  AlertCircle,
+  Palmtree,
+  Gift,
+  FileWarning,
+  Trash2,
+  Edit2,
+  RefreshCw,
+  Search
 } from 'lucide-react';
 import { 
   EmployeePayroll, 
   LaborContract, 
   MedicalLeave, 
   VacationRecord, 
+  VacationRequest,
   HrBenefit, 
   AbsenteeismRecord, 
   DisciplinarySanction,
@@ -53,7 +61,7 @@ import {
   GeneratedLaborCertificate,
   KarinInvestigationCase
 } from '../types';
-import { formatCLP, formatNumberCL, createPayrollCentralizationEntry } from '../utils/chileanAccounting';
+import { formatCLP, formatNumberCL, calculatePayroll, createPayrollCentralizationEntry } from '../utils/chileanAccounting';
 import { 
   validateHrWorkerParameters,
   calculateSeverancePay,
@@ -73,6 +81,26 @@ import {
   INITIAL_DISCIPLINARY_SANCTIONS, 
   INITIAL_HR_ALERTS 
 } from '../data/seedHrData';
+import { AbsenteeismManager } from './hr/AbsenteeismManager';
+import { BenefitsManager } from './hr/BenefitsManager';
+import { ContractsManager } from './hr/ContractsManager';
+import { MedicalLeavesManager } from './hr/MedicalLeavesManager';
+import { SanctionsManager } from './hr/SanctionsManager';
+import { VacationsManager } from './hr/VacationsManager';
+
+export type HrSubTab =
+  | 'collaborators'
+  | 'contracts'
+  | 'absenteeism'
+  | 'medical_leaves'
+  | 'vacations'
+  | 'benefits'
+  | 'sanctions'
+  | 'severance'
+  | 'karin'
+  | 'certificates'
+  | 'legal_books'
+  | 'console';
 
 interface HrAgentModuleProps {
   company: CompanyProfile;
@@ -82,8 +110,29 @@ interface HrAgentModuleProps {
   payrolls: EmployeePayroll[];
   onUpdateEmployee: (emp: EmployeePayroll) => void;
   onAddEmployee: (emp: EmployeePayroll) => void;
+  onDeleteEmployee?: (empId: string) => void;
   indicators: ChileIndicators;
   onAddAccountingEntry: (entry: AccountingEntry) => void;
+  contracts?: LaborContract[];
+  onAddContract?: (contract: LaborContract) => void;
+  onUpdateContract?: (contract: LaborContract) => void;
+  medicalLeaves?: MedicalLeave[];
+  onAddMedicalLeave?: (leave: MedicalLeave) => void;
+  onUpdateMedicalLeave?: (leave: MedicalLeave) => void;
+  vacations?: VacationRecord[];
+  onAddVacationRequest?: (employeeId: string, req: VacationRequest) => void;
+  onApproveVacationRequest?: (employeeId: string, reqId: string) => void;
+  absenteeismList?: AbsenteeismRecord[];
+  onAddAbsenteeismRecord?: (record: AbsenteeismRecord) => void;
+  benefits?: HrBenefit[];
+  onAddBenefit?: (benefit: HrBenefit) => void;
+  onToggleBenefit?: (benefitId: string) => void;
+  sanctions?: DisciplinarySanction[];
+  onAddSanction?: (sanction: DisciplinarySanction) => void;
+  onUpdateSanction?: (sanction: DisciplinarySanction) => void;
+  karinCases?: KarinInvestigationCase[];
+  onAddKarinCase?: (caseItem: KarinInvestigationCase) => void;
+  onUpdateKarinCase?: (caseItem: KarinInvestigationCase) => void;
 }
 
 export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
@@ -91,27 +140,50 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
   activeClient,
   clients,
   onSelectClient,
-  payrolls,
+  payrolls = [],
   onUpdateEmployee,
   onAddEmployee,
+  onDeleteEmployee,
   indicators,
-  onAddAccountingEntry
+  onAddAccountingEntry,
+  contracts,
+  onAddContract,
+  onUpdateContract,
+  medicalLeaves,
+  onAddMedicalLeave,
+  onUpdateMedicalLeave,
+  vacations,
+  onAddVacationRequest,
+  onApproveVacationRequest,
+  absenteeismList,
+  onAddAbsenteeismRecord,
+  benefits,
+  onAddBenefit,
+  onToggleBenefit,
+  sanctions,
+  onAddSanction,
+  onUpdateSanction,
+  karinCases,
+  onAddKarinCase,
+  onUpdateKarinCase,
 }) => {
   // Navigation Tabs inside HR Agent Module
-  const [activeSubTab, setActiveSubTab] = useState<'console' | 'contracts_severance' | 'vacations_leaves' | 'certificates' | 'payroll_engine' | 'legal_books'>('console');
+  const [activeSubTab, setActiveSubTab] = useState<HrSubTab>('collaborators');
 
   // Multi-Company Active State
   const activeEmpresaId = activeClient.id || company.id;
 
-  // Local state for HR documents and records
-  const [contracts, setContracts] = useState<LaborContract[]>(INITIAL_LABOR_CONTRACTS);
-  const [medicalLeaves, setMedicalLeaves] = useState<MedicalLeave[]>(INITIAL_MEDICAL_LEAVES);
-  const [vacations, setVacations] = useState<VacationRecord[]>(INITIAL_VACATION_RECORDS);
-  const [absenteeismList, setAbsenteeismList] = useState<AbsenteeismRecord[]>(INITIAL_ABSENTEEISM);
+  // Local state fallbacks for HR documents and records
+  const [localContracts, setLocalContracts] = useState<LaborContract[]>(INITIAL_LABOR_CONTRACTS);
+  const [localMedicalLeaves, setLocalMedicalLeaves] = useState<MedicalLeave[]>(INITIAL_MEDICAL_LEAVES);
+  const [localVacations, setLocalVacations] = useState<VacationRecord[]>(INITIAL_VACATION_RECORDS);
+  const [localAbsenteeism, setLocalAbsenteeism] = useState<AbsenteeismRecord[]>(INITIAL_ABSENTEEISM);
+  const [localBenefits, setLocalBenefits] = useState<HrBenefit[]>(INITIAL_HR_BENEFITS);
+  const [localSanctions, setLocalSanctions] = useState<DisciplinarySanction[]>(INITIAL_DISCIPLINARY_SANCTIONS);
   const [alerts, setAlerts] = useState<HrAgentAlert[]>(INITIAL_HR_ALERTS);
 
   // Ley Karin Cases State
-  const [karinCases, setKarinCases] = useState<KarinInvestigationCase[]>([
+  const [localKarinCases, setLocalKarinCases] = useState<KarinInvestigationCase[]>([
     {
       id: 'karin-01',
       empresaId: activeEmpresaId,
@@ -128,6 +200,49 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
       conclusionesYAcciones: 'Entrevistas de testigos en curso bajo estricta confidencialidad según Ley 21.643.',
     }
   ]);
+
+  const activeContracts = contracts ?? localContracts;
+  const activeMedicalLeaves = medicalLeaves ?? localMedicalLeaves;
+  const activeVacations = vacations ?? localVacations;
+  const activeAbsenteeism = absenteeismList ?? localAbsenteeism;
+  const activeBenefits = benefits ?? localBenefits;
+  const activeSanctions = sanctions ?? localSanctions;
+  const activeKarinCases = karinCases ?? localKarinCases;
+
+  // Modals & UI States
+  const [showAddCollabModal, setShowAddCollabModal] = useState(false);
+  const [collabSearch, setCollabSearch] = useState('');
+  const [showAddKarinModal, setShowAddKarinModal] = useState(false);
+
+  // New Collaborator Form Data
+  const [newCollabForm, setNewCollabForm] = useState<Partial<EmployeePayroll>>({
+    nombreCompleto: '',
+    rut: '',
+    cargo: '',
+    departamento: 'Operaciones',
+    fechaIngreso: new Date().toISOString().split('T')[0],
+    tipoContrato: 'INDEFINIDO',
+    sueldoBase: 1200000,
+    gratificacionModalidad: 'ART_50',
+    asignacionColacion: 80000,
+    asignacionMovilizacion: 70000,
+    afpNombre: 'HABITAT',
+    saludTipo: 'FONASA',
+    saludPlanUf: 0,
+    otrosDescuentos: 0,
+    horasExtrasCantidad: 0,
+    comisionesBonosImponibles: 0
+  });
+
+  // New Karin Report Form Data
+  const [newKarinForm, setNewKarinForm] = useState<Partial<KarinInvestigationCase>>({
+    tipoAcoso: 'ACOSO_LABORAL',
+    denuncianteRutAnonimizado: '',
+    denunciadoCargo: '',
+    medidasDeResguardo: 'Separación preventiva de turnos y dependencias físicas inmediatas.',
+    responsableInvestigacion: 'Comité Paritario & Oficial de Cumplimiento RRHH',
+    conclusionesYAcciones: 'Investigación preliminar aperturada bajo reserva legal.'
+  });
 
   // Selected entities for modals and inspectors
   const [selectedContractForDt, setSelectedContractForDt] = useState<LaborContract | null>(null);
@@ -167,6 +282,191 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Handlers bridging to App level or local state
+  const handleAddContract = (contract: LaborContract) => {
+    if (onAddContract) onAddContract(contract);
+    else setLocalContracts(prev => [contract, ...prev]);
+    showToast(`Contrato ${contract.folioRegistroDt || contract.id} registrado para MiDT.`);
+  };
+
+  const handleUpdateContract = (contract: LaborContract) => {
+    if (onUpdateContract) onUpdateContract(contract);
+    else setLocalContracts(prev => prev.map(c => c.id === contract.id ? contract : c));
+    showToast(`Contrato actualizado.`);
+  };
+
+  const handleAddMedicalLeave = (leave: MedicalLeave) => {
+    if (onAddMedicalLeave) onAddMedicalLeave(leave);
+    else setLocalMedicalLeaves(prev => [leave, ...prev]);
+    showToast(`Licencia Médica Folio ${leave.folioLicencia} ingresada.`);
+  };
+
+  const handleUpdateMedicalLeave = (leave: MedicalLeave) => {
+    if (onUpdateMedicalLeave) onUpdateMedicalLeave(leave);
+    else setLocalMedicalLeaves(prev => prev.map(l => l.id === leave.id ? leave : l));
+    showToast(`Licencia Médica actualizada.`);
+  };
+
+  const handleAddVacationRequest = (empId: string, req: VacationRequest) => {
+    if (onAddVacationRequest) onAddVacationRequest(empId, req);
+    else {
+      setLocalVacations(prev => prev.map(v => v.employeeId === empId ? { ...v, solicitudes: [req, ...(v.solicitudes || [])] } : v));
+    }
+    showToast(`Solicitud de feriado legal registrada (${req.diasHabilesTomados} días hábiles).`);
+  };
+
+  const handleApproveVacationRequest = (empId: string, reqId: string) => {
+    if (onApproveVacationRequest) onApproveVacationRequest(empId, reqId);
+    else {
+      setLocalVacations(prev => prev.map(v => {
+        if (v.employeeId === empId) {
+          const r = (v.solicitudes || []).find(s => s.id === reqId);
+          const d = r ? r.diasHabilesTomados : 0;
+          return {
+            ...v,
+            diasTomadosHistorico: (v.diasTomadosHistorico || 0) + d,
+            diasDisponibles: Math.max(0, v.diasDisponibles - d),
+            solicitudes: (v.solicitudes || []).map(s => s.id === reqId ? { ...s, estado: 'AUTORIZADA_RRHH' as const } : s)
+          };
+        }
+        return v;
+      }));
+    }
+    showToast(`Feriado legal aprobado y comprobante emitido.`);
+  };
+
+  const handleAddAbsenteeismRecord = (rec: AbsenteeismRecord) => {
+    if (onAddAbsenteeismRecord) onAddAbsenteeismRecord(rec);
+    else setLocalAbsenteeism(prev => [rec, ...prev]);
+    showToast(`Novedad de asistencia registrada (${rec.tipo}).`);
+  };
+
+  const handleAddBenefit = (b: HrBenefit) => {
+    if (onAddBenefit) onAddBenefit(b);
+    else setLocalBenefits(prev => [b, ...prev]);
+    showToast(`Bono/Beneficio "${b.nombre}" creado.`);
+  };
+
+  const handleToggleBenefit = (id: string) => {
+    if (onToggleBenefit) onToggleBenefit(id);
+    else setLocalBenefits(prev => prev.map(b => b.id === id ? { ...b, activo: !b.activo } : b));
+    showToast(`Estado del beneficio modificado.`);
+  };
+
+  const handleAddSanction = (s: DisciplinarySanction) => {
+    if (onAddSanction) onAddSanction(s);
+    else setLocalSanctions(prev => [s, ...prev]);
+    showToast(`Medida disciplinaria ${s.folioConstanciaDt || s.id} registrada.`);
+  };
+
+  const handleUpdateSanction = (s: DisciplinarySanction) => {
+    if (onUpdateSanction) onUpdateSanction(s);
+    else setLocalSanctions(prev => prev.map(item => item.id === s.id ? s : item));
+    showToast(`Sanción actualizada.`);
+  };
+
+  const handleAddKarinCaseSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newCase: KarinInvestigationCase = {
+      id: `karin-${Date.now()}`,
+      empresaId: activeEmpresaId,
+      folioCaso: `KARIN-2026-${String(activeKarinCases.length + 1).padStart(3, '0')}`,
+      fechaDenuncia: new Date().toISOString().split('T')[0],
+      tipoAcoso: newKarinForm.tipoAcoso || 'ACOSO_LABORAL',
+      denuncianteRutAnonimizado: newKarinForm.denuncianteRutAnonimizado || 'ANONIMO',
+      denunciadoCargo: newKarinForm.denunciadoCargo || 'Por Determinar',
+      estado: 'INVESTIGACION_INTERNA',
+      medidasDeResguardo: newKarinForm.medidasDeResguardo || 'Separación preventiva de turnos.',
+      plazoLegalDias: 30,
+      fechaLimiteInforme: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      responsableInvestigacion: newKarinForm.responsableInvestigacion || 'Comité Paritario',
+      conclusionesYAcciones: newKarinForm.conclusionesYAcciones || 'En investigación bajo reserva.'
+    };
+
+    if (onAddKarinCase) onAddKarinCase(newCase);
+    else setLocalKarinCases(prev => [newCase, ...prev]);
+
+    setShowAddKarinModal(false);
+    showToast(`Denuncia Ley Karin Folio ${newCase.folioCaso} ingresada bajo reserva legal.`);
+  };
+
+  // Submit new collaborator from modal
+  const handleCreateCollaboratorSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCollabForm.nombreCompleto || !newCollabForm.rut) {
+      showToast('Debe ingresar al menos Nombre y RUT válido.');
+      return;
+    }
+
+    const calculated = calculatePayroll(
+      {
+        ...newCollabForm,
+        id: `emp-${Date.now()}`,
+      } as EmployeePayroll,
+      indicators
+    );
+
+    onAddEmployee(calculated);
+
+    // Auto-create initial labor contract
+    const newContract: LaborContract = {
+      id: `ctr-${Date.now()}`,
+      employeeId: calculated.id,
+      rut: calculated.rut,
+      nombreCompleto: calculated.nombreCompleto,
+      nacionalidad: 'Chilena',
+      estadoCivil: 'Soltero(a)',
+      fechaNacimiento: '1990-01-01',
+      domicilio: 'Av. Costanera 1420',
+      comuna: 'Puerto Montt',
+      cargo: calculated.cargo,
+      departamento: calculated.departamento,
+      tipoContrato: calculated.tipoContrato === 'INDEFINIDO' ? 'INDEFINIDO' : 'PLAZO_FIJO',
+      fechaInicio: calculated.fechaIngreso,
+      sueldoBase: calculated.sueldoBase,
+      jornadaHorasSemanales: 42,
+      distribucionJornada: 'Lunes a Viernes de 08:30 a 17:30 hrs',
+      lugarTrabajo: 'Planta de Procesos & Taller de Redes',
+      gratificacionModalidad: (calculated.gratificacionModalidad === 'ART_47' ? 'ART_47' : calculated.gratificacionModalidad === 'ART_50' ? 'ART_50' : 'CONVENCIONAL') as any,
+      asignacionColacion: calculated.asignacionColacion || 0,
+      asignacionMovilizacion: calculated.asignacionMovilizacion || 0,
+      estado: 'VIGENTE',
+      registradoDtRel: true,
+      folioRegistroDt: `DT-2026-${Math.floor(100000 + Math.random() * 900000)}`,
+      anexos: [],
+      clausulaConfidencialidad: true,
+      clausulaTeletrabajo: false,
+      observaciones: 'Contrato registrado con firma electrónica MiDT'
+    };
+    handleAddContract(newContract);
+
+    // Initialize vacation balance
+    const newVacation: VacationRecord = {
+      id: `vac-${Date.now()}`,
+      employeeId: calculated.id,
+      nombreCompleto: calculated.nombreCompleto,
+      rut: calculated.rut,
+      fechaIngreso: calculated.fechaIngreso,
+      antiguedadAnos: 0,
+      diasLegalesPorAno: 15,
+      diasProgresivos: 0,
+      diasAcumuladosTotales: 15,
+      diasTomadosHistorico: 0,
+      diasDisponibles: 15,
+      periodosPendientes: 1,
+      alertaExcesoPeriodosArt70: false,
+      solicitudes: []
+    };
+    if (onAddVacationRequest) {
+      // Vacation record is in vacations array
+    } else {
+      setLocalVacations(prev => [newVacation, ...prev]);
+    }
+
+    setShowAddCollabModal(false);
+    showToast(`Colaborador ${calculated.nombreCompleto} registrado con éxito. Contrato MiDT y ficha creados.`);
   };
 
   // Copy to clipboard helper
@@ -469,29 +769,42 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
         </div>
 
         {/* Navigation Sub-Tabs */}
-        <div className="flex items-center gap-1.5 border-t border-slate-100 mt-4 pt-3 overflow-x-auto">
+        <div className="flex items-center gap-1.5 border-t border-slate-100 mt-4 pt-3 overflow-x-auto pb-1">
           {[
-            { id: 'console', label: 'Consola Autónoma & Chat', icon: Bot },
-            { id: 'contracts_severance', label: 'Módulo A: Contratos & Finiquitos', icon: FileCheck },
-            { id: 'vacations_leaves', label: 'Módulo B: Vacaciones, Licencias & Ley Karin', icon: HeartPulse },
-            { id: 'certificates', label: 'Módulo C: Certificados Laborales', icon: FileText },
-            { id: 'payroll_engine', label: 'Módulo D: Motor Liquidaciones (4 Bloques)', icon: Calculator },
-            { id: 'legal_books', label: 'Módulo E: Libros DT & Previred 105', icon: FileSpreadsheet },
+            { id: 'collaborators', label: '1. Ficha Colaboradores', icon: Users, count: payrolls.length },
+            { id: 'contracts', label: '2. Contratos MiDT', icon: FileCheck, count: activeContracts.length },
+            { id: 'absenteeism', label: '3. Asistencia & Atrasos', icon: Clock, count: activeAbsenteeism.length },
+            { id: 'medical_leaves', label: '4. Licencias Médicas (SIL)', icon: HeartPulse, count: activeMedicalLeaves.length },
+            { id: 'vacations', label: '5. Vacaciones Art. 67', icon: Palmtree, count: activeVacations.length },
+            { id: 'benefits', label: '6. Bonos & Beneficios', icon: Gift, count: activeBenefits.length },
+            { id: 'sanctions', label: '7. Sanciones RIOHS', icon: FileWarning, count: activeSanctions.length },
+            { id: 'severance', label: '8. Finiquitos Art. 161', icon: Scale },
+            { id: 'karin', label: '9. Canal Ley Karin 21.643', icon: ShieldAlert, count: activeKarinCases.length },
+            { id: 'certificates', label: '10. Certificados Laborales', icon: FileText },
+            { id: 'legal_books', label: '11. Libros DT & Previred 105', icon: FileSpreadsheet },
+            { id: 'console', label: '12. Consola Asistente IA', icon: Bot },
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeSubTab === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveSubTab(tab.id as any)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                onClick={() => setActiveSubTab(tab.id as HrSubTab)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   isActive
-                    ? 'bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs'
+                    ? 'bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs font-bold'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-transparent'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
                 <span>{tab.label}</span>
+                {tab.count !== undefined && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                    isActive ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {tab.count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -733,32 +1046,65 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SUBTAB 2: MÓDULO A - CONTRATOS, ANEXOS, LEY 40 HORAS & FINIQUITOS         */}
+      {/* SUBTAB: 1. FICHA Y DIRECTORIO DE COLABORADORES (INGESTA DE PERSONAS)     */}
       {/* ========================================================================= */}
-      {activeSubTab === 'contracts_severance' && (
+      {activeSubTab === 'collaborators' && (
         <div className="space-y-6">
-          {/* Contracts Section Header */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileCheck className="w-5 h-5 text-blue-600" />
-                <span>Gestión de Contratos de Trabajo (Art. 10 CT) & Ley 40 Horas</span>
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Contratos indefinidos, plazo fijo y por obra. Payload estructurado para MiDT e identificación de excepciones Art. 22 inc. 2.
-              </p>
+          {/* Summary KPIs */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Dotación Total</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{payrolls.length}</div>
+              <div className="text-[11px] text-emerald-600 font-semibold mt-1">100% Contratos Registrados</div>
             </div>
-
-            <button
-              onClick={() => setSelectedContractForDt(contracts[0])}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Ver Payload Portal MiDT (Dirección del Trabajo)</span>
-            </button>
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Sueldo Base Promedio</div>
+              <div className="text-xl font-black text-slate-900 mt-1 font-mono">
+                {formatCLP(payrolls.length ? Math.round(payrolls.reduce((s, p) => s + (p.sueldoBase || 0), 0) / payrolls.length) : 0)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Sueldo Mínimo: $500.000</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Imponible Nómina</div>
+              <div className="text-xl font-black text-blue-700 mt-1 font-mono">
+                {formatCLP(payrolls.reduce((s, p) => s + (p.totalImponible || 0), 0))}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Base Previsión & SIS</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Líquido a Pago</div>
+              <div className="text-xl font-black text-emerald-700 mt-1 font-mono">
+                {formatCLP(payrolls.reduce((s, p) => s + (p.sueldoLiquido || 0), 0))}
+              </div>
+              <div className="text-[11px] text-emerald-600 font-semibold mt-1">Transferencias Bancarias</div>
+            </div>
           </div>
 
-          {/* Contracts Table */}
+          {/* Action Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={collabSearch}
+                onChange={(e) => setCollabSearch(e.target.value)}
+                placeholder="Buscar colaborador por nombre, RUT o cargo..."
+                className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowAddCollabModal(true)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>+ Registrar Nuevo Colaborador</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Collaborators Table */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-700">
@@ -766,76 +1112,182 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                   <tr>
                     <th className="px-4 py-3">Colaborador / RUT</th>
                     <th className="px-4 py-3">Cargo & Departamento</th>
-                    <th className="px-4 py-3">Tipo Contrato</th>
-                    <th className="px-4 py-3">Jornada Semanal</th>
-                    <th className="px-4 py-3">Ley 40 Horas</th>
-                    <th className="px-4 py-3">Registro MiDT</th>
+                    <th className="px-4 py-3 text-center">Tipo Contrato</th>
                     <th className="px-4 py-3 text-right">Sueldo Base</th>
+                    <th className="px-4 py-3 text-right">Gratificación</th>
+                    <th className="px-4 py-3 text-right">Líquido a Pago</th>
+                    <th className="px-4 py-3">Previsión / Salud</th>
+                    <th className="px-4 py-3 text-center">Novedades RRHH</th>
                     <th className="px-4 py-3 text-center">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {contracts.map(ctr => (
-                    <tr key={ctr.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-slate-900">{ctr.nombreCompleto}</div>
-                        <div className="text-[11px] font-mono text-slate-400">{ctr.rut}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-slate-800">{ctr.cargo}</div>
-                        <div className="text-[10px] text-slate-400">{ctr.departamento}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                          {ctr.tipoContrato}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-slate-700">
-                        {ctr.jornadaHorasSemanales} hrs / semana
-                      </td>
-                      <td className="px-4 py-3">
-                        {ctr.jornadaHorasSemanales <= 42 ? (
-                          <span className="flex items-center gap-1 text-[11px] text-emerald-700 font-semibold">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Conforme (≤ 42h)</span>
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-[11px] text-amber-700 font-semibold">
-                            <Clock className="w-3.5 h-3.5" />
-                            <span>En Adaptación</span>
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {ctr.registradoDtRel ? (
-                          <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                            {ctr.folioRegistroDt}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-mono text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                            PENDIENTE MiDT
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-slate-900">
-                        {formatCLP(ctr.sueldoBase)}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => setSelectedContractForDt(ctr)}
-                          className="text-blue-600 hover:text-blue-800 font-bold text-[11px] underline cursor-pointer"
-                        >
-                          Payload MiDT
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {payrolls
+                    .filter(p => 
+                      p.nombreCompleto?.toLowerCase().includes(collabSearch.toLowerCase()) ||
+                      p.rut?.includes(collabSearch) ||
+                      p.cargo?.toLowerCase().includes(collabSearch.toLowerCase())
+                    )
+                    .map(emp => {
+                      const hasActiveLeave = activeMedicalLeaves.some(l => l.rut === emp.rut);
+                      const hasAbsenteeism = activeAbsenteeism.some(a => a.rut === emp.rut);
+                      const empContract = activeContracts.find(c => c.rut === emp.rut);
+
+                      return (
+                        <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-slate-900">{emp.nombreCompleto}</div>
+                            <div className="text-[11px] font-mono text-slate-400">{emp.rut}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-800">{emp.cargo}</div>
+                            <div className="text-[10px] text-slate-400">{emp.departamento || 'Operaciones'}</div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                              {emp.tipoContrato || 'INDEFINIDO'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-slate-900">
+                            {formatCLP(emp.sueldoBase)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-600">
+                            {formatCLP(emp.gratificacionLegal)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-emerald-600">
+                            {formatCLP(emp.sueldoLiquido)}
+                          </td>
+                          <td className="px-4 py-3 text-[11px]">
+                            <div className="font-semibold text-slate-800">AFP {emp.afpNombre}</div>
+                            <div className="text-slate-500">{emp.saludTipo} {emp.saludPlanUf > 0 ? `(${emp.saludPlanUf} UF)` : ''}</div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {hasActiveLeave ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 flex items-center justify-center gap-1">
+                                <HeartPulse className="w-3 h-3" />
+                                <span>SIL Activo</span>
+                              </span>
+                            ) : hasAbsenteeism ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                <span>Novedad</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Normal</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              {empContract && (
+                                <button
+                                  onClick={() => setSelectedContractForDt(empContract)}
+                                  title="Ver Payload MiDT"
+                                  className="text-blue-600 hover:text-blue-800 font-bold text-[11px] underline cursor-pointer"
+                                >
+                                  MiDT
+                                </button>
+                              )}
+                              {onDeleteEmployee && payrolls.length > 1 && (
+                                <button
+                                  onClick={() => onDeleteEmployee(emp.id)}
+                                  title="Eliminar Colaborador"
+                                  className="text-rose-500 hover:text-rose-700 p-1 rounded-md hover:bg-rose-50 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Finiquitos Calculator & Simulator */}
+      {/* ========================================================================= */}
+      {/* SUBTAB: 2. CONTRATOS MiDT                                                 */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'contracts' && (
+        <ContractsManager
+          contracts={activeContracts}
+          onAddContract={handleAddContract}
+          onUpdateContract={handleUpdateContract}
+          company={company}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 3. ASISTENCIA & ATRASOS                                           */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'absenteeism' && (
+        <AbsenteeismManager
+          absenteeism={activeAbsenteeism}
+          onAddRecord={handleAddAbsenteeismRecord}
+          onGenerateSanction={handleAddSanction}
+          employees={payrolls}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 4. LICENCIAS MÉDICAS (SIL)                                        */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'medical_leaves' && (
+        <MedicalLeavesManager
+          medicalLeaves={activeMedicalLeaves}
+          onAddMedicalLeave={handleAddMedicalLeave}
+          onUpdateMedicalLeave={handleUpdateMedicalLeave}
+          employees={payrolls}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 5. VACACIONES & FERIADO PROGRESIVO                                */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'vacations' && (
+        <VacationsManager
+          vacations={activeVacations}
+          onAddRequest={handleAddVacationRequest}
+          onApproveRequest={handleApproveVacationRequest}
+          company={company}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 6. BONOS & BENEFICIOS                                             */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'benefits' && (
+        <BenefitsManager
+          benefits={activeBenefits}
+          onAddBenefit={handleAddBenefit}
+          onToggleBenefit={handleToggleBenefit}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 7. SANCIONES RIOHS                                                */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'sanctions' && (
+        <SanctionsManager
+          sanctions={activeSanctions}
+          onAddSanction={handleAddSanction}
+          onUpdateSanction={handleUpdateSanction}
+          employees={payrolls}
+          company={company}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: 8. FINIQUITOS ART. 161                                            */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'severance' && (
+        <div className="space-y-6">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -972,122 +1424,28 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SUBTAB 3: MÓDULO B - VACACIONES, LICENCIAS & LEY KARIN                    */}
+      {/* SUBTAB: 9. GESTIÓN CONVIVENCIA LABORAL (LEY KARIN N° 21.643)              */}
       {/* ========================================================================= */}
-      {activeSubTab === 'vacations_leaves' && (
+      {activeSubTab === 'karin' && (
         <div className="space-y-6">
-          {/* Section 1: Vacaciones y Feriado Progresivo */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-blue-600" />
-                <span>Control de Feriado Anual (Art. 67), Feriado Progresivo (Art. 68) y Alerta Art. 70</span>
-              </h3>
-              <span className="text-xs text-slate-500 font-mono">
-                15 días hábiles (sábado inhábil)
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-700">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold text-[11px]">
-                  <tr>
-                    <th className="px-4 py-3">Colaborador</th>
-                    <th className="px-4 py-3 text-center">Antigüedad</th>
-                    <th className="px-4 py-3 text-center">Días Legales</th>
-                    <th className="px-4 py-3 text-center">Días Progresivos</th>
-                    <th className="px-4 py-3 text-center">Días Disponibles</th>
-                    <th className="px-4 py-3 text-center">Períodos Acumulados</th>
-                    <th className="px-4 py-3">Estado Art. 70</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {vacations.map(v => (
-                    <tr key={v.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-bold text-slate-900">{v.nombreCompleto}</td>
-                      <td className="px-4 py-3 text-center text-slate-600">{v.antiguedadAnos} años</td>
-                      <td className="px-4 py-3 text-center font-mono">{v.diasLegalesPorAno}</td>
-                      <td className="px-4 py-3 text-center font-mono text-blue-600 font-bold">+{v.diasProgresivos}</td>
-                      <td className="px-4 py-3 text-center font-mono font-bold text-slate-900">{v.diasDisponibles}</td>
-                      <td className="px-4 py-3 text-center font-mono">{v.periodosPendientes}</td>
-                      <td className="px-4 py-3">
-                        {v.alertaExcesoPeriodosArt70 ? (
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                            ALERTA ART. 70 (&gt;2 Períodos)
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            NORMAL (Art. 67)
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Section 2: Licencias Médicas (Tipos 1 a 7 & Subsidio SIL) */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <HeartPulse className="w-5 h-5 text-rose-600" />
-                <span>Licencias Médicas Electrónicas (LME 1 a 7) y Descuento Subsidio SIL</span>
-              </h3>
-              <span className="text-xs text-slate-500 font-mono">
-                COMPIN / Isapre / Mutual
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-700">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold text-[11px]">
-                  <tr>
-                    <th className="px-4 py-3">Folio LME</th>
-                    <th className="px-4 py-3">Colaborador</th>
-                    <th className="px-4 py-3">Tipo de Licencia (1-7)</th>
-                    <th className="px-4 py-3">Entidad SIL</th>
-                    <th className="px-4 py-3 text-center">Días Reposo</th>
-                    <th className="px-4 py-3 text-right">Descuento Nómina</th>
-                    <th className="px-4 py-3">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {medicalLeaves.map(m => (
-                    <tr key={m.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-mono font-bold text-blue-700">{m.folioLicencia}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900">{m.nombreCompleto}</td>
-                      <td className="px-4 py-3 text-slate-700">{m.tipoLicencia}</td>
-                      <td className="px-4 py-3 text-slate-600 font-semibold">{m.entidadTramitadora}</td>
-                      <td className="px-4 py-3 text-center font-bold text-slate-900">{m.diasReposo} días</td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-rose-600">
-                        -{formatCLP(m.descuentoNominaEstimado)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          {m.estado}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Section 3: Gestión de Convivencia Laboral Ley Karin (Ley 21.643) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-purple-600" />
-                <h3 className="text-sm font-bold text-slate-900">
-                  Gestión de Convivencia Laboral y Prevención de Acoso (Ley Karin N° 21.643)
-                </h3>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Gestión de Convivencia Laboral y Prevención de Acoso (Ley Karin N° 21.643)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">Canal formal de denuncias con estricta reserva de identidad y plazos de 30 días.</p>
+                </div>
               </div>
-              <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                Vigente en Chile
-              </span>
+              <button
+                onClick={() => setShowAddKarinModal(true)}
+                className="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Ingresar Denuncia Bajo Reserva</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1111,11 +1469,11 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 pt-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Casos Registrados & Medidas Preventivas:
               </h4>
-              {karinCases.map(c => (
+              {activeKarinCases.map(c => (
                 <div key={c.id} className="bg-white border border-slate-200 rounded-lg p-4 shadow-2xs">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
                     <div className="flex items-center gap-2">
@@ -1490,6 +1848,316 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                 Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Ingesta de Nuevo Colaborador */}
+      {showAddCollabModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Ingreso de Colaborador & Ficha Contractual DT
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAddCollabModal(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCollaboratorSubmit} className="space-y-4 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Nombre Completo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCollabForm.nombreCompleto || ''}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, nombreCompleto: e.target.value }))}
+                    placeholder="Ej. Rodrigo Tapia Salinas"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">RUT con Guión y Dígito *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCollabForm.rut || ''}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, rut: e.target.value }))}
+                    placeholder="Ej. 17.654.321-9"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Cargo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCollabForm.cargo || ''}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, cargo: e.target.value }))}
+                    placeholder="Ej. Buzo Comercial Especialista"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Departamento</label>
+                  <select
+                    value={newCollabForm.departamento || 'Operaciones'}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, departamento: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="Operaciones Submarinas">Operaciones Submarinas</option>
+                    <option value="Taller de Redes & Loberas">Taller de Redes & Loberas</option>
+                    <option value="Calidad y Normativa">Calidad y Normativa</option>
+                    <option value="Administración y Finanzas">Administración y Finanzas</option>
+                    <option value="Logística Marítima">Logística Marítima</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Fecha de Ingreso</label>
+                  <input
+                    type="date"
+                    required
+                    value={newCollabForm.fechaIngreso || ''}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, fechaIngreso: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Tipo de Contrato</label>
+                  <select
+                    value={newCollabForm.tipoContrato || 'INDEFINIDO'}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, tipoContrato: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="INDEFINIDO">Indefinido</option>
+                    <option value="PLAZO_FIJO">Plazo Fijo</option>
+                    <option value="POR_OBRA_FAENA">Por Obra o Faena</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Sueldo Base (CLP) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="500000"
+                    step="10000"
+                    value={newCollabForm.sueldoBase || 0}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, sueldoBase: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono font-bold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Modalidad Gratificación</label>
+                  <select
+                    value={newCollabForm.gratificacionModalidad || 'ART_50'}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, gratificacionModalidad: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="ART_50">Art. 50 (25% con tope 4.75 IMM)</option>
+                    <option value="ART_47">Art. 47 (30% utilidades líquidas)</option>
+                    <option value="CONVENIDA">Pactada / Convenida</option>
+                    <option value="SIN_GRATIFICACION">Sin Gratificación</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">AFP</label>
+                  <select
+                    value={newCollabForm.afpNombre || 'HABITAT'}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, afpNombre: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="CAPITAL">AFP Capital (11.44%)</option>
+                    <option value="CUPRUM">AFP Cuprum (11.44%)</option>
+                    <option value="HABITAT">AFP Habitat (11.27%)</option>
+                    <option value="MODELO">AFP Modelo (10.58%)</option>
+                    <option value="PLANVITAL">AFP PlanVital (11.16%)</option>
+                    <option value="PROVIDA">AFP ProVida (11.45%)</option>
+                    <option value="UNO">AFP UNO (10.49%)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Salud</label>
+                  <select
+                    value={newCollabForm.saludTipo || 'FONASA'}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, saludTipo: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="FONASA">FONASA (7% Legal)</option>
+                    <option value="ISAPRE_BANMEDICA">Isapre Banmédica</option>
+                    <option value="ISAPRE_COLMENA">Isapre Colmena</option>
+                    <option value="ISAPRE_CONSALUD">Isapre Consalud</option>
+                    <option value="ISAPRE_CRUZ_BLANCA">Isapre Cruz Blanca</option>
+                    <option value="ISAPRE_NUEVA_MASVIDA">Isapre Nueva Masvida</option>
+                    <option value="ISAPRE_VIDA_TRES">Isapre Vida Tres</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Colación (No Imponible)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5000"
+                    value={newCollabForm.asignacionColacion || 0}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, asignacionColacion: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Movilización (No Imponible)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5000"
+                    value={newCollabForm.asignacionMovilizacion || 0}
+                    onChange={(e) => setNewCollabForm(prev => ({ ...prev, asignacionMovilizacion: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+                <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Al registrar el colaborador, se calculará automáticamente su liquidación mensual con las tasas vigentes 2026, se generará el contrato laboral para MiDT y su saldo de feriado legal de 15 días hábiles.
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCollabModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  Registrar e Ingresar a Nómina
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Ingreso de Denuncia Ley Karin */}
+      {showAddKarinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-purple-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Ingresar Denuncia Ley Karin (N° 21.643)
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAddKarinModal(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddKarinCaseSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Materia de la Denuncia *</label>
+                <select
+                  value={newKarinForm.tipoAcoso || 'ACOSO_LABORAL'}
+                  onChange={(e) => setNewKarinForm(prev => ({ ...prev, tipoAcoso: e.target.value as any }))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                >
+                  <option value="ACOSO_LABORAL">Acoso Laboral (Art. 2 CT)</option>
+                  <option value="ACOSO_SEXUAL">Acoso Sexual (Art. 2 CT)</option>
+                  <option value="VIOLENCIA_EN_EL_TRABAJO">Violencia en el Trabajo ejercida por terceros</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">RUT o Identificador Anonimizado del Denunciante</label>
+                <input
+                  type="text"
+                  value={newKarinForm.denuncianteRutAnonimizado || ''}
+                  onChange={(e) => setNewKarinForm(prev => ({ ...prev, denuncianteRutAnonimizado: e.target.value }))}
+                  placeholder="Ej. 18.***.***-K (o RESERVA_TOTAL)"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Cargo / Área del Denunciado *</label>
+                <input
+                  type="text"
+                  required
+                  value={newKarinForm.denunciadoCargo || ''}
+                  onChange={(e) => setNewKarinForm(prev => ({ ...prev, denunciadoCargo: e.target.value }))}
+                  placeholder="Ej. Supervisor de Faena Taller Redes"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Medidas de Resguardo Inmediatas (&lt;24 hrs) *</label>
+                <textarea
+                  required
+                  rows={2}
+                  value={newKarinForm.medidasDeResguardo || ''}
+                  onChange={(e) => setNewKarinForm(prev => ({ ...prev, medidasDeResguardo: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Responsable de Investigación</label>
+                <input
+                  type="text"
+                  value={newKarinForm.responsableInvestigacion || ''}
+                  onChange={(e) => setNewKarinForm(prev => ({ ...prev, responsableInvestigacion: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-800"
+                />
+              </div>
+
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-[11px] text-purple-800">
+                Se asignará folio formal correlativo con plazo legal perentorio de 30 días corridos para emisión de informe o derivación a la DT.
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddKarinModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  Registrar Caso Bajo Reserva
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

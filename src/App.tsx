@@ -12,6 +12,8 @@ import { AgentClientConfig } from './components/AgentClientConfig';
 import { BankReconciliation } from './components/BankReconciliation';
 import { InventoryAgentModule } from './components/InventoryAgentModule';
 import { HrAgentModule } from './components/HrAgentModule';
+import { FixedAssetAgentModule } from './components/FixedAssetAgentModule';
+import { ProductionCostingAgentModule } from './components/ProductionCostingAgentModule';
 
 import { 
   initialCompanyProfile, 
@@ -29,6 +31,11 @@ import {
   seedTransfers,
   seedRequisitions
 } from './data/seedData';
+import {
+  seedFixedAssets,
+  seedProductionOrders,
+  seedCifPool,
+} from './data/seedFixedAssetsAndProduction';
 import { 
   DEFAULT_INDICATORS,
   createSalesDteEntry,
@@ -55,8 +62,13 @@ import {
   Warehouse,
   InventoryItem,
   WarehouseTransfer,
-  ReplenishmentRequisition
+  ReplenishmentRequisition,
+  FixedAsset,
+  ProductionOrder,
+  IndirectCostPoolItem,
+  SystemGeneralParameters,
 } from './types';
+import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from './data/erpMasterConfig';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -74,7 +86,9 @@ import {
   Landmark,
   Boxes,
   UserCheck,
-  Scale
+  Scale,
+  Building2,
+  Factory,
 } from 'lucide-react';
 
 export default function App() {
@@ -92,11 +106,32 @@ export default function App() {
 
   // Core Data States
   const [dtes, setDtes] = useState<DteDocument[]>([]);
-  const [f29, setF29] = useState<F29Declaration>({
-    ...seedF29,
-    rutContribuyente: activeClient.rut,
-    razonSocial: activeClient.razonSocial,
-    tasaPpm: activeClient.tasaPpm || 0.01,
+  const [f29, setF29] = useState<F29Declaration>(() => {
+    const isExento = Boolean((activeClient as any)?.exentoIvaGiro || activeClient.id === 'client-innovagile');
+    if (isExento) {
+      return {
+        ...seedF29,
+        rutContribuyente: activeClient.rut,
+        razonSocial: activeClient.razonSocial,
+        tasaPpm: activeClient.tasaPpm || 0.01,
+        ventasAfectasNeto: 0,
+        debitoFiscalIva: 0,
+        ventasExentasTotal: 0,
+        notasCreditoDebitoVentas: 0,
+        comprasNetoAfecto: 0,
+        creditoFiscalIva: 0,
+        impuestoDeterminadoIva: 0,
+        baseImponiblePpm: 0,
+        montoPpm: 0,
+        totalAPagar: 0,
+      };
+    }
+    return {
+      ...seedF29,
+      rutContribuyente: activeClient.rut,
+      razonSocial: activeClient.razonSocial,
+      tasaPpm: activeClient.tasaPpm || 0.01,
+    };
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
     return activeClient.id === 'client-innovagile' ? [] : seedPayrolls;
@@ -108,11 +143,49 @@ export default function App() {
   const [bankAccounts, setBankAccounts] = useState<BankAccountConfig[]>(seedBankAccounts);
   const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(seedBankMovements);
 
+  // Parámetros Generales de Sistema ERP (Art. 16 Código Tributario, Moneda, Cuentas de Cierre y Redondeo)
+  const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(() => {
+    const saved = localStorage.getItem('audicon_system_general_params');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse saved system general params', e);
+      }
+    }
+    return DEFAULT_SYSTEM_GENERAL_PARAMETERS;
+  });
+
+  const handleUpdateSystemParams = (newParams: SystemGeneralParameters) => {
+    setSystemParams(newParams);
+    try {
+      localStorage.setItem('audicon_system_general_params', JSON.stringify(newParams));
+    } catch (e) {
+      console.error('Failed to save system general params', e);
+    }
+    // Sincronizar parámetros de cierre de ejercicio en el perfil de empresa activa
+    setCompany(prev => ({
+      ...prev,
+      mesCierreEjercicio: newParams.mesCierreEjercicio,
+      diaCierreEjercicio: newParams.diaCierreEjercicio,
+      ejercicioActivo: newParams.ejercicioActivo,
+      bloqueoPeriodoCerrado: newParams.bloqueoPeriodoCerrado,
+      resolucionSiiCierreEspecial: newParams.resolucionSiiCierreEspecial,
+    }));
+  };
+
   // Inventory & Multi-Warehouse States (Agente de Inventarios & Bodegas)
   const [warehouses, setWarehouses] = useState<Warehouse[]>(seedWarehouses);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(seedInventoryItems);
   const [transfers, setTransfers] = useState<WarehouseTransfer[]>(seedTransfers);
   const [requisitions, setRequisitions] = useState<ReplenishmentRequisition[]>(seedRequisitions);
+
+  // Fixed Assets (Responsable de la Administración del Activo Fijo - NIC 16)
+  const [fixedAssets, setFixedAssets] = useState<FixedAsset[]>(seedFixedAssets);
+
+  // Production Orders & Costing (Agente de Producción o Costeo - NIC 2)
+  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(seedProductionOrders);
+  const [cifPoolItems, setCifPoolItems] = useState<IndirectCostPoolItem[]>(seedCifPool);
 
   // Select active client
   const handleSelectActiveClient = (clientId: string) => {
@@ -120,16 +193,34 @@ export default function App() {
     if (!selected) return;
     setActiveClientId(clientId);
     setCompany(selected);
-    if (selected.id === 'client-innovagile') {
+    const isExento = Boolean((selected as any)?.exentoIvaGiro || selected.id === 'client-innovagile');
+    if (isExento) {
       setDtes([]);
       setPayrolls([]);
+      setF29({
+        ...seedF29,
+        rutContribuyente: selected.rut,
+        razonSocial: selected.razonSocial,
+        tasaPpm: selected.tasaPpm || 0.01,
+        ventasAfectasNeto: 0,
+        debitoFiscalIva: 0,
+        ventasExentasTotal: 0,
+        notasCreditoDebitoVentas: 0,
+        comprasNetoAfecto: 0,
+        creditoFiscalIva: 0,
+        impuestoDeterminadoIva: 0,
+        baseImponiblePpm: 0,
+        montoPpm: 0,
+        totalAPagar: 0,
+      });
+    } else {
+      setF29(prev => ({
+        ...prev,
+        rutContribuyente: selected.rut,
+        razonSocial: selected.razonSocial,
+        tasaPpm: selected.tasaPpm || 0.01,
+      }));
     }
-    setF29(prev => ({
-      ...prev,
-      rutContribuyente: selected.rut,
-      razonSocial: selected.razonSocial,
-      tasaPpm: selected.tasaPpm || 0.01,
-    }));
   };
 
   // Add new client to firm's portfolio
@@ -405,6 +496,8 @@ export default function App() {
     { id: 'hr_agent', label: 'Agente RRHH & Personas', subtitle: 'DT, Previred, Art. 10/161 & Karin', icon: UserCheck },
     { id: 'payroll', label: 'Remuneraciones (DT)', subtitle: 'Nómina, Art. 50 e Imposiciones', icon: Users },
     { id: 'inventory', label: 'Inventario & Bodegas', subtitle: 'WMS, Stock Crítico & DTE 52', icon: Boxes },
+    { id: 'fixed_assets', label: 'Activo Fijo (NIC 16)', subtitle: 'CM Art. 41, Deprec. & Ficha', icon: Building2 },
+    { id: 'production', label: 'Producción & Costeo', subtitle: 'NIC 2, MPD, MOD, CIF & CPT', icon: Factory },
     { id: 'cashflow', label: 'Flujo de Caja', subtitle: 'Proyecciones 30/60/90 días', icon: TrendingUp },
     { id: 'leases', label: 'Contratos & Arriendos', subtitle: 'Modelado NIIF / IFRS 16', icon: Home },
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
@@ -507,6 +600,8 @@ export default function App() {
               onUpdateClient={handleUpdateClient}
               onDeleteClient={handleDeleteClient}
               onDownloadClientDtes={handleDownloadClientDtes}
+              systemParams={systemParams}
+              onUpdateSystemParams={handleUpdateSystemParams}
             />
           )}
 
@@ -601,6 +696,31 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'fixed_assets' && (
+            <FixedAssetAgentModule
+              currentClient={activeClient}
+              assets={fixedAssets || []}
+              fixedAssets={fixedAssets || []}
+              onAddAsset={(asset) => setFixedAssets(prev => [asset, ...prev])}
+              onUpdateAsset={(asset) => setFixedAssets(prev => prev.map(a => a.id === asset.id ? asset : a))}
+              onAddAccountingEntry={handleAddEntry}
+              accountingEntries={entries || []}
+              indicators={indicators}
+            />
+          )}
+
+          {activeTab === 'production' && (
+            <ProductionCostingAgentModule
+              currentClient={activeClient}
+              productionOrders={productionOrders || []}
+              cifPoolItems={cifPoolItems || []}
+              onAddProductionOrder={(order) => setProductionOrders(prev => [order, ...prev])}
+              onUpdateProductionOrder={(order) => setProductionOrders(prev => prev.map(o => o.id === order.id ? order : o))}
+              onAddAccountingEntry={handleAddEntry}
+              accountingEntries={entries || []}
+            />
+          )}
+
           {activeTab === 'leases' && (
             <LeaseManager
               leases={leases}
@@ -624,6 +744,7 @@ export default function App() {
           {activeTab === 'ledger' && (
             <SeniorAccountingOrchestrator
               company={company}
+              onUpdateCompany={(updated) => setCompany(prev => ({ ...prev, ...updated }))}
               firm={firm}
               indicators={indicators}
               entries={entries}
@@ -637,6 +758,8 @@ export default function App() {
               f29={f29}
               leases={leases}
               bankStatements={bankMovements}
+              systemParams={systemParams}
+              onUpdateSystemParams={handleUpdateSystemParams}
             />
           )}
         </main>

@@ -16,9 +16,27 @@ import {
   Edit2,
   Trash2,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  HeartPulse,
+  Clock,
+  Gift,
+  RefreshCw,
+  Palmtree,
+  ArrowRight,
+  ShieldAlert,
+  FileWarning
 } from 'lucide-react';
-import { EmployeePayroll, ChileIndicators, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
+import { 
+  EmployeePayroll, 
+  ChileIndicators, 
+  AccountingEntry, 
+  CompanyProfile, 
+  ClientCompany,
+  MedicalLeave,
+  AbsenteeismRecord,
+  VacationRecord,
+  HrBenefit
+} from '../types';
 import { 
   formatCLP, 
   formatNumberCL, 
@@ -37,22 +55,46 @@ interface PayrollManagerProps {
   indicators: ChileIndicators;
   company: CompanyProfile;
   onAddEntry: (entry: AccountingEntry) => void;
+  medicalLeaves?: MedicalLeave[];
+  absenteeismList?: AbsenteeismRecord[];
+  vacations?: VacationRecord[];
+  benefits?: HrBenefit[];
+  onSyncFromHr?: () => void;
 }
 
 export const PayrollManager: React.FC<PayrollManagerProps> = ({
-  payrolls,
+  payrolls = [],
   onAddEmployee,
   onUpdateEmployee,
   onDeleteEmployee,
   indicators,
   company,
   onAddEntry,
+  medicalLeaves = [],
+  absenteeismList = [],
+  vacations = [],
+  benefits = [],
+  onSyncFromHr,
 }) => {
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeePayroll | null>(null);
   const [selectedPayslip, setSelectedPayslip] = useState<EmployeePayroll | null>(null);
   const [viewEntryModal, setViewEntryModal] = useState<AccountingEntry | null>(null);
   const [copied, setCopied] = useState(false);
+  const [syncStatusToast, setSyncStatusToast] = useState<string | null>(null);
+
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
+  const safeMedicalLeaves = Array.isArray(medicalLeaves) ? medicalLeaves : [];
+  const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
+  const safeVacations = Array.isArray(vacations) ? vacations : [];
+  const safeBenefits = Array.isArray(benefits) ? benefits : [];
+
+  // Inter-agent metrics from HR
+  const totalDiasLicencia = safeMedicalLeaves.reduce((s, l) => s + (l.diasReposo || 0), 0);
+  const totalDescuentosInasistencia = safeAbsenteeism.reduce((s, a) => s + (a.impactoDescuentoPesos || 0), 0);
+  const totalAtrasosMinutos = safeAbsenteeism.reduce((s, a) => s + (a.minutosAtraso || 0), 0);
+  const activeBonusesCount = safeBenefits.filter(b => b.activo).length;
+  const totalBonosAsignados = safeBenefits.filter(b => b.activo).reduce((s, b) => s + (b.montoAporteEmpresaPorTrabajador || 0), 0);
 
   // Form state
   const [formData, setFormData] = useState<Partial<EmployeePayroll>>({
@@ -75,12 +117,12 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
   });
 
   // Calculate totals for summary cards
-  const totalSueldosLiquidos = payrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
-  const totalImponible = payrolls.reduce((s, p) => s + p.totalHaberesImponibles, 0);
-  const totalDescuentosPrevisionales = payrolls.reduce((s, p) => s + p.afpMonto + p.saludMonto + p.afcTrabajadorMonto, 0);
-  const totalImpuestoUnico = payrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
-  const totalAportesPatronales = payrolls.reduce((s, p) => s + p.sisEmpleadorMonto + p.mutualEmpleadorMonto + p.afcEmpleadorMonto, 0);
-  const totalCostoEmpresa = payrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
+  const totalSueldosLiquidos = safePayrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
+  const totalImponible = safePayrolls.reduce((s, p) => s + p.totalHaberesImponibles, 0);
+  const totalDescuentosPrevisionales = safePayrolls.reduce((s, p) => s + p.afpMonto + p.saludMonto + p.afcTrabajadorMonto, 0);
+  const totalImpuestoUnico = safePayrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
+  const totalAportesPatronales = safePayrolls.reduce((s, p) => s + p.sisEmpleadorMonto + p.mutualEmpleadorMonto + p.afcEmpleadorMonto, 0);
+  const totalCostoEmpresa = safePayrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
 
   const handleOpenAddModal = () => {
     setEditingEmployee(null);
@@ -148,6 +190,113 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {syncStatusToast && (
+        <div className="bg-slate-900 text-white px-4 py-3 rounded-lg shadow-lg text-xs flex items-center justify-between animate-fade-in border border-slate-700">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>{syncStatusToast}</span>
+          </div>
+          <button onClick={() => setSyncStatusToast(null)} className="text-slate-400 hover:text-white cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Inter-Agent Dialogue & Supervision Banner */}
+      <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white rounded-xl p-5 shadow-sm border border-blue-800/60">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-500 text-white">
+                Inter-Agente Activo
+              </span>
+              <span className="text-xs font-bold text-blue-200">
+                Remuneraciones ↔ Agente de RRHH & Gestión de Personas
+              </span>
+            </div>
+            <h3 className="text-sm font-bold text-white">
+              Sincronización Bidireccional de Novedades del Personal
+            </h3>
+            <p className="text-xs text-slate-300 max-w-3xl">
+              El módulo de Remuneraciones se alimenta de las licencias médicas (SIL), atrasos e inasistencias (Art. 160 N°3), feriados legales (Art. 67) y bonos pactados registrados en RRHH, garantizando que ninguna liquidación dependa de datos mock.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {onSyncFromHr && (
+              <button
+                onClick={() => {
+                  onSyncFromHr();
+                  setSyncStatusToast('Nómina sincronizada con éxito: se procesaron licencias, inasistencias y bonos de RRHH.');
+                  setTimeout(() => setSyncStatusToast(null), 4000);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+                title="Aplica licencias, atrasos y bonos desde RRHH a las liquidaciones"
+              >
+                <RefreshCw className="w-3.5 h-3.5 animate-spin-reverse" />
+                <span>Sincronizar Novedades de RRHH</span>
+              </button>
+            )}
+            <button
+              onClick={handleGenerateCentralizationEntry}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+              title="Genera el comprobante contable para revisión del Agente Contable Senior"
+            >
+              <FileCode className="w-3.5 h-3.5" />
+              <span>Centralizar a Contabilidad</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Real-time HR Ingestion KPIs */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/10">
+          <div className="bg-white/5 rounded-lg p-2.5 border border-white/10">
+            <div className="text-[10px] text-blue-300 font-bold uppercase flex items-center gap-1.5">
+              <HeartPulse className="w-3 h-3 text-rose-400" />
+              <span>Licencias Médicas (SIL)</span>
+            </div>
+            <div className="text-base font-mono font-bold text-white mt-1">
+              {safeMedicalLeaves.length} activas ({totalDiasLicencia} días reposo)
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">COMPIN / Isapre aplicadas a días trabajados</div>
+          </div>
+
+          <div className="bg-white/5 rounded-lg p-2.5 border border-white/10">
+            <div className="text-[10px] text-blue-300 font-bold uppercase flex items-center gap-1.5">
+              <Clock className="w-3 h-3 text-amber-400" />
+              <span>Inasistencias & Atrasos</span>
+            </div>
+            <div className="text-base font-mono font-bold text-amber-300 mt-1">
+              {safeAbsenteeism.length} registros ({totalAtrasosMinutos} min)
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Descuento aplicado: -{formatCLP(totalDescuentosInasistencia)}</div>
+          </div>
+
+          <div className="bg-white/5 rounded-lg p-2.5 border border-white/10">
+            <div className="text-[10px] text-blue-300 font-bold uppercase flex items-center gap-1.5">
+              <Palmtree className="w-3 h-3 text-emerald-400" />
+              <span>Vacaciones & Feriados</span>
+            </div>
+            <div className="text-base font-mono font-bold text-emerald-300 mt-1">
+              {safeVacations.length} colaboradores
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Control de saldos Art. 67/70 Código del Trabajo</div>
+          </div>
+
+          <div className="bg-white/5 rounded-lg p-2.5 border border-white/10">
+            <div className="text-[10px] text-blue-300 font-bold uppercase flex items-center gap-1.5">
+              <Gift className="w-3 h-3 text-indigo-400" />
+              <span>Bonos & Beneficios</span>
+            </div>
+            <div className="text-base font-mono font-bold text-indigo-300 mt-1">
+              {activeBonusesCount} vigentes
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Total asignado: +{formatCLP(totalBonosAsignados)}</div>
+          </div>
+        </div>
+      </div>
+
       {/* Top 4 Geometric Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Sueldos Líquidos a Pagar */}
@@ -160,7 +309,7 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
           </div>
           <div className="mt-2 text-2xl font-bold text-[#0f172a]">{formatCLP(totalSueldosLiquidos)}</div>
           <div className="mt-1 text-xs text-slate-500">
-            {payrolls.length} colaboradores activos en nómina
+            {safePayrolls.length} colaboradores activos en nómina
           </div>
         </div>
 
@@ -287,11 +436,29 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
-              {payrolls.map((emp) => (
+              {safePayrolls.map((emp) => {
+                const empLeaves = safeMedicalLeaves.filter(l => l.employeeId === emp.id || l.rut === emp.rut);
+                const empAbsences = safeAbsenteeism.filter(a => a.employeeId === emp.id || a.rut === emp.rut);
+                const hasActiveLeave = empLeaves.some(l => l.estado === 'TRAMITADA_APROBADA' || l.estado === 'INGRESADA');
+                const hasAbsences = empAbsences.length > 0;
+
+                return (
                 <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors">
                   {/* Colaborador */}
                   <td className="px-4 py-3 font-sans">
-                    <div className="font-bold text-slate-900">{emp.nombreCompleto}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-bold text-slate-900">{emp.nombreCompleto}</div>
+                      {hasActiveLeave && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold border border-rose-200 flex items-center gap-0.5" title="Tiene Licencia Médica SIL activa">
+                          <HeartPulse className="w-2.5 h-2.5" /> SIL
+                        </span>
+                      )}
+                      {hasAbsences && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-200 flex items-center gap-0.5" title="Tiene atrasos o inasistencias reportadas">
+                          <Clock className="w-2.5 h-2.5" /> Novedad
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[11px] text-slate-500 font-mono">{emp.rut}</div>
                   </td>
 
@@ -376,7 +543,7 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
                     </div>
                   </td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </div>

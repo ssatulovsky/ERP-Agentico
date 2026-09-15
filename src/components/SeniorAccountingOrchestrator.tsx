@@ -28,6 +28,8 @@ import {
   ChevronRight,
   TrendingUp,
   Boxes,
+  Factory,
+  UserCheck,
   Users,
   Receipt,
   FileText,
@@ -42,6 +44,8 @@ import {
   ListTree,
   ChevronDown,
   ChevronUp,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -64,6 +68,14 @@ import {
   BalanceGroupingMode,
   GroupedBalanceReport,
   ClientCompany,
+  FixedAsset,
+  ProductionOrder,
+  LaborContract,
+  MedicalLeave,
+  VacationRecord,
+  AbsenteeismRecord,
+  HrBenefit,
+  SystemGeneralParameters,
 } from '../types';
 import { formatCLP, formatNumberCL, formatNormalizedAccountingEntry } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
@@ -86,7 +98,9 @@ import {
   validateAndBalanceEntry,
   buildTransactionalAccountingProposalJSON,
   findAccountInChart,
+  validateEntryFiscalPeriod,
 } from '../utils/accountingOrchestratorEngine';
+import { FiscalYearClosingModule } from './FiscalYearClosingModule';
 import {
   loadCompanyChartOfAccounts,
   saveCompanyChartOfAccounts,
@@ -105,6 +119,7 @@ import { EditClosingAdjustmentModal } from './accounting/EditClosingAdjustmentMo
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
+  onUpdateCompany?: (updated: Partial<CompanyProfile>) => void;
   firm: AccountingFirmProfile;
   indicators: ChileIndicators;
   entries: AccountingEntry[];
@@ -121,10 +136,20 @@ interface SeniorAccountingOrchestratorProps {
   f29?: F29Declaration;
   leases?: LeaseContract[];
   bankStatements?: BankStatementMovement[];
+  fixedAssets?: FixedAsset[];
+  productionOrders?: ProductionOrder[];
+  contracts?: LaborContract[];
+  medicalLeaves?: MedicalLeave[];
+  vacations?: VacationRecord[];
+  absenteeismList?: AbsenteeismRecord[];
+  benefits?: HrBenefit[];
+  systemParams?: SystemGeneralParameters;
+  onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
 }
 
 export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestratorProps> = ({
   company,
+  onUpdateCompany = () => {},
   firm,
   indicators,
   entries = [],
@@ -138,14 +163,30 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   f29 = seedF29,
   leases = [],
   bankStatements = [],
+  fixedAssets = [],
+  productionOrders = [],
+  contracts = [],
+  medicalLeaves = [],
+  vacations = [],
+  absenteeismList = [],
+  benefits = [],
+  systemParams,
+  onUpdateSystemParams,
 }) => {
   const safeEntries = Array.isArray(entries) ? entries : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const safeBankStatements = Array.isArray(bankStatements) ? bankStatements : [];
   const safeLeases = Array.isArray(leases) ? leases : [];
+  const safeFixedAssets = Array.isArray(fixedAssets) ? fixedAssets : [];
+  const safeProductionOrders = Array.isArray(productionOrders) ? productionOrders : [];
+  const safeContracts = Array.isArray(contracts) ? contracts : [];
+  const safeMedicalLeaves = Array.isArray(medicalLeaves) ? medicalLeaves : [];
+  const safeVacations = Array.isArray(vacations) ? vacations : [];
+  const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
+  const safeBenefits = Array.isArray(benefits) ? benefits : [];
   // Navigation tabs of the orchestrator
-  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'IFRS' | 'AI_ROUTING'>('AUDIT');
+  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
@@ -280,8 +321,36 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Audit items across peripheral modules
   const auditItems: OrchestratorAuditItem[] = useMemo(() => {
-    return auditPeripheralModules(safeEntries, safeDtes, safePayrolls, f29, safeBankStatements, safeLeases);
-  }, [safeEntries, safeDtes, safePayrolls, f29, safeBankStatements, safeLeases]);
+    return auditPeripheralModules(
+      safeEntries,
+      safeDtes,
+      safePayrolls,
+      f29,
+      safeBankStatements,
+      safeLeases,
+      safeFixedAssets,
+      safeProductionOrders,
+      safeContracts,
+      safeMedicalLeaves,
+      safeVacations,
+      safeAbsenteeism,
+      safeBenefits
+    );
+  }, [
+    safeEntries,
+    safeDtes,
+    safePayrolls,
+    f29,
+    safeBankStatements,
+    safeLeases,
+    safeFixedAssets,
+    safeProductionOrders,
+    safeContracts,
+    safeMedicalLeaves,
+    safeVacations,
+    safeAbsenteeism,
+    safeBenefits,
+  ]);
 
   const totalInTransit = auditItems.reduce((s, i) => s + i.enTransito, 0);
 
@@ -309,6 +378,13 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     entry: AccountingEntry,
     context?: { agenteNombre?: string; accion?: string; modelName?: string; payloadInput?: any }
   ) => {
+    // Validación estricta de ejercicio fiscal y períodos bloqueados (Art. 16 Código Tributario)
+    const periodCheck = validateEntryFiscalPeriod(entry.fecha, company);
+    if (!periodCheck.permitido) {
+      showToast(`BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`, 'error');
+      throw new Error(`BLOQUEO FISCAL: ${periodCheck.motivo}`);
+    }
+
     if (commitEntry) {
       try {
         await commitEntry(entry, {
@@ -316,6 +392,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           accion: context?.accion || `ASIENTO_${entry.origen}`,
           modelName: context?.modelName,
           payloadInput: context?.payloadInput,
+          companyConfig: company,
         });
       } catch (err: any) {
         console.error('[SeniorOrchestrator] Error al autorizar comprobante contable:', err);
@@ -512,6 +589,91 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         creadoEn: new Date().toISOString(),
       };
       dispatchEntry(entry, { agenteNombre: 'AGENTE_F29', accion: 'LIQUIDACION_F29_TRIBUTARIO' });
+    } else if (modulo === 'ACTIVO_FIJO') {
+      const totalDepreciacion = safeFixedAssets.reduce((s, a) => s + (a.depreciacionAcumulada || 185000), 0);
+      const entry: AccountingEntry = {
+        id: `centraliza-activo-fijo-${Date.now()}`,
+        fecha: today,
+        concepto: `Centralización Depreciación Lineal y Corrección Monetaria Activo Fijo (${safeFixedAssets.length} bienes NIC 16 / Art. 41 LIR)`,
+        documento: 'Cuadro de Activo Fijo Tributario y Financiero',
+        origen: 'ACTIVO_FIJO',
+        lineas: [
+          {
+            cuentaCodigo: '6.1.05.001',
+            cuentaNombre: 'Gasto por Depreciación del Ejercicio (NIC 16)',
+            debe: totalDepreciacion,
+            haber: 0,
+            centroCosto: 'ADMINISTRACION',
+          },
+          {
+            cuentaCodigo: '1.2.02.001',
+            cuentaNombre: 'Depreciación Acumulada Activo Fijo',
+            debe: 0,
+            haber: totalDepreciacion,
+          },
+        ],
+        totalDebe: totalDepreciacion,
+        totalHaber: totalDepreciacion,
+        balanceado: true,
+        creadoEn: new Date().toISOString(),
+      };
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_ACTIVO_FIJO', accion: 'CENTRALIZACION_DEPRECIACION_NIC16' });
+    } else if (modulo === 'PRODUCCION') {
+      const totalCostoOP = safeProductionOrders.reduce((s, op) => s + (op.costoTotalReal || 850000), 0);
+      const entry: AccountingEntry = {
+        id: `centraliza-produccion-${Date.now()}`,
+        fecha: today,
+        concepto: `Cierre y Activación de Órdenes de Fabricación (${safeProductionOrders.length} OPs finalizadas)`,
+        documento: 'Hoja de Costos de Producción NIC 2',
+        origen: 'PRODUCCION',
+        lineas: [
+          {
+            cuentaCodigo: '1.1.05.002',
+            cuentaNombre: 'Inventario de Productos Terminados',
+            debe: totalCostoOP,
+            haber: 0,
+          },
+          {
+            cuentaCodigo: '1.1.05.003',
+            cuentaNombre: 'Trabajos y Productos en Proceso (Costos Directos e Indirectos)',
+            debe: 0,
+            haber: totalCostoOP,
+          },
+        ],
+        totalDebe: totalCostoOP,
+        totalHaber: totalCostoOP,
+        balanceado: true,
+        creadoEn: new Date().toISOString(),
+      };
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_PRODUCCION', accion: 'CENTRALIZACION_COSTO_FABRICACION' });
+    } else if (modulo === 'RRHH_PERSONAS') {
+      const provVacaciones = safeVacations.reduce((s, v) => s + (v.diasDisponibles * 45000), 0);
+      const entry: AccountingEntry = {
+        id: `centraliza-provision-vacaciones-${Date.now()}`,
+        fecha: today,
+        concepto: `Provisión Legal de Feriado y Vacaciones Acumuladas Art. 67/73 Código del Trabajo`,
+        documento: 'Control de Feriados y Nómina DT',
+        origen: 'REMUNERACIONES',
+        lineas: [
+          {
+            cuentaCodigo: '6.1.01.003',
+            cuentaNombre: 'Gasto por Provisión de Vacaciones Legales',
+            debe: provVacaciones,
+            haber: 0,
+          },
+          {
+            cuentaCodigo: '2.1.02.003',
+            cuentaNombre: 'Provisión Feriado Proporcional y Vacaciones por Pagar',
+            debe: 0,
+            haber: provVacaciones,
+          },
+        ],
+        totalDebe: provVacaciones,
+        totalHaber: provVacaciones,
+        balanceado: true,
+        creadoEn: new Date().toISOString(),
+      };
+      dispatchEntry(entry, { agenteNombre: 'AGENTE_RRHH', accion: 'PROVISION_VACACIONES_ART67' });
     }
   };
 
@@ -1205,6 +1367,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           <Bot className="w-4 h-4 text-purple-400" />
           <span>Asesor Contable IA & Routing</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('EJERCICIO_CIERRE')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+            activeTab === 'EJERCICIO_CIERRE'
+              ? 'bg-[#0f172a] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Calendar className="w-4 h-4 text-amber-500" />
+          <span>Ejercicio Fiscal, Cierre & Catch-Up</span>
+          {(company.periodosCerrados?.length || 0) > 0 && (
+            <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold flex items-center gap-0.5">
+              <Lock className="w-2.5 h-2.5" />
+              {company.periodosCerrados?.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* VIEW 1: AUDITORÍA CONTINUA Y ORQUESTACIÓN */}
@@ -1251,6 +1431,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                         {item.modulo === 'F29' && <Scale className="w-4 h-4 text-purple-600" />}
                         {item.modulo === 'TESORERIA' && <Landmark className="w-4 h-4 text-sky-600" />}
                         {item.modulo === 'ARRIENDO' && <Building2 className="w-4 h-4 text-teal-600" />}
+                        {item.modulo === 'ACTIVO_FIJO' && <Boxes className="w-4 h-4 text-orange-600" />}
+                        {item.modulo === 'PRODUCCION' && <Factory className="w-4 h-4 text-amber-700" />}
+                        {item.modulo === 'RRHH_PERSONAS' && <UserCheck className="w-4 h-4 text-emerald-700" />}
                         <span>{item.nombre}</span>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-700">{item.totalDocumentos}</td>
@@ -2732,6 +2915,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             </div>
           )}
         </div>
+      )}
+
+      {/* VIEW 8: EJERCICIO FISCAL, CIERRE, APERTURA Y REGISTRO RETROACTIVO (CATCH-UP) */}
+      {activeTab === 'EJERCICIO_CIERRE' && (
+        <FiscalYearClosingModule
+          company={company}
+          onUpdateCompany={onUpdateCompany}
+          entries={safeEntries}
+          balance8Col={balance8Col}
+          payrolls={safePayrolls}
+          f29={f29}
+          onAddEntry={onAddEntry}
+          dispatchEntry={dispatchEntry}
+          onShowToast={showToast}
+          convertAmount={convertAmount}
+          systemParams={systemParams}
+          onUpdateSystemParams={onUpdateSystemParams}
+        />
       )}
 
       {/* MODAL: NUEVO ASIENTO MANUAL */}

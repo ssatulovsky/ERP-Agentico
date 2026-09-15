@@ -139,9 +139,15 @@ export const SiiIntegrationModal: React.FC<SiiIntegrationModalProps> = ({
       addLog(`Condición Tributaria verificada ante SII: ${data.condicionTributaria === 'NO_AFECTA_IVA' ? 'NO AFECTA A IVA (Art. 12 Letra E / DL 825)' : 'AFECTA A IVA'}.`);
       
       if (data.condicionTributaria === 'NO_AFECTA_IVA') {
-        addLog(`Giro del Contribuyente: SERVICIOS TECNOLÓGICOS / INFORMÁTICOS NO AFECTOS A IVA.`);
+        const exentasCount = data.resumenVentas?.ventasExentasCount ?? 0;
+        const exentasMonto = data.resumenVentas?.ventasExentasMonto ?? 0;
+        addLog(`Giro del Contribuyente: SERVICIOS TECNOLÓGICOS / INFORMÁTICOS NO AFECTOS A IVA (Art. 12 Letra E / DL 825).`);
         addLog(`Ventas Afectas a IVA en RCV (DTE 33): 0 documentos ($0 Neto, $0 Débito Fiscal).`);
-        addLog(`Ventas Exentas en RCV (DTE 34): ${data.resumenVentas?.ventasExentasCount || 1} Factura(s) No Afecta(s) por $${(data.resumenVentas?.ventasExentasMonto || 2500000).toLocaleString('es-CL')}.`);
+        if (exentasCount > 0) {
+          addLog(`Ventas Exentas en RCV (DTE 34): ${exentasCount} Factura(s) No Afecta(s) por $${exentasMonto.toLocaleString('es-CL')}.`);
+        } else {
+          addLog(`Ventas Exentas en RCV (DTE 34): 0 documentos registrados en el período oficial consultado ante el SII.`);
+        }
       }
 
       const receivedDocs: DteDocument[] = data.documentos || [];
@@ -1065,9 +1071,16 @@ if __name__ == "__main__":
                 </div>
                 <button
                   onClick={() => {
-                    setPasteContent(
-                      `Tipo;Folio;RUT;RazonSocial;MontoNeto;MontoIva;MontoTotal;Operacion\n33;2041;76.998.112-4;SERVICIOS CLOUD CHILE SPA;2500000;475000;2975000;VENTA\n33;18902;77.450.890-1;PROVEEDOR FERRETERO CENTRAL;800000;152000;952000;COMPRA\nBHE;45;14.890.320-K;PATRICIO HERNANDEZ ROJAS;1200000;0;1026000;HONORARIOS`
-                    );
+                    const isExento = (effectiveCompany as any)?.exentoIvaGiro;
+                    if (isExento) {
+                      setPasteContent(
+                        `Tipo;Folio;RUT;RazonSocial;MontoNeto;MontoIva;MontoTotal;Operacion\n34;101;76.998.112-4;SERVICIOS CLOUD CHILE SPA;2500000;0;2500000;VENTA\n33;18902;77.450.890-1;PROVEEDOR SERVICIOS DATA CENTER;800000;152000;952000;COMPRA\nBHE;45;14.890.320-K;PATRICIO HERNANDEZ ROJAS;1200000;0;1026000;HONORARIOS`
+                      );
+                    } else {
+                      setPasteContent(
+                        `Tipo;Folio;RUT;RazonSocial;MontoNeto;MontoIva;MontoTotal;Operacion\n33;2041;76.998.112-4;DISTRIBUIDORA NORTE SPA;2500000;475000;2975000;VENTA\n33;18902;77.450.890-1;PROVEEDOR FERRETERO CENTRAL;800000;152000;952000;COMPRA\nBHE;45;14.890.320-K;PATRICIO HERNANDEZ ROJAS;1200000;0;1026000;HONORARIOS`
+                      );
+                    }
                   }}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded text-xs font-semibold cursor-pointer"
                 >

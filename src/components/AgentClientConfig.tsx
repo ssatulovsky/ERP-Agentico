@@ -27,13 +27,21 @@ import {
   ArrowRight,
   Info,
   Boxes,
-  Warehouse
+  Warehouse,
+  Anchor,
+  FolderTree,
+  Settings2,
+  UserPlus,
+  CreditCard
 } from 'lucide-react';
 import { 
   AccountingFirmProfile, 
   ClientCompany, 
   CompanyProfile, 
-  DteDocument 
+  DteDocument,
+  SystemGeneralParameters,
+  AccountCreationDefinition,
+  ClientAuxiliaryMasterRecord
 } from '../types';
 import { 
   formatCLP, 
@@ -42,6 +50,12 @@ import {
   formatRutChileno 
 } from '../utils/chileanAccounting';
 import { AgentGovernancePanel } from './AgentGovernancePanel';
+import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../data/erpMasterConfig';
+import { NewErpClientOnboardingModal } from './tenancy/NewErpClientOnboardingModal';
+import { AnchorClientMasterModal } from './tenancy/AnchorClientMasterModal';
+import { SystemGeneralConfigModal } from './tenancy/SystemGeneralConfigModal';
+import { IfrsChartOfAccountsModal } from './tenancy/IfrsChartOfAccountsModal';
+import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterModal';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -53,6 +67,8 @@ interface AgentClientConfigProps {
   onUpdateClient: (client: ClientCompany) => void;
   onDeleteClient: (clientId: string) => void;
   onDownloadClientDtes: (client: ClientCompany) => void;
+  systemParams?: SystemGeneralParameters;
+  onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
 }
 
 export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
@@ -65,9 +81,19 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onUpdateClient,
   onDeleteClient,
   onDownloadClientDtes,
+  systemParams = DEFAULT_SYSTEM_GENERAL_PARAMETERS,
+  onUpdateSystemParams,
 }) => {
   const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE'>('GOVERNANCE');
   
+  // Modales ERP Multi-Tenant (Conforme a Capturas del Sistema)
+  const [isErpOnboardingOpen, setIsErpOnboardingOpen] = useState(false);
+  const [isAnchorModalOpen, setIsAnchorModalOpen] = useState(false);
+  const [anchorModalClient, setAnchorModalClient] = useState<ClientCompany | null>(null);
+  const [isSystemConfigOpen, setIsSystemConfigOpen] = useState(false);
+  const [isIfrsChartOpen, setIsIfrsChartOpen] = useState(false);
+  const [isAuxiliariesModalOpen, setIsAuxiliariesModalOpen] = useState(false);
+
   // Modal / Editor State for Clients
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientCompany | null>(null);
@@ -413,23 +439,105 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       {/* SECTION 1: CLIENTS PORTFOLIO & SII CREDENTIALS */}
       {activeSection === 'CLIENTS' && (
         <div className="space-y-4">
-          {/* Action Header */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200">
-            <div>
-              <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
-                <span>Empresas Clientes Administradas</span>
-                <span className="text-xs font-normal text-slate-500">
-                  (Cada cliente posee su clave tributaria del SII y configuración de agente)
-                </span>
-              </h3>
+          {/* Action Header with ERP Tenancy & Onboarding Toolbar */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-slate-800 text-sm">
+                    Cartera de Empresas Clientes & Módulos ERP
+                  </h3>
+                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded font-mono">
+                    MULTI-TENANCY & PARÁMETROS
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Gestión integral de clientes ERP, planes de suscripción, clientes ancla, parámetros de cierre Art. 16 CT, cuentas IFRS y padrón SII.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsErpOnboardingOpen(true)}
+                  className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5 text-blue-200" />
+                  <span>Alta Cliente ERP (Planes)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenAddModal}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Agregar Rápido</span>
+                </button>
+              </div>
             </div>
-            <button
-              onClick={handleOpenAddModal}
-              className="px-4 py-2 bg-[#2563eb] hover:bg-blue-600 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-2 shadow-xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Agregar Nueva Empresa Cliente</span>
-            </button>
+
+            {/* Quick Access to ERP Masters according to Screenshots */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setAnchorModalClient(activeClient);
+                  setIsAnchorModalOpen(true);
+                }}
+                className="p-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/50 text-left transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <div className="w-7 h-7 rounded bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                  <Anchor className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="block text-xs font-bold text-slate-800">Ficha Cliente Ancla</span>
+                  <span className="block text-[10px] text-slate-400">Parámetros Contables/Comerciales</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsSystemConfigOpen(true)}
+                className="p-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/50 text-left transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <div className="w-7 h-7 rounded bg-slate-800 text-white flex items-center justify-center shrink-0">
+                  <Sliders className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="block text-xs font-bold text-slate-800">Parámetros de Sistema</span>
+                  <span className="block text-[10px] text-slate-400">Cierre Art. 16 CT & Tolerancias</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsIfrsChartOpen(true)}
+                className="p-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/50 text-left transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center shrink-0">
+                  <FolderTree className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="block text-xs font-bold text-slate-800">Plan de Cuentas IFRS</span>
+                  <span className="block text-[10px] text-slate-400">Jerarquías y Cuentas Imputables</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsAuxiliariesModalOpen(true)}
+                className="p-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/50 text-left transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <div className="w-7 h-7 rounded bg-cyan-600 text-white flex items-center justify-center shrink-0">
+                  <Users className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="block text-xs font-bold text-slate-800">Maestro de Auxiliares</span>
+                  <span className="block text-[10px] text-slate-400">Padrón Clientes/Proveedores SII</span>
+                </div>
+              </button>
+            </div>
           </div>
 
           {/* Grid of Client Companies */}
@@ -587,6 +695,19 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                       >
                         <Download className="w-3 h-3" />
                         <span>Descargar RCV</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnchorModalClient(client);
+                          setIsAnchorModalOpen(true);
+                        }}
+                        className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-md text-xs font-bold cursor-pointer transition-all flex items-center gap-1"
+                        title="Abrir Ficha de Cliente Ancla, Parámetros Contables y Crédito"
+                      >
+                        <Anchor className="w-3 h-3 text-indigo-600" />
+                        <span>Ficha Ancla</span>
                       </button>
                     </div>
 
@@ -828,6 +949,38 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                 <div>
                   <div className="font-bold text-slate-800">Agente de Tesorería</div>
                   <div className="text-[10px] text-slate-500">Flujo 30/60/90 días</div>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-2.5 p-3 rounded-lg border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(firmForm.agentesHabilitados.activoFijo)}
+                  onChange={(e) => setFirmForm({
+                    ...firmForm,
+                    agentesHabilitados: { ...firmForm.agentesHabilitados, activoFijo: e.target.checked }
+                  })}
+                  className="rounded text-blue-600 focus:ring-0"
+                />
+                <div>
+                  <div className="font-bold text-slate-800">Responsable Activo Fijo</div>
+                  <div className="text-[10px] text-slate-500">NIC 16, CM Art. 41 LIR y Deprec.</div>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-2.5 p-3 rounded-lg border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(firmForm.agentesHabilitados.costeoProduccion)}
+                  onChange={(e) => setFirmForm({
+                    ...firmForm,
+                    agentesHabilitados: { ...firmForm.agentesHabilitados, costeoProduccion: e.target.checked }
+                  })}
+                  className="rounded text-blue-600 focus:ring-0"
+                />
+                <div>
+                  <div className="font-bold text-slate-800">Agente de Producción/Costeo</div>
+                  <div className="text-[10px] text-slate-500">NIC 2, MPD, MOD, CIF & CPT</div>
                 </div>
               </label>
             </div>
@@ -1448,6 +1601,60 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </div>
         </div>
       )}
+
+      {/* 1. Modal Alta Cliente ERP (Planes de Contratación) */}
+      <NewErpClientOnboardingModal
+        isOpen={isErpOnboardingOpen}
+        onClose={() => setIsErpOnboardingOpen(false)}
+        onSaveClient={(newClient) => {
+          onAddClient(newClient);
+          onSelectActiveClient(newClient.id);
+        }}
+        firmName={firm.nombreFantasia}
+      />
+
+      {/* 2. Modal Ficha Cliente Ancla (Parámetros Contables y Comerciales) */}
+      <AnchorClientMasterModal
+        isOpen={isAnchorModalOpen}
+        onClose={() => {
+          setIsAnchorModalOpen(false);
+          setAnchorModalClient(null);
+        }}
+        client={anchorModalClient || clients.find(c => c.id === activeClientId) || clients[0]}
+        onSaveClient={(updated) => {
+          onUpdateClient(updated);
+        }}
+      />
+
+      {/* 3. Modal Parámetros de Sistema (Cierre Art. 16 CT & Tolerancias) */}
+      <SystemGeneralConfigModal
+        isOpen={isSystemConfigOpen}
+        onClose={() => setIsSystemConfigOpen(false)}
+        initialParameters={systemParams}
+        onSaveParameters={(updatedParams) => {
+          if (onUpdateSystemParams) {
+            onUpdateSystemParams(updatedParams);
+          }
+        }}
+      />
+
+      {/* 4. Modal Plan de Cuentas IFRS (Jerarquía y Cuentas Imputables) */}
+      <IfrsChartOfAccountsModal
+        isOpen={isIfrsChartOpen}
+        onClose={() => setIsIfrsChartOpen(false)}
+        onAddAccount={(newAccount) => {
+          console.log('Nueva cuenta IFRS registrada:', newAccount);
+        }}
+      />
+
+      {/* 5. Modal Maestro de Auxiliares de Clientes Padrón SII */}
+      <ClientAuxiliariesMasterModal
+        isOpen={isAuxiliariesModalOpen}
+        onClose={() => setIsAuxiliariesModalOpen(false)}
+        onSelectAuxiliary={(aux) => {
+          console.log('Auxiliar seleccionado:', aux);
+        }}
+      />
     </div>
   );
 };

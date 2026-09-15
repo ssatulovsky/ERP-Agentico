@@ -50,14 +50,22 @@ export const STANDARD_ACCOUNT_PLAN: AccountPlanItem[] = [
   { codigo: '1.1.05', nombre: 'IVA Crédito Fiscal', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
   { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
   { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
-  { codigo: '1.1.08', nombre: 'Mercaderías / Existencias', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
+  { codigo: '1.1.08', nombre: 'Mercaderías / Existencias Generales', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
+  { codigo: '1.1.08.01', nombre: 'Existencias - Materias Primas e Insumos', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
+  { codigo: '1.1.08.02', nombre: 'Existencias - Productos en Proceso (WIP)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
+  { codigo: '1.1.08.03', nombre: 'Existencias - Productos Terminados', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
   { codigo: '1.1.09', nombre: 'Anticipo de Sueldos', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
   
-  // Activos No Circulantes / Fijos / IFRS 16
+  // Activos No Circulantes / Fijos / IFRS 16 / NIC 16
   { codigo: '1.2.01', nombre: 'Activo por Derecho de Uso (IFRS 16)', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
   { codigo: '1.2.02', nombre: 'Depreciación Acumulada Activo Derecho de Uso', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
   { codigo: '1.2.03', nombre: 'Mobiliario e Instalaciones', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
-  { codigo: '1.2.04', nombre: 'Equipos Computacionales', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.04', nombre: 'Equipos Computacionales y Servidores', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.05', nombre: 'Maquinarias, Equipos y Embarcaciones', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.06', nombre: 'Redes, Loberas e Instalaciones Acuícolas', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.07', nombre: 'Vehículos de Terreno y Flota', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.08', nombre: 'Infraestructura, Plantas y Edificios', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
+  { codigo: '1.2.99', nombre: 'Depreciación Acumulada Activo Fijo (NIC 16)', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
   
   // Pasivos Circulantes
   { codigo: '2.1.01', nombre: 'Proveedores Nacionales (Cuentas por Pagar)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
@@ -87,9 +95,14 @@ export const STANDARD_ACCOUNT_PLAN: AccountPlanItem[] = [
   { codigo: '4.1.01', nombre: 'Ingresos por Ventas Afectas a IVA', tipo: 'INGRESO', clasificacion: 'OPERACIONAL' },
   { codigo: '4.1.02', nombre: 'Ingresos por Servicios Exentos', tipo: 'INGRESO', clasificacion: 'OPERACIONAL' },
   { codigo: '4.1.03', nombre: 'Intereses Ganados / Otros Ingresos', tipo: 'INGRESO', clasificacion: 'NO_OPERACIONAL' },
+  { codigo: '4.1.04', nombre: 'Utilidad en Enajenación de Activo Fijo', tipo: 'INGRESO', clasificacion: 'NO_OPERACIONAL' },
 
   // Costos y Gastos
   { codigo: '5.1.01', nombre: 'Costo de Ventas / Mercaderías', tipo: 'COSTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.1.02', nombre: 'Materia Prima Directa Consumida (MPD)', tipo: 'COSTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.1.03', nombre: 'Mano de Obra Directa Fabril (MOD)', tipo: 'COSTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.1.04', nombre: 'Costos Indirectos de Fabricación Reales (CIF)', tipo: 'COSTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.1.05', nombre: 'Costos Indirectos de Fabricación Aplicados (WIP)', tipo: 'COSTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.01', nombre: 'Sueldos y Remuneraciones Base', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.02', nombre: 'Gratificaciones Legales', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.03', nombre: 'Horas Extras', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
@@ -102,6 +115,9 @@ export const STANDARD_ACCOUNT_PLAN: AccountPlanItem[] = [
   { codigo: '5.2.10', nombre: 'Servicios Básicos (Luz, Agua, Telecomunicaciones)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.11', nombre: 'Software, Servidores y Licencias', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
   { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.2.13', nombre: 'Gasto Depreciación Activo Fijo (NIC 16)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
+  { codigo: '5.2.14', nombre: 'Pérdida en Retiro o Enajenación de Activo Fijo', tipo: 'GASTO', clasificacion: 'NO_OPERACIONAL' },
+  { codigo: '6.1.01', nombre: 'Corrección Monetaria del Ejercicio (Art. 41 LIR)', tipo: 'GASTO', clasificacion: 'NO_OPERACIONAL' },
 ];
 
 export const CHILE_CHART_OF_ACCOUNTS = STANDARD_ACCOUNT_PLAN;
@@ -366,7 +382,8 @@ export function calculatePayroll(
  */
 export function createPayrollCentralizationEntry(
   payrolls: EmployeePayroll[],
-  periodo: string
+  periodo: string,
+  fechaCustom?: string
 ): AccountingEntry {
   const totalSueldoBase = payrolls.reduce((sum, p) => sum + p.sueldoBase, 0);
   const totalGratificaciones = payrolls.reduce((sum, p) => sum + p.gratificacionMonto, 0);
@@ -421,7 +438,7 @@ export function createPayrollCentralizationEntry(
 
   return {
     id: `entry-payroll-${Date.now()}`,
-    fecha: `${periodo}-28`,
+    fecha: fechaCustom || `${periodo}-28`,
     concepto: `Centralización de Remuneraciones Mes de ${periodo} (${payrolls.length} colaboradores)`,
     documento: `Libro de Remuneraciones Periodo ${periodo}`,
     lineas,
@@ -1077,5 +1094,487 @@ export function generateAutoReplenishmentRequisition(
     estado: 'PENDIENTE_APROBACION',
   };
 }
+
+// ============================================================================
+// GENERADORES DE ASIENTOS: ACTIVO FIJO (NIC 16 / ART. 31 N° 5 & 41 LIR)
+// ============================================================================
+
+import {
+  FixedAsset,
+  ProductionOrder,
+  DirectMaterialConsumption,
+  DirectLaborEntry,
+} from '../types';
+
+/**
+ * Asiento de Alta o Incorporación de Activo Fijo (Compra / Capitalización)
+ */
+export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingEntry {
+  const neto = Math.round(asset.valorAdquisicionOriginal);
+  const iva = Math.round(neto * 0.19); // IVA Crédito Fiscal Activo Fijo (Código 524 F29)
+  const total = neto + iva;
+  const fecha = asset.fechaAdquisicion || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: asset.cuentaContableActivo || '1.2.05',
+      cuentaNombre: `${asset.nombre} (${asset.codigoPlaca})`,
+      debe: neto,
+      haber: 0,
+      rutAuxiliar: asset.proveedorRut,
+      centroCosto: asset.ubicacionFisica,
+    },
+    {
+      cuentaCodigo: '1.1.05',
+      cuentaNombre: 'IVA Crédito Fiscal (Activo Fijo Art. 23 DL 825)',
+      debe: iva,
+      haber: 0,
+    },
+    {
+      cuentaCodigo: '2.1.01',
+      cuentaNombre: `Proveedores Nacionales (${asset.proveedorRazonSocial || 'Adquisición AF'})`,
+      debe: 0,
+      haber: total,
+      rutAuxiliar: asset.proveedorRut,
+    },
+  ];
+
+  return {
+    id: `entry-af-alta-${asset.id}-${Date.now()}`,
+    fecha,
+    concepto: `Alta Activo Fijo: ${asset.nombre} - Placa ${asset.codigoPlaca} (Folio DTE ${asset.folioDteCompra || 'S/F'})`,
+    documento: `DTE 33 Folio ${asset.folioDteCompra || 'AF-ALTA'}`,
+    lineas,
+    totalDebe: total,
+    totalHaber: total,
+    balanceado: true,
+    origen: 'ACTIVO_FIJO',
+    creadoEn: new Date().toISOString(),
+    supervisorSignature: `AF-AUTO-${asset.codigoPlaca}`,
+  };
+}
+
+/**
+ * Asiento de Depreciación del Período (Mensual / Anual NIC 16 e IFRS)
+ */
+export function createFixedAssetDepreciationEntry(
+  periodo: string,
+  depreciaciones: Array<{
+    activo: FixedAsset;
+    cuotaFinanciera: number;
+    cuotaFabrilCif: number;
+  }>,
+  fechaCustom?: string
+): AccountingEntry {
+  const fecha = fechaCustom || `${periodo}-28`;
+  let totalGastoAdmin = 0;
+  let totalCifFabril = 0;
+  let totalDepAcum = 0;
+
+  depreciaciones.forEach((d) => {
+    if (d.activo.esFabrilProduccion) {
+      totalCifFabril += d.cuotaFabrilCif;
+    } else {
+      totalGastoAdmin += d.cuotaFinanciera;
+    }
+    totalDepAcum += d.cuotaFinanciera;
+  });
+
+  totalGastoAdmin = Math.round(totalGastoAdmin);
+  totalCifFabril = Math.round(totalCifFabril);
+  totalDepAcum = Math.round(totalDepAcum);
+
+  const lineas: AccountingEntryLine[] = [];
+
+  if (totalGastoAdmin > 0) {
+    lineas.push({
+      cuentaCodigo: '5.2.13',
+      cuentaNombre: 'Gasto Depreciación Activo Fijo (NIC 16)',
+      debe: totalGastoAdmin,
+      haber: 0,
+      centroCosto: 'ADMINISTRACION_CENTRAL',
+    });
+  }
+
+  if (totalCifFabril > 0) {
+    lineas.push({
+      cuentaCodigo: '5.1.04',
+      cuentaNombre: 'Costos Indirectos de Fabricación (Depreciación Maquinaria Fabril)',
+      debe: totalCifFabril,
+      haber: 0,
+      centroCosto: 'PLANTA_PRODUCCION',
+    });
+  }
+
+  lineas.push({
+    cuentaCodigo: '1.2.99',
+    cuentaNombre: 'Depreciación Acumulada Activo Fijo (NIC 16)',
+    debe: 0,
+    haber: totalDepAcum,
+  });
+
+  return {
+    id: `entry-af-dep-${periodo}-${Date.now()}`,
+    fecha,
+    concepto: `Depreciación Activo Fijo Período ${periodo} (${depreciaciones.length} activos procesados)`,
+    documento: `Cuadro AF Periodo ${periodo}`,
+    lineas,
+    totalDebe: totalDepAcum,
+    totalHaber: totalDepAcum,
+    balanceado: true,
+    origen: 'ACTIVO_FIJO',
+    creadoEn: new Date().toISOString(),
+    supervisorSignature: `DEP-AUTO-${periodo}`,
+  };
+}
+
+/**
+ * Asiento de Corrección Monetaria del Activo Fijo (Art. 41 N° 2 LIR)
+ */
+export function createFixedAssetMonetaryCorrectionEntry(
+  periodo: string,
+  totalCmActivo: number,
+  totalCmDep: number,
+  fechaCustom?: string
+): AccountingEntry {
+  const fecha = fechaCustom || `${periodo}-28`;
+  const cmActivo = Math.round(totalCmActivo);
+  const cmDep = Math.round(totalCmDep);
+  const efectoNeto = cmActivo - cmDep;
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.2.05',
+      cuentaNombre: 'Reajuste IPC Activo Fijo (Art. 41 N° 2 LIR)',
+      debe: cmActivo,
+      haber: 0,
+    },
+    {
+      cuentaCodigo: '1.2.99',
+      cuentaNombre: 'Reajuste IPC Depreciación Acumulada',
+      debe: 0,
+      haber: cmDep,
+    },
+    {
+      cuentaCodigo: '6.1.01',
+      cuentaNombre: 'Corrección Monetaria Ejercicio (Resultado Neto)',
+      debe: efectoNeto < 0 ? Math.abs(efectoNeto) : 0,
+      haber: efectoNeto > 0 ? efectoNeto : 0,
+    },
+  ];
+
+  const total = Math.max(cmActivo, cmDep + Math.max(0, efectoNeto));
+
+  return {
+    id: `entry-af-cm-${periodo}-${Date.now()}`,
+    fecha,
+    concepto: `Corrección Monetaria IPC Activo Fijo y Dep. Acumulada Período ${periodo} (Art. 41 LIR)`,
+    documento: `CM-IPC-${periodo}`,
+    lineas,
+    totalDebe: total,
+    totalHaber: total,
+    balanceado: true,
+    origen: 'ACTIVO_FIJO',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Baja o Enajenación de Activo Fijo
+ */
+export function createFixedAssetDisposalEntry(
+  asset: FixedAsset,
+  precioVentaNeto: number,
+  fechaCustom?: string
+): AccountingEntry {
+  const fecha = fechaCustom || new Date().toISOString().split('T')[0];
+  const costoHist = Math.round(asset.valorAdquisicionOriginal);
+  const depAcum = Math.round(asset.depreciacionAcumuladaFinanciera);
+  const valorLibro = costoHist - depAcum;
+  const precio = Math.round(precioVentaNeto);
+  const iva = Math.round(precio * 0.19);
+  const totalCobrar = precio + iva;
+  const resultado = precio - valorLibro; // Positivo = Ganancia, Negativo = Pérdida
+
+  const lineas: AccountingEntryLine[] = [];
+
+  if (precio > 0) {
+    lineas.push({
+      cuentaCodigo: '1.1.03',
+      cuentaNombre: `Clientes / Cuentas por Cobrar Venta AF (${asset.codigoPlaca})`,
+      debe: totalCobrar,
+      haber: 0,
+    });
+  }
+
+  lineas.push({
+    cuentaCodigo: '1.2.99',
+    cuentaNombre: 'Depreciación Acumulada Activo Fijo (Eliminación por Baja)',
+    debe: depAcum,
+    haber: 0,
+  });
+
+  if (resultado < 0) {
+    lineas.push({
+      cuentaCodigo: '5.2.14',
+      cuentaNombre: 'Pérdida en Retiro o Enajenación de Activo Fijo',
+      debe: Math.abs(resultado),
+      haber: 0,
+    });
+  }
+
+  lineas.push({
+    cuentaCodigo: asset.cuentaContableActivo || '1.2.05',
+    cuentaNombre: `${asset.nombre} (Baja de Costo Histórico)`,
+    debe: 0,
+    haber: costoHist,
+  });
+
+  if (iva > 0) {
+    lineas.push({
+      cuentaCodigo: '2.1.03',
+      cuentaNombre: 'IVA Débito Fiscal Venta Activo Fijo',
+      debe: 0,
+      haber: iva,
+    });
+  }
+
+  if (resultado > 0) {
+    lineas.push({
+      cuentaCodigo: '4.1.04',
+      cuentaNombre: 'Utilidad en Enajenación de Activo Fijo',
+      debe: 0,
+      haber: resultado,
+    });
+  }
+
+  const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
+  const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+
+  return {
+    id: `entry-af-baja-${asset.id}-${Date.now()}`,
+    fecha,
+    concepto: `Baja / Enajenación de Activo Fijo: ${asset.nombre} - Placa ${asset.codigoPlaca}`,
+    documento: `Acta de Baja / Venta ${asset.codigoPlaca}`,
+    lineas,
+    totalDebe,
+    totalHaber,
+    balanceado: totalDebe === totalHaber,
+    origen: 'ACTIVO_FIJO',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+// ============================================================================
+// GENERADORES DE ASIENTOS: PRODUCCIÓN Y COSTEO (NIC 2)
+// ============================================================================
+
+/**
+ * Asiento de Consumo de Materia Prima Directa (MPD) hacia Productos en Proceso (WIP)
+ */
+export function createProductionMpdConsumptionEntry(
+  op: ProductionOrder,
+  consumption: DirectMaterialConsumption
+): AccountingEntry {
+  const monto = Math.round(consumption.costoTotalConsumo);
+  const fecha = consumption.fecha || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.1.08.02',
+      cuentaNombre: `Existencias - Productos en Proceso (${op.folioOP}: ${op.productoNombre})`,
+      debe: monto,
+      haber: 0,
+      centroCosto: op.folioOP,
+    },
+    {
+      cuentaCodigo: '1.1.08.01',
+      cuentaNombre: `Existencias - Materias Primas (${consumption.insumoNombre})`,
+      debe: 0,
+      haber: monto,
+      centroCosto: consumption.bodegaOrigenNombre,
+    },
+  ];
+
+  return {
+    id: `entry-cost-mpd-${consumption.id}-${Date.now()}`,
+    fecha,
+    concepto: `Consumo MPD para ${op.folioOP}: ${consumption.cantidadConsumida} ${consumption.unidadMedida} de ${consumption.insumoNombre}`,
+    documento: consumption.folioGuiaDespacho52 ? `Guía DTE 52 N° ${consumption.folioGuiaDespacho52}` : `Consumo Interno ${op.folioOP}`,
+    lineas,
+    totalDebe: monto,
+    totalHaber: monto,
+    balanceado: true,
+    origen: 'COSTEO_PRODUCCION',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Aplicación de Mano de Obra Directa (MOD) hacia Productos en Proceso (WIP)
+ */
+export function createProductionModAllocationEntry(
+  op: ProductionOrder,
+  labor: DirectLaborEntry
+): AccountingEntry {
+  const monto = Math.round(labor.costoTotalMOD);
+  const fecha = labor.fecha || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.1.08.02',
+      cuentaNombre: `Existencias - Productos en Proceso (${op.folioOP})`,
+      debe: monto,
+      haber: 0,
+      centroCosto: op.folioOP,
+    },
+    {
+      cuentaCodigo: '5.1.03',
+      cuentaNombre: `Mano de Obra Directa Fabril (${labor.etapaProceso})`,
+      debe: 0,
+      haber: monto,
+      rutAuxiliar: labor.trabajadorRut,
+    },
+  ];
+
+  return {
+    id: `entry-cost-mod-${labor.id}-${Date.now()}`,
+    fecha,
+    concepto: `Imputación MOD a ${op.folioOP}: ${labor.horasTrabajadas} HH de ${labor.trabajadorNombre} en ${labor.etapaProceso}`,
+    documento: `Parte Diario HH ${op.folioOP}`,
+    lineas,
+    totalDebe: monto,
+    totalHaber: monto,
+    balanceado: true,
+    origen: 'COSTEO_PRODUCCION',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Asignación de Costos Indirectos de Fabricación (CIF) a la Producción (WIP)
+ */
+export function createProductionCifAllocationEntry(
+  op: ProductionOrder,
+  montoCif: number,
+  fechaCustom?: string
+): AccountingEntry {
+  const monto = Math.round(montoCif);
+  const fecha = fechaCustom || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.1.08.02',
+      cuentaNombre: `Existencias - Productos en Proceso (${op.folioOP})`,
+      debe: monto,
+      haber: 0,
+      centroCosto: op.folioOP,
+    },
+    {
+      cuentaCodigo: '5.1.05',
+      cuentaNombre: `Costos Indirectos de Fabricación Aplicados (Base: ${op.baseProrrateoCif})`,
+      debe: 0,
+      haber: monto,
+      centroCosto: 'PLANTA_PRODUCTIVA',
+    },
+  ];
+
+  return {
+    id: `entry-cost-cif-${op.id}-${Date.now()}`,
+    fecha,
+    concepto: `Aplicación de CIF a ${op.folioOP} (Base Prorrateo: ${op.baseProrrateoCif}, Tasa: ${op.tasaCifAplicada})`,
+    documento: `Liquidación CIF ${op.folioOP}`,
+    lineas,
+    totalDebe: monto,
+    totalHaber: monto,
+    balanceado: true,
+    origen: 'COSTEO_PRODUCCION',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Liquidación de Orden de Producción Terminada (WIP -> Productos Terminados)
+ */
+export function createProductionFinishedLiquidationEntry(
+  op: ProductionOrder,
+  fechaCustom?: string
+): AccountingEntry {
+  const costoTotal = Math.round(op.costoTotalProduccion);
+  const fecha = fechaCustom || op.fechaRealTermino || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.1.08.03',
+      cuentaNombre: `Existencias - Productos Terminados (${op.productoNombre})`,
+      debe: costoTotal,
+      haber: 0,
+      centroCosto: op.bodegaDestinoNombre || 'BODEGA_PRODUCTO_TERMINADO',
+    },
+    {
+      cuentaCodigo: '1.1.08.02',
+      cuentaNombre: `Existencias - Productos en Proceso (${op.folioOP})`,
+      debe: 0,
+      haber: costoTotal,
+      centroCosto: op.folioOP,
+    },
+  ];
+
+  return {
+    id: `entry-cost-liq-${op.id}-${Date.now()}`,
+    fecha,
+    concepto: `Liquidación Producción Terminada ${op.folioOP}: ${op.cantidadProducidaReal} ${op.unidadMedida} de ${op.productoNombre} (Costo Unitario: $${Math.round(op.costoUnitarioReal)}/${op.unidadMedida})`,
+    documento: `Cierre OP ${op.folioOP}`,
+    lineas,
+    totalDebe: costoTotal,
+    totalHaber: costoTotal,
+    balanceado: true,
+    origen: 'COSTEO_PRODUCCION',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Costo de Ventas (CMV) al enajenar productos terminados
+ */
+export function createProductionCogsEntry(
+  op: ProductionOrder,
+  cantidadVendida: number,
+  dteFolio?: number,
+  fechaCustom?: string
+): AccountingEntry {
+  const costoTotalVendido = Math.round(cantidadVendida * op.costoUnitarioReal);
+  const fecha = fechaCustom || new Date().toISOString().split('T')[0];
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '5.1.01',
+      cuentaNombre: `Costo de Ventas - Productos Manufacturados (${op.productoNombre})`,
+      debe: costoTotalVendido,
+      haber: 0,
+      centroCosto: 'VENTAS_OPERACIONALES',
+    },
+    {
+      cuentaCodigo: '1.1.08.03',
+      cuentaNombre: `Existencias - Productos Terminados (${op.productoNombre})`,
+      debe: 0,
+      haber: costoTotalVendido,
+    },
+  ];
+
+  return {
+    id: `entry-cogs-${op.id}-${Date.now()}`,
+    fecha,
+    concepto: `Costo de Ventas (CMV) por entrega de ${cantidadVendida} ${op.unidadMedida} de ${op.productoNombre} (Factura DTE ${dteFolio || 'S/F'})`,
+    documento: dteFolio ? `Factura DTE 33 N° ${dteFolio}` : `Despacho Venta ${op.folioOP}`,
+    lineas,
+    totalDebe: costoTotalVendido,
+    totalHaber: costoTotalVendido,
+    balanceado: true,
+    origen: 'COSTEO_PRODUCCION',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
 
 

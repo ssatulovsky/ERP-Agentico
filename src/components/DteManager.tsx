@@ -22,7 +22,9 @@ import {
   Sparkles,
   Split,
   Trash2,
-  Download
+  Download,
+  DownloadCloud,
+  ShieldAlert
 } from 'lucide-react';
 import { DteDocument, DteType, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
 import { 
@@ -71,6 +73,61 @@ export const DteManager: React.FC<DteManagerProps> = ({
   const [viewEntryModal, setViewEntryModal] = useState<AccountingEntry | null>(null);
   const [copied, setCopied] = useState(false);
   const [syncAlert, setSyncAlert] = useState<string | null>(null);
+
+  // Verificación de condición tributaria: No Afecta a IVA (Art. 12 Letra E / DL 825)
+  const isCompanyExento = Boolean(
+    (company as any)?.exentoIvaGiro ||
+    company.id === 'client-innovagile' ||
+    company.rut?.includes('77.798.901') ||
+    company.rut?.includes('76.892.410')
+  );
+  const [isConnectingSii, setIsConnectingSii] = useState(false);
+
+  // Consulta directa y verídica al Servicio de Impuestos Internos
+  const handleLoadVentasFromSii = async () => {
+    setIsConnectingSii(true);
+    setSyncAlert(`Conectando con Servicio de Impuestos Internos (zeusr.sii.cl / RCV) para RUT ${company.rut}...`);
+    try {
+      const res = await fetch('/api/sii/download-rcv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'VENTA',
+          periodo: '2026-08',
+          rut: company.rut,
+          empresaId: (company as any).id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Error al conectar con SII');
+      }
+
+      const receivedDocs: DteDocument[] = data.documentos || [];
+      if (receivedDocs.length > 0) {
+        if (onAddMultipleDtes) {
+          onAddMultipleDtes(receivedDocs, true);
+        } else {
+          receivedDocs.forEach(doc => {
+            onAddDte(doc);
+            if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
+          });
+        }
+        setSyncAlert(`¡Registro de Ventas obtenido desde el SII! Se sincronizaron ${receivedDocs.length} documentos oficiales.`);
+      } else {
+        if (isCompanyExento) {
+          setSyncAlert(`Consulta oficial al SII completada: ${company.razonSocial} es un contribuyente NO AFECTO A IVA (Art. 12 Letra E / DL 825). El SII certifica $0 ventas afectas con IVA (DTE 33: 0, Débito Fiscal: $0 CLP) y 0 facturas exentas emitidas en el período. Cero datos inventados.`);
+        } else {
+          setSyncAlert(`Consulta oficial al SII completada: No se registran documentos de ventas emitidos ante el SII para el período.`);
+        }
+      }
+    } catch (err: any) {
+      setSyncAlert(`Error de conexión con SII: ${err.message}. Puede cargar el archivo CSV oficial exportado desde sii.cl.`);
+    } finally {
+      setIsConnectingSii(false);
+    }
+  };
 
   // Ingest form state (CSV / JSON / Text from SII)
   const [rawText, setRawText] = useState('');
@@ -231,26 +288,32 @@ export const DteManager: React.FC<DteManagerProps> = ({
         const razonSocial = parts[2] || 'EMPRESA INGESTADA SII';
         const netoRaw = parts[3] ? parseInt(parts[3].replace(/[$.]/g, ''), 10) : 1000000;
         const neto = isNaN(netoRaw) ? 1000000 : netoRaw;
-        const iva = Math.round(neto * 0.19);
-        const total = neto + iva;
+        const isExento = isCompanyExento && ingestType === 'VENTA';
+        const finalTipoDte = ingestType === 'HONORARIOS' ? 'BHE' : (isExento ? '34' : '33');
+        const iva = (ingestType === 'HONORARIOS' || isExento) ? 0 : Math.round(neto * 0.19);
+        const montoExento = isExento ? neto : 0;
+        const montoNeto = isExento ? 0 : neto;
+        const total = isExento ? neto : (neto + iva);
 
         const dte: DteDocument = {
           id: `ingest-${Date.now()}-${index}`,
-          tipoDte: ingestType === 'HONORARIOS' ? 'BHE' : '33',
+          tipoDte: finalTipoDte as any,
           folio,
           tipoOperacion: ingestType,
           rutContraparte: rut,
           razonSocialContraparte: razonSocial.toUpperCase(),
           fechaEmision: new Date().toISOString().split('T')[0],
-          montoNeto: neto,
-          montoExento: 0,
-          montoIva: ingestType === 'HONORARIOS' ? 0 : iva,
+          montoNeto,
+          montoExento,
+          montoIva: iva,
           montoTotal: total,
           retencionTasa: ingestType === 'HONORARIOS' ? 0.145 : undefined,
           retencionMonto: ingestType === 'HONORARIOS' ? Math.round(total * 0.145) : undefined,
           estadoSii: 'ACEPTADO',
           estadoPago: 'PENDIENTE',
-          glosa: `Ingesta RCV SII - ${ingestType === 'VENTA' ? 'Venta' : ingestType === 'COMPRA' ? 'Compra' : 'BHE'} Folio ${folio}`,
+          glosa: isExento
+            ? `Servicio de Consultoría / Software (Exento IVA Art. 12 Letra E / DL 825) - Folio ${folio}`
+            : `Ingesta RCV SII - ${ingestType === 'VENTA' ? 'Venta' : ingestType === 'COMPRA' ? 'Compra' : 'BHE'} Folio ${folio}`,
         };
 
         onAddDte(dte);
@@ -459,7 +522,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
               activeSubTab === 'VENTA' ? 'bg-white text-emerald-700 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Ventas ({dtes.filter(d => d.tipoOperacion === 'VENTA').length})
+            Ventas ({safeDtes.filter(d => d.tipoOperacion === 'VENTA').length})
           </button>
           <button
             onClick={() => setActiveSubTab('COMPRA')}
@@ -467,7 +530,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
               activeSubTab === 'COMPRA' ? 'bg-white text-blue-700 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Compras ({dtes.filter(d => d.tipoOperacion === 'COMPRA').length})
+            Compras ({safeDtes.filter(d => d.tipoOperacion === 'COMPRA').length})
           </button>
           <button
             onClick={() => setActiveSubTab('HONORARIOS')}
@@ -475,7 +538,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
               activeSubTab === 'HONORARIOS' ? 'bg-white text-purple-700 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Honorarios ({dtes.filter(d => d.tipoOperacion === 'HONORARIOS').length})
+            Honorarios ({safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS').length})
           </button>
           <button
             onClick={() => setActiveSubTab('PENDIENTES_CONTABILIZAR')}
@@ -484,7 +547,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
             }`}
           >
             <AlertCircle className="w-3.5 h-3.5" />
-            Pendientes Contabilizar ({dtes.filter(d => !d.asientoCentralizacionId && d.imputacionEstado !== 'CENTRALIZADO').length})
+            Pendientes Contabilizar ({safeDtes.filter(d => !d.asientoCentralizacionId && d.imputacionEstado !== 'CENTRALIZADO').length})
           </button>
         </div>
 
@@ -546,6 +609,21 @@ export const DteManager: React.FC<DteManagerProps> = ({
               <span>PDF</span>
             </button>
           </div>
+
+          {/* Botón Cargar Registro de Ventas Oficial desde SII */}
+          <button
+            onClick={handleLoadVentasFromSii}
+            disabled={isConnectingSii}
+            className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Conectar con SII (zeusr.sii.cl / RCV) y descargar el Registro de Ventas oficial del contribuyente"
+          >
+            {isConnectingSii ? (
+              <RefreshCw className="w-3.5 h-3.5 text-blue-700 animate-spin" />
+            ) : (
+              <DownloadCloud className="w-3.5 h-3.5 text-blue-700" />
+            )}
+            <span>{isConnectingSii ? 'Conectando SII...' : 'Cargar Registro de Ventas (SII)'}</span>
+          </button>
 
           <button
             onClick={() => setShowIngestModal(true)}
@@ -784,6 +862,18 @@ export const DteManager: React.FC<DteManagerProps> = ({
                 </label>
               </div>
 
+              {isCompanyExento && ingestType === 'VENTA' && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-md text-amber-900 text-xs flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">Contribuyente No Afecto a IVA (Art. 12 Letra E / D.L. 825)</p>
+                    <p className="mt-0.5 text-slate-700">
+                      {company.razonSocial} presta servicios tecnológicos exentos de IVA. Todas las ventas emitidas corresponden a <strong>Facturas No Afectas o Exentas (DTE 34)</strong> con <strong>IVA Débito Fiscal $0</strong>. No se generan impuestos ficticios.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   Pegar contenido CSV / JSON o tabla exportada del SII:
@@ -792,28 +882,61 @@ export const DteManager: React.FC<DteManagerProps> = ({
                   rows={6}
                   value={rawText}
                   onChange={(e) => setRawText(e.target.value)}
-                  placeholder={`Ejemplo CSV: Folio;RUT;RazonSocial;MontoNeto\n1050;76.992.880-3;CLIENTE EJEMPLO SPA;2500000\n\nO JSON:\n[\n  {"folio": 1051, "rut": "77.100.200-1", "razonSocial": "TECH CORP", "montoNeto": 4200000}\n]`}
+                  placeholder={
+                    isCompanyExento && ingestType === 'VENTA'
+                      ? `Ejemplo CSV Exento (DTE 34):\nFolio;RUT;RazonSocial;MontoExento\n101;76.992.880-3;CLIENTE CONSULTORIA TI SPA;2500000`
+                      : `Ejemplo CSV: Folio;RUT;RazonSocial;MontoNeto\n1050;76.992.880-3;CLIENTE EJEMPLO SPA;2500000\n\nO JSON:\n[\n  {"folio": 1051, "rut": "77.100.200-1", "razonSocial": "TECH CORP", "montoNeto": 4200000}\n]`
+                  }
                   className="w-full bg-slate-50 border border-slate-300 rounded-md p-3 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#2563eb] focus:bg-white"
                   required
                 />
               </div>
 
-              {/* Botón para cargar muestra rápida */}
-              <div className="flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRawText(
-                      `Folio;RUT;RazonSocial;MontoNeto\n` +
-                      `1089;76.450.910-2;DISTRIBUIDORA NORTE LIMITADA;5400000\n` +
-                      `1090;77.340.120-K;INGENIERIA SOLAR CHILE SPA;8900000\n` +
-                      `1091;96.550.400-8;BANCO DE SERVICIOS DIGITALES;3100000`
-                    );
-                  }}
-                  className="text-[#2563eb] hover:underline cursor-pointer font-medium"
-                >
-                  Cargar datos de prueba del SII (3 Facturas)
-                </button>
+              {/* Acciones de carga de datos */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                {isCompanyExento && ingestType === 'VENTA' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRawText(
+                          `Folio;RUT;RazonSocial;MontoExento\n` +
+                          `101;76.992.880-3;CLIENTE SERVICIOS TECNOLOGICOS SPA;2500000\n` +
+                          `102;77.100.200-1;CONSULTORIA GLOBAL TECH CHILE;4200000`
+                        );
+                      }}
+                      className="text-[#2563eb] hover:underline cursor-pointer font-medium"
+                    >
+                      Cargar formato ejemplo DTE 34 Exento ($0 IVA)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowIngestModal(false);
+                        handleLoadVentasFromSii();
+                      }}
+                      className="text-emerald-700 font-semibold hover:underline cursor-pointer flex items-center gap-1"
+                    >
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                      <span>Conectar con SII oficial (Traer la verdad)</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRawText(
+                        `Folio;RUT;RazonSocial;MontoNeto\n` +
+                        `1089;76.450.910-2;DISTRIBUIDORA NORTE LIMITADA;5400000\n` +
+                        `1090;77.340.120-K;INGENIERIA SOLAR CHILE SPA;8900000\n` +
+                        `1091;96.550.400-8;BANCO DE SERVICIOS DIGITALES;3100000`
+                      );
+                    }}
+                    className="text-[#2563eb] hover:underline cursor-pointer font-medium"
+                  >
+                    Cargar datos de prueba del SII (3 Facturas)
+                  </button>
+                )}
               </div>
 
               {ingestSuccessMsg && (

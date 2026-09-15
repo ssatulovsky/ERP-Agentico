@@ -150,6 +150,68 @@ export const agentAuditLogs = mysqlTable(
 );
 
 // ============================================================================
+// 5. TABLA: fiscal_year_closings (Cierres y Aperturas de Ejercicios Contables)
+// ============================================================================
+export const fiscalYearClosings = mysqlTable(
+  'fiscal_year_closings',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    ejercicio: int('ejercicio').notNull(),
+    fechaCierre: date('fecha_cierre', { mode: 'string' }).notNull(),
+    fechaAperturaSiguiente: date('fecha_apertura_siguiente', { mode: 'string' }).notNull(),
+    resultadoEjercicio: decimal('resultado_ejercicio', { precision: 15, scale: 2 }).notNull(),
+    tipoResultado: mysqlEnum('tipo_resultado', ['UTILIDAD', 'PERDIDA']).notNull(),
+    asientoRefundicionId: varchar('asiento_refundicion_id', { length: 36 }).references(() => accountingEntries.id, {
+      onDelete: 'set null',
+    }),
+    asientoCierreBalanceId: varchar('asiento_cierre_balance_id', { length: 36 }).references(() => accountingEntries.id, {
+      onDelete: 'set null',
+    }),
+    asientoAperturaId: varchar('asiento_apertura_id', { length: 36 }).references(() => accountingEntries.id, {
+      onDelete: 'set null',
+    }),
+    estado: mysqlEnum('cierre_estado', ['BORRADOR', 'AUDITADO', 'APLICADO', 'REVERTIDO']).notNull().default('APLICADO'),
+    cerradoPor: varchar('cerrado_por', { length: 100 }).notNull().default('SENIOR_ACCOUNTING_ORCHESTRATOR'),
+    observaciones: text('observaciones'),
+    createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  (table) => ({
+    uqFiscalClosing: uniqueIndex('uq_fiscal_closing_empresa_ejercicio').on(table.empresaId, table.ejercicio),
+    idxFiscalClosingEmpresa: index('idx_fiscal_closing_empresa').on(table.empresaId),
+  })
+);
+
+// ============================================================================
+// 6. TABLA: retroactive_catchup_packs (Lotes de Regularización Retroactiva)
+// ============================================================================
+export const retroactiveCatchupPacks = mysqlTable(
+  'retroactive_catchup_packs',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    periodo: varchar('periodo', { length: 7 }).notNull(), // Formato AAAA-MM
+    tipoProceso: mysqlEnum('tipo_proceso', [
+      'REMUNERACIONES_Y_F29',
+      'SOLO_REMUNERACIONES',
+      'SOLO_F29',
+      'AJUSTE_PATRIMONIAL',
+    ]).notNull(),
+    fechaDevengo: date('fecha_devengo', { mode: 'string' }).notNull(),
+    fechaPago: date('fecha_pago', { mode: 'string' }).notNull(),
+    montoTotalDevengado: decimal('monto_total_devengado', { precision: 15, scale: 2 }).notNull(),
+    montoTotalPagado: decimal('monto_total_pagado', { precision: 15, scale: 2 }).notNull(),
+    asientosGeneradosIds: json('asientos_generados_ids').notNull(),
+    estado: mysqlEnum('catchup_estado', ['APLICADO', 'AUDITADO', 'REVERTIDO']).notNull().default('APLICADO'),
+    orquestadorTraceId: varchar('orquestador_trace_id', { length: 64 }).notNull(),
+    createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  (table) => ({
+    idxCatchupEmpresaPeriodo: index('idx_catchup_empresa_periodo').on(table.empresaId, table.periodo),
+  })
+);
+
+// ============================================================================
 // RELACIONES DRIZZLE ORM
 // ============================================================================
 export const accountingEntriesRelations = relations(accountingEntries, ({ many }) => ({
@@ -177,3 +239,9 @@ export type NewAccountingEntryLine = typeof accountingEntryLines.$inferInsert;
 
 export type AgentAuditLog = typeof agentAuditLogs.$inferSelect;
 export type NewAgentAuditLog = typeof agentAuditLogs.$inferInsert;
+
+export type FiscalYearClosing = typeof fiscalYearClosings.$inferSelect;
+export type NewFiscalYearClosing = typeof fiscalYearClosings.$inferInsert;
+
+export type RetroactiveCatchupPack = typeof retroactiveCatchupPacks.$inferSelect;
+export type NewRetroactiveCatchupPack = typeof retroactiveCatchupPacks.$inferInsert;

@@ -11,6 +11,8 @@ import {
   type AgentAuditLog,
 } from '@/db/schema';
 import { db as defaultDb } from '@/db';
+import type { CompanyProfile } from '../types';
+import { validateEntryFiscalPeriod } from '../utils/accountingOrchestratorEngine';
 
 // ============================================================================
 // CUSTOM ERROR CLASSES (MANEJO EXHAUSTIVO DE ERRORES TIPADOS)
@@ -25,6 +27,18 @@ export abstract class AccountingLedgerError extends Error {
     this.name = this.constructor.name;
     this.timestamp = new Date().toISOString();
     Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Error emitido cuando un comprobante intenta registrarse en un período cerrado
+ * o fuera de los límites del ejercicio fiscal de la empresa (Art. 16 Código Tributario).
+ */
+export class LockedFiscalPeriodError extends AccountingLedgerError {
+  readonly code = 'LOCKED_FISCAL_PERIOD';
+
+  constructor(message: string, details?: Record<string, any>) {
+    super(message, details);
   }
 }
 
@@ -124,6 +138,7 @@ export interface RecordVerifiedEntryPayload {
   header: AccountingEntryHeaderInput;
   lineas: AccountingEntryLineInput[];
   auditContext: AgentAuditContextInput;
+  companyConfig?: CompanyProfile;
 }
 
 export interface RecordVerifiedEntryResult {
@@ -292,6 +307,17 @@ export async function recordVerifiedEntry(
   }
   if (!header.concepto || !header.concepto.trim()) {
     throw new InvalidAccountingPayloadError("El campo 'concepto' (glosa del asiento) es obligatorio.");
+  }
+
+  // Validación de Período Fiscal y Bloqueo de Períodos (Art. 16 Código Tributario)
+  if (payload.companyConfig) {
+    const periodValidation = validateEntryFiscalPeriod(header.fecha, payload.companyConfig);
+    if (!periodValidation.permitido) {
+      throw new LockedFiscalPeriodError(
+        `BLOQUEO FISCAL: No es posible asentar el comprobante con fecha ${header.fecha}. ${periodValidation.motivo}. ${periodValidation.sugerencia || ''}`,
+        { fecha: header.fecha, validation: periodValidation }
+      );
+    }
   }
 
   // 2. SUMA DETERMINÍSTICA EN CENTAVOS Y VALIDACIÓN DE LÍNEAS

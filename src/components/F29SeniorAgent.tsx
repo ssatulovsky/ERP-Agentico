@@ -66,15 +66,18 @@ interface F29SeniorAgentProps {
 export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
   f29,
   onUpdateF29,
-  dtes,
-  payrolls,
+  dtes = [],
+  payrolls = [],
   company,
   indicators = DEFAULT_INDICATORS,
   onAddEntry,
 }) => {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
+
   // Estado general
   const [activeSubTab, setActiveSubTab] = useState<'panel' | 'terminal' | 'rcv_audit' | 'patente_f22' | 'queue_tracker'>('panel');
-  const [selectedPeriod, setSelectedPeriod] = useState<string>(f29.periodo || '2026-08');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(f29?.periodo || '2026-08');
   const [isPostergacionActive, setIsPostergacionActive] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedAsiento, setCopiedAsiento] = useState(false);
@@ -82,8 +85,8 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
   const [showEntrySuccessModal, setShowEntrySuccessModal] = useState<AccountingEntry | null>(null);
 
   // Parámetros tributarios editables en vivo
-  const [tasaPpmManual, setTasaPpmManual] = useState<number>(company.tasaPpm || 0.01);
-  const [tasaPpmVoluntariaManual, setTasaPpmVoluntariaManual] = useState<number>(company.tasaPpmVoluntaria || 0);
+  const [tasaPpmManual, setTasaPpmManual] = useState<number>(company?.tasaPpm || 0.01);
+  const [tasaPpmVoluntariaManual, setTasaPpmVoluntariaManual] = useState<number>(company?.tasaPpmVoluntaria || 0);
 
   // Chat con el Agente Senior
   const [userQuery, setUserQuery] = useState('');
@@ -96,7 +99,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
 
   // Cálculo determinístico base
   const [seniorResult, setSeniorResult] = useState<F29SeniorResult>(() => {
-    return calculatePreF29(company, dtes, payrolls, indicators, {
+    return calculatePreF29(company, safeDtes, safePayrolls, indicators, {
       periodo: selectedPeriod,
       tasaPpmManual,
       tasaPpmVoluntariaManual,
@@ -877,7 +880,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                 </p>
               </div>
               <span className="text-xs font-mono font-bold bg-slate-100 text-slate-700 px-2 py-1 rounded">
-                DTEs de Compra: {dtes.filter(d => d.tipoOperacion === 'COMPRA').length}
+                DTEs de Compra: {safeDtes.filter(d => d.tipoOperacion === 'COMPRA').length}
               </span>
             </div>
 
@@ -929,7 +932,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {dtes
+                  {safeDtes
                     .filter(d => d.tipoOperacion === 'COMPRA')
                     .map((d) => (
                       <tr key={d.id} className="hover:bg-slate-50">

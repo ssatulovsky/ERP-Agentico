@@ -323,8 +323,8 @@ app.post("/api/sii/download-rcv", async (req, res) => {
       targetCompany = INITIAL_CLIENTS.find(c => c.id === empresaId);
     }
     if (!targetCompany && rut) {
-      const cleanParam = String(rut).replace(/\./g, "").trim().toUpperCase();
-      targetCompany = INITIAL_CLIENTS.find(c => c.rut.replace(/\./g, "").trim().toUpperCase() === cleanParam);
+      const cleanParam = String(rut).replace(/[^0-9kK]/g, "").toUpperCase();
+      targetCompany = INITIAL_CLIENTS.find(c => c.rut.replace(/[^0-9kK]/g, "").toUpperCase() === cleanParam);
     }
 
     const cleanRut = targetCompany 
@@ -342,7 +342,12 @@ app.post("/api/sii/download-rcv", async (req, res) => {
 
     console.log(`[SII Gateway Multi-Empresa] Conectando a Portal RCV para Empresa: ${targetCompany?.razonSocial || cleanRut} (RUT Autenticación: ${rutAutenticacion}), Periodo: ${formattedPeriodo}, Tipo: ${tipo}`);
 
-    const isExentoIva = cleanRut.includes("76892410") || cleanRut === "76892410K";
+    const isExentoIva = Boolean(
+      targetCompany?.exentoIvaGiro ||
+      targetCompany?.id === "client-innovagile" ||
+      cleanRut.includes("77798901") ||
+      cleanRut.includes("76892410")
+    );
     const tipoNormalized = String(tipo).toUpperCase();
 
     const fetchTipos: ("COMPRA" | "VENTA")[] = [];
@@ -403,12 +408,24 @@ app.post("/api/sii/download-rcv", async (req, res) => {
     const mappedDocuments = remoteRecords.map((r, idx) => {
       const formattedRut = formatRutDisplay(r.rutContraparte);
       const isBhe = r.tipoDte === 999 || r.tipoOperacion === "HONORARIOS";
-      const tipoDteStr = isBhe ? "BHE" : String(r.tipoDte);
-      const iva = (r.montoIvaRecuperable || 0) + (r.montoIvaNoRecuperable || 0);
+      let tipoDteStr = isBhe ? "BHE" : String(r.tipoDte);
+      let iva = (r.montoIvaRecuperable || 0) + (r.montoIvaNoRecuperable || 0);
+      let montoExento = r.montoExento || 0;
+      let montoNeto = r.montoNeto || 0;
+      let montoTotal = r.montoTotal || (montoNeto + iva + montoExento);
+
+      // Si la empresa es NO AFECTA a IVA (Art. 12 Letra E / DL 825) y es una VENTA:
+      // No puede emitir DTE 33 ni generar IVA Débito Fiscal. Corresponde exclusivamente DTE 34.
+      if (isExentoIva && r.tipoOperacion === "VENTA") {
+        tipoDteStr = "34";
+        montoExento = montoTotal;
+        montoNeto = 0;
+        iva = 0;
+      }
 
       let glosa = `DTE ${tipoDteStr} Folio ${r.folio}`;
       if (tipoDteStr === "34") {
-        glosa = `Servicio de Consultoría y Arquitectura Cloud (Exento IVA Art. 12 Letra E) - Folio ${r.folio}`;
+        glosa = `Servicio de Consultoría y Software (Exento IVA Art. 12 Letra E) - Folio ${r.folio}`;
       } else if (isBhe) {
         glosa = `Boleta de Honorarios Electrónica Folio ${r.folio} - ${r.razonSocialContraparte}`;
       } else if (r.tipoOperacion === "COMPRA") {
@@ -425,10 +442,10 @@ app.post("/api/sii/download-rcv", async (req, res) => {
         fechaEmision: r.fechaEmision,
         fechaRecepcion: r.fechaEmision,
         fechaVencimiento: `${formattedPeriodo}-28`,
-        montoExento: r.montoExento || 0,
-        montoNeto: r.montoNeto || 0,
+        montoExento,
+        montoNeto,
         montoIva: isBhe ? 0 : iva,
-        montoTotal: r.montoTotal,
+        montoTotal,
         retencionTasa: isBhe ? (r.retencionTasa || 0.145) : undefined,
         retencionMonto: isBhe ? (r.retencionMonto || Math.round(r.montoTotal * 0.145)) : undefined,
         estadoSii: "ACEPTADO",

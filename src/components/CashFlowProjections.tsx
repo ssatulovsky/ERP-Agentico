@@ -362,13 +362,13 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
               onClick={() => setTypeFilter('INGRESO')}
               className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer ${typeFilter === 'INGRESO' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600'}`}
             >
-              Ingresos ({movements.filter(m => m.tipo === 'INGRESO').length})
+              Ingresos ({safeMovements.filter(m => m.tipo === 'INGRESO').length})
             </button>
             <button
               onClick={() => setTypeFilter('EGRESO')}
               className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer ${typeFilter === 'EGRESO' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-600'}`}
             >
-              Egresos ({movements.filter(m => m.tipo === 'EGRESO').length})
+              Egresos ({safeMovements.filter(m => m.tipo === 'EGRESO').length})
             </button>
           </div>
 

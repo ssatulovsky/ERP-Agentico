@@ -37,11 +37,17 @@ async function runProgrammaticMigration(): Promise<void> {
     const elapsedMs = Date.now() - startTime;
 
     console.log(`[✓] Migraciones aplicadas exitosamente en ${elapsedMs}ms.`);
-    console.log('\n[3/3] Tablas migradas y verificadas en MySQL 8.0:');
-    console.log('  - accounting_entries (Cabecera Libro Diario con idempotencia compuesta)');
-    console.log('  - accounting_entry_lines (Líneas de detalle con FK onDelete: cascade)');
-    console.log('  - agent_audit_logs (Bitácora forense de auditoría inmutable)');
-    console.log('  - economic_indicators (Sincronización diaria de indicadores chilenos)');
+    console.log('\n[3/3] Módulos y tablas de persistencia verificadas en MySQL 8.0:');
+    console.log('  - Tenancy & Clientes (accounting_firms, companies con Art. 16 CT, subscriptions, vault)');
+    console.log('  - Core Ledger IFRS (chart_of_accounts, accounting_entries, lines, audit_logs)');
+    console.log('  - Cierre y Catch-up (fiscal_year_closings, retroactive_catchup_packs)');
+    console.log('  - Tributario SII (dtes_rcv, boletas_honorarios 14.5%, f29_declarations, indicators)');
+    console.log('  - Laboral DT (employees, labor_contracts, annexes 40 hrs, medical_leaves, vacations, payroll, karin)');
+    console.log('  - Activos Fijos (fixed_assets NIC 16 / Art. 31 LIR, depreciation_runs)');
+    console.log('  - Producción NIC 2 (production_orders, consumptions, labor_mod, cif_pools)');
+    console.log('  - Bodegas & WMS (warehouses, warehouse_items, movements, transfers DTE 52, requisitions)');
+    console.log('  - Tesorería (bank_accounts, transactions, reconciliations, novedades, cash_flow)');
+    console.log('  - Arrendamientos & Autónomos (lease_contracts IFRS 16, marketing, tickets, agent_configs, learnings)');
 
     console.log('\n================================================================');
     console.log('  MIGRACIÓN CONCLUIDA EXITOSAMENTE (EXIT CODE 0)');

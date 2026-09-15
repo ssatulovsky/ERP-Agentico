@@ -25,9 +25,18 @@ export async function initializeMysqlDatabase(): Promise<{
   const port = Number(process.env.MYSQL_PORT) || 3306;
   const user = process.env.MYSQL_USER || 'root';
   const password = process.env.MYSQL_PASSWORD || '';
-  const database = process.env.MYSQL_DATABASE || 'chile_erp';
+  let database = process.env.MYSQL_DATABASE || '';
+  if (!database && connectionUri) {
+    try {
+      const parsedUrl = new URL(connectionUri.replace(/^mysql:\/\//i, 'http://'));
+      database = parsedUrl.pathname.replace(/^\//, '').split('?')[0];
+    } catch {}
+  }
+  if (!database) {
+    database = 'erp_contable';
+  }
 
-  console.log(`[1/4] Estableciendo conexión con servidor MySQL en ${host}:${port} (Usuario: ${user})...`);
+  console.log(`[1/4] Estableciendo conexión con servidor MySQL en ${host}:${port} (Usuario: ${user}, BD: ${database})...`);
 
   let connection: mysql.Connection | null = null;
   try {
@@ -57,11 +66,15 @@ export async function initializeMysqlDatabase(): Promise<{
   }
 
   try {
-    // 2. Crear base de datos si no existe
-    console.log(`[2/4] Asegurando existencia de la base de datos \`${database}\`...`);
-    await connection.query(
-      `CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
-    );
+    // 2. Crear base de datos si no existe o usar existente
+    console.log(`[2/4] Asegurando existencia y selección de la base de datos \`${database}\`...`);
+    try {
+      await connection.query(
+        `CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
+      );
+    } catch (createErr: any) {
+      console.log(`[i] Permisos directos sobre BD \`${database}\` (sin permiso global CREATE DATABASE): continuando.`);
+    }
     await connection.query(`USE \`${database}\`;`);
     console.log(`[✓] Base de datos \`${database}\` lista y seleccionada.`);
 

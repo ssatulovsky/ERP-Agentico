@@ -16,6 +16,15 @@ import {
   BankStatementMovement,
   CompanyProfile,
   ChileIndicators,
+  FixedAsset,
+  ProductionOrder,
+  LaborContract,
+  MedicalLeave,
+  VacationRecord,
+  AbsenteeismRecord,
+  HrBenefit,
+  PeriodLockValidationResult,
+  CatchUpPeriodConfig,
 } from '../types';
 import { formatCLP, formatNumberCL } from './chileanAccounting';
 
@@ -1500,13 +1509,25 @@ export function auditPeripheralModules(
   payrolls: EmployeePayroll[] = [],
   f29?: F29Declaration,
   bankMovements: BankStatementMovement[] = [],
-  leases: LeaseContract[] = []
+  leases: LeaseContract[] = [],
+  fixedAssets: FixedAsset[] = [],
+  productionOrders: ProductionOrder[] = [],
+  contracts: LaborContract[] = [],
+  medicalLeaves: MedicalLeave[] = [],
+  vacations: VacationRecord[] = [],
+  absenteeismList: AbsenteeismRecord[] = [],
+  benefits: HrBenefit[] = []
 ): OrchestratorAuditItem[] {
   const safeEntries = Array.isArray(entries) ? entries : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const safeBankMovements = Array.isArray(bankMovements) ? bankMovements : [];
   const safeLeases = Array.isArray(leases) ? leases : [];
+  const safeFixedAssets = Array.isArray(fixedAssets) ? fixedAssets : [];
+  const safeProductionOrders = Array.isArray(productionOrders) ? productionOrders : [];
+  const safeContracts = Array.isArray(contracts) ? contracts : [];
+  const safeMedicalLeaves = Array.isArray(medicalLeaves) ? medicalLeaves : [];
+  const safeVacations = Array.isArray(vacations) ? vacations : [];
   const safeF29Total = f29?.totalAPagar || 0;
 
   // 1. RCV Ventas
@@ -1738,6 +1759,59 @@ export function auditPeripheralModules(
       observacion: leasesPending === 0
         ? 'Amortización de activo ROU e intereses de pasivo devengados correctamente.'
         : `${leasesPending} contratos requieren registro de derecho de uso o devengo mensual.`,
+    },
+    // 8. Activo Fijo (NIC 16 / Art. 41 LIR)
+    {
+      modulo: 'ACTIVO_FIJO',
+      nombre: 'Bienes de Uso y Activo Fijo (NIC 16 / Art. 41 LIR)',
+      totalDocumentos: safeFixedAssets.length,
+      montoTotal: safeFixedAssets.reduce((s, a) => s + (a.valorAdquisicionOriginal || 0), 0),
+      contabilizados: safeEntries.filter(e => 
+        e.origen === 'ACTIVO_FIJO' || 
+        e.concepto.toLowerCase().includes('depreciaci') || 
+        e.concepto.toLowerCase().includes('corrección monetaria')
+      ).length > 0 ? safeFixedAssets.length : 0,
+      enTransito: safeEntries.filter(e => 
+        e.origen === 'ACTIVO_FIJO' || 
+        e.concepto.toLowerCase().includes('depreciaci')
+      ).length > 0 ? 0 : safeFixedAssets.length,
+      estado: safeFixedAssets.length === 0 || safeEntries.some(e => e.origen === 'ACTIVO_FIJO' || e.concepto.toLowerCase().includes('depreciaci')) ? 'AL_DIA' : 'EN_TRANSITO',
+      observacion: safeFixedAssets.length === 0 || safeEntries.some(e => e.origen === 'ACTIVO_FIJO' || e.concepto.toLowerCase().includes('depreciaci'))
+        ? 'Cuadro de depreciación lineal y corrección monetaria debidamente reconocido en el Libro Mayor.'
+        : `${safeFixedAssets.length} activos fijos requieren devengo mensual de depreciación y corrección monetaria.`,
+    },
+    // 9. Costeo de Producción e Inventarios (NIC 2)
+    {
+      modulo: 'PRODUCCION',
+      nombre: 'Costos de Producción y Fabricación (NIC 2)',
+      totalDocumentos: safeProductionOrders.length,
+      montoTotal: safeProductionOrders.reduce((s, op) => s + (op.costoTotalProduccion || 0), 0),
+      contabilizados: safeEntries.filter(e => 
+        e.origen === 'PRODUCCION' || 
+        e.concepto.toLowerCase().includes('producción') || 
+        e.concepto.toLowerCase().includes('fabricación')
+      ).length > 0 ? safeProductionOrders.length : 0,
+      enTransito: safeEntries.filter(e => 
+        e.origen === 'PRODUCCION' || 
+        e.concepto.toLowerCase().includes('producción')
+      ).length > 0 ? 0 : safeProductionOrders.length,
+      estado: safeProductionOrders.length === 0 || safeEntries.some(e => e.origen === 'PRODUCCION') ? 'AL_DIA' : 'EN_TRANSITO',
+      observacion: safeProductionOrders.length === 0 || safeEntries.some(e => e.origen === 'PRODUCCION')
+        ? 'Consumos MPD, Mano de Obra Directa (MOD) y CIF distribuidos y capitalizados en productos terminados.'
+        : `${safeProductionOrders.length} órdenes de producción requieren cierre contable y traslado de costos.`,
+    },
+    // 10. Agente RRHH y Gestión de Personas (Contratos MiDT, LME, Vacaciones Art. 67-70)
+    {
+      modulo: 'RRHH_PERSONAS',
+      nombre: 'Gestión Legal RRHH y Personas (DT / Ley 40H / Ley Karin)',
+      totalDocumentos: safeContracts.length + safeMedicalLeaves.length + safeVacations.length,
+      montoTotal: safeMedicalLeaves.reduce((s, m) => s + (m.descuentoNominaEstimado || 0), 0),
+      contabilizados: safeContracts.filter(c => c.registradoDtRel).length,
+      enTransito: safeContracts.filter(c => !c.registradoDtRel).length,
+      estado: safeContracts.every(c => c.registradoDtRel) ? 'AL_DIA' : 'EN_TRANSITO',
+      observacion: safeContracts.every(c => c.registradoDtRel)
+        ? `100% de contratos registrados en MiDT. Licencias (${safeMedicalLeaves.length}) y vacaciones sincronizadas con Remuneraciones.`
+        : `Existen ${safeContracts.filter(c => !c.registradoDtRel).length} contratos pendientes de registro electrónico en el portal MiDT.`,
     },
   ];
 }
@@ -2015,3 +2089,536 @@ export function buildTransactionalAccountingProposalJSON(
     alertas_auditoria: alerts,
   };
 }
+
+/**
+ * =========================================================================
+ * GESTIÓN DE EJERCICIO FISCAL Y BLOQUEO DE PERÍODOS (ART. 16 CÓDIGO TRIBUTARIO)
+ * =========================================================================
+ */
+
+/**
+ * Calcula las fechas exactas de inicio y término del ejercicio fiscal
+ * según la configuración de la empresa (fecha de cierre configurable).
+ */
+export function getFiscalYearDates(company: Partial<CompanyProfile>): {
+  ejercicioActivo: number;
+  mesCierre: number;
+  diaCierre: number;
+  fechaInicio: string;
+  fechaFin: string;
+  esCierreEspecial: boolean;
+} {
+  const ejercicioActivo = company.ejercicioActivo || 2026;
+  const mesCierre = company.mesCierreEjercicio || 12;
+  const esCierreEspecial = mesCierre !== 12;
+  
+  let diaCierre = company.diaCierreEjercicio;
+  if (!diaCierre) {
+    if (mesCierre === 12) diaCierre = 31;
+    else if (mesCierre === 6) diaCierre = 30;
+    else if (mesCierre === 9) diaCierre = 30;
+    else if (mesCierre === 3) diaCierre = 31;
+    else diaCierre = 30;
+  }
+
+  let fechaInicio = `${ejercicioActivo}-01-01`;
+  let fechaFin = `${ejercicioActivo}-${String(mesCierre).padStart(2, '0')}-${String(diaCierre).padStart(2, '0')}`;
+
+  if (esCierreEspecial) {
+    // Si el cierre es en el mes N (ej: Junio = mes 6), el ejercicio inicia el mes N+1 del año anterior (ej: 01/07/2025 al 30/06/2026)
+    const mesInicio = mesCierre + 1;
+    const anoInicio = ejercicioActivo - 1;
+    fechaInicio = `${anoInicio}-${String(mesInicio).padStart(2, '0')}-01`;
+  }
+
+  return {
+    ejercicioActivo,
+    mesCierre,
+    diaCierre,
+    fechaInicio: company.fechaInicioEjercicio || fechaInicio,
+    fechaFin: company.fechaFinEjercicio || fechaFin,
+    esCierreEspecial,
+  };
+}
+
+/**
+ * Valida si una fecha de comprobante está permitida según el ejercicio fiscal activo
+ * y los períodos mensuales cerrados/bloqueados.
+ */
+export function validateEntryFiscalPeriod(
+  fecha: string,
+  company: Partial<CompanyProfile>
+): PeriodLockValidationResult {
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    return {
+      permitido: false,
+      codigoError: 'FUERA_DE_RANGO',
+      motivo: `Formato de fecha inválido (${fecha}). Debe ser YYYY-MM-DD.`,
+      sugerencia: 'Indique una fecha válida en formato ISO (ej: 2026-08-31).',
+    };
+  }
+
+  const { fechaInicio, fechaFin, ejercicioActivo } = getFiscalYearDates(company);
+  const periodo = fecha.substring(0, 7);
+
+  // 1. Validar si es anterior al inicio del ejercicio
+  if (fecha < fechaInicio) {
+    return {
+      permitido: false,
+      codigoError: 'EJERCICIO_ANTERIOR',
+      motivo: `La fecha ${fecha} corresponde a un ejercicio fiscal anterior ya cerrado (anterior al ${fechaInicio}).`,
+      sugerencia: `Los saldos y movimientos anteriores deben consolidarse en el Asiento de Apertura al ${fechaInicio} o regularizarse contra la cuenta patrimonial '3.1.02.001 Resultados Acumulados' bajo norma NIC 8.`,
+    };
+  }
+
+  // 2. Validar si es posterior al cierre del ejercicio
+  if (fecha > fechaFin) {
+    return {
+      permitido: false,
+      codigoError: 'EJERCICIO_FUTURO',
+      motivo: `La fecha ${fecha} es posterior al término del ejercicio fiscal activo ${ejercicioActivo} (${fechaFin}).`,
+      sugerencia: `Debe ejecutar el Asiento de Cierre del ejercicio ${ejercicioActivo} y aperturar formalmente el ejercicio ${ejercicioActivo + 1}.`,
+    };
+  }
+
+  // 3. Validar si el período mensual está formalmente bloqueado/cerrado
+  const periodosCerrados = company.periodosCerrados || [];
+  const bloqueoActivo = company.bloqueoPeriodoCerrado !== false;
+
+  if (bloqueoActivo && periodosCerrados.includes(periodo)) {
+    return {
+      permitido: false,
+      codigoError: 'PERIODO_CERRADO',
+      motivo: `El período contable ${periodo} se encuentra cerrado y bloqueado (declaración F29 / conciliación cerrada).`,
+      sugerencia: `Para registrar movimientos retroactivos o ajustes en ${periodo}, debe desbloquear temporalmente el período desde la pestaña 'Ejercicio & Cierre' con autorización del Contador Auditor.`,
+    };
+  }
+
+  return { permitido: true };
+}
+
+/**
+ * =========================================================================
+ * GENERADOR AUTOMÁTICO DE ASIENTOS DE CIERRE Y APERTURA DE EJERCICIO
+ * =========================================================================
+ */
+
+/**
+ * 1. Asiento de Cierre de Cuentas de Resultado
+ * Salda a cero todas las cuentas de pérdida (gastos/costos) y de ganancia (ingresos)
+ * contra la cuenta de patrimonio '3.1.03.001 Resultado del Ejercicio'.
+ */
+export function generateClosingResultEntry(
+  balance8Col: Balance8ColumnasReport,
+  fechaCierre: string,
+  ejercicio: number
+): AccountingEntry {
+  const lineas: AccountingEntryLine[] = [];
+
+  // Saldo de cuentas de Ganancias (Clases 4 y 7 con saldo acreedor): Se DEBITAN para quedar en cero
+  balance8Col.cuentas
+    .filter(c => c.ganancia > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: Math.round(c.ganancia),
+        haber: 0,
+      });
+    });
+
+  // Saldo de cuentas de Pérdidas (Clases 5, 6 y 7 con saldo deudor): Se ACREDITAN para quedar en cero
+  balance8Col.cuentas
+    .filter(c => c.perdida > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: 0,
+        haber: Math.round(c.perdida),
+      });
+    });
+
+  // Contrapartida: Resultado del Ejercicio (Patrimonio)
+  const res = balance8Col.resultado_del_ejercicio;
+  if (res.tipo === 'UTILIDAD' && res.monto > 0) {
+    // Si hay utilidad, el haber debe aumentar con la utilidad neta
+    lineas.push({
+      cuentaCodigo: '3.1.03.001',
+      cuentaNombre: 'Resultado del Ejercicio (Utilidad Neta del Período)',
+      debe: 0,
+      haber: Math.round(res.monto),
+    });
+  } else if (res.tipo === 'PERDIDA' && res.monto > 0) {
+    // Si hay pérdida, el debe absorbe el déficit
+    lineas.push({
+      cuentaCodigo: '3.1.03.002',
+      cuentaNombre: 'Resultado del Ejercicio (Pérdida Neta del Período)',
+      debe: Math.round(res.monto),
+      haber: 0,
+    });
+  }
+
+  const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
+  const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+
+  return {
+    id: `cierre-res-${ejercicio}-${Date.now()}`,
+    fecha: fechaCierre,
+    concepto: `Cierre de Cuentas de Resultado - Ejercicio Fiscal ${ejercicio} (Liquidación de Pérdidas y Ganancias)`,
+    documento: `Comprobante Cierre Resultado ${ejercicio}`,
+    origen: 'MANUAL',
+    lineas,
+    totalDebe,
+    totalHaber,
+    balanceado: Math.abs(totalDebe - totalHaber) < 2,
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * 2. Asiento de Cierre Patrimonial y de Inventario (Finiquito de Libros del Ejercicio)
+ * Salda a cero todas las cuentas de Activos (se acreditan) y de Pasivos y Patrimonio (se debitan).
+ */
+export function generateClosingBalanceEntry(
+  balance8Col: Balance8ColumnasReport,
+  fechaCierre: string,
+  ejercicio: number
+): AccountingEntry {
+  const lineas: AccountingEntryLine[] = [];
+
+  // Saldo de cuentas de Pasivo y Patrimonio (Clases 2 y 3): Se DEBITAN para quedar en cero
+  balance8Col.cuentas
+    .filter(c => c.pasivo > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: Math.round(c.pasivo),
+        haber: 0,
+      });
+    });
+
+  // Saldo de cuentas de Activo (Clase 1): Se ACREDITAN para quedar en cero
+  balance8Col.cuentas
+    .filter(c => c.activo > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: 0,
+        haber: Math.round(c.activo),
+      });
+    });
+
+  // El Resultado del ejercicio actúa en el patrimonio
+  const res = balance8Col.resultado_del_ejercicio;
+  if (res.tipo === 'UTILIDAD' && res.monto > 0) {
+    lineas.push({
+      cuentaCodigo: '3.1.03.001',
+      cuentaNombre: 'Resultado del Ejercicio (Cierre Utilidad Neta)',
+      debe: Math.round(res.monto),
+      haber: 0,
+    });
+  } else if (res.tipo === 'PERDIDA' && res.monto > 0) {
+    lineas.push({
+      cuentaCodigo: '3.1.03.002',
+      cuentaNombre: 'Resultado del Ejercicio (Cierre Pérdida Neta)',
+      debe: 0,
+      haber: Math.round(res.monto),
+    });
+  }
+
+  const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
+  const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+
+  return {
+    id: `cierre-bal-${ejercicio}-${Date.now()}`,
+    fecha: fechaCierre,
+    concepto: `Cierre Patrimonial y de Inventario - Ejercicio Fiscal ${ejercicio} (Cierre Final de Libros)`,
+    documento: `Comprobante Cierre Patrimonial ${ejercicio}`,
+    origen: 'MANUAL',
+    lineas,
+    totalDebe,
+    totalHaber,
+    balanceado: Math.abs(totalDebe - totalHaber) < 2,
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * 3. Asiento de Apertura del Nuevo Ejercicio
+ * Se genera con fecha del primer día del nuevo ejercicio contable,
+ * aperturando los Activos (DEBE), Pasivos (HABER) y trasladando el
+ * Resultado del ejercicio anterior a '3.1.02.001 Resultados Acumulados'.
+ */
+export function generateOpeningEntryFromPreviousClosing(
+  balance8Col: Balance8ColumnasReport,
+  fechaApertura: string,
+  nuevoEjercicio: number
+): AccountingEntry {
+  const lineas: AccountingEntryLine[] = [];
+
+  // Activos pasan al DEBE
+  balance8Col.cuentas
+    .filter(c => c.activo > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: Math.round(c.activo),
+        haber: 0,
+      });
+    });
+
+  // Pasivos y Cuentas de Capital pasan al HABER
+  balance8Col.cuentas
+    .filter(c => c.pasivo > 0)
+    .forEach(c => {
+      lineas.push({
+        cuentaCodigo: c.codigo,
+        cuentaNombre: c.nombre,
+        debe: 0,
+        haber: Math.round(c.pasivo),
+      });
+    });
+
+  // El Resultado del ejercicio anterior se reclasifica a Resultados Acumulados
+  const res = balance8Col.resultado_del_ejercicio;
+  if (res.tipo === 'UTILIDAD' && res.monto > 0) {
+    lineas.push({
+      cuentaCodigo: '3.1.02.001',
+      cuentaNombre: 'Resultados Acumulados de Ejercicios Anteriores (Utilidad)',
+      debe: 0,
+      haber: Math.round(res.monto),
+    });
+  } else if (res.tipo === 'PERDIDA' && res.monto > 0) {
+    lineas.push({
+      cuentaCodigo: '3.1.02.001',
+      cuentaNombre: 'Resultados Acumulados de Ejercicios Anteriores (Déficit)',
+      debe: Math.round(res.monto),
+      haber: 0,
+    });
+  }
+
+  const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
+  const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+
+  return {
+    id: `apertura-${nuevoEjercicio}-${Date.now()}`,
+    fecha: fechaApertura,
+    concepto: `Comprobante de Apertura N° 1 - Traspaso de Saldos Iniciales Ejercicio Fiscal ${nuevoEjercicio}`,
+    documento: `Comprobante Apertura N° 01/${nuevoEjercicio}`,
+    origen: 'MANUAL',
+    lineas,
+    totalDebe,
+    totalHaber,
+    balanceado: Math.abs(totalDebe - totalHaber) < 2,
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * =========================================================================
+ * ASISTENTE DE PUESTA AL DÍA / REGULARIZACIÓN DE PERÍODOS ATRASADOS (CATCH-UP)
+ * =========================================================================
+ * Automatiza la generación de toda la cadena contable atrasada (devengos + pagos bancarios)
+ * para que el contador no tenga que cargar asientos manuales línea por línea.
+ */
+
+export function generateRetroactiveCatchUpPack(
+  periodo: string,
+  payrolls: EmployeePayroll[],
+  f29: F29Declaration,
+  bancoCodigo: string = '1.1.02.001',
+  bancoNombre: string = 'Banco Santander Chile Cta Cte M/N'
+): {
+  asientoDevengoRemuneraciones: AccountingEntry;
+  asientoPagoSueldosLiquidos: AccountingEntry;
+  asientoPagoPrevired: AccountingEntry;
+  asientoDevengoF29: AccountingEntry;
+  asientoPagoF29: AccountingEntry;
+  todosLosAsientos: AccountingEntry[];
+} {
+  // Fechas canónicas del período atrasado
+  const [ano, mes] = periodo.split('-');
+  const anoNum = parseInt(ano, 10);
+  const mesNum = parseInt(mes, 10);
+  const ultimoDiaMes = new Date(anoNum, mesNum, 0).getDate();
+  const fechaFinMes = `${periodo}-${String(ultimoDiaMes).padStart(2, '0')}`;
+
+  // Mes siguiente para pagos
+  const mesSiguienteDate = new Date(anoNum, mesNum, 1);
+  const anoSig = mesSiguienteDate.getFullYear();
+  const mesSig = String(mesSiguienteDate.getMonth() + 1).padStart(2, '0');
+  const fechaPagoSueldos = `${anoSig}-${mesSig}-05`;
+  const fechaPagoPrevired = `${anoSig}-${mesSig}-13`;
+  const fechaPagoF29 = `${anoSig}-${mesSig}-20`;
+
+  // 1. Devengo de Remuneraciones
+  const totalSueldoBase = payrolls.reduce((s, p) => s + p.sueldoBase, 0);
+  const totalGratif = payrolls.reduce((s, p) => s + p.gratificacionMonto, 0);
+  const totalHorasExtras = payrolls.reduce((s, p) => s + p.horasExtrasMonto, 0);
+  const totalBonos = payrolls.reduce((s, p) => s + p.comisionesBonosImponibles, 0);
+  const totalNoImponibles = payrolls.reduce((s, p) => s + p.totalHaberesNoImponibles, 0);
+
+  const totalSis = payrolls.reduce((s, p) => s + p.sisEmpleadorMonto, 0);
+  const totalMutual = payrolls.reduce((s, p) => s + p.mutualEmpleadorMonto, 0);
+  const totalAfcEmpleador = payrolls.reduce((s, p) => s + p.afcEmpleadorMonto, 0);
+  const totalAportesPatronales = totalSis + totalMutual + totalAfcEmpleador;
+
+  const totalAfp = payrolls.reduce((s, p) => s + p.afpMonto, 0);
+  const totalSalud = payrolls.reduce((s, p) => s + p.saludMonto, 0);
+  const totalAfcTrabajador = payrolls.reduce((s, p) => s + p.afcTrabajadorMonto, 0);
+  const totalImpuestoUnico = payrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
+  const totalSueldosLiquidos = payrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
+
+  const lineasDevengoRemun: AccountingEntryLine[] = [
+    { cuentaCodigo: '5.2.01.001', cuentaNombre: 'Sueldos y Remuneraciones Base', debe: totalSueldoBase, haber: 0 },
+    { cuentaCodigo: '5.2.01.002', cuentaNombre: 'Gratificaciones Legales Art. 50', debe: totalGratif, haber: 0 },
+  ];
+  if (totalHorasExtras + totalBonos > 0) {
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.003', cuentaNombre: 'Horas Extras y Bonos Imponibles', debe: totalHorasExtras + totalBonos, haber: 0 });
+  }
+  if (totalNoImponibles > 0) {
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.005', cuentaNombre: 'Asignaciones No Imponibles (Colación/Movilización)', debe: totalNoImponibles, haber: 0 });
+  }
+  if (totalAportesPatronales > 0) {
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.004', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)', debe: totalAportesPatronales, haber: 0 });
+  }
+
+  lineasDevengoRemun.push(
+    { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: 0, haber: totalAfp },
+    { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: 0, haber: totalSalud },
+    { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador },
+    { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis }
+  );
+  if (totalImpuestoUnico > 0) {
+    lineasDevengoRemun.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico });
+  }
+  lineasDevengoRemun.push({ cuentaCodigo: '2.1.07.001', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: 0, haber: totalSueldosLiquidos });
+
+  const sumDebeRemun = lineasDevengoRemun.reduce((s, l) => s + l.debe, 0);
+  const sumHaberRemun = lineasDevengoRemun.reduce((s, l) => s + l.haber, 0);
+
+  const asientoDevengoRemuneraciones: AccountingEntry = {
+    id: `catchup-dev-remun-${periodo}-${Date.now()}`,
+    fecha: fechaFinMes,
+    concepto: `Devengo Centralización Remuneraciones Mes de ${periodo} (${payrolls.length} trabajadores)`,
+    documento: `Libro de Remuneraciones ${periodo}`,
+    origen: 'REMUNERACIONES',
+    lineas: lineasDevengoRemun,
+    totalDebe: sumDebeRemun,
+    totalHaber: sumHaberRemun,
+    balanceado: Math.abs(sumDebeRemun - sumHaberRemun) < 1,
+    creadoEn: new Date().toISOString(),
+  };
+
+  // 2. Pago de Sueldos Líquidos (Transferencia Bancaria Nómina)
+  const asientoPagoSueldosLiquidos: AccountingEntry = {
+    id: `catchup-pago-sueldos-${periodo}-${Date.now()}`,
+    fecha: fechaPagoSueldos,
+    concepto: `Pago Transferencia Bancaria Nómina Sueldos Líquidos Período ${periodo}`,
+    documento: `Nómina Transferencia Banco ${fechaPagoSueldos}`,
+    origen: 'CAJA_BANCO',
+    lineas: [
+      { cuentaCodigo: '2.1.07.001', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: totalSueldosLiquidos, haber: 0 },
+      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalSueldosLiquidos },
+    ],
+    totalDebe: totalSueldosLiquidos,
+    totalHaber: totalSueldosLiquidos,
+    balanceado: true,
+    creadoEn: new Date().toISOString(),
+  };
+
+  // 3. Pago de Cotizaciones Previsionales (Previred)
+  const totalPrevisionalPrevired = totalAfp + totalSalud + (totalAfcTrabajador + totalAfcEmpleador) + (totalMutual + totalSis);
+  const asientoPagoPrevired: AccountingEntry = {
+    id: `catchup-pago-previred-${periodo}-${Date.now()}`,
+    fecha: fechaPagoPrevired,
+    concepto: `Pago Electrónico Planillas de Imposiciones Previred Período ${periodo}`,
+    documento: `Comprobante Pago Previred Folio #${periodo.replace('-', '')}91`,
+    origen: 'CAJA_BANCO',
+    lineas: [
+      { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: totalAfp, haber: 0 },
+      { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: totalSalud, haber: 0 },
+      { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: totalAfcTrabajador + totalAfcEmpleador, haber: 0 },
+      { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: totalMutual + totalSis, haber: 0 },
+      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalPrevisionalPrevired },
+    ],
+    totalDebe: totalPrevisionalPrevired,
+    totalHaber: totalPrevisionalPrevired,
+    balanceado: true,
+    creadoEn: new Date().toISOString(),
+  };
+
+  // 4. Devengo de Impuestos F29 del período
+  const debitoFiscalIva = f29.debitoFiscalIva || 0;
+  const creditoFiscalIva = f29.creditoFiscalIva || 0;
+  const retencionHonorarios = f29.retencionHonorariosSegundaCat || 0;
+  const retencionImpuestoUnicoF29 = f29.retencionImpuestoUnicoSueldos || totalImpuestoUnico || 0;
+  const ppmMonto = f29.montoPpm || 0;
+  const totalDeterminadoF29 = f29.totalAPagar || Math.max(0, debitoFiscalIva - creditoFiscalIva + retencionHonorarios + retencionImpuestoUnicoF29 + ppmMonto);
+
+  const lineasF29: AccountingEntryLine[] = [
+    { cuentaCodigo: '2.1.04.001', cuentaNombre: 'IVA Débito Fiscal (Ventas Facturadas)', debe: debitoFiscalIva, haber: 0 },
+    { cuentaCodigo: '1.1.04.001', cuentaNombre: 'IVA Crédito Fiscal (Compras y Servicios)', debe: 0, haber: creditoFiscalIva },
+    { cuentaCodigo: '1.1.04.003', cuentaNombre: 'Pagos Provisionales Mensuales (PPM Obligatorio)', debe: ppmMonto, haber: 0 },
+  ];
+  if (retencionHonorarios > 0) {
+    lineasF29.push({ cuentaCodigo: '2.1.04.002', cuentaNombre: 'Retención Impuesto Boletas Honorarios (14.5%)', debe: retencionHonorarios, haber: 0 });
+  }
+  if (retencionImpuestoUnicoF29 > 0) {
+    lineasF29.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría Sueldos', debe: retencionImpuestoUnicoF29, haber: 0 });
+  }
+  lineasF29.push({ cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: 0, haber: totalDeterminadoF29 });
+
+  const sumDebeF29 = lineasF29.reduce((s, l) => s + l.debe, 0);
+  const sumHaberF29 = lineasF29.reduce((s, l) => s + l.haber, 0);
+
+  const asientoDevengoF29: AccountingEntry = {
+    id: `catchup-dev-f29-${periodo}-${Date.now()}`,
+    fecha: fechaFinMes,
+    concepto: `Liquidación Tributaria Mensual F29 Período ${periodo} (SII)`,
+    documento: `Formulario 29 Folio #${periodo.replace('-', '')}88`,
+    origen: 'F29_TRIBUTARIO',
+    lineas: lineasF29,
+    totalDebe: sumDebeF29,
+    totalHaber: sumHaberF29,
+    balanceado: Math.abs(sumDebeF29 - sumHaberF29) < 2,
+    creadoEn: new Date().toISOString(),
+  };
+
+  // 5. Pago del F29 (Cargo a Cuenta por Pagar, Abono a Banco)
+  const asientoPagoF29: AccountingEntry = {
+    id: `catchup-pago-f29-${periodo}-${Date.now()}`,
+    fecha: fechaPagoF29,
+    concepto: `Pago Electrónico Tributario Formulario 29 SII Período ${periodo} vía Convenio Bancario`,
+    documento: `Certificado Pago SII F29 Folio #${periodo.replace('-', '')}88`,
+    origen: 'CAJA_BANCO',
+    lineas: [
+      { cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: totalDeterminadoF29, haber: 0 },
+      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalDeterminadoF29 },
+    ],
+    totalDebe: totalDeterminadoF29,
+    totalHaber: totalDeterminadoF29,
+    balanceado: true,
+    creadoEn: new Date().toISOString(),
+  };
+
+  return {
+    asientoDevengoRemuneraciones,
+    asientoPagoSueldosLiquidos,
+    asientoPagoPrevired,
+    asientoDevengoF29,
+    asientoPagoF29,
+    todosLosAsientos: [
+      asientoDevengoRemuneraciones,
+      asientoPagoSueldosLiquidos,
+      asientoPagoPrevired,
+      asientoDevengoF29,
+      asientoPagoF29,
+    ],
+  };
+}
+

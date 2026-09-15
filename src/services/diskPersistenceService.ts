@@ -85,6 +85,16 @@ class DiskPersistenceService {
           ...this.store,
           ...parsed,
         };
+        // Purgar asientos ficticios de ventas con IVA para InnovAgile (empresa no afecta a IVA)
+        this.store.entries = this.store.entries.filter(e => {
+          const isInnovagile = e.empresaId.includes('76.892.410') || e.empresaId.includes('77.798.901');
+          if (isInnovagile && (e.origenModulo === 'RCV_VENTA' || e.documentoRef?.includes('DTE 33') || e.concepto?.includes('Retail Logistics'))) {
+            return false;
+          }
+          return true;
+        });
+        const validEntryIds = new Set(this.store.entries.map(e => e.id));
+        this.store.lines = this.store.lines.filter(l => validEntryIds.has(l.entryId));
         console.log(`[DiskPersistence] Snapshot cargado desde disco: ${DISK_FILE} (${this.store.entries.length} asientos, ${this.store.dtes.length} DTEs).`);
       } else {
         console.log('[DiskPersistence] Archivo de persistencia no encontrado. Inicializando con datos semilla estándar.');
@@ -405,6 +415,13 @@ class DiskPersistenceService {
     const demoEmpresas = ['76.892.410-K', '76.543.210-9', '76.543.210-K'];
 
     demoEmpresas.forEach((empresaId, empIdx) => {
+      const isInnovagile = empresaId.includes('76.892.410') || empresaId.includes('77.798.901');
+      if (isInnovagile) {
+        // InnovAgile Group SpA es NO AFECTA A IVA (Art. 12 Letra E / DL 825).
+        // CERO datos inventados: no emite DTE 33 ni genera Débito Fiscal ($0).
+        // Debe consultar directamente al SII oficial para obtener su realidad tributaria.
+        return;
+      }
       // 1. Asiento Venta Retail
       const idVenta = `entry-seed-v1-${empIdx}`;
       const hashVenta = crypto.createHmac('sha256', 'SIEX_AUDIT_SUPERVISOR_KEY_2026').update(idVenta).digest('hex');

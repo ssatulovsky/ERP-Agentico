@@ -3,22 +3,6 @@
   "lastPersistedAt": "2026-09-11T16:53:48.035Z",
   "entries": [
     {
-      "id": "entry-seed-v1-0",
-      "firmId": "firm-001-audicon",
-      "empresaId": "76.892.410-K",
-      "periodo": "2026-09",
-      "fecha": "2026-09-02",
-      "concepto": "Venta Factura Electrónica Folio 1041 - Retail Logistics Chile S.A.",
-      "documentoRef": "DTE 33 N° 1041",
-      "totalDebe": "14875000.00",
-      "totalHaber": "14875000.00",
-      "origenModulo": "RCV_VENTA",
-      "creadoPorAgente": "AGENTE_RCV",
-      "autorizadoPorSupervisor": true,
-      "supervisorSignature": "20bbf07899d588aa280a0c1bc07e4640d902dc72702c930d0c1a7c8e821ae933",
-      "createdAt": "2026-09-08T16:53:23.514Z"
-    },
-    {
       "id": "entry-seed-c1-0",
       "firmId": "firm-001-audicon",
       "empresaId": "76.892.410-K",
@@ -100,39 +84,6 @@
     }
   ],
   "lines": [
-    {
-      "id": "line-v1-1-0",
-      "entryId": "entry-seed-v1-0",
-      "lineaNumero": 1,
-      "codigoCuenta": "1.1.03.001",
-      "nombreCuenta": "Clientes Nacionales (Retail Logistics Chile S.A.)",
-      "debe": "14875000.00",
-      "haber": "0.00",
-      "rutAuxiliar": "77.210.980-5",
-      "centroCosto": "VENTAS_CORPORATIVAS"
-    },
-    {
-      "id": "line-v1-2-0",
-      "entryId": "entry-seed-v1-0",
-      "lineaNumero": 2,
-      "codigoCuenta": "4.1.01.001",
-      "nombreCuenta": "Ingresos por Ventas Afectas a IVA",
-      "debe": "0.00",
-      "haber": "12500000.00",
-      "rutAuxiliar": null,
-      "centroCosto": "VENTAS_CORPORATIVAS"
-    },
-    {
-      "id": "line-v1-3-0",
-      "entryId": "entry-seed-v1-0",
-      "lineaNumero": 3,
-      "codigoCuenta": "2.1.03.001",
-      "nombreCuenta": "IVA Débito Fiscal",
-      "debe": "0.00",
-      "haber": "2375000.00",
-      "rutAuxiliar": null,
-      "centroCosto": null
-    },
     {
       "id": "line-c1-1-0",
       "entryId": "entry-seed-c1-0",
