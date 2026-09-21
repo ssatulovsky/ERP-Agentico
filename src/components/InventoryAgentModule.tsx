@@ -57,6 +57,8 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { downloadInventoryPdf, downloadInventoryExcel } from '../utils/reportGenerators';
+import { ProductionOrder, ProductionBudget, WarehouseWithdrawal } from '../types';
+import { WarehouseWithdrawalModal } from './WarehouseWithdrawalModal';
 
 interface InventoryAgentModuleProps {
   company: CompanyProfile;
@@ -72,6 +74,11 @@ interface InventoryAgentModuleProps {
   requisitions: ReplenishmentRequisition[];
   onUpdateRequisitions: (reqs: ReplenishmentRequisition[]) => void;
   onAddAccountingEntry?: (entry: AccountingEntry) => void;
+  productionOrders?: ProductionOrder[];
+  productionBudgets?: ProductionBudget[];
+  warehouseWithdrawals?: WarehouseWithdrawal[];
+  onAddWithdrawal?: (withdrawal: WarehouseWithdrawal) => void;
+  onQuickCreateOp?: (newOp: ProductionOrder) => void;
 }
 
 export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
@@ -87,15 +94,25 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
   onUpdateTransfers,
   requisitions = [],
   onUpdateRequisitions,
-  onAddAccountingEntry
+  onAddAccountingEntry,
+  productionOrders = [],
+  productionBudgets = [],
+  warehouseWithdrawals = [],
+  onAddWithdrawal,
+  onQuickCreateOp
 }) => {
   const safeWarehouses = Array.isArray(warehouses) ? warehouses : [];
   const safeInventoryItems = Array.isArray(inventoryItems) ? inventoryItems : [];
   const safeTransfers = Array.isArray(transfers) ? transfers : [];
   const safeRequisitions = Array.isArray(requisitions) ? requisitions : [];
+  const safeOrders = Array.isArray(productionOrders) ? productionOrders : [];
+  const safeBudgets = Array.isArray(productionBudgets) ? productionBudgets : [];
+  const safeWithdrawals = Array.isArray(warehouseWithdrawals) ? warehouseWithdrawals : [];
 
   // Navigation tabs inside Inventory module
-  const [activeSubTab, setActiveSubTab] = useState<'stock' | 'transfers' | 'requisitions' | 'warehouses'>('stock');
+  const [activeSubTab, setActiveSubTab] = useState<'stock' | 'retiros' | 'transfers' | 'requisitions' | 'warehouses'>('stock');
+  const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState<boolean>(false);
+  const [selectedWithdrawalDetail, setSelectedWithdrawalDetail] = useState<WarehouseWithdrawal | null>(null);
 
   // Filtering & Search
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('ALL');
@@ -709,6 +726,21 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveSubTab('retiros')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'retiros'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <PackageMinus className="w-4 h-4 text-amber-500" />
+            <span>Retiros & Vales a OP</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-900 font-mono">
+              {safeWithdrawals.length}
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('transfers')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeSubTab === 'transfers'
@@ -780,6 +812,15 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
               <span>Informe PDF</span>
             </button>
           </div>
+
+          <button
+            onClick={() => setIsWithdrawalModalOpen(true)}
+            className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-colors shadow-sm cursor-pointer"
+            title="Emitir nuevo Vale de Salida de Bodega vinculado a una Orden de Producción"
+          >
+            <PackageMinus className="w-4 h-4" />
+            <span>+ Retiro a OP</span>
+          </button>
 
           {activeSubTab === 'transfers' && (
             <button
@@ -1019,6 +1060,214 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 1.5: RETIROS Y VALES DE MATERIALES A ORDEN DE PRODUCCIÓN */}
+      {/* ========================================================= */}
+      {activeSubTab === 'retiros' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                    Protocolo Bodega ↔ Producción
+                  </span>
+                  <span className="text-slate-400 text-xs">•</span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    Validación obligatoria de N° de Orden de Producción / Trabajo
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <PackageMinus className="w-5 h-5 text-amber-600" />
+                  <span>Vales de Entrega de Materiales e Insumos a Planta (MPD)</span>
+                </h3>
+                <p className="text-xs text-slate-500 max-w-3xl">
+                  Para cualquier retiro de bodega, el bodeguero debe registrar la Orden de Trabajo u OP activa. El sistema valida automáticamente las cantidades solicitadas contra el presupuesto de materiales pactado con el cliente y detecta sobreconsumos o desvíos antes del despacho físico.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setIsWithdrawalModalOpen(true)}
+                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg shadow-sm transition-all cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Emitir Nuevo Vale a OP</span>
+              </button>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="text-[11px] font-medium text-slate-500 block">Total Vales Emitidos</span>
+                <strong className="text-xl font-bold font-mono text-slate-900">{safeWithdrawals.length}</strong>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="text-[11px] font-medium text-slate-500 block">Valor Despachado a WIP</span>
+                <strong className="text-xl font-bold font-mono text-amber-700">
+                  {formatCLP(safeWithdrawals.reduce((acc, w) => acc + (w.costoTotalRetiro || 0), 0))}
+                </strong>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="text-[11px] font-medium text-slate-500 block">Órdenes Abastecidas</span>
+                <strong className="text-xl font-bold font-mono text-blue-700">
+                  {new Set(safeWithdrawals.map(w => w.ordenProduccionFolio)).size}
+                </strong>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="text-[11px] font-medium text-slate-500 block">Alertas de Sobreconsumo</span>
+                <strong className="text-xl font-bold font-mono text-rose-600">
+                  {safeWithdrawals.filter(w => w.alertaSobreconsumo).length}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Vales List */}
+          <div className="space-y-3">
+            {safeWithdrawals.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm">
+                <PackageMinus className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <h4 className="text-base font-bold text-slate-700">No hay vales de retiro registrados</h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
+                  Cualquier salida de insumos fabriles desde bodega debe vincularse a una Orden de Trabajo u OP con presupuesto aprobado.
+                </p>
+                <button
+                  onClick={() => setIsWithdrawalModalOpen(true)}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                >
+                  + Emitir Primer Vale a OP
+                </button>
+              </div>
+            ) : (
+              safeWithdrawals.map((w) => (
+                <div
+                  key={w.id}
+                  className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-amber-300 transition-colors space-y-3"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="font-mono text-xs font-bold bg-amber-50 text-amber-800 px-2.5 py-1 rounded border border-amber-200">
+                        {w.folioVale}
+                      </span>
+                      <span className="text-slate-300 text-xs">|</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-slate-500">Orden de Producción:</span>
+                        <strong className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                          {w.ordenProduccionFolio}
+                        </strong>
+                      </div>
+                      {w.clienteNombre && (
+                        <>
+                          <span className="text-slate-300 text-xs">•</span>
+                          <span className="text-xs text-slate-600 font-medium">
+                            Cliente: <strong className="text-slate-900">{w.clienteNombre}</strong>
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {w.alertaSobreconsumo ? (
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Alerta de Desvío / Sobreconsumo</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Conforme al Presupuesto</span>
+                        </span>
+                      )}
+                      <span className="text-xs font-mono text-slate-400">
+                        {w.fechaRetiro} {w.horaRetiro || ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Detalle Logístico */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-600 bg-slate-50/70 p-2.5 rounded-lg border border-slate-100">
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Bodega Despachadora:</span>
+                      <strong className="text-slate-800">{w.bodegaOrigenNombre}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Solicitante (Planta):</span>
+                      <strong className="text-slate-800">{w.solicitanteNombre}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Bodeguero Despachador:</span>
+                      <strong className="text-slate-800">{w.responsableBodegaNombre}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Valor Total Despachado:</span>
+                      <strong className="text-amber-700 font-mono text-sm font-bold">{formatCLP(w.costoTotalRetiro)}</strong>
+                    </div>
+                  </div>
+
+                  {/* Detalle de Insumos Retirados */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-slate-400 text-[11px]">
+                          <th className="py-1 px-2">Código SKU</th>
+                          <th className="py-1 px-2">Insumo / Material</th>
+                          <th className="py-1 px-2 text-center">Cant. Solicitada</th>
+                          <th className="py-1 px-2 text-center">Cant. Presupuestada OP</th>
+                          <th className="py-1 px-2 text-right">Costo Unit. PMP</th>
+                          <th className="py-1 px-2 text-right">Total Insumo</th>
+                          <th className="py-1 px-2 text-center">Control Presupuesto</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {w.items.map((it, idx) => {
+                          const isOver = it.cantidadPresupuestada > 0 && it.cantidadSolicitada > it.cantidadPresupuestada;
+                          const diff = it.cantidadSolicitada - it.cantidadPresupuestada;
+                          const pct = it.cantidadPresupuestada > 0 ? Math.round((diff / it.cantidadPresupuestada) * 100) : 0;
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50/50">
+                              <td className="py-1.5 px-2 font-mono text-slate-500">{it.insumoCodigo}</td>
+                              <td className="py-1.5 px-2 font-medium text-slate-800">{it.insumoNombre}</td>
+                              <td className="py-1.5 px-2 text-center font-bold font-mono text-slate-900">
+                                {it.cantidadSolicitada} {it.unidadMedida}
+                              </td>
+                              <td className="py-1.5 px-2 text-center font-mono text-slate-600">
+                                {it.cantidadPresupuestada > 0 ? `${it.cantidadPresupuestada} ${it.unidadMedida}` : 'Sin tope'}
+                              </td>
+                              <td className="py-1.5 px-2 text-right font-mono text-slate-600">{formatCLP(it.costoUnitarioPMP)}</td>
+                              <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-900">{formatCLP(it.costoTotal)}</td>
+                              <td className="py-1.5 px-2 text-center">
+                                {isOver ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
+                                    +{diff} {it.unidadMedida} (+{pct}%)
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700">
+                                    En Rango
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {w.observaciones && (
+                    <div className="text-[11px] text-slate-500 italic bg-amber-50/40 p-2 rounded border border-amber-100/60">
+                      <strong>Observaciones:</strong> {w.observaciones}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -1746,6 +1995,25 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal de Retiro de Bodega a Orden de Producción */}
+      {isWithdrawalModalOpen && (
+        <WarehouseWithdrawalModal
+          warehouses={clientWarehouses}
+          inventoryItems={clientItems}
+          productionOrders={safeOrders}
+          productionBudgets={safeBudgets}
+          onClose={() => setIsWithdrawalModalOpen(false)}
+          onConfirmWithdrawal={(withdrawal) => {
+            if (onAddWithdrawal) {
+              onAddWithdrawal(withdrawal);
+            }
+            setIsWithdrawalModalOpen(false);
+            showToast(`Vale ${withdrawal.folioVale} emitido exitosamente para OP ${withdrawal.ordenProduccionFolio}. Stock rebajado.`);
+          }}
+          onQuickCreateOp={onQuickCreateOp}
+        />
       )}
     </div>
   );

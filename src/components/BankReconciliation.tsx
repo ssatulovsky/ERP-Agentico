@@ -42,7 +42,9 @@ import {
   ClientCompany,
   CompanyProfile,
   AccountingFirmProfile,
-  BankNovedadType
+  BankNovedadType,
+  CHILE_BANKS_CATALOG,
+  BankName
 } from '../types';
 import { formatCLP, formatNumberCL } from '../utils/chileanAccounting';
 import { downloadBankReconciliationPdf, downloadBankReconciliationExcel } from '../utils/reportGenerators';
@@ -1852,11 +1854,16 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       {/* MODAL 3: AGREGAR NUEVA CUENTA BANCARIA */}
       {isConfigModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <Landmark className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900 text-base">Agregar Cuenta Bancaria</h3>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">Definir Cuenta Bancaria</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Parametrización para {activeClient?.nombreCorto || company?.razonSocial}
+                  </p>
+                </div>
               </div>
               <button 
                 onClick={() => setIsConfigModalOpen(false)}
@@ -1870,60 +1877,121 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
               onSubmit={(e) => {
                 e.preventDefault();
                 const form = e.target as HTMLFormElement;
+                const bankSelect = (form.elements.namedItem('banco') as HTMLSelectElement).value;
+                const customBank = (form.elements.namedItem('bancoPersonalizado') as HTMLInputElement)?.value;
+                const finalBankName = bankSelect === 'OTRO' ? (customBank || 'Banco Personalizado') : bankSelect;
+                const saldoInput = Number((form.elements.namedItem('saldoEnLinea') as HTMLInputElement).value) || 0;
+                const tipoCuenta = (form.elements.namedItem('tipoCuenta') as HTMLSelectElement).value as any;
+                const moneda = (form.elements.namedItem('moneda') as HTMLSelectElement).value as any;
+
+                const catalogMatch = CHILE_BANKS_CATALOG.find(b => b.nombre === bankSelect);
+                const bankCodigo = (catalogMatch?.codigo || 'OTRO') as BankName;
+
                 const newAcc: BankAccountConfig = {
                   id: `bank-acc-${Date.now()}`,
-                  banco: (form.elements.namedItem('banco') as HTMLSelectElement).value,
-                  bancoCodigo: 'BCI',
-                  tipoCuenta: 'CORRIENTE',
+                  banco: finalBankName,
+                  bancoCodigo: bankCodigo,
+                  tipoCuenta: tipoCuenta || 'CORRIENTE',
                   numeroCuenta: (form.elements.namedItem('numeroCuenta') as HTMLInputElement).value || '11-89201-0',
-                  moneda: 'CLP',
-                  saldoEnLinea: 15000000,
+                  moneda: moneda || 'CLP',
+                  saldoEnLinea: saldoInput,
                   estadoConexion: 'CONECTADO',
-                  tipoConexion: 'OPEN_BANKING_API',
-                  apiKey: 'live_pk_new_account',
-                  esPrincipal: false,
-                  ultimaSincronizacion: 'Hoy',
+                  tipoConexion: (form.elements.namedItem('tipoConexion') as HTMLSelectElement).value as any || 'OPEN_BANKING_API',
+                  apiKey: `api_token_${Date.now().toString().slice(-6)}`,
+                  esPrincipal: bankAccounts.length === 0,
+                  ultimaSincronizacion: new Date().toLocaleTimeString('es-CL'),
                 };
                 onUpdateBankAccounts([...bankAccounts, newAcc]);
                 setIsConfigModalOpen(false);
               }}
               className="space-y-3 text-xs"
             >
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Banco Nacional</label>
-                <select 
-                  name="banco"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
-                >
-                  <option value="Banco Santander Chile">Banco Santander Chile</option>
-                  <option value="Banco de Chile">Banco de Chile</option>
-                  <option value="Banco BCI">Banco BCI</option>
-                  <option value="BancoEstado">BancoEstado</option>
-                  <option value="Scotiabank Chile">Scotiabank Chile</option>
-                  <option value="Banco Itaú Chile">Banco Itaú Chile</option>
-                  <option value="Banco Security">Banco Security</option>
-                  <option value="Banco BICE">Banco BICE</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">Entidad Bancaria Nacional / CMF</label>
+                  <select 
+                    name="banco"
+                    id="select-banco-modal"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
+                    defaultValue="Banco del Estado de Chile (BancoEstado)"
+                  >
+                    {CHILE_BANKS_CATALOG.map((b) => (
+                      <option key={b.codigo} value={b.nombre}>
+                        {b.nombre} (SBIF {b.codigoSbif})
+                      </option>
+                    ))}
+                    <option value="OTRO">Otro Banco / Entidad Extranjera</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Número de Cuenta</label>
-                <input 
-                  type="text"
-                  name="numeroCuenta"
-                  placeholder="ej: 00-184920-1"
-                  required
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-mono"
-                />
-              </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">Nombre Personalizado (si eligió 'Otro')</label>
+                  <input 
+                    type="text"
+                    name="bancoPersonalizado"
+                    placeholder="ej: JPMorgan Chase, Banco de Inversiones, etc."
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
+                  />
+                </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Método de Conexión</label>
-                <select className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2">
-                  <option value="OPEN_BANKING_API">API Open Banking Oficial (Recomendado)</option>
-                  <option value="EMPRESAS_CONNECT">Banca Empresas Connect (Host-to-Host)</option>
-                  <option value="IMPORTACION_CARTOLA">Importación Periódica de Cartolas</option>
-                </select>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Tipo de Cuenta</label>
+                  <select 
+                    name="tipoCuenta"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
+                  >
+                    <option value="CORRIENTE">Cuenta Corriente</option>
+                    <option value="VISTA">Cuenta Vista / Chequera Electrónica</option>
+                    <option value="DOLARES">Cuenta en Dólares (USD)</option>
+                    <option value="AHORRO">Cuenta de Ahorro / Inversión</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Moneda</label>
+                  <select 
+                    name="moneda"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
+                  >
+                    <option value="CLP">CLP (Peso Chileno)</option>
+                    <option value="USD">USD (Dólar Americano)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Número de Cuenta</label>
+                  <input 
+                    type="text"
+                    name="numeroCuenta"
+                    placeholder="ej: 00-184920-1"
+                    required
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-mono font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Saldo en Línea Real ($)</label>
+                  <input 
+                    type="number"
+                    name="saldoEnLinea"
+                    placeholder="ej: 25000000"
+                    defaultValue={10000000}
+                    required
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">Método de Conexión</label>
+                  <select 
+                    name="tipoConexion"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
+                  >
+                    <option value="OPEN_BANKING_API">API Open Banking Oficial (Recomendado)</option>
+                    <option value="EMPRESAS_CONNECT">Banca Empresas Connect (Host-to-Host)</option>
+                    <option value="IMPORTACION_CARTOLA">Importación Periódica de Cartolas</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">

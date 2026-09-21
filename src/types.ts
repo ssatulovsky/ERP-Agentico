@@ -4,6 +4,10 @@ export type DteType =
   | '61' // Nota de Crédito Electrónica
   | '56' // Nota de Débito Electrónica
   | '46' // Factura de Compra Electrónica
+  | '110' // Factura de Exportación Electrónica
+  | '39' // Boleta Electrónica
+  | '41' // Boleta Exenta Electrónica
+  | '52' // Guía de Despacho Electrónica
   | 'BH' // Boleta de Honorarios Electrónica
   | 'BHE'; // Boleta de Honorarios Recibida
 
@@ -140,7 +144,38 @@ export type BankName =
   | 'SCOTIABANK'
   | 'ITAU'
   | 'SECURITY'
-  | 'BICE';
+  | 'BICE'
+  | 'BANCO_FALABELLA'
+  | 'BANCO_RIPLEY'
+  | 'BANCO_CONSORCIO'
+  | 'BANCO_INTERNACIONAL'
+  | 'HSBC'
+  | 'BTG_PACTUAL'
+  | 'OTRO';
+
+export interface ChileBankInfo {
+  codigo: BankName;
+  nombre: string;
+  codigoSbif: string;
+}
+
+export const CHILE_BANKS_CATALOG: ChileBankInfo[] = [
+  { codigo: 'BANCO_ESTADO', nombre: 'Banco del Estado de Chile (BancoEstado)', codigoSbif: '012' },
+  { codigo: 'BANCO_DE_CHILE', nombre: 'Banco de Chile / Edwards', codigoSbif: '001' },
+  { codigo: 'BANCO_SANTANDER', nombre: 'Banco Santander Chile', codigoSbif: '037' },
+  { codigo: 'BCI', nombre: 'Banco de Crédito e Inversiones (BCI)', codigoSbif: '016' },
+  { codigo: 'SCOTIABANK', nombre: 'Scotiabank Chile', codigoSbif: '014' },
+  { codigo: 'ITAU', nombre: 'Banco Itaú Chile', codigoSbif: '039' },
+  { codigo: 'SECURITY', nombre: 'Banco Security', codigoSbif: '049' },
+  { codigo: 'BICE', nombre: 'Banco BICE', codigoSbif: '028' },
+  { codigo: 'BANCO_CONSORCIO', nombre: 'Banco Consorcio', codigoSbif: '055' },
+  { codigo: 'BANCO_FALABELLA', nombre: 'Banco Falabella', codigoSbif: '051' },
+  { codigo: 'BANCO_RIPLEY', nombre: 'Banco Ripley', codigoSbif: '053' },
+  { codigo: 'BANCO_INTERNACIONAL', nombre: 'Banco Internacional', codigoSbif: '009' },
+  { codigo: 'HSBC', nombre: 'HSBC Bank Chile', codigoSbif: '031' },
+  { codigo: 'BTG_PACTUAL', nombre: 'Banco BTG Pactual Chile', codigoSbif: '059' },
+  { codigo: 'OTRO', nombre: 'Otro Banco / Entidad Financiera Internacional', codigoSbif: '999' },
+];
 
 export type BankAccountType = 'CORRIENTE' | 'VISTA' | 'DOLARES' | 'AHORRO';
 
@@ -531,6 +566,31 @@ export interface LeaseContract {
   estado?: 'ACTIVO' | 'VENCIDO' | 'EN_RENOVACION';
 }
 
+export type CashFlowCategory = 
+  | 'VENTAS_OPERACIONALES' 
+  | 'PROVEEDORES' 
+  | 'REMUNERACIONES' 
+  | 'PREVIRED_LEYES_SOCIALES'
+  | 'IMPUESTOS_F29' 
+  | 'PRODUCCION_HITO_VENTA'
+  | 'PRODUCCION_INSUMOS_COMPRA'
+  | 'ARRIENDOS' 
+  | 'SERVICIOS_BASICOS' 
+  | 'FINANCIAMIENTO' 
+  | 'HONORARIOS' 
+  | 'OTRO';
+
+export type CashFlowOriginModule = 
+  | 'MANUAL' 
+  | 'DTE_SII' 
+  | 'NOMINA' 
+  | 'PREVIRED' 
+  | 'F29' 
+  | 'PRESUPUESTO_PRODUCCION' 
+  | 'ORDEN_PRODUCCION' 
+  | 'LEASING_IFRS16' 
+  | 'CONCILIACION_BANCARIA';
+
 export interface CashFlowMovement {
   id: string;
   // 5 campos obligatorios requeridos:
@@ -551,8 +611,85 @@ export interface CashFlowMovement {
   // 5. Estado
   estado: 'PENDIENTE' | 'FACTURADO' | 'COBRADO' | 'PAGADO' | 'VENCIDO';
   tipo: 'INGRESO' | 'EGRESO';
-  categoria: 'VENTAS_OPERACIONALES' | 'PROVEEDORES' | 'REMUNERACIONES' | 'IMPUESTOS_F29' | 'ARRIENDOS' | 'SERVICIOS_BASICOS' | 'FINANCIAMIENTO' | 'HONORARIOS' | 'OTRO';
+  categoria: CashFlowCategory;
   dteFolioAsociado?: number;
+  origenModulo?: CashFlowOriginModule;
+  probabilidadCobroPct?: number; // 0 a 100%
+  cuentaBancariaId?: string;
+  alertaRiesgo?: string;
+  documentoReferencia?: string;
+}
+
+export interface DailyCashFlowPoint {
+  fecha: string;
+  diaSemana: string;
+  ingresosDia: number;
+  egresosDia: number;
+  flujoNetoDia: number;
+  saldoProyectado: number;
+  estaEnDeficit: boolean;
+  quiebreCajaMonto: number;
+  eventosClave: {
+    concepto: string;
+    tipo: 'INGRESO' | 'EGRESO';
+    monto: number;
+    categoria: CashFlowCategory;
+  }[];
+}
+
+export interface LiquidityCrisisAlert {
+  fechaQuiebre: string;
+  diasParaQuiebre: number;
+  saldoMinimoProyectado: number;
+  deficitMaximo: number;
+  causasPrincipales: string[];
+  accionesRecomendadas: string[];
+  nivelGravedad: 'CRITICO' | 'ALERTA' | 'PRECAUCION' | 'ESTABLE';
+}
+
+export interface ErpCommitmentsScanResult {
+  nominaSueldos: {
+    totalTrabajadores: number;
+    totalLiquidoMensual: number;
+    fechaPagoEstimada: string;
+    proyectado: boolean;
+  };
+  previredLeyesSociales: {
+    totalAporteTrabajador: number;
+    totalAportePatronal: number;
+    totalPreviredMensual: number;
+    fechaVencimientoPrevired: string;
+    proyectado: boolean;
+  };
+  f29Impuestos: {
+    periodoFiscal: string;
+    montoIvaDeterminado: number;
+    montoPpm: number;
+    retenciones: number;
+    totalAPagarF29: number;
+    fechaVencimientoF29: string;
+    proyectado: boolean;
+  };
+  produccionHitos: {
+    totalPresupuestosAprobados: number;
+    montoTotalHitosCobro: number;
+    montoTotalInsumosComprometidos: number;
+    partidasHitos: {
+      folioPresupuesto: string;
+      clienteNombre: string;
+      hitoDescripcion: string;
+      montoTotal: number;
+      fechaEstimada: string;
+      tipo: 'INGRESO' | 'EGRESO';
+    }[];
+  };
+  dtesPendientes: {
+    ventasPorCobrarCount: number;
+    ventasPorCobrarTotal: number;
+    comprasPorPagarCount: number;
+    comprasPorPagarTotal: number;
+  };
+  totalCompromisosIdentificados: number;
 }
 
 export interface AccountingEntryLine {
@@ -1495,6 +1632,32 @@ export interface ProductionOrder {
   // Trazabilidad de Consumos
   consumosMateriales: DirectMaterialConsumption[];
   manoDeObraRegistros: DirectLaborEntry[];
+  // Asociación con Presupuesto de Producción y Cotización
+  presupuestoId?: string;
+  presupuestoFolio?: string;
+  clienteNombre?: string;
+  clienteRut?: string;
+  precioVentaPactado?: number;
+  margenPresupuestadoClp?: number;
+  margenPresupuestadoPct?: number;
+  presupuestoBase?: {
+    costoMpdPresupuestado: number;
+    costoModPresupuestado: number;
+    costoCifPresupuestado: number;
+    costoTotalPresupuestado: number;
+    materialesPresupuestados: {
+      insumoId?: string;
+      insumoCodigo: string;
+      insumoNombre: string;
+      cantidadPresupuestada: number;
+      costoUnitarioEstimado: number;
+      costoTotalPresupuestado: number;
+      unidadMedida: string;
+    }[];
+  };
+  desvioMargenActualClp?: number;
+  desvioMargenActualPct?: number;
+  analisisCierre?: ProductionOrderClosureAnalysis;
   // Asientos Contables Generados en Libro Diario
   asientosGenerados: {
     consumoMpdAsientoId?: string;
@@ -1503,6 +1666,156 @@ export interface ProductionOrder {
     liquidacionPtAsientoId?: string;
     costoVentasAsientoId?: string;
   };
+}
+
+export type BudgetStatus =
+  | 'BORRADOR'
+  | 'ENVIADO'
+  | 'EN_NEGOCIACION'
+  | 'APROBADO'
+  | 'RECHAZADO'
+  | 'CANCELADO';
+
+export type BudgetItemType = 'MPD' | 'MOD' | 'CIF' | 'OTRO';
+
+export interface ProductionBudgetItem {
+  id: string;
+  tipo: BudgetItemType;
+  insumoId?: string;
+  insumoCodigo?: string;
+  descripcion: string;
+  unidadMedida: string;
+  cantidadPresupuestada: number;
+  costoUnitarioEstimado: number;
+  costoTotalEstimado: number;
+  precioUnitarioSugerido?: number;
+  precioTotalVenta?: number;
+  visibleParaCliente: boolean; // Si es false, se oculta en la cotización cliente pero se computa en el margen interno
+  notasInternas?: string;
+}
+
+export interface ProductionBudget {
+  id: string;
+  empresaId: string;
+  folio: string; // ej: "PRE-2026-042"
+  clienteId?: string;
+  clienteNombre: string;
+  clienteRut: string;
+  contactoCliente?: string;
+  emailCliente?: string;
+  fechaEmision: string;
+  fechaValidez: string;
+  estado: BudgetStatus;
+  fechaEnvio?: string;
+  fechaAprobacion?: string;
+  productoNombre: string;
+  productoCodigo: string;
+  categoria: ProductionProductCategory;
+  unidadMedida: string;
+  cantidad: number;
+  condicionesComerciales?: string;
+  partidas: ProductionBudgetItem[];
+  // Métricas financieras calculadas
+  costoTotalMpd: number;
+  costoTotalMod: number;
+  costoTotalCif: number;
+  costoTotalInterno: number; // Incluye partidas visibles y ocultas
+  precioVentaNetoCliente: number; // Precio cotizado al cliente (visible)
+  margenBrutoEstimadoClp: number;
+  margenBrutoEstimadoPct: number;
+  markupPct: number;
+  ordenProduccionIdGenerada?: string;
+  folioOpGenerada?: string;
+  historialEnvio?: {
+    fecha: string;
+    remitente: string;
+    destinatario: string;
+    observaciones?: string;
+  }[];
+}
+
+export interface MaterialDeviationDetail {
+  insumoCodigo: string;
+  insumoNombre: string;
+  unidadMedida: string;
+  cantidadPresupuestada: number;
+  cantidadReal: number;
+  desvioCantidad: number;
+  desvioCantidadPct: number;
+  costoPresupuestado: number;
+  costoReal: number;
+  desvioCostoClp: number;
+  impactoEnMargenPct: number;
+}
+
+export interface ProductionOrderClosureAnalysis {
+  fechaCierre: string;
+  costoMpdReal: number;
+  costoMpdPresupuestado: number;
+  varianzaMpdClp: number;
+  varianzaMpdPct: number;
+  costoModReal: number;
+  costoModPresupuestado: number;
+  varianzaModClp: number;
+  varianzaModPct: number;
+  costoCifReal: number;
+  costoCifPresupuestado: number;
+  varianzaCifClp: number;
+  varianzaCifPct: number;
+  costoTotalReal: number;
+  costoTotalPresupuestado: number;
+  varianzaCostoTotalClp: number;
+  varianzaCostoTotalPct: number;
+  precioVentaFinal: number;
+  margenPresupuestadoClp: number;
+  margenPresupuestadoPct: number;
+  margenRealClp: number;
+  margenRealPct: number;
+  erosionMargenPct: number; // Margen Presupuestado % - Margen Real %
+  diagnosticoEficiencia: 'EXCELENTE' | 'DENTRO_DE_TOLERANCIA' | 'DESVIO_MODERADO' | 'SOBRECOSTO_CRITICO';
+  resumenDiagnostico: string;
+  detalleDesviosMateriales: MaterialDeviationDetail[];
+}
+
+export interface WarehouseWithdrawalItem {
+  insumoId: string;
+  insumoCodigo: string;
+  insumoNombre: string;
+  cantidadSolicitada: number;
+  cantidadPresupuestadaOriginal: number;
+  cantidadPresupuestada?: number;
+  cantidadPreviaConsumida: number;
+  cantidadTotalResultante: number;
+  haySobreconsumo: boolean;
+  desvioCantidad: number;
+  costoUnitarioPMP: number;
+  costoTotal: number;
+  unidadMedida: string;
+  impactoEstimadoEnMargenClp: number;
+}
+
+export interface WarehouseWithdrawal {
+  id: string;
+  empresaId: string;
+  folioVale: string; // ej: "VALE-2026-0042"
+  fecha: string;
+  fechaRetiro?: string;
+  horaRetiro?: string;
+  ordenProduccionId: string; // OBLIGATORIO
+  ordenProduccionFolio: string;
+  clienteNombre?: string;
+  bodegaOrigenId: string;
+  bodegaOrigenNombre: string;
+  solicitanteNombre: string;
+  responsableBodega: string;
+  responsableBodegaNombre?: string;
+  items: WarehouseWithdrawalItem[];
+  costoTotalVale: number;
+  costoTotalRetiro?: number;
+  alertaSobreconsumo?: boolean;
+  folioGuiaDespacho52?: string;
+  observaciones?: string;
+  asientoId?: string;
 }
 
 export interface CostOfGoodsManufacturedReport {
@@ -1709,6 +2022,98 @@ export interface ClientAuxiliaryMasterRecord {
   terminosPago?: string;
   vendedor?: string;
   descuentoPorcentaje?: number;
+}
+
+// ==========================================
+// AGENTE AUTÓNOMO DE FACTURACIÓN Y COBRANZA (SII & PLAYWRIGHT)
+// ==========================================
+
+export interface BillingItemDetail {
+  id: string;
+  nombre: string;
+  descripcion?: string;
+  cantidad: number;
+  unidadMedida: string; // "C/U", "MT", "KG", "HR", "GL"
+  precioUnitario: number;
+  descuentoPct?: number;
+  esExento?: boolean;
+  montoTotal: number;
+}
+
+export interface BillingDteReference {
+  tipoDocRef: '33' | '34' | '39' | '52' | '801'; // 801 = Orden de Compra
+  folioRef: number;
+  fechaRef: string;
+  codRef: '1' | '2' | '3'; // 1=Anula, 2=Corrige texto, 3=Corrige montos
+  razonRef: string;
+}
+
+export interface BillingExportData {
+  clausulaVenta: 'FOB' | 'CIF' | 'CFR' | 'EXW';
+  puertoEmbarque: string;
+  paisReceptor: string;
+  monedaExportacion: 'USD' | 'EUR';
+  tipoCambioObservado: number;
+  modalidadVenta: 'DEFINITIVA' | 'A_FIRME' | 'BAJO_CONDICION';
+}
+
+export interface BillingEmissionDraft {
+  id: string;
+  tipoDte: DteType;
+  folioSugerido?: number;
+  fechaEmision: string;
+  condicionVenta: 'CONTADO' | 'CREDITO_30' | 'CREDITO_60' | 'CREDITO_90';
+  fechaVencimiento: string;
+  medioPago?: 'TRANSFERENCIA' | 'CHEQUE' | 'TARJETA' | 'EFECTIVO';
+  // Receptor
+  rutReceptor: string;
+  razonSocialReceptor: string;
+  giroReceptor: string;
+  direccionReceptor: string;
+  comunaReceptor: string;
+  ciudadReceptor: string;
+  emailReceptorDte: string;
+  // Items
+  items: BillingItemDetail[];
+  montoNeto: number;
+  montoExento: number;
+  montoIva: number;
+  montoTotal: number;
+  // Referencias (para DTE 61 / 56)
+  referencia?: BillingDteReference;
+  // Datos Exportación (para DTE 110)
+  exportacion?: BillingExportData;
+  // Vinculación con Producción
+  ordenProduccionId?: string;
+  ordenProduccionCodigo?: string;
+  presupuestoId?: string;
+  hitoDescripcion?: string;
+}
+
+export interface PlaywrightRobotStep {
+  stepNumber: number;
+  descripcion: string;
+  selector: string;
+  valorOAccion: string;
+  timestamp?: string;
+  estado: 'PENDIENTE' | 'EJECUTANDO' | 'EXITO' | 'FALLO';
+}
+
+export interface PlaywrightRobotRunReport {
+  id: string;
+  tipoDte: DteType;
+  rutEmisor: string;
+  rutReceptor: string;
+  portalUrl: string;
+  modoEjecucion: 'HEADLESS_BOT' | 'SIMULACION_GUI' | 'SCRIPT_DESCARGA';
+  iniciadoEn: string;
+  finalizadoEn?: string;
+  estado: 'EN_PROCESO' | 'COMPLETADO_EXITO' | 'ERROR';
+  folioAsignado?: number;
+  tedXmlFirmado?: string;
+  trackIdSii?: string;
+  pasos: PlaywrightRobotStep[];
+  logs: string[];
 }
 
 

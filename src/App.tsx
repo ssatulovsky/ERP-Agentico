@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { DteManager } from './components/DteManager';
 import { F29SeniorAgent } from './components/F29SeniorAgent';
@@ -14,6 +14,10 @@ import { InventoryAgentModule } from './components/InventoryAgentModule';
 import { HrAgentModule } from './components/HrAgentModule';
 import { FixedAssetAgentModule } from './components/FixedAssetAgentModule';
 import { ProductionCostingAgentModule } from './components/ProductionCostingAgentModule';
+import { BillingAutonomousAgent } from './components/BillingAutonomousAgent';
+import { UserManualModal } from './components/UserManualModal';
+import { ErpPremiaLogo } from './components/ErpPremiaLogo';
+import { loadClientState, saveClientState, loadPersistentState, savePersistentState } from './utils/storageService';
 
 import { 
   initialCompanyProfile, 
@@ -36,6 +40,11 @@ import {
   seedProductionOrders,
   seedCifPool,
 } from './data/seedFixedAssetsAndProduction';
+import {
+  SEED_PRODUCTION_BUDGETS,
+  SEED_WAREHOUSE_WITHDRAWALS,
+  convertBudgetToProductionOrder,
+} from './data/seedBudgetsAndWithdrawals';
 import { 
   DEFAULT_INDICATORS,
   createSalesDteEntry,
@@ -65,6 +74,8 @@ import {
   ReplenishmentRequisition,
   FixedAsset,
   ProductionOrder,
+  ProductionBudget,
+  WarehouseWithdrawal,
   IndirectCostPoolItem,
   SystemGeneralParameters,
 } from './types';
@@ -93,6 +104,7 @@ import {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('agents');
+  const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
@@ -104,8 +116,10 @@ export default function App() {
   const [company, setCompany] = useState(activeClient);
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
-  // Core Data States
-  const [dtes, setDtes] = useState<DteDocument[]>([]);
+  // Core Data States with Multi-Tenant Local Persistence (Sin datos fijos, almacenamiento real segregado)
+  const [dtes, setDtes] = useState<DteDocument[]>(() => {
+    return loadClientState<DteDocument[]>(activeClientId, 'dtes', activeClient.id === 'client-innovagile' ? [] : seedDtes);
+  });
   const [f29, setF29] = useState<F29Declaration>(() => {
     const isExento = Boolean((activeClient as any)?.exentoIvaGiro || activeClient.id === 'client-innovagile');
     if (isExento) {
@@ -134,14 +148,53 @@ export default function App() {
     };
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
-    return activeClient.id === 'client-innovagile' ? [] : seedPayrolls;
+    return loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', activeClient.id === 'client-innovagile' ? [] : seedPayrolls);
   });
-  const [leases, setLeases] = useState<LeaseContract[]>(seedLeases);
-  const [movements, setMovements] = useState<CashFlowMovement[]>(seedMovements);
+  const [leases, setLeases] = useState<LeaseContract[]>(() => {
+    return loadClientState<LeaseContract[]>(activeClientId, 'leases', seedLeases);
+  });
+  const [movements, setMovements] = useState<CashFlowMovement[]>(() => {
+    return loadClientState<CashFlowMovement[]>(activeClientId, 'movements', seedMovements);
+  });
 
-  // Bank Reconciliation & Open Banking States
-  const [bankAccounts, setBankAccounts] = useState<BankAccountConfig[]>(seedBankAccounts);
-  const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(seedBankMovements);
+  // Bank Reconciliation & Open Banking States (Cada cliente tiene sus cuentas bancarias persistidas)
+  const [bankAccounts, setBankAccounts] = useState<BankAccountConfig[]>(() => {
+    return loadClientState<BankAccountConfig[]>(activeClientId, 'bankAccounts', seedBankAccounts);
+  });
+  const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(() => {
+    return loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+  });
+
+  // Efectos de Sincronización Automática en LocalStorage por Cliente
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'dtes', dtes);
+    }
+  }, [activeClientId, dtes]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'movements', movements);
+    }
+  }, [activeClientId, movements]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'bankAccounts', bankAccounts);
+    }
+  }, [activeClientId, bankAccounts]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'bankMovements', bankMovements);
+    }
+  }, [activeClientId, bankMovements]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'payrolls', payrolls);
+    }
+  }, [activeClientId, payrolls]);
 
   // Parámetros Generales de Sistema ERP (Art. 16 Código Tributario, Moneda, Cuentas de Cierre y Redondeo)
   const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(() => {
@@ -187,6 +240,10 @@ export default function App() {
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(seedProductionOrders);
   const [cifPoolItems, setCifPoolItems] = useState<IndirectCostPoolItem[]>(seedCifPool);
 
+  // Production Budgets & Warehouse Withdrawals (Presupuestos & Vales a OP)
+  const [productionBudgets, setProductionBudgets] = useState<ProductionBudget[]>(SEED_PRODUCTION_BUDGETS);
+  const [warehouseWithdrawals, setWarehouseWithdrawals] = useState<WarehouseWithdrawal[]>(SEED_WAREHOUSE_WITHDRAWALS);
+
   // Select active client
   const handleSelectActiveClient = (clientId: string) => {
     const selected = clients.find(c => c.id === clientId);
@@ -194,9 +251,20 @@ export default function App() {
     setActiveClientId(clientId);
     setCompany(selected);
     const isExento = Boolean((selected as any)?.exentoIvaGiro || selected.id === 'client-innovagile');
+
+    const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', isExento ? [] : seedDtes);
+    const loadedPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', isExento ? [] : seedPayrolls);
+    const loadedMovements = loadClientState<CashFlowMovement[]>(clientId, 'movements', seedMovements);
+    const loadedBanks = loadClientState<BankAccountConfig[]>(clientId, 'bankAccounts', seedBankAccounts);
+    const loadedBankMovs = loadClientState<BankStatementMovement[]>(clientId, 'bankMovements', seedBankMovements);
+
+    setDtes(loadedDtes);
+    setPayrolls(loadedPayrolls);
+    setMovements(loadedMovements);
+    setBankAccounts(loadedBanks);
+    setBankMovements(loadedBankMovs);
+
     if (isExento) {
-      setDtes([]);
-      setPayrolls([]);
       setF29({
         ...seedF29,
         rutContribuyente: selected.rut,
@@ -249,6 +317,136 @@ export default function App() {
     setClients(remaining);
     if (activeClientId === clientId && remaining.length > 0) {
       handleSelectActiveClient(remaining[0].id);
+    }
+  };
+
+  // Aprobación de Presupuesto y Generación Automática de OP
+  const handleApproveBudgetAndGenerateOp = (budget: ProductionBudget) => {
+    const nextOpNum = 100 + productionOrders.length + 1;
+    const generatedFolio = `OP-${new Date().getFullYear()}-${nextOpNum}`;
+    const newOp = convertBudgetToProductionOrder(budget, generatedFolio);
+
+    const updatedBudget: ProductionBudget = {
+      ...budget,
+      estado: 'APROBADO',
+      fechaAprobacion: new Date().toISOString().split('T')[0],
+      ordenProduccionIdGenerada: newOp.id,
+      folioOpGenerada: newOp.folioOP,
+    };
+
+    setProductionBudgets(prev => prev.map(b => b.id === budget.id ? updatedBudget : b));
+    setProductionOrders(prev => [newOp, ...prev]);
+  };
+
+  // Retiro de Bodega vinculado a OP (Actualización de Stock, OP y Asiento WIP)
+  const handleAddWithdrawal = (withdrawal: WarehouseWithdrawal) => {
+    // 1. Agregar a historial de retiros
+    setWarehouseWithdrawals(prev => [withdrawal, ...prev]);
+
+    // 2. Rebajar stock físico en Bodegas e Inventario General
+    setInventoryItems(prevItems => {
+      return prevItems.map(item => {
+        const matchingWithdrawalItem = withdrawal.items.find(
+          wi => wi.insumoId === item.id || wi.insumoCodigo === item.sku
+        );
+        if (!matchingWithdrawalItem) return item;
+
+        const qtyToDeduct = matchingWithdrawalItem.cantidadSolicitada;
+        const newStockGeneral = Math.max(0, item.stockGeneral - qtyToDeduct);
+        const updatedWhStock = item.stockPorBodega.map(wh => {
+          if (wh.bodegaId === withdrawal.bodegaOrigenId) {
+            return {
+              ...wh,
+              stockFisico: Math.max(0, wh.stockFisico - qtyToDeduct),
+            };
+          }
+          return wh;
+        });
+
+        return {
+          ...item,
+          stockGeneral: newStockGeneral,
+          stockDisponible: Math.max(0, newStockGeneral - item.stockComprometido),
+          stockPorBodega: updatedWhStock,
+        };
+      });
+    });
+
+    // 3. Imputar consumo MPD a la Orden de Producción
+    setProductionOrders(prevOps => {
+      return prevOps.map(op => {
+        if (op.id !== withdrawal.ordenProduccionId && op.folioOP !== withdrawal.ordenProduccionFolio) {
+          return op;
+        }
+
+        const newConsumptions = withdrawal.items.map((wi, idx) => ({
+          id: `mpd-${Date.now()}-${idx}`,
+          insumoId: wi.insumoId,
+          insumoCodigo: wi.insumoCodigo,
+          insumoNombre: wi.insumoNombre,
+          bodegaOrigenNombre: withdrawal.bodegaOrigenNombre,
+          cantidadConsumida: wi.cantidadSolicitada,
+          unidadMedida: wi.unidadMedida,
+          costoUnitarioPMP: wi.costoUnitarioPMP,
+          costoTotalConsumo: wi.costoTotal,
+          fechaConsumo: withdrawal.fechaRetiro || withdrawal.fecha || new Date().toISOString().split('T')[0],
+          folioGuiaDespacho52: withdrawal.folioGuiaDespacho52,
+        }));
+
+        const additionalCost = withdrawal.costoTotalVale || withdrawal.costoTotalRetiro || 0;
+        const newMpd = (op.costoDirectoMateriales || 0) + additionalCost;
+        const newPrimo = (op.costoDirectoManoObra || 0) + newMpd;
+        const newTotal = newPrimo + (op.costoIndirectoCif || 0);
+        const cantReal = op.cantidadProducidaReal > 0 ? op.cantidadProducidaReal : op.cantidadObjetivo;
+        const newUnit = Math.round(newTotal / (cantReal || 1));
+
+        return {
+          ...op,
+          consumosMateriales: [...(op.consumosMateriales || []), ...newConsumptions],
+          costoDirectoMateriales: newMpd,
+          costoPrimo: newPrimo,
+          costoTotalProduccion: newTotal,
+          costoUnitarioReal: newUnit,
+        };
+      });
+    });
+
+    // 4. Centralizar asiento contable de consumo WIP (Art. 30 LIR)
+    const totalAmount = withdrawal.costoTotalVale || withdrawal.costoTotalRetiro || 0;
+    const withdrawalDate = withdrawal.fecha || withdrawal.fechaRetiro || new Date().toISOString().split('T')[0];
+    const respBodega = withdrawal.responsableBodega || withdrawal.responsableBodegaNombre || 'Agente WMS/Producción';
+
+    if (totalAmount > 0) {
+      const entryId = `entry-wip-mpd-${Date.now()}`;
+      const newEntry: AccountingEntry = {
+        id: entryId,
+        fecha: withdrawalDate,
+        concepto: `Consumo MPD Vale ${withdrawal.folioVale} a ${withdrawal.ordenProduccionFolio} (${withdrawal.clienteNombre || 'Producción'})`,
+        documento: `Vale Salida Bodega ${withdrawal.folioVale}`,
+        lineas: [
+          {
+            cuentaCodigo: '1.1.04.004',
+            cuentaNombre: 'Productos en Proceso WIP - Materiales Directos',
+            debe: totalAmount,
+            haber: 0,
+            centroCosto: 'PLANTA_FABRIL',
+          },
+          {
+            cuentaCodigo: '1.1.04.001',
+            cuentaNombre: 'Materias Primas e Insumos Fabriles',
+            debe: 0,
+            haber: totalAmount,
+            centroCosto: 'BODEGA_CENTRAL',
+          },
+        ],
+        totalDebe: totalAmount,
+        totalHaber: totalAmount,
+        balanceado: true,
+        origen: 'INVENTARIO',
+        creadoEn: new Date().toISOString(),
+        supervisorSignature: respBodega,
+      };
+      handleAddEntry(newEntry);
     }
   };
 
@@ -490,7 +688,8 @@ export default function App() {
 
   const navLinks = [
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
-    { id: 'rcv', label: 'Registro Compras/Ventas', subtitle: 'DTEs 33, 34, 61 & BHE', icon: Receipt },
+    { id: 'billing_agent', label: 'Facturación & Cobranza', subtitle: 'DTE, Playwright SII & Boletas', icon: Bot },
+    { id: 'rcv', label: 'Registro Compras, Ventas / Honorarios', subtitle: 'DTEs 33, 34, 61, BHE & Boletas', icon: Receipt },
     { id: 'reconciliation', label: 'Conciliación Bancaria', subtitle: 'APIs Bancos, Cartolas & Novedades', icon: Landmark },
     { id: 'f29', label: 'Agente Fiscal F29 & SII', subtitle: 'Motor F29, Art. 64 & Patente CPT', icon: FileSpreadsheet },
     { id: 'hr_agent', label: 'Agente RRHH & Personas', subtitle: 'DT, Previred, Art. 10/161 & Karin', icon: UserCheck },
@@ -498,7 +697,7 @@ export default function App() {
     { id: 'inventory', label: 'Inventario & Bodegas', subtitle: 'WMS, Stock Crítico & DTE 52', icon: Boxes },
     { id: 'fixed_assets', label: 'Activo Fijo (NIC 16)', subtitle: 'CM Art. 41, Deprec. & Ficha', icon: Building2 },
     { id: 'production', label: 'Producción & Costeo', subtitle: 'NIC 2, MPD, MOD, CIF & CPT', icon: Factory },
-    { id: 'cashflow', label: 'Flujo de Caja', subtitle: 'Proyecciones 30/60/90 días', icon: TrendingUp },
+    { id: 'cashflow', label: 'Flujo de Caja Proyectado', subtitle: 'Saldo Bancario Real & 30/60/90 días', icon: TrendingUp },
     { id: 'leases', label: 'Contratos & Arriendos', subtitle: 'Modelado NIIF / IFRS 16', icon: Home },
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
   ];
@@ -518,13 +717,15 @@ export default function App() {
         discrepanciesCount={discrepanciesCount}
         openAiChat={() => setIsAiModalOpen(true)}
         openAuditor={() => setIsAiModalOpen(true)}
+        openManual={() => setIsManualOpen(true)}
       />
 
       {/* Main Two-Column Layout */}
       <div className="flex-1 flex flex-col md:flex-row w-full max-w-[1600px] mx-auto">
         {/* Geometric Sidebar Navigation */}
         <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-[1px_0_3px_rgba(0,0,0,0.02)]">
-          <div className="py-4 space-y-1">
+
+          <div className="py-3 space-y-1">
             <div className="px-5 pb-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
               Módulos del Sistema
             </div>
@@ -560,7 +761,7 @@ export default function App() {
           </div>
 
           {/* Sidebar Bottom: Compliance & Health Card */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50/70 space-y-3">
+          <div className="p-4 border-t border-slate-200 bg-slate-50/70 space-y-2">
             <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-500 uppercase">Estado Cumplimiento</span>
@@ -576,6 +777,14 @@ export default function App() {
                 Régimen: {company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : '14 A General'}
               </div>
             </div>
+
+            <button
+              onClick={() => setIsManualOpen(true)}
+              className="w-full flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 py-1.5 px-3 rounded-md text-xs font-bold shadow-2xs transition-colors cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Manual & Guía de Pruebas</span>
+            </button>
 
             <button
               onClick={() => setIsAiModalOpen(true)}
@@ -602,6 +811,20 @@ export default function App() {
               onDownloadClientDtes={handleDownloadClientDtes}
               systemParams={systemParams}
               onUpdateSystemParams={handleUpdateSystemParams}
+            />
+          )}
+
+          {activeTab === 'billing_agent' && (
+            <BillingAutonomousAgent
+              company={company}
+              dtes={dtes}
+              onAddDte={handleAddDte}
+              onUpdateDte={handleUpdateDte}
+              onAddEntry={handleAddEntry}
+              onAddCashFlowMovement={handleAddMovement}
+              productionOrders={productionOrders}
+              productionBudgets={productionBudgets}
+              bankAccounts={bankAccounts}
             />
           )}
 
@@ -693,6 +916,11 @@ export default function App() {
               requisitions={requisitions}
               onUpdateRequisitions={setRequisitions}
               onAddAccountingEntry={handleAddEntry}
+              productionOrders={productionOrders}
+              productionBudgets={productionBudgets}
+              warehouseWithdrawals={warehouseWithdrawals}
+              onAddWithdrawal={handleAddWithdrawal}
+              onQuickCreateOp={(newOp) => setProductionOrders(prev => [newOp, ...prev])}
             />
           )}
 
@@ -718,6 +946,13 @@ export default function App() {
               onUpdateProductionOrder={(order) => setProductionOrders(prev => prev.map(o => o.id === order.id ? order : o))}
               onAddAccountingEntry={handleAddEntry}
               accountingEntries={entries || []}
+              productionBudgets={productionBudgets}
+              warehouseWithdrawals={warehouseWithdrawals}
+              onAddProductionBudget={(b) => setProductionBudgets(prev => [b, ...prev])}
+              onUpdateProductionBudget={(b) => setProductionBudgets(prev => prev.map(item => item.id === b.id ? b : item))}
+              onApproveBudgetAndGenerateOp={handleApproveBudgetAndGenerateOp}
+              inventoryItems={inventoryItems}
+              warehouses={warehouses}
             />
           )}
 
@@ -734,10 +969,17 @@ export default function App() {
             <CashFlowProjections
               movements={movements}
               onAddMovement={handleAddMovement}
+              onAddMultipleMovements={(newMovs) => setMovements(prev => [...newMovs, ...prev])}
               onUpdateMovement={handleUpdateMovement}
               dtes={dtes}
               indicators={indicators}
               company={company}
+              bankAccounts={bankAccounts}
+              payrolls={payrolls}
+              f29={f29}
+              productionBudgets={productionBudgets}
+              productionOrders={productionOrders}
+              leases={leases}
             />
           )}
 
@@ -779,6 +1021,13 @@ export default function App() {
         company={company}
         firm={firm}
         onAddEntry={handleAddEntry}
+      />
+
+      {/* Interactive In-App User Manual & Casuistics Modal */}
+      <UserManualModal
+        isOpen={isManualOpen}
+        onClose={() => setIsManualOpen(false)}
+        onNavigateToTab={(tabId) => setActiveTab(tabId)}
       />
     </div>
   );

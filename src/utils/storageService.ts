@@ -26,6 +26,19 @@ export function savePersistentState<T>(key: string, data: T): void {
   }
 }
 
+/**
+ * Persistencia segregada por empresa o cliente (Multi-Tenant Local Persistence)
+ */
+export function loadClientState<T>(clientId: string, entityKey: string, fallback: T): T {
+  const compositeKey = `client_${clientId}_${entityKey}`;
+  return loadPersistentState<T>(compositeKey, fallback);
+}
+
+export function saveClientState<T>(clientId: string, entityKey: string, data: T): void {
+  const compositeKey = `client_${clientId}_${entityKey}`;
+  savePersistentState<T>(compositeKey, data);
+}
+
 export function clearPersistentState(key?: string): void {
   if (typeof window === 'undefined') return;
   try {
@@ -45,3 +58,40 @@ export function clearPersistentState(key?: string): void {
     console.error('[StorageService] Error al limpiar localStorage:', err);
   }
 }
+
+/**
+ * Respaldo JSON completo de la base de datos local para exportación/importación
+ */
+export function exportAllErpData(): string {
+  if (typeof window === 'undefined') return '{}';
+  const dump: Record<string, any> = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('remix_erp_')) {
+      try {
+        dump[k] = JSON.parse(localStorage.getItem(k) || 'null');
+      } catch {
+        dump[k] = localStorage.getItem(k);
+      }
+    }
+  }
+  return JSON.stringify(dump, null, 2);
+}
+
+export function importErpData(jsonString: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const dump = JSON.parse(jsonString);
+    if (typeof dump !== 'object' || !dump) return false;
+    Object.keys(dump).forEach(k => {
+      if (k.startsWith('remix_erp_')) {
+        localStorage.setItem(k, JSON.stringify(dump[k]));
+      }
+    });
+    return true;
+  } catch (err) {
+    console.error('[StorageService] Error al importar base de datos:', err);
+    return false;
+  }
+}
+

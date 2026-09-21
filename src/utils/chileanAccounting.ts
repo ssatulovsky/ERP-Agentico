@@ -451,7 +451,7 @@ export function createPayrollCentralizationEntry(
 }
 
 /**
- * Generate Accounting Entry for Sales Invoice (DTE 33 / DTE 34)
+ * Generate Accounting Entry for Sales Documents (DTE 33, 34, 39, 41, 56, 61, 110)
  */
 export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
   if (!dte) {
@@ -459,7 +459,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       id: `entry-dte-sale-default-${Date.now()}`,
       fecha: new Date().toISOString().split('T')[0],
       concepto: 'Venta Documento Tributario',
-      documento: 'DTE 34',
+      documento: 'DTE 33',
       lineas: [],
       totalDebe: 0,
       totalHaber: 0,
@@ -469,28 +469,122 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
     };
   }
 
-  const isExentoOrNoAfecto = dte.tipoDte === '34' || (dte.montoExento > 0 && dte.montoIva === 0);
-  const lineas: AccountingEntryLine[] = [
-    {
+  const lineas: AccountingEntryLine[] = [];
+
+  // CASO 1: NOTA DE CRÉDITO DE VENTA (DTE 61)
+  if (dte.tipoDte === '61') {
+    if (dte.montoNeto > 0) {
+      lineas.push({
+        cuentaCodigo: '4.1.99',
+        cuentaNombre: 'Devoluciones y Descuentos en Ventas (Art. 21 DL 825)',
+        debe: dte.montoNeto,
+        haber: 0,
+      });
+    }
+    if (dte.montoIva > 0) {
+      lineas.push({
+        cuentaCodigo: '2.1.03',
+        cuentaNombre: 'IVA Débito Fiscal (Rebaja por NC Emitida)',
+        debe: dte.montoIva,
+        haber: 0,
+      });
+    }
+    if (dte.montoExento > 0) {
+      lineas.push({
+        cuentaCodigo: '4.1.02',
+        cuentaNombre: 'Rebaja Ventas Exentas por NC',
+        debe: dte.montoExento,
+        haber: 0,
+      });
+    }
+    lineas.push({
+      cuentaCodigo: '1.1.03',
+      cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
+      debe: 0,
+      haber: dte.montoTotal,
+    });
+  } 
+  // CASO 2: FACTURA DE EXPORTACIÓN (DTE 110)
+  else if (dte.tipoDte === '110') {
+    lineas.push(
+      {
+        cuentaCodigo: '1.1.04',
+        cuentaNombre: `Clientes del Exterior / Exportación (${dte.razonSocialContraparte})`,
+        debe: dte.montoTotal,
+        haber: 0,
+      },
+      {
+        cuentaCodigo: '4.1.03',
+        cuentaNombre: 'Ingresos por Exportaciones (Art. 12 Letra D DL 825)',
+        debe: 0,
+        haber: dte.montoTotal,
+      }
+    );
+  }
+  // CASO 3: BOLETA ELECTRÓNICA AFECTA (DTE 39) O BOLETA EXENTA (DTE 41)
+  else if (dte.tipoDte === '39' || dte.tipoDte === '41') {
+    lineas.push({
+      cuentaCodigo: '1.1.03',
+      cuentaNombre: `Clientes Boletas / Venta Menor (${dte.razonSocialContraparte || 'Consumidor Final'})`,
+      debe: dte.montoTotal,
+      haber: 0,
+    });
+    if (dte.tipoDte === '41' || (dte.montoExento > 0 && dte.montoIva === 0)) {
+      lineas.push({
+        cuentaCodigo: '4.1.02',
+        cuentaNombre: 'Ingresos por Ventas Exentas con Boleta',
+        debe: 0,
+        haber: dte.montoTotal,
+      });
+    } else {
+      if (dte.montoNeto > 0) {
+        lineas.push({
+          cuentaCodigo: '4.1.01',
+          cuentaNombre: 'Ingresos por Ventas con Boleta Electrónica',
+          debe: 0,
+          haber: dte.montoNeto,
+        });
+      }
+      if (dte.montoIva > 0) {
+        lineas.push({
+          cuentaCodigo: '2.1.03',
+          cuentaNombre: 'IVA Débito Fiscal Boletas',
+          debe: 0,
+          haber: dte.montoIva,
+        });
+      }
+    }
+  }
+  // CASO 4: FACTURA NO AFECTA O EXENTA (DTE 34)
+  else if (dte.tipoDte === '34' || (dte.montoExento > 0 && dte.montoIva === 0)) {
+    lineas.push(
+      {
+        cuentaCodigo: '1.1.03',
+        cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
+        debe: dte.montoTotal,
+        haber: 0,
+      },
+      {
+        cuentaCodigo: '4.1.02',
+        cuentaNombre: 'Ingresos por Servicios Exentos y No Afectos a IVA',
+        debe: 0,
+        haber: dte.montoExento || dte.montoTotal,
+      }
+    );
+  }
+  // CASO 5: FACTURA ELECTRÓNICA (DTE 33) O NOTA DE DÉBITO (DTE 56)
+  else {
+    lineas.push({
       cuentaCodigo: '1.1.03',
       cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
-    },
-  ];
-
-  if (isExentoOrNoAfecto) {
-    lineas.push({
-      cuentaCodigo: '4.1.02',
-      cuentaNombre: 'Ingresos por Servicios Exentos y No Afectos a IVA',
-      debe: 0,
-      haber: dte.montoExento || dte.montoTotal,
     });
-  } else {
+
     if (dte.montoNeto > 0) {
       lineas.push({
-        cuentaCodigo: '4.1.01',
-        cuentaNombre: 'Ingresos por Ventas Afectas a IVA',
+        cuentaCodigo: dte.tipoDte === '56' ? '4.2.01' : '4.1.01',
+        cuentaNombre: dte.tipoDte === '56' ? 'Otros Ingresos / Recargos ND Emitida' : 'Ingresos por Ventas Afectas a IVA',
         debe: 0,
         haber: dte.montoNeto,
       });
@@ -518,12 +612,19 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  const docTipoDesc = dte.tipoDte === '34' ? 'Factura No Afecta o Exenta (DTE 34)' : `DTE ${dte.tipoDte}`;
+  const docTipoDesc = 
+    dte.tipoDte === '34' ? 'Factura No Afecta o Exenta (DTE 34)' :
+    dte.tipoDte === '61' ? 'Nota de Crédito (DTE 61)' :
+    dte.tipoDte === '56' ? 'Nota de Débito (DTE 56)' :
+    dte.tipoDte === '39' ? 'Boleta Electrónica (DTE 39)' :
+    dte.tipoDte === '41' ? 'Boleta Exenta (DTE 41)' :
+    dte.tipoDte === '110' ? 'Factura de Exportación (DTE 110)' :
+    `Factura Electrónica (DTE ${dte.tipoDte})`;
 
   return {
     id: `entry-dte-sale-${dte.id}`,
     fecha: dte.fechaEmision,
-    concepto: `Venta ${dte.tipoDte === '34' ? 'Factura No Afecta o Exenta' : 'Factura Electrónica'} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
+    concepto: `Venta ${docTipoDesc} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
     documento: `${docTipoDesc} N° ${dte.folio}`,
     lineas,
     totalDebe,
@@ -535,7 +636,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
 }
 
 /**
- * Generate Accounting Entry for Purchase Invoice DTE 33
+ * Generate Accounting Entry for Purchase Invoice DTE 33 / DTE 61
  */
 export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
   if (!dte) {
@@ -553,44 +654,90 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
     };
   }
 
-  const lineas: AccountingEntryLine[] = [
-    {
-      cuentaCodigo: '5.1.01',
-      cuentaNombre: 'Costo de Ventas / Gastos Operacionales',
-      debe: dte.montoNeto,
+  const lineas: AccountingEntryLine[] = [];
+
+  // CASO NOTA DE CRÉDITO DE COMPRA (DTE 61 de Proveedor)
+  if (dte.tipoDte === '61') {
+    lineas.push({
+      cuentaCodigo: '2.1.01',
+      cuentaNombre: `Proveedores Nacionales (${dte.razonSocialContraparte})`,
+      debe: dte.montoTotal,
       haber: 0,
-    },
-    {
-      cuentaCodigo: '1.1.05',
-      cuentaNombre: 'IVA Crédito Fiscal',
-      debe: dte.montoIva,
-      haber: 0,
-    },
-    {
+    });
+
+    if (dte.montoNeto > 0) {
+      lineas.push({
+        cuentaCodigo: '5.1.01',
+        cuentaNombre: 'Costo de Ventas / Rebaja Compras por NC',
+        debe: 0,
+        haber: dte.montoNeto,
+      });
+    }
+
+    if (dte.montoIva > 0) {
+      lineas.push({
+        cuentaCodigo: '1.1.05',
+        cuentaNombre: 'IVA Crédito Fiscal (Rebaja por NC Recibida)',
+        debe: 0,
+        haber: dte.montoIva,
+      });
+    }
+
+    if (dte.montoExento > 0) {
+      lineas.push({
+        cuentaCodigo: '5.2.10',
+        cuentaNombre: 'Gastos Exentos / Rebaja por NC',
+        debe: 0,
+        haber: dte.montoExento,
+      });
+    }
+  } else {
+    // FACTURA O NOTA DE DÉBITO DE COMPRA
+    if (dte.montoExento > 0) {
+      lineas.push({
+        cuentaCodigo: '5.2.10',
+        cuentaNombre: 'Gastos Exentos / Otros Servicios',
+        debe: dte.montoExento,
+        haber: 0,
+      });
+    }
+
+    if (dte.montoNeto > 0) {
+      lineas.push({
+        cuentaCodigo: '5.1.01',
+        cuentaNombre: 'Costo de Ventas / Gastos Operacionales',
+        debe: dte.montoNeto,
+        haber: 0,
+      });
+    }
+
+    if (dte.montoIva > 0) {
+      lineas.push({
+        cuentaCodigo: '1.1.05',
+        cuentaNombre: 'IVA Crédito Fiscal',
+        debe: dte.montoIva,
+        haber: 0,
+      });
+    }
+
+    lineas.push({
       cuentaCodigo: '2.1.01',
       cuentaNombre: `Proveedores Nacionales (${dte.razonSocialContraparte})`,
       debe: 0,
       haber: dte.montoTotal,
-    },
-  ];
-
-  if (dte.montoExento > 0) {
-    lineas.unshift({
-      cuentaCodigo: '5.2.10',
-      cuentaNombre: 'Gastos Exentos / Otros Servicios',
-      debe: dte.montoExento,
-      haber: 0,
     });
   }
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
+  const docDesc = dte.tipoDte === '61' ? 'Nota de Crédito Proveedor (DTE 61)' : `Factura Proveedor (DTE ${dte.tipoDte})`;
+
   return {
     id: `entry-dte-purch-${dte.id}`,
     fecha: dte.fechaEmision,
-    concepto: `Compra Factura Electrónica Proveedor Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
-    documento: `DTE 33 N° ${dte.folio}`,
+    concepto: `Compra ${docDesc} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
+    documento: `${docDesc} N° ${dte.folio}`,
     lineas,
     totalDebe,
     totalHaber,
@@ -879,6 +1026,8 @@ export function validateRutChileno(rutCompleto: string): boolean {
   
   return dv === dvEsperado;
 }
+
+export const validateRut = validateRutChileno;
 
 /**
  * Formateador de RUT Chileno estándar (XX.XXX.XXX-X)

@@ -22,6 +22,7 @@ import {
   ClientCompany 
 } from '../types';
 import { formatCLP, formatNumberCL } from '../utils/chileanAccounting';
+import { ErpPremiaLogo } from './ErpPremiaLogo';
 
 interface NavbarProps {
   activeTab: string;
@@ -35,6 +36,7 @@ interface NavbarProps {
   discrepanciesCount: number;
   openAiChat: () => void;
   openAuditor: () => void;
+  openManual: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -49,6 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   discrepanciesCount,
   openAiChat,
   openAuditor,
+  openManual,
 }) => {
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
@@ -58,10 +61,10 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Top Bar: Geometric Monogram, Title, Client Switcher, Chilean KPI Strip & Controls */}
       <div className="w-full px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-4">
         {/* Left: Brand, Firm & Client Switcher */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-indigo-700 text-white rounded-lg font-black flex items-center justify-center text-base tracking-tight shadow-md border border-white/20">
-            S
-          </div>
+        <div className="flex items-center gap-3.5">
+          <ErpPremiaLogo variant="full" layout="horizontal" theme="dark" size="sm" />
+
+          <div className="h-8 w-[1px] bg-slate-700/80 hidden md:block" />
 
           <div className="flex flex-col">
             {/* Firm Banner */}
@@ -207,6 +210,16 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>{discrepanciesCount} Alertas SII</span>
             </button>
           )}
+
+          <button
+            onClick={openManual}
+            className="flex items-center gap-1.5 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border border-indigo-500/40 px-3 py-1.5 rounded-md transition-colors cursor-pointer text-xs font-semibold"
+            title="Abrir Manual de Usuario y Guía de Casuística"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Manual de</span>
+            <span>Usuario</span>
+          </button>
 
           <button
             onClick={openAuditor}

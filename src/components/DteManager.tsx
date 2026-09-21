@@ -61,7 +61,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
   onClearAllDtes
 }) => {
   const safeDtes = Array.isArray(dtes) ? dtes : [];
-  const [activeSubTab, setActiveSubTab] = useState<'TODOS' | 'VENTA' | 'COMPRA' | 'HONORARIOS' | 'PENDIENTES_CONTABILIZAR'>('TODOS');
+  const [activeSubTab, setActiveSubTab] = useState<'TODOS' | 'VENTA' | 'COMPRA' | 'HONORARIOS' | 'BOLETAS' | 'PENDIENTES_CONTABILIZAR'>('TODOS');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('TODOS');
   
@@ -159,6 +159,8 @@ export const DteManager: React.FC<DteManagerProps> = ({
     let matchesTab = true;
     if (activeSubTab === 'PENDIENTES_CONTABILIZAR') {
       matchesTab = !d.asientoCentralizacionId && (d.imputacionEstado !== 'CENTRALIZADO');
+    } else if (activeSubTab === 'BOLETAS') {
+      matchesTab = d.tipoDte === '39' || d.tipoDte === '41' || (d as any).tipoOperacion === 'BOLETA';
     } else if (activeSubTab !== 'TODOS') {
       matchesTab = d.tipoOperacion === activeSubTab;
     }
@@ -445,13 +447,13 @@ export const DteManager: React.FC<DteManagerProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-sm text-white">Centro de Integración SII (APIs & Ingesta RCV)</span>
+              <span className="font-extrabold text-sm text-white">Registro de Compras, Ventas / Honorarios & Boletas SII (RCV & BHE)</span>
               <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded text-[10px] font-mono font-bold">
-                API REST / RPA Ready
+                API REST / RPA Playwright Ready
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Descarga automática de DTEs (Facturas 33/34, NC 61, BHE), ingesta guiada de CSV/Excel del SII y conciliación directa con Flujo de Caja y Libro Diario.
+              Descarga y auditoría oficial de DTEs (Facturas 33/34, NC 61, Boletas 39/41 y Boletas de Honorarios BHE), ingesta guiada RCV y conciliación directa con Flujo de Caja y Libro Diario.
             </p>
           </div>
         </div>
@@ -539,6 +541,14 @@ export const DteManager: React.FC<DteManagerProps> = ({
             }`}
           >
             Honorarios ({safeDtes.filter(d => d.tipoOperacion === 'HONORARIOS').length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab('BOLETAS')}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+              activeSubTab === 'BOLETAS' ? 'bg-white text-indigo-700 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Boletas (39/41) ({safeDtes.filter(d => d.tipoDte === '39' || d.tipoDte === '41' || (d as any).tipoOperacion === 'BOLETA').length})
           </button>
           <button
             onClick={() => setActiveSubTab('PENDIENTES_CONTABILIZAR')}

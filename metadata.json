@@ -1,6 +1,6 @@
 {
   "name": "Remix Agente Contable y Financiero Senior",
-  "description": "Sistema integral de gestión contable multi-empresa para estudios contables, Agente Fiscal y Tributario Senior (F29 dos capas, RCV, Art. 64, CPT y Ley de Rentas Municipales), agentes SII, inventarios y bodegas WMS, agente autónomo de RRHH y gestión de personas (DT, Previred, Ley Karin y Art. 10/161), conciliación bancaria con APIs y cartolas, IFRS 16 y flujo de caja.",
+  "description": "Sistema integral de gestión contable multi-empresa para estudios contables, Agente Fiscal y Tributario Senior (F29 dos capas, RCV, Art. 64, CPT y Ley de Rentas Municipales), Agente Autónomo de Facturación y Cobranza (DTE 33, 34, 39, 41, 61, 110, Playwright RPA SII MIPYME y Boletas/Honorarios), agentes SII, inventarios y bodegas WMS, agente autónomo de RRHH y gestión de personas (DT, Previred, Ley Karin y Art. 10/161), conciliación bancaria con catálogo completo de bancos chilenos y cartolas, IFRS 16 y flujo de caja proyectado real.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

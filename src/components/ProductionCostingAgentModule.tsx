@@ -9,6 +9,11 @@ import {
   IndirectCostPoolItem,
   AccountingEntry,
   ClientCompany,
+  ProductionBudget,
+  ProductionOrderClosureAnalysis,
+  WarehouseWithdrawal,
+  InventoryItem,
+  Warehouse,
 } from '../types';
 import {
   formatCLP,
@@ -35,7 +40,11 @@ import {
   ArrowRight,
   ShieldCheck,
   Percent,
+  FileText,
+  Building2,
 } from 'lucide-react';
+import { BudgetManagementSection } from './BudgetManagementSection';
+import { OpClosureAnalysisModal } from './OpClosureAnalysisModal';
 
 interface ProductionCostingAgentModuleProps {
   currentClient: ClientCompany;
@@ -45,6 +54,13 @@ interface ProductionCostingAgentModuleProps {
   onUpdateProductionOrder: (order: ProductionOrder) => void;
   onAddAccountingEntry: (entry: AccountingEntry) => void;
   accountingEntries?: AccountingEntry[];
+  productionBudgets?: ProductionBudget[];
+  warehouseWithdrawals?: WarehouseWithdrawal[];
+  onAddProductionBudget?: (budget: ProductionBudget) => void;
+  onUpdateProductionBudget?: (budget: ProductionBudget) => void;
+  onApproveBudgetAndGenerateOp?: (budget: ProductionBudget) => void;
+  inventoryItems?: InventoryItem[];
+  warehouses?: Warehouse[];
 }
 
 export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModuleProps> = ({
@@ -55,13 +71,22 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
   onUpdateProductionOrder,
   onAddAccountingEntry,
   accountingEntries = [],
+  productionBudgets = [],
+  warehouseWithdrawals = [],
+  onAddProductionBudget,
+  onUpdateProductionBudget,
+  onApproveBudgetAndGenerateOp,
+  inventoryItems = [],
+  warehouses = [],
 }) => {
   const safeOrders = useMemo(() => Array.isArray(productionOrders) ? productionOrders : [], [productionOrders]);
   const safeCif = useMemo(() => Array.isArray(cifPoolItems) ? cifPoolItems : [], [cifPoolItems]);
   const safeEntries = useMemo(() => Array.isArray(accountingEntries) ? accountingEntries : [], [accountingEntries]);
+  const safeBudgets = useMemo(() => Array.isArray(productionBudgets) ? productionBudgets : [], [productionBudgets]);
 
-  const [activeTab, setActiveTab] = useState<'ORDENES' | 'MPD' | 'MOD' | 'CIF' | 'ESTADO_COSTO' | 'CONTABILIDAD'>('ORDENES');
+  const [activeTab, setActiveTab] = useState<'PRESUPUESTOS' | 'ORDENES' | 'MPD' | 'MOD' | 'CIF' | 'ESTADO_COSTO' | 'CONTABILIDAD'>('ORDENES');
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [closureModalOp, setClosureModalOp] = useState<ProductionOrder | null>(null);
 
   // Modales
   const [showCreateOpModal, setShowCreateOpModal] = useState(false);
@@ -372,6 +397,38 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     );
   };
 
+  // Handler: Confirmar Cierre y Liquidación desde Modal de Análisis de Desvíos
+  const handleConfirmClosureAndLiquidation = (orderId: string, analysis: ProductionOrderClosureAnalysis) => {
+    const op = safeOrders.find(o => o.id === orderId);
+    if (!op) return;
+
+    const cantProducida = op.cantidadProducidaReal > 0 ? op.cantidadProducidaReal : op.cantidadObjetivo;
+    const costUnit = Math.round((op.costoTotalProduccion || 0) / cantProducida);
+
+    const updatedOp: ProductionOrder = {
+      ...op,
+      estado: 'TERMINADA',
+      cantidadProducidaReal: cantProducida,
+      costoUnitarioReal: costUnit,
+      fechaRealTermino: new Date().toISOString().split('T')[0],
+      analisisCierre: analysis,
+    };
+
+    const liqEntry = createProductionFinishedLiquidationEntry(updatedOp);
+    updatedOp.asientosGenerados = {
+      ...updatedOp.asientosGenerados,
+      liquidacionPtAsientoId: liqEntry.id,
+    };
+
+    onAddAccountingEntry(liqEntry);
+    onUpdateProductionOrder(updatedOp);
+    setClosureModalOp(null);
+
+    triggerSuccess(
+      `Orden ${op.folioOP} liquidada a Productos Terminados con éxito. Diagnóstico de Eficiencia: ${analysis.diagnosticoEficiencia}. Asiento WIP -> PT contabilizado.`
+    );
+  };
+
   // Handler: Registrar Venta / Costo de Ventas
   const handleConfirmCogs = (e: React.FormEvent) => {
     e.preventDefault();
@@ -495,6 +552,21 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
       {/* Tabs */}
       <div className="border-b border-slate-800 flex items-center gap-2 overflow-x-auto pb-1">
         <button
+          onClick={() => setActiveTab('PRESUPUESTOS')}
+          className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors flex items-center gap-2 cursor-pointer ${
+            activeTab === 'PRESUPUESTOS'
+              ? 'bg-blue-600 text-white font-bold shadow'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+          }`}
+        >
+          <FileText className="w-4 h-4 text-blue-300" />
+          <span>Presupuestos & Cotizaciones</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white font-mono">
+            {safeBudgets.length}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('ORDENES')}
           className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors ${
             activeTab === 'ORDENES'
@@ -561,6 +633,18 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
         </button>
       </div>
 
+      {/* TAB 0: PRESUPUESTOS Y COTIZACIONES A CLIENTES */}
+      {activeTab === 'PRESUPUESTOS' && (
+        <BudgetManagementSection
+          budgets={safeBudgets}
+          currentClient={currentClient}
+          inventoryItems={inventoryItems}
+          onAddBudget={(b) => onAddProductionBudget && onAddProductionBudget(b)}
+          onUpdateBudget={(b) => onUpdateProductionBudget && onUpdateProductionBudget(b)}
+          onApproveAndGenerateOp={(b) => onApproveBudgetAndGenerateOp && onApproveBudgetAndGenerateOp(b)}
+        />
+      )}
+
       {/* TAB 1: ÓRDENES DE FABRICACIÓN */}
       {activeTab === 'ORDENES' && (
         <div className="space-y-4">
@@ -622,6 +706,31 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
                       />
                     </div>
                   </div>
+
+                  {/* Badge de Cliente y Presupuesto Vinculado */}
+                  {(op.clienteNombre || op.presupuestoFolio) && (
+                    <div className="bg-slate-950/90 p-2.5 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-3.5 h-3.5 text-blue-400" />
+                        <span className="text-slate-400">Cliente Mandante:</span>
+                        <strong className="text-slate-100">{op.clienteNombre || 'Sin cliente asignado'}</strong>
+                        {op.presupuestoFolio && (
+                          <span className="font-mono text-cyan-400 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800/60 font-semibold text-[11px]">
+                            Presupuesto Ref: {op.presupuestoFolio}
+                          </span>
+                        )}
+                      </div>
+                      {op.margenPresupuestadoPct !== undefined && (
+                        <div className="flex items-center gap-2 font-mono text-[11px]">
+                          <span className="text-slate-400">Margen Previsto:</span>
+                          <strong className="text-emerald-400 font-bold">{op.margenPresupuestadoPct}%</strong>
+                          {op.precioVentaPactado && (
+                            <span className="text-slate-500">(${formatCLP(op.precioVentaPactado)} neto)</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Desglose de Costos de la OP */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/70 p-3.5 rounded-lg border border-slate-800/80 text-xs">
@@ -700,22 +809,33 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
                     <div className="flex items-center gap-2">
                       {op.estado === 'EN_PROCESO' && (
                         <button
-                          onClick={() => handleLiquidateOpToPt(op)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+                          onClick={() => setClosureModalOp(op)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                          title="Realizar análisis de desviaciones de costo y liquidar a PT"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          Liquidar OP a PT
+                          Liquidar OP (Cierre & Desvíos)
                         </button>
                       )}
 
                       {op.estado === 'TERMINADA' && (
-                        <button
-                          onClick={() => setShowCogsModalForOp(op)}
-                          className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
-                        >
-                          <DollarSign className="w-3.5 h-3.5" />
-                          Venta / Costo de Ventas (CMV)
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setClosureModalOp(op)}
+                            className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-600/40 rounded-lg flex items-center gap-1.5 transition-colors font-medium cursor-pointer"
+                            title="Ver análisis de cierre presupuestario vs real y desvíos"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            Auditoría de Cierre
+                          </button>
+                          <button
+                            onClick={() => setShowCogsModalForOp(op)}
+                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            Venta / CMV
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -1602,6 +1722,15 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de Análisis de Cierre de OP y Desviaciones */}
+      {closureModalOp && (
+        <OpClosureAnalysisModal
+          order={closureModalOp}
+          onClose={() => setClosureModalOp(null)}
+          onConfirmClosure={handleConfirmClosureAndLiquidation}
+        />
       )}
     </div>
   );

@@ -954,7 +954,79 @@ CREATE TABLE `fixed_asset_depreciation_runs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 30. TABLA: production_orders (Órdenes de Producción NIC 2 - Costeo Normal/Real)
+-- 30. TABLA: production_budgets (Presupuestos de Producción y Cotizaciones Clientes)
+-- ============================================================================
+DROP TABLE IF EXISTS `production_budget_items`;
+DROP TABLE IF EXISTS `production_budgets`;
+CREATE TABLE `production_budgets` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `folio` VARCHAR(50) NOT NULL, -- ej: PRE-2026-039
+  `cliente_id` VARCHAR(36) NULL,
+  `cliente_nombre` VARCHAR(255) NOT NULL,
+  `cliente_rut` VARCHAR(20) NOT NULL,
+  `contacto_cliente` VARCHAR(200) NULL,
+  `email_cliente` VARCHAR(200) NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_validez` DATE NOT NULL,
+  `estado` ENUM('BORRADOR', 'ENVIADO', 'APROBADO', 'RECHAZADO', 'CANCELADO') NOT NULL DEFAULT 'BORRADOR',
+  `fecha_envio` DATE NULL,
+  `fecha_aprobacion` DATE NULL,
+  `producto_nombre` VARCHAR(255) NOT NULL,
+  `producto_codigo` VARCHAR(50) NOT NULL,
+  `categoria` ENUM(
+    'SALMONIDOS_PROCESADOS',
+    'REDES_Y_FONDEOS',
+    'ALIMENTO_Y_SUPLEMENTOS',
+    'PRODUCTOS_MANUFACTURADOS',
+    'SERVICIOS_INDUSTRIALES'
+  ) NOT NULL,
+  `unidad_medida` VARCHAR(20) NOT NULL DEFAULT 'UNID',
+  `cantidad` DECIMAL(12, 2) NOT NULL DEFAULT 1.00,
+  `condiciones_comerciales` TEXT NULL,
+  `costo_total_mpd` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `costo_total_mod` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `costo_total_cif` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `costo_total_interno` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `precio_venta_neto_cliente` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `margen_bruto_estimado_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `margen_bruto_estimado_pct` DECIMAL(6, 2) NOT NULL DEFAULT 0.00,
+  `markup_pct` DECIMAL(6, 2) NOT NULL DEFAULT 0.00,
+  `orden_produccion_id_generada` VARCHAR(36) NULL,
+  `folio_op_generada` VARCHAR(50) NULL,
+  `historial_envio_json` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_budget_folio` (`empresa_id`, `folio`),
+  KEY `idx_budget_empresa_estado` (`empresa_id`, `estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 30.1 TABLA: production_budget_items (Partidas del Presupuesto de Producción)
+-- ============================================================================
+CREATE TABLE `production_budget_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `presupuesto_id` VARCHAR(36) NOT NULL,
+  `tipo` ENUM('MPD', 'MOD', 'CIF', 'OTRO') NOT NULL,
+  `insumo_id` VARCHAR(36) NULL,
+  `insumo_codigo` VARCHAR(50) NULL,
+  `descripcion` VARCHAR(255) NOT NULL,
+  `unidad_medida` VARCHAR(20) NOT NULL,
+  `cantidad_presupuestada` DECIMAL(12, 2) NOT NULL,
+  `costo_unitario_estimado` DECIMAL(15, 2) NOT NULL,
+  `costo_total_estimado` DECIMAL(15, 2) NOT NULL,
+  `precio_unitario_sugerido` DECIMAL(15, 2) NULL,
+  `precio_total_venta` DECIMAL(15, 2) NULL,
+  `visible_para_cliente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `notas_internas` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_item_presupuesto` (`presupuesto_id`),
+  CONSTRAINT `fk_item_presupuesto` FOREIGN KEY (`presupuesto_id`) REFERENCES `production_budgets` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 30.2 TABLA: production_orders (Órdenes de Producción NIC 2 - Costeo Normal/Real y Control Presupuestario)
 -- ============================================================================
 DROP TABLE IF EXISTS `production_orders`;
 CREATE TABLE `production_orders` (
@@ -1002,11 +1074,28 @@ CREATE TABLE `production_orders` (
   `costo_unitario_real` DECIMAL(15, 4) NOT NULL DEFAULT 0.0000,
   `precio_venta_estimado` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `margen_bruto_unitario_estimado` DECIMAL(8, 4) NULL DEFAULT 0.0000,
+  -- Vínculo Presupuestario y Margen Pactado
+  `presupuesto_id` VARCHAR(36) NULL,
+  `presupuesto_folio` VARCHAR(50) NULL,
+  `cliente_nombre` VARCHAR(255) NULL,
+  `cliente_rut` VARCHAR(20) NULL,
+  `precio_venta_pactado` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `margen_presupuestado_clp` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `margen_presupuestado_pct` DECIMAL(6, 2) NULL DEFAULT 0.00,
+  `costo_mpd_presupuestado` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `costo_mod_presupuestado` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `costo_cif_presupuestado` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `costo_total_presupuestado` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `presupuesto_base_json` JSON NULL,
+  `desvio_margen_actual_clp` DECIMAL(15, 2) NULL DEFAULT 0.00,
+  `desvio_margen_actual_pct` DECIMAL(6, 2) NULL DEFAULT 0.00,
+  `analisis_cierre_json` JSON NULL,
   `asientos_generados_json` JSON NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_production_op_folio` (`empresa_id`, `folio_op`),
-  KEY `idx_production_empresa_estado` (`empresa_id`, `estado`)
+  KEY `idx_production_empresa_estado` (`empresa_id`, `estado`),
+  KEY `idx_production_presupuesto` (`presupuesto_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -1176,6 +1265,60 @@ CREATE TABLE `warehouse_transfers` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
+-- 37.1 TABLA: warehouse_withdrawals (Vales de Entrega de Bodega para OP)
+-- ============================================================================
+DROP TABLE IF EXISTS `warehouse_withdrawal_items`;
+DROP TABLE IF EXISTS `warehouse_withdrawals`;
+CREATE TABLE `warehouse_withdrawals` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `folio_vale` VARCHAR(50) NOT NULL, -- ej: VALE-2026-0042
+  `fecha` DATE NOT NULL,
+  `fecha_retiro` DATE NULL,
+  `hora_retiro` VARCHAR(10) NULL,
+  `orden_produccion_id` VARCHAR(36) NOT NULL,
+  `orden_produccion_folio` VARCHAR(50) NOT NULL,
+  `cliente_nombre` VARCHAR(255) NULL,
+  `bodega_origen_id` VARCHAR(36) NOT NULL,
+  `bodega_origen_nombre` VARCHAR(150) NOT NULL,
+  `solicitante_nombre` VARCHAR(200) NOT NULL,
+  `responsable_bodega` VARCHAR(200) NOT NULL,
+  `costo_total_vale` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `alerta_sobreconsumo` BOOLEAN NOT NULL DEFAULT FALSE,
+  `folio_guia_despacho_52` BIGINT NULL,
+  `observaciones` TEXT NULL,
+  `asiento_id` VARCHAR(36) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_withdrawal_folio` (`empresa_id`, `folio_vale`),
+  KEY `idx_withdrawal_op` (`orden_produccion_id`),
+  CONSTRAINT `fk_withdrawal_op` FOREIGN KEY (`orden_produccion_id`) REFERENCES `production_orders` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_withdrawal_asiento` FOREIGN KEY (`asiento_id`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 37.2 TABLA: warehouse_withdrawal_items (Detalle Insumos de Vales y Control de Desvío)
+-- ============================================================================
+CREATE TABLE `warehouse_withdrawal_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `withdrawal_id` VARCHAR(36) NOT NULL,
+  `insumo_codigo` VARCHAR(50) NOT NULL,
+  `insumo_nombre` VARCHAR(200) NOT NULL,
+  `cantidad_retirada` DECIMAL(12, 2) NOT NULL,
+  `cantidad_presupuestada_original` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `desvio_cantidad` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `costo_unitario_pmp` DECIMAL(15, 4) NOT NULL DEFAULT 0.0000,
+  `costo_total` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `unidad_medida` VARCHAR(20) NOT NULL,
+  `impacto_estimado_en_margen_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_withdrawal_item_parent` (`withdrawal_id`),
+  KEY `idx_withdrawal_item_insumo` (`insumo_codigo`),
+  CONSTRAINT `fk_withdrawal_item_parent` FOREIGN KEY (`withdrawal_id`) REFERENCES `warehouse_withdrawals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
 -- 38. TABLA: replenishment_requisitions (Sugerencias de Reposición IA)
 -- ============================================================================
 DROP TABLE IF EXISTS `replenishment_requisitions`;
@@ -1339,10 +1482,303 @@ CREATE TABLE `agent_learnings` (
   KEY `idx_learnings_activo` (`activo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ============================================================================
+-- 45. MÓDULO INGENIERÍA NAVAL Y ACUICULTURA CHILENA (RG 1821 / RG 941)
+-- Detección de anomalías, auditoría 3D, inspección ROV/taller y trazabilidad
+-- ============================================================================
+
+-- 45.1 TABLA: aquaculture_centers (Centros de Cultivo de Salmónidos con Código RNA)
+DROP TABLE IF EXISTS `aquaculture_anomalies`;
+DROP TABLE IF EXISTS `aquaculture_inspections`;
+DROP TABLE IF EXISTS `aquaculture_mooring_lines`;
+DROP TABLE IF EXISTS `aquaculture_components`;
+DROP TABLE IF EXISTS `aquaculture_nets`;
+DROP TABLE IF EXISTS `aquaculture_drawings`;
+DROP TABLE IF EXISTS `aquaculture_modules`;
+DROP TABLE IF EXISTS `aquaculture_centers`;
+
+CREATE TABLE `aquaculture_centers` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo_rna` VARCHAR(20) NOT NULL, -- Código RNA Sernapesca ej: 102450
+  `nombre_centro` VARCHAR(150) NOT NULL,
+  `titular_nombre` VARCHAR(200) NOT NULL,
+  `titular_rut` VARCHAR(20) NOT NULL,
+  `region` VARCHAR(100) NOT NULL,
+  `comuna` VARCHAR(100) NOT NULL,
+  `agrupacion_concesiones_acs` VARCHAR(50) NULL,
+  `coordenadas_utm_norte` DECIMAL(12, 2) NOT NULL,
+  `coordenadas_utm_este` DECIMAL(12, 2) NOT NULL,
+  `latitud` DECIMAL(10, 7) NULL,
+  `longitud` DECIMAL(10, 7) NULL,
+  `profundidad_media_metros` DECIMAL(6, 2) NOT NULL,
+  `profundidad_maxima_metros` DECIMAL(6, 2) NOT NULL,
+  `tipo_fondo_marino` ENUM('FANGO_BLANDO', 'ARENA_COMPACTA', 'ROCOSO', 'MIXTO') NOT NULL,
+  `corriente_maxima_nudos` DECIMAL(5, 2) NOT NULL,
+  `altura_ola_significativa_hs` DECIMAL(5, 2) NOT NULL,
+  `memoria_calculo_fondeo_rg941_url` VARCHAR(500) NULL,
+  `certificacion_naval_vigente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `fecha_vencimiento_certificado` DATE NULL,
+  `estado_operativo` ENUM('EN_OPERACION', 'DESCANSO_SANITARIO', 'INSTALACION', 'MANTENCION') NOT NULL DEFAULT 'EN_OPERACION',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_centro_rna` (`codigo_rna`),
+  KEY `idx_centro_empresa` (`empresa_id`),
+  KEY `idx_centro_region` (`region`),
+  CONSTRAINT `fk_centro_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.2 TABLA: aquaculture_modules (Trenes y Módulos de Balsas Jaulas)
+CREATE TABLE `aquaculture_modules` (
+  `id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `codigo_tren` VARCHAR(50) NOT NULL,
+  `numero_jaulas` INT NOT NULL,
+  `tipo_geometria` ENUM('CUADRADA_30X30', 'CUADRADA_40X40', 'CIRCULAR_D30', 'CIRCULAR_D40', 'RECTANGULAR') NOT NULL,
+  `dimension_largo_m` DECIMAL(6, 2) NOT NULL,
+  `dimension_ancho_m` DECIMAL(6, 2) NOT NULL,
+  `material_pasillos` VARCHAR(100) NOT NULL DEFAULT 'HDPE Termofusionado Grado PE100',
+  `azimut_orientacion_grados` DECIMAL(5, 1) NOT NULL DEFAULT 0.0,
+  `posicion_relativa_x` DECIMAL(8, 2) NOT NULL DEFAULT 0.00,
+  `posicion_relativa_y` DECIMAL(8, 2) NOT NULL DEFAULT 0.00,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_modulo_codigo` (`centro_id`, `codigo_tren`),
+  KEY `idx_modulo_centro` (`centro_id`),
+  CONSTRAINT `fk_modulo_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.3 TABLA: aquaculture_drawings (Ingesta de Planos de Ingeniería Naval en PDF/CAD)
+CREATE TABLE `aquaculture_drawings` (
+  `id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `tipo_plano` ENUM(
+    'PLANO_GENERAL_CENTRO',
+    'PLANO_FONDEO_BATIMETRIA',
+    'PLANO_RED_PECERA',
+    'PLANO_RED_LOBERA',
+    'PLANO_SISTEMA_SEPARADORES',
+    'PLANO_DETALLE_RELIÑAS_LASTRES'
+  ) NOT NULL,
+  `titulo_plano` VARCHAR(255) NOT NULL,
+  `codigo_plano` VARCHAR(100) NOT NULL,
+  `revision` VARCHAR(10) NOT NULL DEFAULT 'Rev.0',
+  `ingeniero_naval_firma` VARCHAR(150) NOT NULL,
+  `registro_colegio_naval` VARCHAR(50) NULL,
+  `archivo_pdf_url` VARCHAR(500) NOT NULL,
+  `archivo_cad_url` VARCHAR(500) NULL,
+  `datos_ingeridos_json` JSON NULL,
+  `modelo_3d_vertices_json` JSON NULL,
+  `es_plano_oficial_vigente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_plano_centro` (`centro_id`),
+  KEY `idx_plano_tipo` (`tipo_plano`),
+  CONSTRAINT `fk_plano_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.4 TABLA: aquaculture_nets (Padrón de Redes Peceras y Loberas)
+CREATE TABLE `aquaculture_nets` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NULL,
+  `modulo_id` VARCHAR(36) NULL,
+  `codigo_red` VARCHAR(50) NOT NULL,
+  `tipo_red` ENUM(
+    'PECERA',
+    'LOBERA_PERIMETRAL',
+    'LOBERA_FONDO',
+    'PAJARERA_TECHO',
+    'SEGREGADOR_INTERNO'
+  ) NOT NULL,
+  `crotal_oficial_sernapesca` VARCHAR(50) NULL,
+  `dimension_boca_m` DECIMAL(6, 2) NOT NULL,
+  `dimension_profundidad_m` DECIMAL(6, 2) NOT NULL,
+  `material_filamento` ENUM(
+    'HDPE_ALTA_DENSIDAD',
+    'NYLON_POLIAMIDA_PA6',
+    'UHMWPE_ULTRA_RESISTENTE',
+    'POLIESTER_ALTA_TENACIDAD',
+    'ACERO_INOX_COPPER_ALLOY'
+  ) NOT NULL,
+  `tipo_tejido` ENUM('RASCHEL_SIN_NUDO', 'INGLES_CON_NUDO', 'TRENZADO_KNOTLESS') NOT NULL,
+  `tamano_malla_pulgadas` DECIMAL(4, 2) NOT NULL,
+  `denier_filamento` INT NULL,
+  `carga_rotura_malla_kg` DECIMAL(6, 2) NOT NULL,
+  `relinga_superior_cabo_mm` DECIMAL(5, 2) NOT NULL DEFAULT 24.00,
+  `relinga_inferior_plomada_kg` DECIMAL(8, 2) NOT NULL DEFAULT 1200.00,
+  `horas_inmersion_acumuladas` INT NOT NULL DEFAULT 0,
+  `fecha_ultimo_bano_antifouling` DATE NULL,
+  `taller_mantencion_ultimo` VARCHAR(150) NULL,
+  `orden_produccion_origen_id` VARCHAR(36) NULL,
+  `estado_conservacion` ENUM(
+    'OPTIMO_NUEVO',
+    'OPERATIVO_CONFORME',
+    'OBSERVADO_REQUIERE_MANTENCION',
+    'CRITICO_RIESGO_ROTURA',
+    'EN_TALLER_REPARACION',
+    'DADA_DE_BAJA'
+  ) NOT NULL DEFAULT 'OPTIMO_NUEVO',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_red_codigo` (`empresa_id`, `codigo_red`),
+  KEY `idx_red_crotal` (`crotal_oficial_sernapesca`),
+  KEY `idx_red_centro` (`centro_id`),
+  KEY `idx_red_estado` (`estado_conservacion`),
+  CONSTRAINT `fk_red_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_red_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_red_op` FOREIGN KEY (`orden_produccion_origen_id`) REFERENCES `production_orders` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.5 TABLA: aquaculture_components (Separadores, Crotales y Lastres)
+CREATE TABLE `aquaculture_components` (
+  `id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `modulo_id` VARCHAR(36) NULL,
+  `tipo_componente` ENUM(
+    'SEPARADOR_PECERA_LOBERA',
+    'CROTAL_TRAZABILIDAD_RG1821',
+    'PESO_LASTRE_FONDO',
+    'BOYA_TENSION_LOBERA',
+    'GRILLETE_INSPECCIONADO',
+    'TENSIOMETRO_LINEA'
+  ) NOT NULL,
+  `codigo_identificador` VARCHAR(50) NOT NULL,
+  `separacion_real_metros` DECIMAL(5, 2) NULL,
+  `separacion_normativa_minima_m` DECIMAL(5, 2) NULL DEFAULT 1.50,
+  `material` VARCHAR(100) NOT NULL,
+  `peso_kg` DECIMAL(8, 2) NULL,
+  `posicion_jaula_cara` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'ESQUINA_NE', 'ESQUINA_NO', 'ESQUINA_SE', 'ESQUINA_SO', 'FONDO') NOT NULL,
+  `estado_normativo` ENUM('CONFORME_RG1821', 'EN_RIESGO_CONTACTO', 'COLAPSADO_ROTURA', 'EXTRAVIADO') NOT NULL DEFAULT 'CONFORME_RG1821',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_componente_centro` (`centro_id`),
+  KEY `idx_componente_tipo` (`tipo_componente`),
+  CONSTRAINT `fk_comp_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_comp_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.6 TABLA: aquaculture_mooring_lines (Líneas de Fondeo y Fondeaderos RG 941)
+CREATE TABLE `aquaculture_mooring_lines` (
+  `id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `codigo_linea` VARCHAR(50) NOT NULL,
+  `cuadrante_geografico` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'NORESTE', 'NOROESTE', 'SURESTE', 'SUROESTE') NOT NULL,
+  `longitud_total_metros` DECIMAL(8, 2) NOT NULL,
+  `tipo_anclaje` ENUM('BLOQUE_HORMIGON_MUERTO', 'ANCLA_STEVPRIS', 'ANCLA_DANFORTH', 'PASADOR_ROCA_MICROPOZOS') NOT NULL,
+  `peso_anclaje_toneladas` DECIMAL(6, 2) NOT NULL,
+  `diametro_cabo_principal_mm` DECIMAL(6, 2) NOT NULL,
+  `material_cabo` VARCHAR(100) NOT NULL DEFAULT 'Polipropileno Virgen 8 Cordones Multifilamento',
+  `tramo_cadena_grado_mm` VARCHAR(100) NOT NULL DEFAULT 'Cadena Grado 2 D=32mm 15m fondo',
+  `carga_rotura_certificada_mbl_tn` DECIMAL(6, 2) NOT NULL,
+  `factor_seguridad_diseno` DECIMAL(4, 2) NOT NULL DEFAULT 2.50,
+  `tension_trabajo_estimada_ton` DECIMAL(6, 2) NOT NULL,
+  `ultima_inspeccion_acustica_fecha` DATE NULL,
+  `estado_estructural` ENUM('APTO_OPERACION', 'TENSION_ANORMAL', 'CORROSION_CADENA_AVANZADA', 'DESPLAZAMIENTO_MUERTO', 'REEMPLAZO_INMEDIATO') NOT NULL DEFAULT 'APTO_OPERACION',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_linea_codigo` (`centro_id`, `codigo_linea`),
+  KEY `idx_linea_centro` (`centro_id`),
+  CONSTRAINT `fk_mooring_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.7 TABLA: aquaculture_inspections (Inspecciones Submarinas ROV y Taller de Redes)
+CREATE TABLE `aquaculture_inspections` (
+  `id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `fecha_inspeccion` DATE NOT NULL,
+  `tipo_inspeccion` ENUM(
+    'ROV_SUBMARINA_ROBOTICA',
+    'TALLER_REDES_RECEPCION',
+    'TALLER_REDES_POST_LAVADO',
+    'FONDEO_BATIMETRIA_ACUSTICA',
+    'AUDITORIA_PERICIAL_SERNAPESCA'
+  ) NOT NULL,
+  `inspector_naval_nombre` VARCHAR(150) NOT NULL,
+  `matricula_armada_o_identificacion` VARCHAR(50) NOT NULL,
+  `empresa_certificadora` VARCHAR(150) NOT NULL,
+  `robot_rov_modelo` VARCHAR(100) NULL,
+  `profundidad_maxima_alcanzada_m` DECIMAL(6, 2) NOT NULL,
+  `total_horas_grabacion` DECIMAL(5, 2) NOT NULL DEFAULT 1.00,
+  `total_fotografias_analizadas` INT NOT NULL DEFAULT 0,
+  `total_anomalias_detectadas` INT NOT NULL DEFAULT 0,
+  `anomalias_criticas_rg1821` INT NOT NULL DEFAULT 0,
+  `dictamen_conformidad` ENUM(
+    'CONFORME_100_NORMATIVO',
+    'CONFORME_CON_OBSERVACIONES_MENORES',
+    'NO_CONFORME_CRITICO_REQUIERE_ACCION_INMEDIATA',
+    'CLAUSURA_PREVENTIVA_JAULA'
+  ) NOT NULL,
+  `video_evidencia_url` VARCHAR(500) NULL,
+  `informe_tecnico_pdf_url` VARCHAR(500) NULL,
+  `observaciones_tecnicas` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_inspeccion_centro_fecha` (`centro_id`, `fecha_inspeccion`),
+  KEY `idx_inspeccion_dictamen` (`dictamen_conformidad`),
+  CONSTRAINT `fk_insp_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 45.8 TABLA: aquaculture_anomalies (Mapeo de Anomalías y Roturas sobre Modelo 3D)
+CREATE TABLE `aquaculture_anomalies` (
+  `id` VARCHAR(36) NOT NULL,
+  `inspeccion_id` VARCHAR(36) NOT NULL,
+  `centro_id` VARCHAR(36) NOT NULL,
+  `modulo_id` VARCHAR(36) NULL,
+  `net_id` VARCHAR(36) NULL,
+  `tipo_anomalia` ENUM(
+    'ROTURA_MALLA_CORTE_FILAMENTO',
+    'DESGASTE_POR_ABRASION_ROCE',
+    'CORTE_CABO_RELINGA',
+    'PERDIDA_CROTAL_TRAZABILIDAD',
+    'FALLA_SEPARADOR_CONTACTO_REDES',
+    'DESPRENDIMIENTO_LASTRE_FONDO',
+    'FATIGA_FONDEO_GRILLADA',
+    'INCUMPLIMIENTO_NORMATIVO_RG1821',
+    'INCUMPLIMIENTO_NORMATIVO_RG941'
+  ) NOT NULL,
+  `nivel_criticidad` ENUM(
+    'LEVE_MONITOREO',
+    'MEDIA_PROGRAMAR_TALLER',
+    'CRITICA_ALTO_RIESGO_ESCAPE_SALMONES',
+    'EMERGENCIA_ACCION_SUBMARINA_INMEDIATA'
+  ) NOT NULL,
+  `tamano_abertura_cm` DECIMAL(6, 2) NULL DEFAULT 0.00,
+  `numero_mallas_cortadas` INT NULL DEFAULT 0,
+  -- Coordenadas Tridimensionales Espaciales relativas a la Jaula (en metros)
+  `coordenada_relativa_x` DECIMAL(6, 2) NOT NULL,
+  `coordenada_relativa_y` DECIMAL(6, 2) NOT NULL,
+  `profundidad_z_metros` DECIMAL(6, 2) NOT NULL,
+  `cara_jaula` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'FONDO_PLANCHA', 'RELINGA_SUPERIOR', 'CABO_FONDEO') NOT NULL,
+  `fotograma_evidencia_url` VARCHAR(500) NOT NULL,
+  `timestamp_video_segundo` INT NULL,
+  `orden_produccion_reparacion_id` VARCHAR(36) NULL,
+  `estado_reparacion` ENUM(
+    'DETECTADA_PENDIENTE',
+    'REPARADA_IN_SITU_BUZO',
+    'REPARADA_EN_TALLER_REDERIA',
+    'VALIDADA_POR_INSPECTOR_NAVAL',
+    'DESESTIMADA_FALSO_POSITIVO'
+  ) NOT NULL DEFAULT 'DETECTADA_PENDIENTE',
+  `fecha_reparacion` DATE NULL,
+  `observacion_naval` TEXT NOT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_anomalia_inspeccion` (`inspeccion_id`),
+  KEY `idx_anomalia_centro` (`centro_id`),
+  KEY `idx_anomalia_criticidad` (`nivel_criticidad`),
+  KEY `idx_anomalia_estado` (`estado_reparacion`),
+  CONSTRAINT `fk_anom_inspeccion` FOREIGN KEY (`inspeccion_id`) REFERENCES `aquaculture_inspections` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_anom_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_anom_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_anom_net` FOREIGN KEY (`net_id`) REFERENCES `aquaculture_nets` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_anom_op` FOREIGN KEY (`orden_produccion_reparacion_id`) REFERENCES `production_orders` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================================
--- 45. DATOS SEMILLA (INITIAL SEED DATA)
+-- 46. DATOS SEMILLA (INITIAL SEED DATA)
 -- ============================================================================
 
 -- Catálogo Maestro de Planes ERP SaaS
@@ -1606,4 +2042,325 @@ VALUES (
 )
 ON DUPLICATE KEY UPDATE `jornada_horas_semanales` = VALUES(`jornada_horas_semanales`);
 
--- Fin del script
+-- ============================================================================
+-- 46.1 DATOS SEMILLA: PRESUPUESTOS Y ÓRDENES DE PRODUCCIÓN
+-- ============================================================================
+INSERT INTO `production_budgets` (
+  `id`, `empresa_id`, `folio`, `cliente_id`, `cliente_nombre`, `cliente_rut`,
+  `contacto_cliente`, `email_cliente`, `fecha_emision`, `fecha_validez`,
+  `estado`, `fecha_envio`, `fecha_aprobacion`, `producto_nombre`, `producto_codigo`,
+  `categoria`, `unidad_medida`, `cantidad`, `condiciones_comerciales`,
+  `costo_total_mpd`, `costo_total_mod`, `costo_total_cif`, `costo_total_interno`,
+  `precio_venta_neto_cliente`, `margen_bruto_estimado_clp`, `margen_bruto_estimado_pct`,
+  `markup_pct`, `orden_produccion_id_generada`, `folio_op_generada`, `created_at`
+)
+VALUES
+(
+  'pre-2026-039', 'client-retail-01', 'PRE-2026-039', 'aux-cl-chiloe', 'Chiloé Pesquera & Salmon SpA', '76.452.190-8',
+  'Ing. Rodrigo Almonacid', 'rodrigo.almonacid@chiloepesquera.cl', '2026-08-15', '2026-09-15',
+  'APROBADO', '2026-08-16', '2026-08-20', 'Red Pecera HDPE Cuadrada 30x30x15m Reforzada', 'RED-HDPE-303015',
+  'REDES_Y_FONDEOS', 'UNID', 2.00, 'Pago 40% anticipo, 60% contra entrega conforme en Puerto Montt',
+  16500000.00, 4800000.00, 2200000.00, 23500000.00,
+  34500000.00, 11000000.00, 31.88,
+  46.81, 'op-2026-101', 'OP-2026-101', NOW()
+),
+(
+  'pre-2026-040', 'client-retail-01', 'PRE-2026-040', 'aux-cl-austral', 'Austral Salmónidos del Sur S.A.', '77.890.120-3',
+  'Patricia Vargas Cárdenas', 'pvargas@australsalmonidos.cl', '2026-08-22', '2026-09-22',
+  'APROBADO', '2026-08-23', '2026-08-28', 'Módulo de Lobera Perimetral y Fondo Antilobo', 'LOB-PERIM-D40',
+  'REDES_Y_FONDEOS', 'UNID', 1.00, 'Crédito a 30 días fecha factura comercial DTE',
+  12800000.00, 3900000.00, 1850000.00, 18550000.00,
+  26900000.00, 8350000.00, 31.04,
+  45.01, 'op-2026-102', 'OP-2026-102', NOW()
+)
+ON DUPLICATE KEY UPDATE `cliente_nombre` = VALUES(`cliente_nombre`);
+
+-- Partidas de Presupuesto
+INSERT INTO `production_budget_items` (
+  `id`, `presupuesto_id`, `tipo`, `insumo_codigo`, `descripcion`,
+  `unidad_medida`, `cantidad_presupuestada`, `costo_unitario_estimado`,
+  `costo_total_estimado`, `precio_unitario_sugerido`, `precio_total_venta`,
+  `visible_para_cliente`, `notas_internas`, `created_at`
+)
+VALUES
+('pbi-01', 'pre-2026-039', 'MPD', 'PAÑO-HDPE-1.5', 'Paño Malla HDPE Virgen Grado Acuicultura 1.5"', 'KG', 1800.00, 5200.00, 9360000.00, 7800.00, 14040000.00, TRUE, 'Cálculo para dos redes peceras 30x30m', NOW()),
+('pbi-02', 'pre-2026-039', 'MPD', 'CABO-POLIPROP-24MM', 'Cabo Polipropileno Virgen 8 Cordones 24mm para Relingas', 'METROS', 1200.00, 3200.00, 3840000.00, 4800.00, 5760000.00, TRUE, 'Relingas superior e inferior', NOW()),
+('pbi-03', 'pre-2026-039', 'MPD', 'PLOMADA-CADENA-10MM', 'Cabo de Fondo con Alma de Plomo Lastre 1200kg', 'KG', 2400.00, 1375.00, 3300000.00, 2050.00, 4920000.00, TRUE, 'Plomada embutida certificada', NOW()),
+('pbi-04', 'pre-2026-039', 'MOD', 'MANO-OBRA-ARMADURA', 'Armadura y Enllingue Red Pecera Maestros Rederos', 'HORAS', 240.00, 20000.00, 4800000.00, 28000.00, 6720000.00, TRUE, 'Jornada taller redería especializada Puerto Montt', NOW()),
+('pbi-05', 'pre-2026-039', 'CIF', 'MAQ-COSTURA-TALLER', 'Depreciación Maquinaria y Energía Fabril de Planta', 'HORAS_MAQ', 110.00, 20000.00, 2200000.00, 27818.18, 3060000.00, FALSE, 'Costos indirectos asignados', NOW())
+ON DUPLICATE KEY UPDATE `descripcion` = VALUES(`descripcion`);
+
+-- Órdenes de Producción Vinculadas
+INSERT INTO `production_orders` (
+  `id`, `empresa_id`, `folio_op`, `descripcion`, `producto_codigo`, `producto_nombre`,
+  `categoria`, `unidad_medida`, `fecha_inicio`, `fecha_estimada_termino`, `fecha_real_termino`,
+  `estado`, `cantidad_objetivo`, `cantidad_producida_real`, `cantidad_merma`,
+  `costo_directo_materiales`, `costo_directo_mano_obra`, `costo_primo`, `base_prorrateo_cif`,
+  `tasa_cif_aplicada`, `costo_indirecto_cif`, `costo_total_produccion`, `costo_unitario_real`,
+  `precio_venta_estimado`, `margen_bruto_unitario_estimado`,
+  `presupuesto_id`, `presupuesto_folio`, `cliente_nombre`, `cliente_rut`,
+  `precio_venta_pactado`, `margen_presupuestado_clp`, `margen_presupuestado_pct`,
+  `costo_mpd_presupuestado`, `costo_mod_presupuestado`, `costo_cif_presupuestado`, `costo_total_presupuestado`,
+  `desvio_margen_actual_clp`, `desvio_margen_actual_pct`, `created_at`
+)
+VALUES
+(
+  'op-2026-101', 'client-retail-01', 'OP-2026-101', 'Fabricación de 2 Redes Peceras HDPE 30x30x15m Reforzadas', 'RED-HDPE-303015', 'Red Pecera HDPE 30x30m',
+  'REDES_Y_FONDEOS', 'UNID', '2026-08-25', '2026-09-18', NULL,
+  'EN_PROCESO', 2.00, 0.00, 0.00,
+  16850000.00, 4200000.00, 21050000.00, 'HORAS_HOMBRE_MOD',
+  10500.0000, 2100000.00, 23150000.00, 11575000.0000,
+  34500000.00, 5675000.0000,
+  'pre-2026-039', 'PRE-2026-039', 'Chiloé Pesquera & Salmon SpA', '76.452.190-8',
+  34500000.00, 11000000.00, 31.88,
+  16500000.00, 4800000.00, 2200000.00, 23500000.00,
+  350000.00, 1.01, NOW()
+)
+ON DUPLICATE KEY UPDATE `descripcion` = VALUES(`descripcion`);
+
+-- Vales de Retiro de Bodega
+INSERT INTO `warehouse_withdrawals` (
+  `id`, `empresa_id`, `folio_vale`, `fecha`, `fecha_retiro`, `hora_retiro`,
+  `orden_produccion_id`, `orden_produccion_folio`, `cliente_nombre`,
+  `bodega_origen_id`, `bodega_origen_nombre`, `solicitante_nombre`, `responsable_bodega`,
+  `costo_total_vale`, `alerta_sobreconsumo`, `observaciones`, `created_at`
+)
+VALUES
+(
+  'vale-2026-0041', 'client-retail-01', 'VALE-2026-0041', '2026-08-26', '2026-08-26', '08:45',
+  'op-2026-101', 'OP-2026-101', 'Chiloé Pesquera & Salmon SpA',
+  'wh-01', 'Bodega Central San Bernardo', 'Luis Mansilla (Maestro Mayor Redería)', 'Claudio Ojeda (Jefe Bodega)',
+  13200000.00, FALSE, 'Primer retiro de paños de polietileno HDPE virgen y cabos de relinga', NOW()
+),
+(
+  'vale-2026-0042', 'client-retail-01', 'VALE-2026-0042', '2026-09-02', '2026-09-02', '14:20',
+  'op-2026-101', 'OP-2026-101', 'Chiloé Pesquera & Salmon SpA',
+  'wh-01', 'Bodega Central San Bernardo', 'Luis Mansilla (Maestro Mayor Redería)', 'Claudio Ojeda (Jefe Bodega)',
+  3650000.00, TRUE, 'Sobreconsumo de 50 kg paño de malla por ajuste de esquinas en escuadra', NOW()
+)
+ON DUPLICATE KEY UPDATE `folio_vale` = VALUES(`folio_vale`);
+
+INSERT INTO `warehouse_withdrawal_items` (
+  `id`, `withdrawal_id`, `insumo_codigo`, `insumo_nombre`,
+  `cantidad_retirada`, `cantidad_presupuestada_original`, `desvio_cantidad`,
+  `costo_unitario_pmp`, `costo_total`, `unidad_medida`, `impacto_estimado_en_margen_clp`, `created_at`
+)
+VALUES
+('vwi-01', 'vale-2026-0041', 'PAÑO-HDPE-1.5', 'Paño Malla HDPE Virgen 1.5"', 1800.00, 1800.00, 0.00, 5200.0000, 9360000.00, 'KG', 0.00, NOW()),
+('vwi-02', 'vale-2026-0041', 'CABO-POLIPROP-24MM', 'Cabo Polipropileno Virgen 24mm', 1200.00, 1200.00, 0.00, 3200.0000, 3840000.00, 'METROS', 0.00, NOW()),
+('vwi-03', 'vale-2026-0042', 'PAÑO-HDPE-1.5', 'Paño Malla HDPE Virgen 1.5"', 50.00, 0.00, 50.00, 5200.0000, 260000.00, 'KG', -260000.00, NOW()),
+('vwi-04', 'vale-2026-0042', 'PLOMADA-CADENA-10MM', 'Cabo con Alma de Plomo 1200kg', 2465.00, 2400.00, 65.00, 1375.0000, 3390000.00, 'KG', -90000.00, NOW())
+ON DUPLICATE KEY UPDATE `insumo_nombre` = VALUES(`insumo_nombre`);
+
+-- ============================================================================
+-- 46.2 DATOS SEMILLA: INGENIERÍA NAVAL Y ACUICULTURA (RG 1821 / RG 941)
+-- ============================================================================
+
+-- Centros de Cultivo de Salmónidos con Código RNA Oficial
+INSERT INTO `aquaculture_centers` (
+  `id`, `empresa_id`, `codigo_rna`, `nombre_centro`, `titular_nombre`, `titular_rut`,
+  `region`, `comuna`, `agrupacion_concesiones_acs`, `coordenadas_utm_norte`, `coordenadas_utm_este`,
+  `latitud`, `longitud`, `profundidad_media_metros`, `profundidad_maxima_metros`,
+  `tipo_fondo_marino`, `corriente_maxima_nudos`, `altura_ola_significativa_hs`,
+  `memoria_calculo_fondeo_rg941_url`, `certificacion_naval_vigente`, `fecha_vencimiento_certificado`,
+  `estado_operativo`, `created_at`
+)
+VALUES
+(
+  'centro-rna-102450', 'client-retail-01', '102450', 'Centro Punta Pilluco', 'Salmones del Fiordo Reloncaví S.A.', '76.320.440-1',
+  'Región de Los Lagos', 'Hornopirén', 'ACS 17A', 5354200.00, 684300.00,
+  -41.9324000, -72.4821000, 48.50, 72.00,
+  'FANGO_BLANDO', 1.85, 2.10,
+  'https://storage.armada.cl/fondeos/102450_memoria_rg941.pdf', TRUE, '2027-06-30',
+  'EN_OPERACION', NOW()
+),
+(
+  'centro-rna-103890', 'client-retail-01', '103890', 'Centro Canal Lemuy - Cheniao', 'Chiloé Pesquera & Salmon SpA', '76.452.190-8',
+  'Región de Los Lagos', 'Puqueldón / Quellón', 'ACS 18B', 5289100.00, 621450.00,
+  -42.5412000, -73.6120000, 36.00, 55.00,
+  'ARENA_COMPACTA', 2.40, 2.80,
+  'https://storage.armada.cl/fondeos/103890_memoria_rg941.pdf', TRUE, '2027-11-15',
+  'EN_OPERACION', NOW()
+)
+ON DUPLICATE KEY UPDATE `nombre_centro` = VALUES(`nombre_centro`);
+
+-- Módulos y Trenes de Jaulas
+INSERT INTO `aquaculture_modules` (
+  `id`, `centro_id`, `codigo_tren`, `numero_jaulas`, `tipo_geometria`,
+  `dimension_largo_m`, `dimension_ancho_m`, `material_pasillos`,
+  `azimut_orientacion_grados`, `posicion_relativa_x`, `posicion_relativa_y`, `created_at`
+)
+VALUES
+(
+  'mod-pilluco-tren-norte', 'centro-rna-102450', 'TREN-NORTE-01', 8, 'CUADRADA_30X30',
+  120.00, 60.00, 'HDPE Termofusionado PE100 con Pasillos Antideslizantes',
+  315.0, 0.00, 0.00, NOW()
+),
+(
+  'mod-pilluco-tren-sur', 'centro-rna-102450', 'TREN-SUR-02', 8, 'CUADRADA_30X30',
+  120.00, 60.00, 'HDPE Termofusionado PE100 con Pasillos Antideslizantes',
+  315.0, 0.00, 90.00, NOW()
+)
+ON DUPLICATE KEY UPDATE `codigo_tren` = VALUES(`codigo_tren`);
+
+-- Planos de Ingeniería Naval Ingeridos
+INSERT INTO `aquaculture_drawings` (
+  `id`, `centro_id`, `tipo_plano`, `titulo_plano`, `codigo_plano`, `revision`,
+  `ingeniero_naval_firma`, `registro_colegio_naval`, `archivo_pdf_url`,
+  `datos_ingeridos_json`, `modelo_3d_vertices_json`, `es_plano_oficial_vigente`, `created_at`
+)
+VALUES
+(
+  'plano-pilluco-gen-01', 'centro-rna-102450', 'PLANO_GENERAL_CENTRO',
+  'Plano General Disposición de Módulos y Trenes de Cultivo RNA 102450', 'PLN-NAV-102450-G01', 'Rev.3',
+  'Ing. Naval Christian E. Heins (UACH Valdivia)', 'CIN-CHILE-3942',
+  'https://archivos-acuicultura.cl/planos/PLN-NAV-102450-G01-Rev3.pdf',
+  '{"trenes": 2, "jaulas_totales": 16, "dimension_jaula": "30x30m", "espacio_entre_trenes_m": 90, "azimut": 315}',
+  '{"vertices": [{"x":0,"y":0,"z":0},{"x":30,"y":0,"z":0},{"x":30,"y":30,"z":0},{"x":0,"y":30,"z":0},{"x":0,"y":0,"z":-15},{"x":30,"y":0,"z":-15},{"x":30,"y":30,"z":-15},{"x":0,"y":30,"z":-15}]}',
+  TRUE, NOW()
+),
+(
+  'plano-pilluco-red-02', 'centro-rna-102450', 'PLANO_RED_PECERA',
+  'Memoria y Plano Estructural Red Pecera HDPE 30x30x15m Reforzada', 'PLN-RED-303015-PE', 'Rev.2',
+  'Ing. Naval Christian E. Heins (UACH Valdivia)', 'CIN-CHILE-3942',
+  'https://archivos-acuicultura.cl/planos/PLN-RED-303015-PE-Rev2.pdf',
+  '{"malla": "1.5 pulgadas", "material": "HDPE Virgen", "relinga_superior": "24mm", "lastre_fondo_kg": 1200, "carga_rotura_kg": 185}',
+  '{"malla_3d": {"caras": ["Norte", "Sur", "Este", "Oeste", "Fondo"], "profundidad_m": 15.0}}',
+  TRUE, NOW()
+)
+ON DUPLICATE KEY UPDATE `titulo_plano` = VALUES(`titulo_plano`);
+
+-- Redes Peceras y Loberas con Crotales Oficiales RG 1821
+INSERT INTO `aquaculture_nets` (
+  `id`, `empresa_id`, `centro_id`, `modulo_id`, `codigo_red`, `tipo_red`,
+  `crotal_oficial_sernapesca`, `dimension_boca_m`, `dimension_profundidad_m`,
+  `material_filamento`, `tipo_tejido`, `tamano_malla_pulgadas`, `denier_filamento`,
+  `carga_rotura_malla_kg`, `relinga_superior_cabo_mm`, `relinga_inferior_plomada_kg`,
+  `horas_inmersion_acumuladas`, `fecha_ultimo_bano_antifouling`, `taller_mantencion_ultimo`,
+  `orden_produccion_origen_id`, `estado_conservacion`, `created_at`
+)
+VALUES
+(
+  'net-pecera-j01', 'client-retail-01', 'centro-rna-102450', 'mod-pilluco-tren-norte',
+  'RED-PEC-TN-J01', 'PECERA', 'CRT-SERNA-2026-08819', 30.00, 15.00,
+  'HDPE_ALTA_DENSIDAD', 'RASCHEL_SIN_NUDO', 1.50, 21048, 185.00, 24.00, 1200.00,
+  2480, '2026-05-10', 'Taller Redería Austral Puerto Montt', 'op-2026-101',
+  'OPERATIVO_CONFORME', NOW()
+),
+(
+  'net-lobera-j01', 'client-retail-01', 'centro-rna-102450', 'mod-pilluco-tren-norte',
+  'RED-LOB-TN-J01', 'LOBERA_PERIMETRAL', 'CRT-SERNA-2026-09402', 34.00, 18.00,
+  'UHMWPE_ULTRA_RESISTENTE', 'TRENZADO_KNOTLESS', 8.00, 42080, 850.00, 32.00, 2500.00,
+  4200, '2026-01-15', 'Taller Redería Austral Puerto Montt', NULL,
+  'OPERATIVO_CONFORME', NOW()
+)
+ON DUPLICATE KEY UPDATE `codigo_red` = VALUES(`codigo_red`);
+
+-- Separadores Pecera-Lobera y Componentes RG 1821
+INSERT INTO `aquaculture_components` (
+  `id`, `centro_id`, `modulo_id`, `tipo_componente`, `codigo_identificador`,
+  `separacion_real_metros`, `separacion_normativa_minima_m`, `material`,
+  `peso_kg`, `posicion_jaula_cara`, `estado_normativo`, `created_at`
+)
+VALUES
+(
+  'comp-sep-01', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'SEPARADOR_PECERA_LOBERA', 'SEP-TN-J01-OESTE',
+  1.85, 1.50, 'Tubería HDPE D=110mm Rígida con Grilletes Inox 316', 42.00, 'OESTE', 'CONFORME_RG1821', NOW()
+),
+(
+  'comp-sep-02', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'SEPARADOR_PECERA_LOBERA', 'SEP-TN-J01-NORTE',
+  1.10, 1.50, 'Tubería HDPE D=110mm Rígida con Grilletes Inox 316', 42.00, 'NORTE', 'EN_RIESGO_CONTACTO', NOW()
+),
+(
+  'comp-lastre-01', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'PESO_LASTRE_FONDO', 'LST-TN-J01-ESQ-SO',
+  NULL, 1.50, 'Bloque de Plomo Forrado en Goma de Alta Resistencia', 350.00, 'ESQUINA_SO', 'CONFORME_RG1821', NOW()
+)
+ON DUPLICATE KEY UPDATE `codigo_identificador` = VALUES(`codigo_identificador`);
+
+-- Líneas de Fondeo RG 941
+INSERT INTO `aquaculture_mooring_lines` (
+  `id`, `centro_id`, `codigo_linea`, `cuadrante_geografico`, `longitud_total_metros`,
+  `tipo_anclaje`, `peso_anclaje_toneladas`, `diametro_cabo_principal_mm`,
+  `material_cabo`, `tramo_cadena_grado_mm`, `carga_rotura_certificada_mbl_tn`,
+  `factor_seguridad_diseno`, `tension_trabajo_estimada_ton`,
+  `ultima_inspeccion_acustica_fecha`, `estado_estructural`, `created_at`
+)
+VALUES
+(
+  'moor-nw-01', 'centro-rna-102450', 'FONDEO-NW-01', 'NOROESTE', 240.00,
+  'BLOQUE_HORMIGON_MUERTO', 15.00, 64.00,
+  'Polipropileno Virgen 8 Cordones Multifilamento', 'Cadena Grado 2 D=38mm tramo 20m fondo', 85.00,
+  2.85, 22.40, '2026-07-20', 'APTO_OPERACION', NOW()
+),
+(
+  'moor-se-02', 'centro-rna-102450', 'FONDEO-SE-02', 'SURESTE', 220.00,
+  'ANCLA_STEVPRIS', 5.00, 64.00,
+  'Polipropileno Virgen 8 Cordones Multifilamento', 'Cadena Grado 3 D=32mm tramo 25m fondo', 92.00,
+  3.10, 19.80, '2026-07-20', 'APTO_OPERACION', NOW()
+)
+ON DUPLICATE KEY UPDATE `codigo_linea` = VALUES(`codigo_linea`);
+
+-- Inspección Submarina ROV y Taller
+INSERT INTO `aquaculture_inspections` (
+  `id`, `centro_id`, `fecha_inspeccion`, `tipo_inspeccion`,
+  `inspector_naval_nombre`, `matricula_armada_o_identificacion`, `empresa_certificadora`,
+  `robot_rov_modelo`, `profundidad_maxima_alcanzada_m`, `total_horas_grabacion`,
+  `total_fotografias_analizadas`, `total_anomalias_detectadas`, `anomalias_criticas_rg1821`,
+  `dictamen_conformidad`, `video_evidencia_url`, `informe_tecnico_pdf_url`,
+  `observaciones_tecnicas`, `created_at`
+)
+VALUES
+(
+  'insp-rov-2026-0912', 'centro-rna-102450', '2026-09-12', 'ROV_SUBMARINA_ROBOTICA',
+  'Sebastián Bahamonde Cárdenas (Piloto ROV)', 'MAT-ARMADA-7419-PMO', 'Austral Robotic Subsea Surveys SpA',
+  'BlueROV2 Heavy HD 4K Sonar Micron', 18.50, 3.50,
+  142, 3, 1,
+  'NO_CONFORME_CRITICO_REQUIERE_ACCION_INMEDIATA',
+  'https://storage.inspecciones.cl/videos/ROV-102450-20260912-4K.mp4',
+  'https://storage.inspecciones.cl/informes/INF-TEC-ROV-102450-0912.pdf',
+  'Inspección pericial en Jaula 01 Tren Norte detecta rotura de malla por desgarro en paño lateral cara Oeste a -8.5 metros de profundidad. Separador norte presenta inclinación con distancia a lobera reducida a 1.10m (incumple mínimo 1.50m RG 1821).',
+  NOW()
+)
+ON DUPLICATE KEY UPDATE `inspector_naval_nombre` = VALUES(`inspector_naval_nombre`);
+
+-- Mapeo 3D de Anomalías y Roturas Detectadas
+INSERT INTO `aquaculture_anomalies` (
+  `id`, `inspeccion_id`, `centro_id`, `modulo_id`, `net_id`,
+  `tipo_anomalia`, `nivel_criticidad`, `tamano_abertura_cm`, `numero_mallas_cortadas`,
+  `coordenada_relativa_x`, `coordenada_relativa_y`, `profundidad_z_metros`,
+  `cara_jaula`, `fotograma_evidencia_url`, `timestamp_video_segundo`,
+  `orden_produccion_reparacion_id`, `estado_reparacion`, `fecha_reparacion`,
+  `observacion_naval`, `created_at`
+)
+VALUES
+(
+  'anom-rotura-01', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
+  'ROTURA_MALLA_CORTE_FILAMENTO', 'CRITICA_ALTO_RIESGO_ESCAPE_SALMONES', 24.50, 6,
+  15.20, 0.00, -8.50,
+  'OESTE', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-ROTURA-8M5-OESTE.jpg', 1845,
+  'op-2026-101', 'DETECTADA_PENDIENTE', NULL,
+  'Corte limpio de 6 mallas consecutivas con apertura elástica de 24.5 cm en paño HDPE lateral a 8.5 metros de profundidad. Alerta inmediata Sernapesca según protocolo RG 1821 para evitar escape de peces.',
+  NOW()
+),
+(
+  'anom-separador-02', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
+  'FALLA_SEPARADOR_CONTACTO_REDES', 'MEDIA_PROGRAMAR_TALLER', 0.00, 0,
+  15.00, 30.00, -6.00,
+  'NORTE', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-SEP-NORTE.jpg', 2420,
+  NULL, 'DETECTADA_PENDIENTE', NULL,
+  'Separador HDPE con deformación angular por tensión de corrientes submarinas. Separación efectiva medida con sónar láser es 1.10 metros, inferior a los 1.50 metros mínimos obligatorios estipulados en la RG 1821.',
+  NOW()
+),
+(
+  'anom-relinga-03', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
+  'DESGASTE_POR_ABRASION_ROCE', 'LEVE_MONITOREO', 0.00, 0,
+  2.40, 0.00, -1.20,
+  'RELINGA_SUPERIOR', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-ROCE-PASILLO.jpg', 615,
+  NULL, 'DETECTADA_PENDIENTE', NULL,
+  'Abrasión superficial en protección de cabo de relinga superior por roce contra estructura flotante de pasillo HDPE en esquina Noroeste. Sin compromiso de carga de rotura.',
+  NOW()
+)
+ON DUPLICATE KEY UPDATE `observacion_naval` = VALUES(`observacion_naval`);
+
+-- Fin del script actualizado de inicialización MySQL
+
