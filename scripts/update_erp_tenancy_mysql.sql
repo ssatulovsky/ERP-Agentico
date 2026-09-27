@@ -36,22 +36,21 @@ ON DUPLICATE KEY UPDATE `precio_uf_mensual` = VALUES(`precio_uf_mensual`), `nomb
 -- ----------------------------------------------------------------------------
 -- 2. MODIFICACIÓN TABLA: companies (Extensión Cliente Ancla y Planes)
 -- ----------------------------------------------------------------------------
-ALTER TABLE `companies`
-  ADD COLUMN IF NOT EXISTS `plan_contratado_id` VARCHAR(50) NULL DEFAULT 'PLAN_PRO',
-  ADD COLUMN IF NOT EXISTS `plan_precio_uf` DECIMAL(10, 2) NULL DEFAULT 4.50,
-  ADD COLUMN IF NOT EXISTS `fecha_inicio_contrato` DATE NULL,
-  ADD COLUMN IF NOT EXISTS `fecha_termino_contrato` DATE NULL,
-  ADD COLUMN IF NOT EXISTS `limite_credito_comercial` DECIMAL(15, 2) NULL DEFAULT 15000000.00,
-  ADD COLUMN IF NOT EXISTS `dias_credito` INT NOT NULL DEFAULT 30,
-  ADD COLUMN IF NOT EXISTS `cuenta_contable_cobro_id` VARCHAR(30) NULL DEFAULT '1.1.03.001',
-  ADD COLUMN IF NOT EXISTS `cuenta_contable_pago_id` VARCHAR(30) NULL DEFAULT '2.1.01.001',
-  ADD COLUMN IF NOT EXISTS `contacto_cobranza_nombre` VARCHAR(150) NULL,
-  ADD COLUMN IF NOT EXISTS `contacto_cobranza_email` VARCHAR(150) NULL,
-  ADD COLUMN IF NOT EXISTS `contacto_cobranza_telefono` VARCHAR(50) NULL,
-  ADD COLUMN IF NOT EXISTS `direccion_comercial` VARCHAR(255) NULL,
-  ADD COLUMN IF NOT EXISTS `ciudad_comercial` VARCHAR(100) NULL,
-  ADD COLUMN IF NOT EXISTS `region_comercial` VARCHAR(100) NULL,
-  ADD COLUMN IF NOT EXISTS `comuna_comercial` VARCHAR(100) NULL;
+ALTER TABLE `companies` ADD COLUMN `plan_contratado_id` VARCHAR(50) NULL DEFAULT 'PLAN_PRO';
+ALTER TABLE `companies` ADD COLUMN `plan_precio_uf` DECIMAL(10, 2) NULL DEFAULT 4.50;
+ALTER TABLE `companies` ADD COLUMN `fecha_inicio_contrato` DATE NULL;
+ALTER TABLE `companies` ADD COLUMN `fecha_termino_contrato` DATE NULL;
+ALTER TABLE `companies` ADD COLUMN `limite_credito_comercial` DECIMAL(15, 2) NULL DEFAULT 15000000.00;
+ALTER TABLE `companies` ADD COLUMN `dias_credito` INT NOT NULL DEFAULT 30;
+ALTER TABLE `companies` ADD COLUMN `cuenta_contable_cobro_id` VARCHAR(30) NULL DEFAULT '1.1.03.001';
+ALTER TABLE `companies` ADD COLUMN `cuenta_contable_pago_id` VARCHAR(30) NULL DEFAULT '2.1.01.001';
+ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_nombre` VARCHAR(150) NULL;
+ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_email` VARCHAR(150) NULL;
+ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_telefono` VARCHAR(50) NULL;
+ALTER TABLE `companies` ADD COLUMN `direccion_comercial` VARCHAR(255) NULL;
+ALTER TABLE `companies` ADD COLUMN `ciudad_comercial` VARCHAR(100) NULL;
+ALTER TABLE `companies` ADD COLUMN `region_comercial` VARCHAR(100) NULL;
+ALTER TABLE `companies` ADD COLUMN `comuna_comercial` VARCHAR(100) NULL;
 
 -- ----------------------------------------------------------------------------
 -- 3. TABLA: erp_system_parameters (Parámetros Generales de Cierre Art. 16 CT)
@@ -300,6 +299,9 @@ CREATE TABLE IF NOT EXISTS `cost_centers` (
   KEY `idx_cost_center_categoria` (`categoria`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Asegurar que la columna categoria sea VARCHAR(50) por si la tabla ya existía con el ENUM anterior
+ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(50) NOT NULL;
+
 -- ----------------------------------------------------------------------------
 -- 9. TABLA: cost_center_imputations (Trazabilidad de Imputaciones Analíticas)
 -- ----------------------------------------------------------------------------
@@ -350,12 +352,11 @@ CREATE TABLE IF NOT EXISTS `dte_items` (
 -- ----------------------------------------------------------------------------
 -- 11. COLUMNAS DE INTEGRACIÓN HTTP-DTE / LIBREDTE (dtes_rcv)
 -- ----------------------------------------------------------------------------
-ALTER TABLE `dtes_rcv`
-  ADD COLUMN IF NOT EXISTS `track_id` VARCHAR(100) NULL AFTER `items`,
-  ADD COLUMN IF NOT EXISTS `ted_xml` TEXT NULL AFTER `track_id`,
-  ADD COLUMN IF NOT EXISTS `xml_timbrado` MEDIUMTEXT NULL AFTER `ted_xml`,
-  ADD COLUMN IF NOT EXISTS `pdf_url` VARCHAR(500) NULL AFTER `xml_timbrado`,
-  ADD COLUMN IF NOT EXISTS `ambiente_sii` INT NOT NULL DEFAULT 1 AFTER `pdf_url`;
+ALTER TABLE `dtes_rcv` ADD COLUMN `track_id` VARCHAR(100) NULL AFTER `items`;
+ALTER TABLE `dtes_rcv` ADD COLUMN `ted_xml` TEXT NULL AFTER `track_id`;
+ALTER TABLE `dtes_rcv` ADD COLUMN `xml_timbrado` MEDIUMTEXT NULL AFTER `ted_xml`;
+ALTER TABLE `dtes_rcv` ADD COLUMN `pdf_url` VARCHAR(500) NULL AFTER `xml_timbrado`;
+ALTER TABLE `dtes_rcv` ADD COLUMN `ambiente_sii` INT NOT NULL DEFAULT 1 AFTER `pdf_url`;
 
 -- ----------------------------------------------------------------------------
 -- 12. TABLA: company_credentials_vault (Bóveda Segura AES-256-GCM para SII y Certificados)
@@ -397,6 +398,7 @@ VALUES
 ON DUPLICATE KEY UPDATE `clave_certificado_encrypted` = VALUES(`clave_certificado_encrypted`), `updated_at` = NOW();
 
 -- Semillas de Centros de Costo (Mini-Empresas)
+ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(50) NOT NULL;
 INSERT INTO `cost_centers` (
   `id`, `empresa_id`, `codigo`, `nombre`, `categoria`, `responsable_nombre`, `responsable_email`,
   `presupuesto_mensual_clp`, `activo`, `descripcion`, `ventas_acumuladas_mes`, `costos_directos_mes`,
@@ -407,34 +409,31 @@ VALUES
 ('cc-02', 'client-retail-01', 'CC-VTA-STGO', 'Ventas & Distribución Zona Central (Mini-Empresa)', 'VENTAS', 'Gonzalo Silva Valenzuela', 'gonzalo.silva@maraustral.cl', 28000000.00, TRUE, 'Unidad comercial metropolitana y de exportaciones. Opera como centro de utilidad independiente.', 48500000.00, 18200000.00, 3400000.00, 5800000.00, 350000.00, NOW()),
 ('cc-03', 'client-retail-01', 'CC-PRD-QUELLON', 'Planta Fabril & Maestranza Quellón (Mini-Empresa)', 'PRODUCCION', 'Ing. Rodrigo Cárdenas Soto', 'rodrigo.cardenas@maraustral.cl', 52000000.00, TRUE, 'Fabricación y reparación de redes peceras, loberas y estructuras HDPE de acuicultura.', 64200000.00, 28900000.00, 6200000.00, 14800000.00, 2100000.00, NOW()),
 ('cc-04', 'client-retail-01', 'CC-LOG-SUR', 'Logística & Transporte Fluvial Décima Región', 'LOGISTICA', 'Patricio Almonacid Vera', 'patricio.almonacid@maraustral.cl', 18500000.00, TRUE, 'Flota de barcazas, camiones rampla, despacho de insumos a centros de cultivo.', 12000000.00, 6400000.00, 2100000.00, 4900000.00, 980000.00, NOW())
-ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`);
+ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`), `categoria` = VALUES(`categoria`);
 
 -- ----------------------------------------------------------------------------
 -- 13. ACTUALIZACIÓN INTEGRAL DE TESORERÍA, CONCILIACIÓN BANCARIA Y FLUJO DE CAJA
 -- ----------------------------------------------------------------------------
 -- Extensión Multidivisa en Cuentas Bancarias
-ALTER TABLE `bank_accounts`
-  ADD COLUMN IF NOT EXISTS `tipo_conexion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL',
-  ADD COLUMN IF NOT EXISTS `estado_conexion` VARCHAR(50) NOT NULL DEFAULT 'CONECTADO',
-  ADD COLUMN IF NOT EXISTS `es_principal` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `bank_accounts` ADD COLUMN `tipo_conexion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL';
+ALTER TABLE `bank_accounts` ADD COLUMN `estado_conexion` VARCHAR(50) NOT NULL DEFAULT 'CONECTADO';
+ALTER TABLE `bank_accounts` ADD COLUMN `es_principal` BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Extensión Multidivisa y Match Inteligente en Transacciones de Cartola
-ALTER TABLE `bank_transactions`
-  ADD COLUMN IF NOT EXISTS `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
-  ADD COLUMN IF NOT EXISTS `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
-  ADD COLUMN IF NOT EXISTS `monto_clp_equivalente` DECIMAL(15, 2) NULL,
-  ADD COLUMN IF NOT EXISTS `match_certeza` INT NULL,
-  ADD COLUMN IF NOT EXISTS `match_sugerido_id` VARCHAR(36) NULL,
-  ADD COLUMN IF NOT EXISTS `match_sugerido_glosa` VARCHAR(255) NULL,
-  ADD COLUMN IF NOT EXISTS `origen_importacion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL',
-  ADD COLUMN IF NOT EXISTS `raw_hash_transaction` VARCHAR(64) NULL;
+ALTER TABLE `bank_transactions` ADD COLUMN `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP';
+ALTER TABLE `bank_transactions` ADD COLUMN `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000;
+ALTER TABLE `bank_transactions` ADD COLUMN `monto_clp_equivalente` DECIMAL(15, 2) NULL;
+ALTER TABLE `bank_transactions` ADD COLUMN `match_certeza` INT NULL;
+ALTER TABLE `bank_transactions` ADD COLUMN `match_sugerido_id` VARCHAR(36) NULL;
+ALTER TABLE `bank_transactions` ADD COLUMN `match_sugerido_glosa` VARCHAR(255) NULL;
+ALTER TABLE `bank_transactions` ADD COLUMN `origen_importacion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL';
+ALTER TABLE `bank_transactions` ADD COLUMN `raw_hash_transaction` VARCHAR(64) NULL;
 
 -- Extensión NIC 21 Diferencial de Cambio en Conciliaciones
-ALTER TABLE `bank_reconciliations`
-  ADD COLUMN IF NOT EXISTS `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
-  ADD COLUMN IF NOT EXISTS `tipo_cambio_cierre` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
-  ADD COLUMN IF NOT EXISTS `diferencial_cambio_monto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  ADD COLUMN IF NOT EXISTS `asiento_diferencial_cambio_id` VARCHAR(36) NULL;
+ALTER TABLE `bank_reconciliations` ADD COLUMN `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP';
+ALTER TABLE `bank_reconciliations` ADD COLUMN `tipo_cambio_cierre` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000;
+ALTER TABLE `bank_reconciliations` ADD COLUMN `diferencial_cambio_monto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE `bank_reconciliations` ADD COLUMN `asiento_diferencial_cambio_id` VARCHAR(36) NULL;
 
 -- TABLA: cash_flow_movements (Proyecciones y Partidas Diarias de Tesorería)
 CREATE TABLE IF NOT EXISTS `cash_flow_movements` (
@@ -625,6 +624,53 @@ CREATE TABLE IF NOT EXISTS `production_budgets` (
   KEY `idx_budget_empresa` (`empresa_id`),
   KEY `idx_budget_estado` (`estado`),
   KEY `idx_budget_folio` (`folio`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: production_budget_items (Desglose de Costos de Cotización: MPD, MOD, CIF)
+CREATE TABLE IF NOT EXISTS `production_budget_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `presupuesto_id` VARCHAR(36) NOT NULL,
+  `tipo` ENUM('MPD', 'MOD', 'CIF', 'OTRO') NOT NULL,
+  `insumo_id` VARCHAR(36) NULL,
+  `insumo_codigo` VARCHAR(50) NULL,
+  `descripcion` VARCHAR(255) NOT NULL,
+  `unidad_medida` VARCHAR(20) NOT NULL,
+  `cantidad_presupuestada` DECIMAL(12, 2) NOT NULL,
+  `costo_unitario_estimado` DECIMAL(15, 2) NOT NULL,
+  `costo_total_estimado` DECIMAL(15, 2) NOT NULL,
+  `precio_unitario_sugerido` DECIMAL(15, 2) NULL,
+  `precio_total_venta` DECIMAL(15, 2) NULL,
+  `visible_para_cliente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `notas_internas` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_item_presupuesto` (`presupuesto_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: warehouse_withdrawals (Vales de Entrega de Bodega para OP)
+CREATE TABLE IF NOT EXISTS `warehouse_withdrawals` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `folio_vale` VARCHAR(50) NOT NULL,
+  `fecha` DATE NOT NULL,
+  `fecha_retiro` DATE NULL,
+  `hora_retiro` VARCHAR(10) NULL,
+  `orden_produccion_id` VARCHAR(36) NOT NULL,
+  `orden_produccion_folio` VARCHAR(50) NOT NULL,
+  `cliente_nombre` VARCHAR(255) NULL,
+  `bodega_origen_id` VARCHAR(36) NOT NULL,
+  `bodega_origen_nombre` VARCHAR(150) NOT NULL,
+  `solicitante_nombre` VARCHAR(200) NOT NULL,
+  `responsable_bodega` VARCHAR(200) NOT NULL,
+  `costo_total_vale` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `alerta_sobreconsumo` BOOLEAN NOT NULL DEFAULT FALSE,
+  `folio_guia_despacho_52` BIGINT NULL,
+  `observaciones` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_vale_empresa` (`empresa_id`),
+  KEY `idx_vale_op` (`orden_produccion_id`),
+  KEY `idx_vale_folio` (`folio_vale`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

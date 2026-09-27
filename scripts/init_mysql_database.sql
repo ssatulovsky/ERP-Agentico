@@ -912,14 +912,7 @@ CREATE TABLE `cost_centers` (
   `empresa_id` VARCHAR(36) NOT NULL,
   `codigo` VARCHAR(50) NOT NULL, -- ej: "CC-ADM-01", "CC-VTA-STGO", "CC-PRD-01"
   `nombre` VARCHAR(200) NOT NULL,
-  `categoria` ENUM(
-    'ADMINISTRACION',
-    'COMERCIAL_VENTAS',
-    'OPERACIONES_PRODUCCION',
-    'LOGISTICA_DISTRIBUCION',
-    'PROYECTOS_INVERSION',
-    'TI_SOPORTE'
-  ) NOT NULL,
+  `categoria` VARCHAR(50) NOT NULL DEFAULT 'ADMINISTRACION',
   `responsable_nombre` VARCHAR(200) NOT NULL,
   `responsable_email` VARCHAR(255) NULL,
   `presupuesto_mensual_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
