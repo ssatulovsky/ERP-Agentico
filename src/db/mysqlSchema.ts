@@ -33,13 +33,13 @@ export * from './schema/agentContextSchema';
 // ============================================================================
 // 5. MÓDULOS ESPECIALIZADOS DE INDUSTRIA Y CUMPLIMIENTO REGULATORIO CHILENO
 // ============================================================================
+export * from './schema/costCentersSchema';
 export * from './schema/fixedAssetsSchema';
 export * from './schema/productionCostingSchema';
 export * from './schema/laborContractsSchema';
 export * from './schema/treasurySchema';
 export * from './schema/inventoryWmsSchema';
 export * from './schema/employeesSchema';
-export * from './schema/aquacultureSchema';
 
 // ============================================================================
 // 6. TABLA: economic_indicators (Sincronización Histórica de Indicadores Chilenos)

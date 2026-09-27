@@ -12,6 +12,7 @@ import { asyncJobsRouter } from "./src/controllers/asyncJobsController";
 import { sseJobRouter } from "./src/routes/sseJobRoutes";
 import { siiRcvRouter } from "./src/controllers/siiRcvController";
 import { payrollRouter } from "./src/controllers/payrollController";
+import { billingDteRouter } from "./src/controllers/billingDteController";
 import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
 import { SiiPlaywrightRunner } from "./src/services/siiPlaywrightRunner";
 import { RcvIngestionService } from "./src/services/rcvIngestionService";
@@ -1338,6 +1339,10 @@ app.use("/api/rcv", siiRcvRouter);
 
 // RUTAS DE NÓMINA Y REMUNERACIONES (CÓDIGO DEL TRABAJO / PREVIRED)
 app.use("/api/payroll", payrollRouter);
+
+// RUTAS DE FACTURACIÓN ELECTRÓNICA HTTP-DTE / LIBREDTE (SII CHILE)
+app.use("/api/billing", billingDteRouter);
+app.use("/api/dte", billingDteRouter);
 
 // RUTAS DE STREAMING SERVER-SENT EVENTS (SSE) PARA BULLMQ (GET /api/jobs/stream/:queueName/:jobId)
 app.use("/api/jobs", sseJobRouter);

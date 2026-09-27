@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<AUTORIZACION>
+  <CAF version="1.0">
+    <DA>
+      <RE>77210980-5</RE>
+      <RS>CONSTRUCTORA E INMOBILIARIA LOS ANDES LTDA</RS>
+      <TD>61</TD>
+      <RNG>
+        <D>1</D>
+        <H>1500</H>
+      </RNG>
+      <FA>2026-01-15</FA>
+      <RSAPK>
+        <M>caf_rsa_modulus_key_sii_77210980-5_td61==</M>
+        <E>Aw==</E>
+      </RSAPK>
+      <IDK>100</IDK>
+    </DA>
+    <FRMA algoritmo="SHA1withRSA">caf_signature_77210980-5_td61==</FRMA>
+  </CAF>
+  <RSASK>-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0_tenant_77210980-5_key...
+-----END RSA PRIVATE KEY-----</RSASK>
+</AUTORIZACION>

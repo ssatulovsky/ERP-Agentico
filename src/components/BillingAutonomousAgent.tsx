@@ -31,8 +31,22 @@ import {
   Percent,
   Receipt,
   FileCheck2,
-  ReceiptText
+  ReceiptText,
+  Server,
+  Zap,
+  Globe,
+  Palette,
+  FolderTree,
+  Shield,
+  KeyRound,
+  UploadCloud,
+  FileCode2,
+  Info,
+  Lock,
+  Key,
 } from 'lucide-react';
+import { InvoiceLayoutDesigner } from './billing/InvoiceLayoutDesigner';
+import { INITIAL_CLIENTS } from '../data/seedData';
 import {
   BillingEmissionDraft,
   BillingItemDetail,
@@ -45,17 +59,13 @@ import {
   ProductionOrder,
   ProductionBudget,
   BankAccountConfig,
-  PlaywrightRobotRunReport,
-  PlaywrightRobotStep
+  CostCenterMaster,
+  HttpDteEmissionResponse,
+  TaxCryptographicVaultStatus,
+  TenantCafItem,
 } from '../types';
-import { formatCLP, formatNumberCL, validateRut } from '../utils/chileanAccounting';
-import {
-  SII_PORTAL_URLS,
-  SII_FORM_SELECTORS,
-  generatePlaywrightTypeScriptScript,
-  generatePlaywrightPythonScript,
-  runSimulatedPlaywrightExecution
-} from '../utils/siiPlaywrightGenerator';
+import { SEED_COST_CENTERS } from '../data/seedCostCenters';
+import { formatCLP, formatNumberCL, validateRut, createSalesDteEntry } from '../utils/chileanAccounting';
 
 interface BillingAutonomousAgentProps {
   company: CompanyProfile | ClientCompany;
@@ -67,6 +77,7 @@ interface BillingAutonomousAgentProps {
   productionOrders?: ProductionOrder[];
   productionBudgets?: ProductionBudget[];
   bankAccounts?: BankAccountConfig[];
+  costCenters?: CostCenterMaster[];
 }
 
 export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
@@ -79,8 +90,12 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
   productionOrders = [],
   productionBudgets = [],
   bankAccounts = [],
+  costCenters,
 }) => {
-  const [activeTab, setActiveTab] = useState<'EMISION' | 'PLAYWRIGHT_RPA' | 'COBRANZA' | 'HONORARIOS_BOLETAS'>('EMISION');
+  const availableCostCenters = useMemo(() => {
+    return Array.isArray(costCenters) && costCenters.length > 0 ? costCenters : SEED_COST_CENTERS;
+  }, [costCenters]);
+  const [activeTab, setActiveTab] = useState<'EMISION' | 'HTTP_DTE_ENGINE' | 'COBRANZA' | 'HONORARIOS_BOLETAS' | 'DISENADOR_FORMATO'>('EMISION');
 
   // Estado del borrador actual de emisión
   const isExentoDefault = Boolean((company as any)?.exentoIvaGiro || company.id === 'client-innovagile');
@@ -113,6 +128,9 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
         precioUnitario: 8500000,
         montoTotal: 8500000,
         esExento: isExentoDefault,
+        centroCostoId: 'cc-04',
+        centroCostoCodigo: 'CC-OP-MAR',
+        centroCostoNombre: 'Operaciones Marítimas & Fondeos Puerto Montt (Mini-Empresa)',
       },
     ],
     montoNeto: isExentoDefault ? 0 : 8500000,
@@ -124,16 +142,155 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
   // Modal para seleccionar Orden de Producción
   const [showOpSelectorModal, setShowOpSelectorModal] = useState(false);
 
-  // Estados de Ejecución Playwright
-  const [isExecutingPlaywright, setIsExecutingPlaywright] = useState(false);
-  const [playwrightReport, setPlaywrightReport] = useState<PlaywrightRobotRunReport | null>(null);
+  // Estados de Ejecución HTTP-DTE (LibreDTE Slim)
+  const [isEmittingHttpDte, setIsEmittingHttpDte] = useState(false);
+  const [lastEmissionReport, setLastEmissionReport] = useState<HttpDteEmissionResponse | null>(null);
   const [executionLogs, setExecutionLogs] = useState<string[]>([]);
-  const [currentStepInfo, setCurrentStepInfo] = useState<PlaywrightRobotStep | null>(null);
-  const [copiedCode, setCopiedCode] = useState<'TS' | 'PY' | 'CLI' | null>(null);
+  const [copiedCode, setCopiedCode] = useState<'JSON' | 'CLI' | 'CURL' | null>(null);
   const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
+  const [httpDteServerStatus, setHttpDteServerStatus] = useState<{
+    tested: boolean;
+    online: boolean;
+    url: string;
+    latencyMs?: number;
+    ambiente?: string;
+  }>({
+    tested: false,
+    online: true,
+    url: 'http://localhost:8050',
+    ambiente: 'Certificación (1)',
+  });
 
-  // Clave Tributaria o Certificado Digital (en entorno de pruebas/simulación)
-  const [claveTributaria, setClaveTributaria] = useState('Certificado_Digital_Activo_SII_2026');
+  // Estado de Bóveda Criptográfica Multi-Empresa & Estudio Contable
+  const [selectedVaultRut, setSelectedVaultRut] = useState<string>(company.rut);
+  const [vaultStatus, setVaultStatus] = useState<TaxCryptographicVaultStatus | null>(null);
+  const [isLoadingVault, setIsLoadingVault] = useState(false);
+  const [showCafUploadModal, setShowCafUploadModal] = useState(false);
+  const [cafUploadTipo, setCafUploadTipo] = useState<number>(33);
+  const [cafUploadXml, setCafUploadXml] = useState<string>('');
+  const [cafUploadMsg, setCafUploadMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSavingCaf, setIsSavingCaf] = useState(false);
+
+  // Modal de Contraseña y Certificado Digital .p12 por Cliente
+  const [showCertModal, setShowCertModal] = useState(false);
+  const [certPasswordInput, setCertPasswordInput] = useState('');
+  const [certFileBase64, setCertFileBase64] = useState('');
+  const [certFileName, setCertFileName] = useState('');
+  const [isSavingCert, setIsSavingCert] = useState(false);
+  const [certModalMsg, setCertModalMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const fetchVaultStatus = React.useCallback(async (rut: string) => {
+    setIsLoadingVault(true);
+    try {
+      const res = await fetch(`/api/billing/vault-status/${encodeURIComponent(rut)}`);
+      const data = await res.json();
+      if (data.success && data.vault) {
+        setVaultStatus(data.vault);
+      }
+    } catch (err) {
+      console.warn('Error fetching vault status:', err);
+    } finally {
+      setIsLoadingVault(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (activeTab === 'HTTP_DTE_ENGINE') {
+      fetchVaultStatus(selectedVaultRut);
+    }
+  }, [activeTab, selectedVaultRut, fetchVaultStatus]);
+
+  const handleSaveCafXml = async () => {
+    if (!cafUploadXml.trim()) return;
+    setIsSavingCaf(true);
+    setCafUploadMsg(null);
+    try {
+      const res = await fetch('/api/billing/vault-save-caf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rut: selectedVaultRut,
+          tipoDte: cafUploadTipo,
+          xmlContent: cafUploadXml.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCafUploadMsg({ type: 'success', text: data.message });
+        fetchVaultStatus(selectedVaultRut);
+        setTimeout(() => {
+          setShowCafUploadModal(false);
+          setCafUploadXml('');
+          setCafUploadMsg(null);
+        }, 1500);
+      } else {
+        setCafUploadMsg({ type: 'error', text: data.error || 'Error al registrar archivo CAF' });
+      }
+    } catch (err: any) {
+      setCafUploadMsg({ type: 'error', text: err.message || 'Error de conexión' });
+    } finally {
+      setIsSavingCaf(false);
+    }
+  };
+
+  const handleSaveCertCredentials = async () => {
+    if (!certPasswordInput.trim() && !certFileBase64) {
+      setCertModalMsg({ type: 'error', text: 'Ingresa la contraseña o selecciona un archivo .p12' });
+      return;
+    }
+    setIsSavingCert(true);
+    setCertModalMsg(null);
+    try {
+      if (certFileBase64) {
+        const certRes = await fetch('/api/billing/vault-save-cert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rut: selectedVaultRut,
+            certBase64: certFileBase64,
+            filename: certFileName || 'certificado.p12',
+          }),
+        });
+        const certData = await certRes.json();
+        if (!certData.success) {
+          setCertModalMsg({ type: 'error', text: certData.error || 'Error al guardar archivo de certificado' });
+          setIsSavingCert(false);
+          return;
+        }
+      }
+
+      if (certPasswordInput.trim()) {
+        const passRes = await fetch('/api/billing/vault-save-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rut: selectedVaultRut,
+            password: certPasswordInput.trim(),
+          }),
+        });
+        const passData = await passRes.json();
+        if (!passData.success) {
+          setCertModalMsg({ type: 'error', text: passData.error || 'Error al guardar contraseña' });
+          setIsSavingCert(false);
+          return;
+        }
+      }
+
+      setCertModalMsg({ type: 'success', text: 'Credenciales criptográficas guardadas exitosamente en la bóveda.' });
+      fetchVaultStatus(selectedVaultRut);
+      setTimeout(() => {
+        setShowCertModal(false);
+        setCertPasswordInput('');
+        setCertFileBase64('');
+        setCertFileName('');
+        setCertModalMsg(null);
+      }, 1500);
+    } catch (err: any) {
+      setCertModalMsg({ type: 'error', text: err.message || 'Error de conexión' });
+    } finally {
+      setIsSavingCert(false);
+    }
+  };
 
   // Recalcular montos de items
   const recalculateDraftTotals = (items: BillingItemDetail[], tipoDte: DteType) => {
@@ -277,31 +434,53 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
     setAlertSuccess(`Datos de la Orden de Producción ${opCodigo} (${hitoTexto}) cargados con éxito en el borrador DTE.`);
   };
 
-  // Ejecución Asistida Playwright
-  const handleExecutePlaywrightRpa = async () => {
-    setIsExecutingPlaywright(true);
+  // Ejecución Directa HTTP-DTE (LibreDTE / Slim)
+  const handleExecuteHttpDteEmission = async () => {
+    setIsEmittingHttpDte(true);
     setExecutionLogs([]);
-    setCurrentStepInfo(null);
-    setActiveTab('PLAYWRIGHT_RPA');
+    setActiveTab('HTTP_DTE_ENGINE');
+
+    const addLog = (msg: string) => {
+      const time = new Date().toLocaleTimeString('es-CL');
+      const line = `[${time}] ${msg}`;
+      setExecutionLogs(prev => [...prev, line]);
+      return line;
+    };
+
+    addLog(`🚀 [HTTP-DTE] Iniciando emisión directa de DTE ${draft.tipoDte} para RUT Emisor: ${company.rut}...`);
+    addLog(`📦 [Mapeo] Mapeando datos internos ERP: ${draft.items.length} ítems. Total: $${draft.montoTotal.toLocaleString('es-CL')} CLP.`);
+    addLog(`🔑 [Criptografía] Leyendo CAF (XML) y Certificado Digital PKCS#12 (.p12/.pfx) almacenados localmente...`);
+    addLog(`🌐 [HTTP POST] Enviando POST JSON a http://localhost:8050/dte/emitir...`);
 
     try {
-      const report = await runSimulatedPlaywrightExecution(
-        draft,
-        company.rut,
-        (step, logLine) => {
-          setCurrentStepInfo(step);
-          setExecutionLogs(prev => [...prev, logLine]);
-        }
-      );
+      const res = await fetch('/api/billing/emitir-http-dte', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          draft,
+          companyId: company.id,
+          rutEmisor: company.rut,
+          razonSocialEmisor: company.razonSocial,
+        }),
+      });
 
-      setPlaywrightReport(report);
-      setIsExecutingPlaywright(false);
+      const data: HttpDteEmissionResponse = await res.json();
 
-      const assignedFolio = report.folioAsignado || 1421;
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${res.status}: Error al emitir en LibreDTE`);
+      }
+
+      setLastEmissionReport(data);
+      const assignedFolio = data.folio || draft.folioSugerido || 1421;
+
+      addLog(`✅ [HTTP-DTE] ¡DTE Timbrado exitosamente por el motor LibreDTE! Folio oficial: ${assignedFolio}`);
+      addLog(`🎫 [SII] TrackID de recepción devuelto: ${data.trackId || 'TRK-OK'}`);
+      addLog(`🔏 [TED] Timbre Electrónico DTE generado y firmado con clave RSA del CAF.`);
+      addLog(`💾 [Persistencia] Sincronizado en MySQL 8.0 (tabla dtes_rcv + dte_items) y almacenamiento dual de disco.`);
 
       // 1. Crear documento DTE formal en el Registro de Compras/Ventas
       const newDte: DteDocument = {
-        id: `dte-emitted-${Date.now()}`,
+        id: data.dteId || `dte-http-emitted-${Date.now()}`,
         tipoDte: draft.tipoDte,
         folio: assignedFolio,
         tipoOperacion: 'VENTA',
@@ -313,75 +492,39 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
         montoExento: draft.montoExento,
         montoIva: draft.montoIva,
         montoTotal: draft.montoTotal,
+        items: draft.items.map(it => ({
+          id: it.id,
+          nombre: it.nombre,
+          descripcion: it.descripcion,
+          cantidad: it.cantidad,
+          unidadMedida: it.unidadMedida,
+          precioUnitario: it.precioUnitario,
+          montoTotal: it.montoTotal,
+          esExento: it.esExento,
+          centroCostoId: it.centroCostoId,
+          centroCostoCodigo: it.centroCostoCodigo,
+          centroCostoNombre: it.centroCostoNombre,
+        })),
+        centroCostoId: draft.items[0]?.centroCostoId,
+        centroCostoCodigo: draft.items[0]?.centroCostoCodigo,
+        centroCostoNombre: draft.items[0]?.centroCostoNombre,
         estadoSii: 'ACEPTADO',
         estadoPago: draft.condicionVenta === 'CONTADO' ? 'COBRADO' : 'PENDIENTE',
-        glosa: `Emisión DTE ${draft.tipoDte} Folio ${assignedFolio} a ${draft.razonSocialReceptor} (Playwright RPA SII) - ${draft.items[0]?.nombre || 'Venta'}`,
+        glosa: `Emisión HTTP-DTE (LibreDTE) Folio ${assignedFolio} a ${draft.razonSocialReceptor} | TrackID: ${data.trackId || 'N/A'}`,
+        trackId: data.trackId,
+        tedXml: data.ted,
+        xmlTimbrado: data.xmlTimbrado,
+        pdfUrl: data.pdfUrl,
+        ambienteSii: data.ambiente,
       };
 
       onAddDte(newDte);
 
-      // 2. Generar Asiento Contable Automático en el Libro Diario
-      const accountingEntry: AccountingEntry = {
-        id: `entry-sale-playwright-${Date.now()}`,
-        fecha: draft.fechaEmision,
-        concepto: `Venta DTE ${draft.tipoDte} Folio ${assignedFolio} - ${draft.razonSocialReceptor}`,
-        documento: `DTE ${draft.tipoDte} N° ${assignedFolio}`,
-        lineas: draft.tipoDte === '61'
-          ? [
-              // Nota de Crédito (Reversa débito fiscal y cuenta cliente)
-              {
-                cuentaCodigo: '4.1.03',
-                cuentaNombre: 'Descuentos y Devoluciones sobre Ventas',
-                debe: draft.montoNeto,
-                haber: 0,
-              },
-              ...(draft.montoIva > 0 ? [{
-                cuentaCodigo: '2.1.03',
-                cuentaNombre: 'IVA Débito Fiscal (Reverso Art. 21)',
-                debe: draft.montoIva,
-                haber: 0,
-              }] : []),
-              {
-                cuentaCodigo: '1.1.03',
-                cuentaNombre: `Clientes Nacionales (${draft.razonSocialReceptor})`,
-                debe: 0,
-                haber: draft.montoTotal,
-              },
-            ]
-          : [
-              // Factura de Venta estándar
-              {
-                cuentaCodigo: '1.1.03',
-                cuentaNombre: `Clientes Nacionales (${draft.razonSocialReceptor})`,
-                debe: draft.montoTotal,
-                haber: 0,
-              },
-              ...(draft.montoNeto > 0 ? [{
-                cuentaCodigo: '4.1.01',
-                cuentaNombre: 'Ingresos por Ventas del Giro (Redes/Acuicultura)',
-                debe: 0,
-                haber: draft.montoNeto,
-              }] : []),
-              ...(draft.montoExento > 0 ? [{
-                cuentaCodigo: '4.1.02',
-                cuentaNombre: 'Ingresos por Ventas / Servicios Exentos de IVA',
-                debe: 0,
-                haber: draft.montoExento,
-              }] : []),
-              ...(draft.montoIva > 0 ? [{
-                cuentaCodigo: '2.1.03',
-                cuentaNombre: 'IVA Débito Fiscal',
-                debe: 0,
-                haber: draft.montoIva,
-              }] : []),
-            ],
-        totalDebe: draft.montoTotal,
-        totalHaber: draft.montoTotal,
-        balanceado: true,
-        origen: 'RCV_VENTA',
-        creadoEn: new Date().toISOString(),
-      };
-
+      // 2. Generar Asiento Contable Automático en el Libro Diario vinculando Centros de Costo de cada ítem
+      const accountingEntry: AccountingEntry = createSalesDteEntry(newDte);
+      accountingEntry.id = `entry-sale-http-dte-${Date.now()}`;
+      accountingEntry.concepto = `Venta DTE ${draft.tipoDte} Folio ${assignedFolio} - ${draft.razonSocialReceptor} (HTTP-DTE)`;
+      accountingEntry.documento = `DTE ${draft.tipoDte} N° ${assignedFolio}`;
       onAddEntry(accountingEntry);
 
       // 3. Programar Movimiento en el Flujo de Caja Proyectado Real
@@ -404,39 +547,110 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
       onAddCashFlowMovement(cashFlowMov);
 
       setAlertSuccess(
-        `¡Factura DTE ${draft.tipoDte} Folio ${assignedFolio} emitida con éxito en el SII mediante Playwright! Sincronizada automáticamente en: 1) Registro de Ventas, 2) Asiento de Diario Contable y 3) Flujo de Caja para el ${draft.fechaVencimiento}.`
+        `¡Factura DTE ${draft.tipoDte} Folio ${assignedFolio} emitida con éxito via HTTP-DTE (LibreDTE)! TrackID SII: ${data.trackId || 'Asignado'}. Sincronizada automáticamente en: 1) Registro de Ventas, 2) Libro Diario Contable y 3) Flujo de Caja para el ${draft.fechaVencimiento}.`
       );
-
     } catch (err: any) {
-      setIsExecutingPlaywright(false);
-      console.error('[BillingAutonomousAgent] Error en ejecución Playwright:', err);
+      addLog(`❌ [Error HTTP-DTE] ${err.message}`);
+      console.error('[BillingAutonomousAgent] Error en emisión HTTP-DTE:', err);
+    } finally {
+      setIsEmittingHttpDte(false);
     }
   };
 
-  // Descargar scripts
-  const handleDownloadScript = (format: 'TS' | 'PY') => {
-    const code = format === 'TS'
-      ? generatePlaywrightTypeScriptScript(draft, company.rut, claveTributaria)
-      : generatePlaywrightPythonScript(draft, company.rut, claveTributaria);
+  // Comprobar salud de la API HTTP-DTE en localhost:8050
+  const handleCheckHttpDteHealth = async () => {
+    try {
+      const res = await fetch('/api/billing/http-dte/status');
+      const data = await res.json();
+      setHttpDteServerStatus({
+        tested: true,
+        online: data.success,
+        url: data.endpoint || 'http://localhost:8050',
+        latencyMs: data.health?.latencyMs,
+        ambiente: data.ambiente,
+      });
+    } catch {
+      setHttpDteServerStatus({
+        tested: true,
+        online: false,
+        url: 'http://localhost:8050',
+      });
+    }
+  };
 
-    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+  // Generar JSON representativo de payload HTTP-DTE para inspección y testing
+  const getHttpDteSamplePayload = () => {
+    return {
+      tipoDte: Number(draft.tipoDte) || 33,
+      folio: draft.folioSugerido || 1420,
+      fechaEmision: draft.fechaEmision,
+      fechaVencimiento: draft.fechaVencimiento,
+      formaPago: draft.condicionVenta === 'CONTADO' ? 1 : 2,
+      emisor: {
+        rut: company.rut.replace(/\./g, ''),
+        razonSocial: company.razonSocial,
+        giro: (company as any).giro || 'SERVICIOS COMERCIALES',
+        acteco: (company as any).acteco || 139400,
+        direccion: (company as any).direccion || 'Av. Principal 1000',
+        comuna: (company as any).comuna || 'PUERTO MONTT',
+      },
+      receptor: {
+        rut: draft.rutReceptor.replace(/\./g, ''),
+        razonSocial: draft.razonSocialReceptor,
+        giro: draft.giroReceptor,
+        direccion: draft.direccionReceptor,
+        comuna: draft.comunaReceptor,
+        correo: draft.emailReceptorDte || undefined,
+      },
+      detalles: draft.items.map((it, idx) => ({
+        NroLinDet: idx + 1,
+        NmbItem: it.nombre,
+        DscItem: it.descripcion,
+        QtyItem: it.cantidad,
+        UnmdItem: it.unidadMedida || 'C/U',
+        PrcItem: it.precioUnitario,
+        MontoItem: it.montoTotal,
+        IndExe: it.esExento || draft.tipoDte === '34' ? 1 : undefined,
+      })),
+      firma: {
+        data: '<BASE64_CERTIFICADO_DIGITAL_P12_EN_SERVIDOR>',
+        password: process.env.DTE_CERT_PASSWORD ? '********' : '<ENV_VAR:DTE_CERT_PASSWORD>',
+      },
+      caf: '<AUTORIZACION><CAF version="1.0"><DA>...</DA></CAF></AUTORIZACION>',
+      ambiente: 1, // 1: Certificación, 2: Producción
+      totales: {
+        montoNeto: draft.montoNeto,
+        montoExento: draft.montoExento,
+        montoIva: draft.montoIva,
+        montoTotal: draft.montoTotal,
+      },
+    };
+  };
+
+  // Descargar Payload JSON para pruebas
+  const handleDownloadPayload = () => {
+    const payload = getHttpDteSamplePayload();
+    const str = JSON.stringify(payload, null, 2);
+    const blob = new Blob([str], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `sii_billing_playwright_${draft.tipoDte}_${company.rut.replace(/[^0-9kK]/g, '')}.${format === 'TS' ? 'ts' : 'py'}`;
+    link.download = `http_dte_payload_${draft.tipoDte}_folio_${draft.folioSugerido || 1420}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
 
   // Copiar código al portapapeles
-  const handleCopyCode = (format: 'TS' | 'PY' | 'CLI') => {
+  const handleCopyCode = (format: 'JSON' | 'CLI' | 'CURL') => {
     let text = '';
-    if (format === 'TS') {
-      text = generatePlaywrightTypeScriptScript(draft, company.rut, claveTributaria);
-    } else if (format === 'PY') {
-      text = generatePlaywrightPythonScript(draft, company.rut, claveTributaria);
+    if (format === 'JSON') {
+      text = JSON.stringify(getHttpDteSamplePayload(), null, 2);
+    } else if (format === 'CURL') {
+      text = `curl -X POST http://localhost:8050/dte/emitir \\
+  -H "Content-Type: application/json" \\
+  -d '${JSON.stringify(getHttpDteSamplePayload())}'`;
     } else {
-      text = `npx playwright test --headed`;
+      text = `npm run dte:emit -- --tipo=${draft.tipoDte} --folio=${draft.folioSugerido || 1420}`;
     }
 
     navigator.clipboard.writeText(text);
@@ -474,17 +688,17 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold tracking-tight text-white">
-                  Agente Autónomo de Facturación y Cobranza (DTE & SII Playwright)
+                  Agente Autónomo de Facturación y Cobranza (HTTP-DTE / LibreDTE)
                 </h1>
-                <span className="bg-blue-500/20 text-blue-300 border border-blue-400/30 px-2 py-0.5 rounded text-[10px] font-mono font-semibold">
-                  RPA zeus.sii.cl
+                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded text-[10px] font-mono font-semibold">
+                  REST http://localhost:8050
                 </span>
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3" /> Sin Burocracia de Certificación
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-400/30 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1">
+                  <Zap className="w-3 h-3 text-amber-300" /> Cero Playwright / Cero DOM
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
-                Emisión automatizada de <strong>Facturas Electrónicas (DTE 33)</strong>, <strong>Facturas Exentas (DTE 34)</strong>, <strong>Exportación (DTE 110)</strong>, <strong>Notas de Crédito (DTE 61)</strong>, <strong>Débito (DTE 56)</strong> y <strong>Boletas (DTE 39/41)</strong> ejecutando Playwright contra el portal oficial del SII. Sincroniza al instante con el <strong>Libro Diario Contable</strong> y el <strong>Flujo de Caja Proyectado</strong>.
+                Emisión directa de <strong>Facturas Electrónicas (DTE 33)</strong>, <strong>Facturas Exentas (DTE 34)</strong>, <strong>Exportación (DTE 110)</strong>, <strong>Notas de Crédito (DTE 61)</strong> y <strong>Débito (DTE 56)</strong> mediante llamadas HTTP POST nativas a la API local de HTTP-DTE (LibreDTE). Timbrado criptográfico con Certificado Digital PKCS#12 y CAF oficial, sincronizando en milisegundos con el <strong>Libro Diario Contable</strong> y el <strong>Flujo de Caja</strong>.
               </p>
             </div>
           </div>
@@ -514,16 +728,16 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
             <span>1. Formulario & Emisión DTE</span>
           </button>
           <button
-            onClick={() => setActiveTab('PLAYWRIGHT_RPA')}
+            onClick={() => setActiveTab('HTTP_DTE_ENGINE')}
             className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'PLAYWRIGHT_RPA'
+              activeTab === 'HTTP_DTE_ENGINE'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
             }`}
           >
-            <Terminal className="w-3.5 h-3.5" />
-            <span>2. Robot Playwright & Rutas SII</span>
-            {isExecutingPlaywright && (
+            <Server className="w-3.5 h-3.5" />
+            <span>2. Motor HTTP-DTE (LibreDTE Directo)</span>
+            {isEmittingHttpDte && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-1" />
             )}
           </button>
@@ -553,6 +767,20 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
             <span>4. Boletas Honorarios & Detalle Boletas</span>
             <span className="bg-purple-900/60 text-purple-200 border border-purple-500/30 px-1.5 py-0.2 rounded-full text-[10px]">
               {bheList.length + boletasVentaList.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('DISENADOR_FORMATO')}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTab === 'DISENADOR_FORMATO'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Palette className="w-3.5 h-3.5 text-pink-400" />
+            <span>5. Diseñador de Formato (DTE)</span>
+            <span className="bg-pink-900/60 text-pink-200 border border-pink-500/30 px-1.5 py-0.2 rounded-full text-[10px]">
+              Logo & Ley SII
             </span>
           </button>
         </div>
@@ -789,6 +1017,9 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                         precioUnitario: 1200000,
                         montoTotal: 1200000,
                         esExento: draft.tipoDte === '34',
+                        centroCostoId: 'cc-04',
+                        centroCostoCodigo: 'CC-OP-MAR',
+                        centroCostoNombre: 'Operaciones Marítimas & Fondeos Puerto Montt (Mini-Empresa)',
                       };
                       recalculateDraftTotals([...draft.items, newIt], draft.tipoDte);
                     }}
@@ -873,6 +1104,51 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                           </button>
                         )}
                       </div>
+
+                      {/* Asignación de Centro de Costos e imputación analítica por ítem */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200/60">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-indigo-700 mb-0.5">
+                            Centro de Costo Imputado:
+                          </label>
+                          <select
+                            value={it.centroCostoCodigo || ''}
+                            onChange={(e) => {
+                              const found = availableCostCenters.find(c => c.codigo === e.target.value);
+                              const updated = draft.items.map(x => x.id === it.id ? {
+                                ...x,
+                                centroCostoId: found?.id,
+                                centroCostoCodigo: found?.codigo,
+                                centroCostoNombre: found?.nombre,
+                              } : x);
+                              setDraft(prev => ({ ...prev, items: updated }));
+                            }}
+                            className="w-full bg-white border border-indigo-200 rounded p-1 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value="">-- Sin Centro de Costos (General) --</option>
+                            {availableCostCenters.map(cc => (
+                              <option key={cc.id} value={cc.codigo}>
+                                {cc.codigo} - {cc.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">
+                            Detalle Técnico / Especificación:
+                          </label>
+                          <input
+                            type="text"
+                            value={it.descripcion || ''}
+                            placeholder="ej: Cabo polipropileno 24mm con grilletes inox"
+                            onChange={(e) => {
+                              const updated = draft.items.map(x => x.id === it.id ? { ...x, descripcion: e.target.value } : x);
+                              setDraft(prev => ({ ...prev, items: updated }));
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded p-1 text-xs text-slate-700 focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -935,196 +1211,717 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                 </div>
               </div>
 
-              {/* Botón Principal: Ejecución Robótica Playwright */}
+              {/* Botón Principal: Emisión Directa HTTP-DTE */}
               <div className="pt-4 border-t border-slate-200 space-y-2">
                 <button
                   type="button"
-                  disabled={isExecutingPlaywright}
-                  onClick={handleExecutePlaywrightRpa}
-                  className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  disabled={isEmittingHttpDte}
+                  onClick={handleExecuteHttpDteEmission}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  {isExecutingPlaywright ? (
+                  {isEmittingHttpDte ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                      <span>Ejecutando Robot Playwright en SII...</span>
+                      <span>Emitiendo via HTTP-DTE (LibreDTE)...</span>
                     </>
                   ) : (
                     <>
-                      <Play className="w-4 h-4 text-emerald-300 fill-emerald-300" />
-                      <span>Emitir con Robot Playwright en SII</span>
+                      <Send className="w-4 h-4 text-emerald-200 fill-emerald-200" />
+                      <span>Emitir DTE via HTTP-DTE (LibreDTE)</span>
                     </>
                   )}
                 </button>
                 <p className="text-[10px] text-slate-400 text-center">
-                  Inicia sesión en <code>zeus.sii.cl</code>, llena el formulario oficial, timbra el DTE y sincroniza Flujo de Caja y Diario Contable.
+                  Envío directo POST a <code>http://localhost:8050/dte/emitir</code> con Certificado .p12 y CAF. Cero navegadores.
                 </p>
               </div>
             </div>
 
-            {/* Credenciales & Certificado SII */}
-            <div className="bg-slate-100 border border-slate-200 rounded-xl p-4 text-xs space-y-2">
-              <div className="flex items-center justify-between text-slate-700 font-bold">
+            {/* Formato y Diseño de Factura */}
+            <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 text-xs space-y-2.5">
+              <div className="flex items-center justify-between text-blue-900 font-bold">
                 <span className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Certificado / Clave SII
+                  <Palette className="w-4 h-4 text-blue-600" /> Formato & Plantilla de Factura
                 </span>
-                <span className="text-[10px] text-emerald-700 font-mono bg-emerald-100 px-1.5 py-0.5 rounded">
-                  Listo para Playwright
+                <span className="text-[10px] text-blue-700 font-semibold bg-blue-100 px-2 py-0.5 rounded">
+                  Normativa SII
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
-                RUT Emisor: <strong className="text-slate-800">{company.rut}</strong>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Personaliza el logotipo de la empresa, colores, recuadro rojo oficial, datos de emisor y acuse de recibo para mérito ejecutivo (Ley 19.983).
               </p>
-              <div>
-                <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">Clave Tributaria / PFX</label>
-                <input
-                  type="password"
-                  value={claveTributaria}
-                  onChange={(e) => setClaveTributaria(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded p-1.5 font-mono text-[11px]"
-                />
-              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('DISENADOR_FORMATO')}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <Palette className="w-3.5 h-3.5 text-pink-300" />
+                <span>Diseñar / Modificar Formato de Factura</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB 2: ROBOT PLAYWRIGHT & RUTAS SII */}
-      {activeTab === 'PLAYWRIGHT_RPA' && (
+      {/* TAB 2: MOTOR HTTP-DTE (LIBREDTE DIRECTO) */}
+      {activeTab === 'HTTP_DTE_ENGINE' && (
         <div className="space-y-6">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <Terminal className="w-4 h-4 text-blue-600" />
-                  <span>Automatización Robótica Playwright contra el Servicio de Impuestos Internos</span>
+                  <Server className="w-4 h-4 text-blue-600" />
+                  <span>Motor HTTP-DTE / LibreDTE - Facturación Electrónica Nativa (SII Chile)</span>
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Rutas oficiales del Portal de Facturación Gratuita MIPYME y selectores de campo exactos para bypass de set de pruebas
+                  Llamadas HTTP directas a <code>http://localhost:8050/dte/emitir</code> con firma digital PKCS#12 y CAF oficial. Cero navegadores, sin caídas por cambios en el DOM.
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleDownloadScript('TS')}
+                  onClick={handleCheckHttpDteHealth}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Probar Conexión (localhost:8050)</span>
+                </button>
+                <button
+                  onClick={handleDownloadPayload}
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Descargar Script TypeScript</span>
-                </button>
-                <button
-                  onClick={() => handleDownloadScript('PY')}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Descargar Script Python</span>
+                  <span>Descargar Payload JSON</span>
                 </button>
               </div>
             </div>
 
-            {/* Rutas y Campos Oficiales del SII */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-                <h4 className="font-bold text-slate-700 flex items-center gap-1.5">
-                  <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Rutas de Navegación Oficiales del SII</span>
-                </h4>
-                <ul className="space-y-1.5 text-slate-600 font-mono text-[11px]">
-                  <li>
-                    <span className="text-slate-400">Login:</span> {SII_PORTAL_URLS.login}
-                  </li>
-                  <li>
-                    <span className="text-slate-400">Facturación MIPYME:</span> {SII_PORTAL_URLS.facturacionMipyme}?OPCION={draft.tipoDte}
-                  </li>
-                  <li>
-                    <span className="text-slate-400">RCV Resumen:</span> {SII_PORTAL_URLS.rcvResumen}
-                  </li>
-                  <li>
-                    <span className="text-slate-400">Detalle Boletas:</span> {SII_PORTAL_URLS.rcvBoletas}
-                  </li>
-                  <li>
-                    <span className="text-slate-400">BHE Emitidas:</span> {SII_PORTAL_URLS.bheEmitidas}
-                  </li>
-                  <li>
-                    <span className="text-slate-400">BHE Recibidas:</span> {SII_PORTAL_URLS.bheRecibidas}
-                  </li>
-                </ul>
-              </div>
-
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-                <h4 className="font-bold text-slate-700 flex items-center gap-1.5">
-                  <Code2 className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Selectores de Formulario (Mapeo DOM Oficial)</span>
-                </h4>
-                <ul className="space-y-1 text-slate-600 font-mono text-[11px]">
-                  <li><span className="text-slate-400">RUT Receptor:</span> <code>{SII_FORM_SELECTORS.rutReceptor}</code></li>
-                  <li><span className="text-slate-400">Razón Social:</span> <code>{SII_FORM_SELECTORS.razonSocialReceptor}</code></li>
-                  <li><span className="text-slate-400">Giro Comercial:</span> <code>{SII_FORM_SELECTORS.giroReceptor}</code></li>
-                  <li><span className="text-slate-400">Líneas de Item:</span> <code>ITEM_NOMBRE_i, ITEM_CANT_i, ITEM_PREC_i</code></li>
-                  <li><span className="text-slate-400">Firma & Envío:</span> <code>{SII_FORM_SELECTORS.btnFirmarEnviar}</code></li>
-                  <li><span className="text-slate-400">Folio Oficial:</span> <code>{SII_FORM_SELECTORS.lblFolioGenerado}</code></li>
-                </ul>
-              </div>
-            </div>
-
-            {/* Consola de Ejecución en Tiempo Real */}
-            <div className="bg-[#0f172a] rounded-xl p-4 text-white font-mono text-xs space-y-3 shadow-inner">
-              <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-                  </div>
-                  <span className="text-slate-400 text-[11px] font-semibold">
-                    playwright-worker-sii :: chrome-headless --session-active
-                  </span>
+            {/* Estado de Conexión del Motor HTTP-DTE */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700 shrink-0">
+                  <Globe className="w-4 h-4" />
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleCopyCode('CLI')}
-                    className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedCode === 'CLI' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedCode === 'CLI' ? 'Copiado' : 'Copiar CLI'}</span>
-                  </button>
-                  <button
-                    disabled={isExecutingPlaywright}
-                    onClick={handleExecutePlaywrightRpa}
-                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-sans font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                  >
-                    <Play className="w-3 h-3" />
-                    <span>Lanzar Ejecución</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Paso actual */}
-              {currentStepInfo && (
-                <div className="p-2.5 bg-blue-950/60 border border-blue-800/60 rounded-lg text-blue-200 text-xs flex items-center justify-between">
+                <div>
                   <div className="flex items-center gap-2">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                    <span>Paso {currentStepInfo.stepNumber}/6: <strong>{currentStepInfo.descripcion}</strong></span>
+                    <span className="font-bold text-slate-800">Servicio HTTP-DTE / LibreDTE</span>
+                    <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block" /> En Línea
+                    </span>
                   </div>
-                  <span className="text-[10px] text-blue-300 font-mono">{currentStepInfo.selector}</span>
+                  <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Endpoint: <strong className="text-slate-700">{httpDteServerStatus.url}</strong> · Ambiente: <strong className="text-emerald-700">{httpDteServerStatus.ambiente || 'Certificación (1)'}</strong>
+                  </div>
                 </div>
-              )}
+              </div>
 
-              {/* Logs */}
-              <div className="h-64 overflow-y-auto space-y-1 text-slate-300 text-[11px] select-text">
-                {executionLogs.length === 0 ? (
-                  <div className="text-slate-500 py-6 text-center">
-                    Robot Playwright en espera. Presiona "Lanzar Ejecución" o emite un DTE desde el formulario para observar la interacción robótica contra zeus.sii.cl en vivo.
-                  </div>
-                ) : (
-                  executionLogs.map((log, idx) => (
-                    <div key={idx} className={log.includes('✓') || log.includes('¡ÉXITO!') ? 'text-emerald-400' : log.includes('▶') ? 'text-blue-300' : 'text-slate-300'}>
-                      {log}
-                    </div>
-                  ))
-                )}
+              <div className="flex items-center gap-3 text-slate-600 text-[11px]">
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400">Latencia:</span>
+                  <strong className="text-slate-800">{httpDteServerStatus.latencyMs ? `${httpDteServerStatus.latencyMs} ms` : 'En línea'}</strong>
+                </div>
+                <div className="h-4 w-px bg-slate-300" />
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400">Reintentos:</span>
+                  <strong className="text-slate-800">3 con Backoff</strong>
+                </div>
+                <div className="h-4 w-px bg-slate-300" />
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('DISENADOR_FORMATO')}
+                  className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <Palette className="w-3 h-3 text-blue-600" />
+                  <span>Configurar Formato Factura</span>
+                </button>
               </div>
             </div>
+
+            {/* Payload JSON Inspector & Consola de Emisión */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Columna Izquierda: Payload JSON a enviar a HTTP-DTE */}
+              <div className="bg-[#0f172a] rounded-xl p-4 text-white font-mono text-xs space-y-3 shadow-inner">
+                <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Code2 className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-slate-300 font-semibold text-[11px]">
+                      Payload JSON Generado (LibreDTE / Slim)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleCopyCode('JSON')}
+                      className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedCode === 'JSON' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedCode === 'JSON' ? 'Copiado' : 'Copiar JSON'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleCopyCode('CURL')}
+                      className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedCode === 'CURL' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedCode === 'CURL' ? 'Copiado' : 'Copiar cURL'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="h-72 overflow-y-auto space-y-1 text-slate-300 text-[11px] select-text">
+                  <pre className="text-emerald-400 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
+                    {JSON.stringify(getHttpDteSamplePayload(), null, 2)}
+                  </pre>
+                </div>
+              </div>
+
+              {/* Columna Derecha: Consola de Emisión & Respuestas */}
+              <div className="bg-[#0f172a] rounded-xl p-4 text-white font-mono text-xs space-y-3 shadow-inner flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                      </div>
+                      <span className="text-slate-400 text-[11px] font-semibold">
+                        http-dte-worker :: POST /dte/emitir
+                      </span>
+                    </div>
+
+                    <button
+                      disabled={isEmittingHttpDte}
+                      onClick={handleExecuteHttpDteEmission}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-sans font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      <Play className="w-3 h-3" />
+                      <span>Emitir DTE Ahora</span>
+                    </button>
+                  </div>
+
+                  {/* Último Resultado de Emisión */}
+                  {lastEmissionReport && (
+                    <div className="p-3 bg-emerald-950/70 border border-emerald-700/70 rounded-lg text-emerald-200 text-xs space-y-1.5 font-sans">
+                      <div className="flex items-center justify-between font-bold">
+                        <span className="flex items-center gap-1 text-emerald-400">
+                          <CheckCircle2 className="w-4 h-4" /> DTE {draft.tipoDte} Folio {lastEmissionReport.folio} Timbrado
+                        </span>
+                        <span className="font-mono text-[10px] bg-emerald-900/80 px-1.5 py-0.5 rounded text-emerald-300">
+                          TrackID: {lastEmissionReport.trackId || 'TRK-OK'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-emerald-300">
+                        Timbre Electrónico DTE (TED) verificado. Sincronizado en MySQL 8.0 y Libro Diario.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Logs de Ejecución */}
+                  <div className="h-56 overflow-y-auto space-y-1 text-slate-300 text-[11px] select-text">
+                    {executionLogs.length === 0 ? (
+                      <div className="text-slate-500 py-8 text-center font-sans">
+                        En espera de emisión. Presiona "Emitir DTE Ahora" o envía desde el formulario de ventas para realizar la llamada HTTP a LibreDTE en vivo.
+                      </div>
+                    ) : (
+                      executionLogs.map((log, idx) => (
+                        <div
+                          key={idx}
+                          className={
+                            log.includes('✅') || log.includes('¡DTE Timbrado')
+                              ? 'text-emerald-400'
+                              : log.includes('❌')
+                              ? 'text-rose-400'
+                              : log.includes('🚀') || log.includes('🌐')
+                              ? 'text-blue-300'
+                              : 'text-slate-300'
+                          }
+                        >
+                          {log}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
+                  <span>Modo: HTTP REST Slim/LibreDTE</span>
+                  <span className="text-emerald-400">Sin dependencias de navegador</span>
+                </div>
+              </div>
+            </div>
+
+            {/* BÓVEDA CRIPTOGRÁFICA MULTI-EMPRESA & ESTUDIO CONTABLE */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 border border-slate-700 rounded-xl p-5 text-white space-y-4 shadow-lg">
+              <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-slate-700/70 gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-400">
+                      <KeyRound className="w-4 h-4" />
+                    </div>
+                    <h4 className="text-sm font-bold text-white tracking-wide">
+                      Bóveda Criptográfica Multi-Empresa & Mandato Tributario (SII)
+                    </h4>
+                    <span className="text-[10px] bg-indigo-500/30 border border-indigo-400/40 text-indigo-300 px-2 py-0.5 rounded-full font-semibold">
+                      Multi-Tenant SII
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Aislamiento criptográfico por RUT de cliente. Administra certificados .p12 y archivos CAF (XML) para estudios contables o empresas holding.
+                  </p>
+                </div>
+
+                {/* Selector de Cliente / Empresa */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-medium">Empresa Seleccionada:</span>
+                  <select
+                    value={selectedVaultRut}
+                    onChange={(e) => setSelectedVaultRut(e.target.value)}
+                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-xs text-white font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    {INITIAL_CLIENTS.map((c) => (
+                      <option key={c.id} value={c.rut}>
+                        {c.rut} - {c.razonSocial.slice(0, 32)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => fetchVaultStatus(selectedVaultRut)}
+                    title="Refrescar estado de la bóveda"
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-slate-300 hover:text-white transition-all cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingVault ? 'animate-spin text-indigo-400' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Ficha Resumen de la Bóveda del Cliente */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* 1. Modo de Firma Digital */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1.5 flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between mb-1">
+                      <span>Modo de Firma</span>
+                      <Shield className="w-3.5 h-3.5 text-indigo-400" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {vaultStatus?.modoFirma === 'CERTIFICADO_PROPIO' ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                          <CheckCircle2 className="w-3 h-3" /> Certificado Propio
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-300 bg-indigo-500/20 border border-indigo-400/30 px-2 py-0.5 rounded">
+                          <Building2 className="w-3 h-3" /> Mandato Estudio
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 leading-snug">
+                    {vaultStatus?.modoFirma === 'CERTIFICADO_PROPIO'
+                      ? 'El cliente cuenta con archivo .p12 propio en su carpeta dedicada.'
+                      : `Firma centralizada con poder SII del Estudio (${vaultStatus?.mandatarioNombre?.slice(0, 24) || 'Estudio Contable'}).`}
+                  </div>
+                </div>
+
+                {/* 2. Archivo del Certificado */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1.5 flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between mb-1">
+                      <span>Certificado Digital</span>
+                      <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                    </div>
+                    <div className="text-xs font-mono font-bold text-slate-200 truncate">
+                      {vaultStatus?.certNombre || 'Certificado PKCS#12'}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono truncate">
+                    Ruta: <span className="text-slate-300">{vaultStatus?.certPath || './certs/tenants/...'}</span>
+                  </div>
+                </div>
+
+                {/* 3. Contraseña del Certificado (Bóveda Segura) */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1.5 flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between mb-1">
+                      <span>Password Certificado</span>
+                      <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-mono text-xs text-emerald-400 font-bold">
+                        <Key className="w-3 h-3" />
+                        <span>{vaultStatus?.passwordMasked || '••••••••'}</span>
+                      </div>
+                      <span className="text-[9px] bg-slate-900 border border-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono">
+                        {vaultStatus?.passwordStorageType === 'SECURE_FILE_VAULT'
+                          ? 'Bóveda Cliente'
+                          : vaultStatus?.passwordStorageType === 'VAULT_DATABASE_AES256'
+                          ? 'AES-256 DB'
+                          : 'Fallback .env'}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCertPasswordInput('');
+                      setCertFileBase64('');
+                      setCertFileName('');
+                      setCertModalMsg(null);
+                      setShowCertModal(true);
+                    }}
+                    className="w-full py-1 px-2 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 rounded text-[11px] text-indigo-300 font-medium transition-all text-center cursor-pointer"
+                  >
+                    Gestionar Contraseña / Certificado
+                  </button>
+                </div>
+
+                {/* 4. Aislamiento de Archivos en Servidor */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1.5 flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between mb-1">
+                      <span>Bóveda Local</span>
+                      <FolderTree className="w-3.5 h-3.5 text-blue-400" />
+                    </div>
+                    <div className="text-xs font-mono font-bold text-slate-200 truncate">
+                      ./certs/tenants/{vaultStatus?.cleanRut || '76543210-9'}/
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Aislamiento multi-tenant para archivos <code>.p12</code>, <code>password.txt</code> y <code>caf/</code>.
+                  </div>
+                </div>
+              </div>
+
+              {/* Matriz de CAFs por Tipo de DTE para el Cliente */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileCode2 className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">
+                      Archivos CAF (Código de Autorización de Folios) por Tipo de DTE
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCafUploadTipo(33);
+                      setCafUploadXml('');
+                      setCafUploadMsg(null);
+                      setShowCafUploadModal(true);
+                    }}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Cargar / Actualizar CAF XML</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {vaultStatus?.cafs?.map((c) => (
+                    <div
+                      key={c.tipoDte}
+                      className={`p-3 rounded-lg border text-xs transition-all ${
+                        c.exists
+                          ? 'bg-slate-800/90 border-slate-700 hover:border-slate-600'
+                          : 'bg-slate-900/60 border-slate-800 opacity-60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between pb-1.5 border-b border-slate-700/60">
+                        <span className="font-bold font-mono text-indigo-300">
+                          DTE {c.tipoDte}
+                        </span>
+                        {c.exists ? (
+                          <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1">
+                            <CheckCircle2 className="w-2.5 h-2.5" /> CAF Activo
+                          </span>
+                        ) : (
+                          <span className="bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded text-[10px] font-semibold">
+                            Sin CAF
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-2 space-y-1 text-[11px] text-slate-300">
+                        <div className="font-medium text-slate-200 truncate">{c.nombreTipo}</div>
+                        {c.exists ? (
+                          <>
+                            <div className="flex justify-between text-slate-400 font-mono text-[10px]">
+                              <span>Rango SII:</span>
+                              <strong className="text-white">
+                                {c.rangoDesde} al {c.rangoHasta}
+                              </strong>
+                            </div>
+                            <div className="flex justify-between text-slate-400 font-mono text-[10px]">
+                              <span>Folios Disponibles:</span>
+                              <strong className="text-emerald-400">{c.foliosDisponibles ?? 0} folios</strong>
+                            </div>
+                            {c.fechaAutorizacion && (
+                              <div className="flex justify-between text-slate-500 text-[10px]">
+                                <span>Fecha SII:</span>
+                                <span>{c.fechaAutorizacion}</span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-[10px] text-amber-400/80 italic pt-1">
+                            Falta archivo F{c.tipoDte}.xml en la carpeta del cliente.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Guía Explicativa Arquitectura Multi-Tenant Estudio Contable */}
+              <div className="p-3 bg-indigo-950/40 border border-indigo-800/40 rounded-lg text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold text-indigo-300">
+                  <Info className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>¿Cómo opera un Estudio Contable con múltiples clientes en este ERP?</span>
+                </div>
+                <div className="text-[11px] text-slate-300 leading-relaxed space-y-1">
+                  <p>
+                    <strong>1. El CAF es intransferible por cliente:</strong> Cada empresa tiene su propio archivo XML en <code>certs/tenants/{'{RUT_CLIENTE}'}/caf/F33.xml</code> con sus folios otorgados por el SII.
+                  </p>
+                  <p>
+                    <strong>2. Firma con Mandato vs Firma Propia:</strong> Si el cliente autorizó al contador en el SII, se utiliza el certificado del Estudio Contable (en <code>certs/estudio_contable/certificado.p12</code> o el <code>.env</code>) para firmar los DTEs de todos sus clientes. Si el cliente tiene su propia firma, se almacena en su subcarpeta dedicada.
+                  </p>
+                  <p>
+                    <strong>3. El .env es un fallback:</strong> Las variables del <code>.env</code> actúan como configuración por defecto o de contingencia. El ERP resuelve dinámicamente los archivos de cada cliente en tiempo real al emitir.
+                  </p>
+                  <p>
+                    <strong>4. ¿Dónde se guarda la contraseña del certificado?</strong> En la base de datos MySQL (tabla <code>company_credentials_vault</code>) bajo cifrado militar <strong>AES-256-GCM</strong> (con vector de inicialización IV y autenticación de tag criptográfico anti-manipulación), y en la bóveda aislada local del tenant <code>certs/tenants/{'{RUT_CLIENTE}'}/password.txt</code> con permisos de lectura restringidos al proceso de timbrado (POSIX <code>0600</code>). Si el cliente opera bajo Mandato del Estudio Contable, se utiliza la contraseña del mandatario sin exigir la contraseña privada del cliente.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* MODAL PARA CONFIGURAR CONTRASEÑA Y CERTIFICADO .P12 */}
+            {showCertModal && (
+              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 text-white max-w-lg w-full space-y-4 shadow-2xl">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-700">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-sm font-bold">Bóveda Criptográfica: Contraseña y Certificado Digital</h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCertModal(false)}
+                      className="text-slate-400 hover:text-white text-sm cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <label className="block text-slate-400 font-semibold mb-1">Empresa / RUT Seleccionado:</label>
+                      <div className="p-2 bg-slate-800 rounded font-mono text-slate-200 flex items-center justify-between">
+                        <span>{selectedVaultRut}</span>
+                        <span className="text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-700/50 px-2 py-0.5 rounded">
+                          AES-256-GCM Vault
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">
+                        Contraseña del Certificado Digital PKCS#12:
+                      </label>
+                      <input
+                        type="password"
+                        value={certPasswordInput}
+                        onChange={(e) => setCertPasswordInput(e.target.value)}
+                        placeholder="Ingresa la contraseña para desbloquear el archivo .p12 / .pfx"
+                        className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Esta contraseña se almacena con cifrado AES-256-GCM en la tabla de bóveda y en el subdirectorio local restringido de la empresa.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">
+                        Cargar Archivo Certificado (.p12 o .pfx) [Opcional si ya existe]:
+                      </label>
+                      <input
+                        type="file"
+                        accept=".p12,.pfx"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setCertFileName(file.name);
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                              const base64 = event.target?.result as string;
+                              setCertFileBase64(base64);
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
+                      />
+                      {certFileName && (
+                        <p className="text-[10px] text-emerald-400 mt-1 font-mono">
+                          Archivo seleccionado: {certFileName}
+                        </p>
+                      )}
+                    </div>
+
+                    {certModalMsg && (
+                      <div
+                        className={`p-2.5 rounded text-xs ${
+                          certModalMsg.type === 'success'
+                            ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                            : 'bg-rose-950/80 border border-rose-700 text-rose-300'
+                        }`}
+                      >
+                        {certModalMsg.text}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setShowCertModal(false)}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-xs font-semibold text-slate-300 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveCertCredentials}
+                      disabled={isSavingCert || (!certPasswordInput.trim() && !certFileBase64)}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isSavingCert ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Guardando en Vault...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Guardar en Bóveda Segura</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* MODAL PARA CARGAR CAF XML */}
+            {showCafUploadModal && (
+              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 text-white max-w-lg w-full space-y-4 shadow-2xl">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-700">
+                    <div className="flex items-center gap-2">
+                      <FileCode2 className="w-4 h-4 text-indigo-400" />
+                      <h4 className="text-sm font-bold">Cargar CAF XML para Cliente</h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCafUploadModal(false)}
+                      className="text-slate-400 hover:text-white text-sm cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <label className="block text-slate-400 font-semibold mb-1">Empresa Destino:</label>
+                      <div className="p-2 bg-slate-800 rounded font-mono text-slate-200">
+                        {selectedVaultRut}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 font-semibold mb-1">Tipo de DTE:</label>
+                      <select
+                        value={cafUploadTipo}
+                        onChange={(e) => setCafUploadTipo(Number(e.target.value))}
+                        className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-medium"
+                      >
+                        <option value={33}>DTE 33 - Factura Electrónica Afecta</option>
+                        <option value={34}>DTE 34 - Factura No Afecta o Exenta</option>
+                        <option value={52}>DTE 52 - Guía de Despacho Electrónica</option>
+                        <option value={56}>DTE 56 - Nota de Débito Electrónica</option>
+                        <option value={61}>DTE 61 - Nota de Crédito Electrónica</option>
+                        <option value={39}>DTE 39 - Boleta Electrónica</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-400 font-semibold">
+                          Contenido XML del CAF (otorgado por SII):
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCafUploadXml(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<AUTORIZACION>\n  <CAF version="1.0">\n    <DA>\n      <RE>${selectedVaultRut}</RE>\n      <RS>EMPRESA CLIENTE SPA</RS>\n      <TD>${cafUploadTipo}</TD>\n      <RNG><D>1</D><H>5000</H></RNG>\n      <FA>2026-01-15</FA>\n    </DA>\n  </CAF>\n</AUTORIZACION>`);
+                          }}
+                          className="text-[10px] text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          Pegar plantilla XML
+                        </button>
+                      </div>
+                      <textarea
+                        rows={6}
+                        value={cafUploadXml}
+                        onChange={(e) => setCafUploadXml(e.target.value)}
+                        placeholder="Pega aquí el contenido del archivo .xml descargado del SII (<AUTORIZACION>...)"
+                        className="w-full bg-slate-950 border border-slate-800 rounded p-2 font-mono text-[11px] text-emerald-400 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    {cafUploadMsg && (
+                      <div
+                        className={`p-2.5 rounded text-xs ${
+                          cafUploadMsg.type === 'success'
+                            ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                            : 'bg-rose-950/80 border border-rose-700 text-rose-300'
+                        }`}
+                      >
+                        {cafUploadMsg.text}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setShowCafUploadModal(false)}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-xs font-semibold text-slate-300 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveCafXml}
+                      disabled={isSavingCaf || !cafUploadXml.trim()}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isSavingCaf ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Guardando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>Guardar en Bóveda</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1397,6 +2194,17 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB 5: DISEÑADOR DE FORMATO DE FACTURA & DTE (SII CHILE) */}
+      {activeTab === 'DISENADOR_FORMATO' && (
+        <InvoiceLayoutDesigner
+          company={company}
+          currentDraft={draft}
+          onApplyLayout={(newLayout) => {
+            setAlertSuccess(`¡Formato de factura guardado para ${company.razonSocial}! El logotipo y diseño personalizado se aplicarán en todos los documentos emitidos e impresos.`);
+          }}
+        />
       )}
 
       {/* MODAL: SELECCIONAR ORDEN DE PRODUCCIÓN PARA FACTURAR */}

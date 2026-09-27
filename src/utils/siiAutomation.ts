@@ -577,7 +577,7 @@ export function generateMonthlyCentralizationEntry(
     // DEBE: IVA Crédito Fiscal (1.1.08)
     // HABER: Proveedores Nacionales (2.1.01)
     // ----------------------------------------------------
-    const debePorCuenta: Record<string, { nombre: string; monto: number }> = {};
+    const debePorCuenta: Record<string, { codigo: string; nombre: string; monto: number; centroCosto?: string }> = {};
     let totalIvaCredito = 0;
     let totalBrutoProveedores = 0;
 
@@ -588,15 +588,42 @@ export function generateMonthlyCentralizationEntry(
       totalIvaCredito += dte.montoIva * factor;
       totalBrutoProveedores += dte.montoTotal * factor;
 
+      // Si la factura tiene ítems detallados con centros de costos
+      if (dte.items && dte.items.length > 0) {
+        dte.items.forEach(it => {
+          const cod = it.cuentaCodigo || dte.cuentaCodigoAsignada || '5.1.01';
+          const cc = it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre;
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+          if (!debePorCuenta[key]) {
+            debePorCuenta[key] = {
+              codigo: cod,
+              nombre: it.cuentaNombre || dte.cuentaNombreAsignada || `Gasto Insumo - ${it.nombre}`,
+              monto: 0,
+              centroCosto: cc,
+            };
+          }
+          const netoItem = it.esExento ? 0 : Math.round(it.montoTotal / (dte.tipoDte === '34' ? 1 : 1.19));
+          const exentoItem = it.esExento ? it.montoTotal : 0;
+          const montoItem = (it.montoTotal && !it.precioUnitario) ? it.montoTotal : (netoItem > 0 ? netoItem : (exentoItem > 0 ? exentoItem : it.montoTotal));
+          debePorCuenta[key].monto += montoItem * factor;
+        });
+      }
       // Si la factura está abierta en varias partidas
-      if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
+      else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
         dte.partidasDesglosadas.forEach(p => {
           const cod = p.cuentaCodigo || '5.1.99';
-          if (!debePorCuenta[cod]) {
-            debePorCuenta[cod] = { nombre: p.cuentaNombre || 'Gasto Operacional', monto: 0 };
+          const cc = p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre;
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+          if (!debePorCuenta[key]) {
+            debePorCuenta[key] = {
+              codigo: cod,
+              nombre: p.cuentaNombre || 'Gasto Operacional',
+              monto: 0,
+              centroCosto: cc,
+            };
           }
           const montoPartida = ((p.montoNeto || 0) + (p.montoExento || 0)) * factor;
-          debePorCuenta[cod].monto += montoPartida;
+          debePorCuenta[key].monto += montoPartida;
         });
       } else {
         // Imputación simple asignada o sugerida
@@ -617,30 +644,39 @@ export function generateMonthlyCentralizationEntry(
         }
 
         const montoBase = ((dte.montoNeto || 0) + (dte.montoExento || 0)) * factor;
+        const cc = dte.centroCostoCodigo || dte.centroCostoNombre;
+        const key = `${codigoFinal}___${cc || 'SIN_CC'}`;
 
-        if (!debePorCuenta[codigoFinal]) {
-          debePorCuenta[codigoFinal] = { nombre: nombreFinal || 'Gasto Operacional', monto: 0 };
+        if (!debePorCuenta[key]) {
+          debePorCuenta[key] = {
+            codigo: codigoFinal,
+            nombre: nombreFinal || 'Gasto Operacional',
+            monto: 0,
+            centroCosto: cc,
+          };
         }
-        debePorCuenta[codigoFinal].monto += montoBase;
+        debePorCuenta[key].monto += montoBase;
       }
     });
 
     // 1. Agregar líneas de DEBE por partidas de compras
-    Object.entries(debePorCuenta).forEach(([cod, data]) => {
+    Object.values(debePorCuenta).forEach((data) => {
       if (data.monto > 0) {
         lines.push({
-          cuentaCodigo: cod,
+          cuentaCodigo: data.codigo,
           cuentaNombre: data.nombre,
           debe: Math.round(data.monto),
-          haber: 0
+          haber: 0,
+          centroCosto: data.centroCosto,
         });
       } else if (data.monto < 0) {
         // En caso de notas de crédito que excedan
         lines.push({
-          cuentaCodigo: cod,
+          cuentaCodigo: data.codigo,
           cuentaNombre: data.nombre,
           debe: 0,
-          haber: Math.round(Math.abs(data.monto))
+          haber: Math.round(Math.abs(data.monto)),
+          centroCosto: data.centroCosto,
         });
       }
     });
@@ -671,9 +707,8 @@ export function generateMonthlyCentralizationEntry(
     // HABER: Ingresos por Servicios / Ventas Exentas (4.1.02) por Monto Exento
     // HABER: IVA Débito Fiscal (2.1.04) por Monto IVA Débito
     // ----------------------------------------------------
+    const haberPorCuentaVentas: Record<string, { codigo: string; nombre: string; monto: number; centroCosto?: string }> = {};
     let totalBrutoClientes = 0;
-    let totalNetoVentas = 0;
-    let totalExentoVentas = 0;
     let totalIvaDebito = 0;
 
     dtesFiltrados.forEach(dte => {
@@ -681,9 +716,79 @@ export function generateMonthlyCentralizationEntry(
       const factor = esNotaCredito ? -1 : 1;
 
       totalBrutoClientes += dte.montoTotal * factor;
-      totalNetoVentas += dte.montoNeto * factor;
-      totalExentoVentas += (dte.montoExento || 0) * factor;
       totalIvaDebito += dte.montoIva * factor;
+
+      // Si la factura tiene ítems detallados con centros de costos
+      if (dte.items && dte.items.length > 0) {
+        dte.items.forEach(it => {
+          const cod = it.cuentaCodigo || (it.esExento ? (config.cuentaVentasExentasIngreso?.codigo || '4.1.02') : config.cuentaVentasIngreso.codigo);
+          const nom = it.cuentaNombre || (it.esExento ? (config.cuentaVentasExentasIngreso?.nombre || 'Ingresos por Servicios Exentos del Giro') : config.cuentaVentasIngreso.nombre);
+          const cc = it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre;
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+
+          if (!haberPorCuentaVentas[key]) {
+            haberPorCuentaVentas[key] = {
+              codigo: cod,
+              nombre: nom,
+              monto: 0,
+              centroCosto: cc,
+            };
+          }
+          const netoItem = it.esExento ? 0 : Math.round(it.montoTotal / (dte.tipoDte === '34' ? 1 : 1.19));
+          const exentoItem = it.esExento ? it.montoTotal : 0;
+          const montoItem = (it.montoTotal && !it.precioUnitario) ? it.montoTotal : (netoItem > 0 ? netoItem : (exentoItem > 0 ? exentoItem : it.montoTotal));
+          haberPorCuentaVentas[key].monto += montoItem * factor;
+        });
+      } else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
+        dte.partidasDesglosadas.forEach(p => {
+          const cod = p.cuentaCodigo || config.cuentaVentasIngreso.codigo;
+          const nom = p.cuentaNombre || config.cuentaVentasIngreso.nombre;
+          const cc = p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre;
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+
+          if (!haberPorCuentaVentas[key]) {
+            haberPorCuentaVentas[key] = {
+              codigo: cod,
+              nombre: nom,
+              monto: 0,
+              centroCosto: cc,
+            };
+          }
+          const montoPartida = ((p.montoNeto || 0) + (p.montoExento || 0)) * factor;
+          haberPorCuentaVentas[key].monto += montoPartida;
+        });
+      } else {
+        const cc = dte.centroCostoCodigo || dte.centroCostoNombre;
+        if (dte.montoNeto > 0 || (dte.montoNeto === 0 && dte.montoExento === 0)) {
+          const cod = config.cuentaVentasIngreso.codigo;
+          const nom = config.cuentaVentasIngreso.nombre;
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+          if (!haberPorCuentaVentas[key]) {
+            haberPorCuentaVentas[key] = {
+              codigo: cod,
+              nombre: nom,
+              monto: 0,
+              centroCosto: cc,
+            };
+          }
+          haberPorCuentaVentas[key].monto += (dte.montoNeto || 0) * factor;
+        }
+
+        if (dte.montoExento > 0) {
+          const cod = config.cuentaVentasExentasIngreso?.codigo || '4.1.02';
+          const nom = config.cuentaVentasExentasIngreso?.nombre || 'Ingresos por Servicios Exentos del Giro';
+          const key = `${cod}___${cc || 'SIN_CC'}`;
+          if (!haberPorCuentaVentas[key]) {
+            haberPorCuentaVentas[key] = {
+              codigo: cod,
+              nombre: nom,
+              monto: 0,
+              centroCosto: cc,
+            };
+          }
+          haberPorCuentaVentas[key].monto += (dte.montoExento || 0) * factor;
+        }
+      }
     });
 
     // 1. DEBE: Clientes Nacionales (parametrizada)
@@ -694,55 +799,34 @@ export function generateMonthlyCentralizationEntry(
       haber: totalBrutoClientes < 0 ? Math.round(Math.abs(totalBrutoClientes)) : 0
     });
 
-    // 2. HABER: Ventas Netas del Giro (Afectas)
-    if (totalNetoVentas > 0) {
-      lines.push({
-        cuentaCodigo: config.cuentaVentasIngreso.codigo,
-        cuentaNombre: config.cuentaVentasIngreso.nombre,
-        debe: 0,
-        haber: Math.round(totalNetoVentas)
-      });
-    } else if (totalNetoVentas < 0) {
-      lines.push({
-        cuentaCodigo: config.cuentaVentasIngreso.codigo,
-        cuentaNombre: config.cuentaVentasIngreso.nombre,
-        debe: Math.round(Math.abs(totalNetoVentas)),
-        haber: 0
-      });
-    }
-
-    // 3. HABER: Ventas / Servicios Exentos del Giro
-    if (totalExentoVentas > 0) {
-      const cuentaExenta = config.cuentaVentasExentasIngreso || {
-        codigo: '4.1.02',
-        nombre: 'Ingresos por Servicios Exentos del Giro'
-      };
-      lines.push({
-        cuentaCodigo: cuentaExenta.codigo,
-        cuentaNombre: cuentaExenta.nombre,
-        debe: 0,
-        haber: Math.round(totalExentoVentas)
-      });
-    } else if (totalExentoVentas < 0) {
-      const cuentaExenta = config.cuentaVentasExentasIngreso || {
-        codigo: '4.1.02',
-        nombre: 'Ingresos por Servicios Exentos del Giro'
-      };
-      lines.push({
-        cuentaCodigo: cuentaExenta.codigo,
-        cuentaNombre: cuentaExenta.nombre,
-        debe: Math.round(Math.abs(totalExentoVentas)),
-        haber: 0
-      });
-    }
-
-    // Si tanto neto como exento son 0, incluir línea con 0
-    if (totalNetoVentas === 0 && totalExentoVentas === 0) {
+    // 2. HABER: Partidas de Ingresos por Venta desagregadas por Centro de Costo de cada ítem
+    const haberEntries = Object.values(haberPorCuentaVentas);
+    if (haberEntries.length === 0) {
       lines.push({
         cuentaCodigo: config.cuentaVentasIngreso.codigo,
         cuentaNombre: config.cuentaVentasIngreso.nombre,
         debe: 0,
         haber: 0
+      });
+    } else {
+      haberEntries.forEach(v => {
+        if (v.monto > 0) {
+          lines.push({
+            cuentaCodigo: v.codigo,
+            cuentaNombre: v.nombre,
+            debe: 0,
+            haber: Math.round(v.monto),
+            centroCosto: v.centroCosto,
+          });
+        } else if (v.monto < 0) {
+          lines.push({
+            cuentaCodigo: v.codigo,
+            cuentaNombre: v.nombre,
+            debe: Math.round(Math.abs(v.monto)),
+            haber: 0,
+            centroCosto: v.centroCosto,
+          });
+        }
       });
     }
 

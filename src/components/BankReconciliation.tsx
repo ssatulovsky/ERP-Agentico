@@ -31,7 +31,8 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
-  ArrowRight
+  ArrowRight,
+  Clipboard,
 } from 'lucide-react';
 import { 
   BankStatementMovement, 
@@ -44,10 +45,37 @@ import {
   AccountingFirmProfile,
   BankNovedadType,
   CHILE_BANKS_CATALOG,
-  BankName
+  BankName,
+  ChileIndicators
 } from '../types';
 import { formatCLP, formatNumberCL } from '../utils/chileanAccounting';
 import { downloadBankReconciliationPdf, downloadBankReconciliationExcel } from '../utils/reportGenerators';
+import {
+  parseExcelOrCsvBankStatement,
+  parsePastedTextBankStatement,
+  parseOfxBankStatement,
+  StatementParseResult,
+} from '../utils/chileanBankStatementParser';
+
+export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
+  if (moneda === 'USD') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  }
+  if (moneda === 'EUR') {
+    return new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: 'EUR',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  }
+  return formatCLP(amount);
+}
 
 interface BankReconciliationProps {
   company: CompanyProfile;
@@ -62,6 +90,8 @@ interface BankReconciliationProps {
   onRegisterNovedad: (movement: BankStatementMovement) => void;
   onRegisterAllNovedades: (movements: BankStatementMovement[]) => void;
   onResetBankMovements?: () => void;
+  indicators?: ChileIndicators;
+  onAddEntry?: (entry: AccountingEntry) => void;
 }
 
 export const BankReconciliation: React.FC<BankReconciliationProps> = ({
@@ -77,6 +107,8 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   onRegisterNovedad,
   onRegisterAllNovedades,
   onResetBankMovements,
+  indicators,
+  onAddEntry,
 }) => {
   const safeBankMovements = Array.isArray(bankMovements) ? bankMovements : [];
   const safeBankAccounts = Array.isArray(bankAccounts) ? bankAccounts : [];
@@ -102,6 +134,17 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     };
   }, [bankAccounts, selectedAccountId, activeClient]);
 
+  // Multimoneda and TCO Rate Calculation (NIC 21 / SII LIR Art. 41 N° 4)
+  const currentExchangeRate = useMemo(() => {
+    if (currentAccount.moneda === 'USD') return indicators?.dolar || 955.20;
+    if (currentAccount.moneda === 'EUR') return 1042.80;
+    return 1;
+  }, [currentAccount.moneda, indicators?.dolar]);
+
+  const formatCurr = (amount: number) => {
+    return formatAccountCurrency(amount, currentAccount.moneda);
+  };
+
   // Tab & Filters
   const [activeSubTab, setActiveSubTab] = useState<'RECONCILIATION' | 'NOVEDADES' | 'ALL_MOVEMENTS' | 'TRANSIT' | 'API_CONFIG'>('RECONCILIATION');
   const [searchTerm, setSearchTerm] = useState('');
@@ -115,8 +158,22 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isDiffCambioModalOpen, setIsDiffCambioModalOpen] = useState(false);
+  const [diffCambioSuccess, setDiffCambioSuccess] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
+
+  // Estados de Importación Multi-Canal de Cartola Bancaria
+  const [importMethod, setImportMethod] = useState<'FILE' | 'PASTE' | 'MANUAL' | 'PRESET'>('FILE');
+  const [importParsedResult, setImportParsedResult] = useState<StatementParseResult | null>(null);
+  const [pastedCartolaText, setPastedCartolaText] = useState<string>('');
+  const [isParsingFile, setIsParsingFile] = useState<boolean>(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [manualDate, setManualDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualTipo, setManualTipo] = useState<'CARGO' | 'ABONO'>('CARGO');
+  const [manualMonto, setManualMonto] = useState<number>(0);
+  const [manualGlosa, setManualGlosa] = useState<string>('');
+  const [manualDocRef, setManualDocRef] = useState<string>('');
 
   // Real-Time Agent Engine State
   const [isRealTimeAgentActive, setIsRealTimeAgentActive] = useState(true);
@@ -128,9 +185,12 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   // Manual Matching Selection
   const [matchingMovement, setMatchingMovement] = useState<BankStatementMovement | null>(null);
 
-  // Filter movements for the current account
+  // Filter movements strictly for the current account
   const accountMovements = useMemo(() => {
-    return safeBankMovements.filter(m => m.cuentaId === currentAccount.id || !m.cuentaId);
+    return safeBankMovements.filter(m => {
+      if (m.cuentaId) return m.cuentaId === currentAccount.id;
+      return currentAccount.id === 'bank-acc-1';
+    });
   }, [safeBankMovements, currentAccount.id]);
 
   // Calculated Novedades (Bank charges/credits not yet in accounting)
@@ -145,6 +205,32 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   // Calculated Partidas en Tránsito (Libro Banco vs Cartola)
   // 1. Cheques o Transferencias giradas y no cobradas por el banco (egresos en contabilidad no debitados aún)
   const transitCheques = useMemo(() => {
+    if (currentAccount.moneda === 'USD') {
+      return [
+        {
+          id: 'trans-chq-usd-1',
+          fecha: '2026-09-18',
+          concepto: 'Transferencia SWIFT emitida a proveedor cloud exterior (En tránsito)',
+          beneficiario: 'MICROSOFT AZURE CORP',
+          monto: 450.00,
+          tipo: 'EGRESO',
+          referencia: 'SWIFT-OUT-4410',
+        }
+      ];
+    }
+    if (currentAccount.moneda === 'EUR') {
+      return [
+        {
+          id: 'trans-chq-eur-1',
+          fecha: '2026-09-17',
+          concepto: 'Pago Proveedor Alemán Maquinaria Enológica (En tránsito)',
+          beneficiario: 'KRONES AG GERMANY',
+          monto: 320.00,
+          tipo: 'EGRESO',
+          referencia: 'SEPA-99120',
+        }
+      ];
+    }
     return [
       {
         id: 'trans-chq-1',
@@ -165,10 +251,34 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         referencia: 'CHQ-40182',
       }
     ];
-  }, []);
+  }, [currentAccount.moneda]);
 
   // 2. Depósitos en tránsito (cobros en contabilidad no acreditados aún en banco)
   const transitDeposits = useMemo(() => {
+    if (currentAccount.moneda === 'USD') {
+      return [
+        {
+          id: 'trans-dep-usd-1',
+          fecha: '2026-09-14',
+          concepto: 'Abono Orden de Pago Exterior pendiente de acreditación SWIFT',
+          monto: 1200.00,
+          tipo: 'INGRESO',
+          referencia: 'SWIFT-IN-9810',
+        }
+      ];
+    }
+    if (currentAccount.moneda === 'EUR') {
+      return [
+        {
+          id: 'trans-dep-eur-1',
+          fecha: '2026-09-15',
+          concepto: 'Cobro Exportación Fruta Fresca París (En liquidación bancaria)',
+          monto: 650.00,
+          tipo: 'INGRESO',
+          referencia: 'EUR-EXP-110',
+        }
+      ];
+    }
     return [
       {
         id: 'trans-dep-1',
@@ -179,7 +289,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         referencia: 'DEP-772910',
       }
     ];
-  }, []);
+  }, [currentAccount.moneda]);
 
   const totalTransitCheques = useMemo(() => {
     return transitCheques.reduce((sum, item) => sum + item.monto, 0);
@@ -365,63 +475,243 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
 
   // Load Sample Statement File with instant real-time reconciliation
   const handleLoadSampleCartola = (bankName: string) => {
-    const sampleMovements: BankStatementMovement[] = [
-      {
-        id: `sample-bm-${Date.now()}-1`,
-        cuentaId: currentAccount.id,
-        fecha: '2026-09-02',
-        glosaBancaria: 'ABONO TRANSF. DESDE TERCEROS CLIENTE ALPHA SPA',
-        numeroReferencia: 'TEF-774910',
-        cargo: 0,
-        abono: 5400000,
-        saldo: 49782013,
-        montoNeto: 5400000,
-        estado: 'CONCILIADO',
-        matchCerteza: 100,
-      },
-      {
-        id: `sample-bm-${Date.now()}-2`,
-        cuentaId: currentAccount.id,
-        fecha: '2026-09-06',
-        glosaBancaria: 'CARGO GASTO COMISION MANTENCION CUENTA',
-        numeroReferencia: 'COM-09-ST',
-        cargo: 24990,
-        abono: 0,
-        saldo: 49757023,
-        montoNeto: -24990,
-        estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
-        novedadRegistrada: isRealTimeAgentActive,
-        tipoNovedad: 'COMISION_MANTENCION',
-        cuentaContableSugerida: {
-          debeCodigo: '5.1.09',
-          debeNombre: 'Gastos y Comisiones Bancarias',
-          haberCodigo: '1.1.01',
-          haberNombre: 'Banco Santander Moneda Nacional',
-          glosa: 'Comisión mensual mantención cuenta corriente',
-        }
-      },
-      {
-        id: `sample-bm-${Date.now()}-3`,
-        cuentaId: currentAccount.id,
-        fecha: '2026-09-14',
-        glosaBancaria: 'CARGO PAC TELEFONIA ENTEL EMPRESAS',
-        numeroReferencia: 'PAC-ENTEL-99',
-        cargo: 78500,
-        abono: 0,
-        saldo: 49678523,
-        montoNeto: -78500,
-        estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
-        novedadRegistrada: isRealTimeAgentActive,
-        tipoNovedad: 'CARGO_PAC_NO_REGISTRADO',
-        cuentaContableSugerida: {
-          debeCodigo: '5.1.03',
-          debeNombre: 'Servicios Básicos y Telefonía',
-          haberCodigo: '1.1.01',
-          haberNombre: 'Banco Santander Moneda Nacional',
-          glosa: 'Pago automático PAC Entel Telefonía Móvil',
-        }
-      }
-    ];
+    let sampleMovements: BankStatementMovement[] = [];
+
+    if (bankName.includes('USD') || currentAccount.moneda === 'USD') {
+      const tc = indicators?.dolar || 955.20;
+      sampleMovements = [
+        {
+          id: `sample-usd-${Date.now()}-1`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-02',
+          glosaBancaria: 'ABONO TRANSF SWIFT WIRE GLOBAL EXPORT INVOICE INV-USA-2026-88',
+          numeroReferencia: 'SWIFT-IN-88901',
+          cargo: 0,
+          abono: 15000.00,
+          saldo: currentAccount.saldoEnLinea + 15000.00,
+          montoNeto: 15000.00,
+          estado: 'CONCILIADO',
+          moneda: 'USD',
+          tipoCambio: tc,
+          montoCLPEquivalente: Math.round(15000.00 * tc),
+          matchCerteza: 100,
+        },
+        {
+          id: `sample-usd-${Date.now()}-2`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-06',
+          glosaBancaria: 'CARGO PAGO SUSCRIPCION SERVIDORES AMAZON AWS CLOUD CORP',
+          numeroReferencia: 'AWS-CORP-912',
+          cargo: 1850.00,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 15000.00 - 1850.00,
+          montoNeto: -1850.00,
+          estado: 'CONCILIADO',
+          moneda: 'USD',
+          tipoCambio: tc - 0.40,
+          montoCLPEquivalente: Math.round(1850.00 * (tc - 0.40)),
+          matchCerteza: 100,
+        },
+        {
+          id: `sample-usd-${Date.now()}-3`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-08',
+          glosaBancaria: 'CARGO COMISION TRANSFERENCIA INTERNACIONAL SWIFT BANCO CORRESPONSAL',
+          numeroReferencia: 'SWIFT-FEE-440',
+          cargo: 35.00,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 15000.00 - 1850.00 - 35.00,
+          montoNeto: -35.00,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'COMISION_TRANSFERENCIAS',
+          moneda: 'USD',
+          tipoCambio: tc,
+          montoCLPEquivalente: Math.round(35.00 * tc),
+          cuentaContableSugerida: {
+            debeCodigo: '6.1.04.005',
+            debeNombre: 'Gastos y Comisiones Bancarias en Moneda Extranjera',
+            haberCodigo: '1.1.02.003',
+            haberNombre: 'Banco Santander Moneda Extranjera (USD)',
+            glosa: 'Comisión transferencia internacional SWIFT Banco Corresponsal (US$ 35.00)',
+          },
+        },
+      ];
+    } else if (bankName.includes('BCI')) {
+      sampleMovements = [
+        {
+          id: `sample-bci-${Date.now()}-1`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-03',
+          glosaBancaria: 'ABONO TRANSF ELECT TRASPASO CLIENTE RETAIL CHILE',
+          numeroReferencia: 'BCI-882190',
+          cargo: 0,
+          abono: 4850000,
+          saldo: currentAccount.saldoEnLinea + 4850000,
+          montoNeto: 4850000,
+          estado: 'CONCILIADO',
+          matchCerteza: 100,
+        },
+        {
+          id: `sample-bci-${Date.now()}-2`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-08',
+          glosaBancaria: 'CARGO COMISION MANTENCION PLAN BCI EMPRESARIOS',
+          numeroReferencia: 'COM-BCI-09',
+          cargo: 21990,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 4850000 - 21990,
+          montoNeto: -21990,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'COMISION_MANTENCION',
+          cuentaContableSugerida: {
+            debeCodigo: '5.1.09',
+            debeNombre: 'Gastos y Comisiones Bancarias',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco de Crédito e Inversiones BCI',
+            glosa: 'Comisión mensual mantención cuenta corriente BCI',
+          },
+        },
+        {
+          id: `sample-bci-${Date.now()}-3`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-17',
+          glosaBancaria: 'CARGO PAC TGR TESORERIA FORMULARIO 29',
+          numeroReferencia: 'PAC-TGR-0926',
+          cargo: 1250000,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 4850000 - 21990 - 1250000,
+          montoNeto: -1250000,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'CARGO_PAC_NO_REGISTRADO',
+          cuentaContableSugerida: {
+            debeCodigo: '2.1.05',
+            debeNombre: 'Impuestos por Pagar (F29 IVA/PPM)',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco de Crédito e Inversiones BCI',
+            glosa: 'Cargo automático PAC Pago F29 TGR',
+          },
+        },
+      ];
+    } else if (bankName.includes('Chile')) {
+      sampleMovements = [
+        {
+          id: `sample-bch-${Date.now()}-1`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-04',
+          glosaBancaria: 'ABONO TRANSF RECEPCION DE TERCEROS PAGO FACTURA 1042',
+          numeroReferencia: 'BCH-TEF-491',
+          cargo: 0,
+          abono: 6120000,
+          saldo: currentAccount.saldoEnLinea + 6120000,
+          montoNeto: 6120000,
+          estado: 'CONCILIADO',
+          matchCerteza: 100,
+        },
+        {
+          id: `sample-bch-${Date.now()}-2`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-07',
+          glosaBancaria: 'CARGO COMISION TARIFA MENSUAL BANCO DE CHILE',
+          numeroReferencia: 'BCH-COM-09',
+          cargo: 26500,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 6120000 - 26500,
+          montoNeto: -26500,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'COMISION_MANTENCION',
+          cuentaContableSugerida: {
+            debeCodigo: '5.1.09',
+            debeNombre: 'Gastos y Comisiones Bancarias',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco de Chile Moneda Nacional',
+            glosa: 'Comisión mensual cuenta corriente Banco de Chile',
+          },
+        },
+        {
+          id: `sample-bch-${Date.now()}-3`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-15',
+          glosaBancaria: 'CARGO PAC AGUAS ANDINAS CONSUMO',
+          numeroReferencia: 'PAC-AGUAS-381',
+          cargo: 45200,
+          abono: 0,
+          saldo: currentAccount.saldoEnLinea + 6120000 - 26500 - 45200,
+          montoNeto: -45200,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'CARGO_PAC_NO_REGISTRADO',
+          cuentaContableSugerida: {
+            debeCodigo: '5.1.03',
+            debeNombre: 'Servicios Básicos (Agua Potable)',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco de Chile Moneda Nacional',
+            glosa: 'Pago automático PAC Aguas Andinas',
+          },
+        },
+      ];
+    } else {
+      sampleMovements = [
+        {
+          id: `sample-bm-${Date.now()}-1`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-02',
+          glosaBancaria: 'ABONO TRANSF. DESDE TERCEROS CLIENTE ALPHA SPA',
+          numeroReferencia: 'TEF-774910',
+          cargo: 0,
+          abono: 5400000,
+          saldo: 49782013,
+          montoNeto: 5400000,
+          estado: 'CONCILIADO',
+          matchCerteza: 100,
+        },
+        {
+          id: `sample-bm-${Date.now()}-2`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-06',
+          glosaBancaria: 'CARGO GASTO COMISION MANTENCION CUENTA',
+          numeroReferencia: 'COM-09-ST',
+          cargo: 24990,
+          abono: 0,
+          saldo: 49757023,
+          montoNeto: -24990,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'COMISION_MANTENCION',
+          cuentaContableSugerida: {
+            debeCodigo: '5.1.09',
+            debeNombre: 'Gastos y Comisiones Bancarias',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco Santander Moneda Nacional',
+            glosa: 'Comisión mensual mantención cuenta corriente',
+          },
+        },
+        {
+          id: `sample-bm-${Date.now()}-3`,
+          cuentaId: currentAccount.id,
+          fecha: '2026-09-14',
+          glosaBancaria: 'CARGO PAC TELEFONIA ENTEL EMPRESAS',
+          numeroReferencia: 'PAC-ENTEL-99',
+          cargo: 78500,
+          abono: 0,
+          saldo: 49678523,
+          montoNeto: -78500,
+          estado: isRealTimeAgentActive ? 'CONCILIADO' : 'NOVEDAD',
+          novedadRegistrada: isRealTimeAgentActive,
+          tipoNovedad: 'CARGO_PAC_NO_REGISTRADO',
+          cuentaContableSugerida: {
+            debeCodigo: '5.1.03',
+            debeNombre: 'Servicios Básicos y Telefonía',
+            haberCodigo: '1.1.01',
+            haberNombre: 'Banco Santander Moneda Nacional',
+            glosa: 'Pago automático PAC Entel Telefonía Móvil',
+          },
+        },
+      ];
+    }
 
     if (isRealTimeAgentActive) {
       sampleMovements.filter(m => m.tipoNovedad).forEach(nov => {
@@ -436,6 +726,132 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         ? `Cartola (${bankName}) recibida y conciliada en tiempo real: 3 movimientos analizados y contabilizados automáticamente. Banco 100% cuadrado.`
         : `Cartola de ejemplo (${bankName}) importada exitosamente con 3 movimientos.`
     );
+    setTimeout(() => setImportNotice(null), 6000);
+  };
+
+  // 1. Manejo de Carga de Archivo Real (.xlsx, .xls, .csv, .txt, .ofx)
+  const handleFileSelected = async (file: File) => {
+    setIsParsingFile(true);
+    setParseError(null);
+    setImportParsedResult(null);
+    try {
+      const fileName = file.name.toLowerCase();
+      if (fileName.endsWith('.ofx')) {
+        const text = await file.text();
+        const res = parseOfxBankStatement(text, currentAccount.id, currentAccount.saldoEnLinea);
+        if (res.success) {
+          setImportParsedResult(res);
+        } else {
+          setParseError(res.error || 'Error al procesar extracto OFX');
+        }
+      } else {
+        const buffer = await file.arrayBuffer();
+        const res = parseExcelOrCsvBankStatement(buffer, currentAccount.id, currentAccount.saldoEnLinea);
+        if (res.success) {
+          setImportParsedResult(res);
+        } else {
+          setParseError(res.error || 'Error al interpretar archivo de cartola');
+        }
+      }
+    } catch (err: any) {
+      setParseError(`Error al leer archivo: ${err.message}`);
+    } finally {
+      setIsParsingFile(false);
+    }
+  };
+
+  // 2. Manejo de Texto Copiado desde Web Banking (Clipboard)
+  const handleProcessPastedText = () => {
+    if (!pastedCartolaText.trim()) {
+      setParseError('Por favor pega el texto de la tabla de tu banco.');
+      return;
+    }
+    setIsParsingFile(true);
+    setParseError(null);
+    try {
+      const res = parsePastedTextBankStatement(pastedCartolaText, currentAccount.id, currentAccount.saldoEnLinea);
+      if (res.success) {
+        setImportParsedResult(res);
+      } else {
+        setParseError(res.error || 'No se detectaron movimientos válidos en el texto pegado.');
+      }
+    } catch (err: any) {
+      setParseError(`Error al procesar texto: ${err.message}`);
+    } finally {
+      setIsParsingFile(false);
+    }
+  };
+
+  // 3. Manejo de Registro Manual de Partida Individual
+  const handleAddManualSingleMovement = () => {
+    if (manualMonto <= 0) {
+      setParseError('El monto debe ser superior a cero.');
+      return;
+    }
+    if (!manualGlosa.trim()) {
+      setParseError('Debes ingresar la glosa o descripción del movimiento.');
+      return;
+    }
+
+    const isAbono = manualTipo === 'ABONO';
+    const cargo = isAbono ? 0 : manualMonto;
+    const abono = isAbono ? manualMonto : 0;
+    const newSaldo = currentAccount.saldoEnLinea + (abono - cargo);
+
+    const newMov: BankStatementMovement = {
+      id: `manual-bm-${Date.now()}`,
+      cuentaId: currentAccount.id,
+      fecha: manualDate || new Date().toISOString().split('T')[0],
+      glosaBancaria: manualGlosa.toUpperCase().trim(),
+      numeroReferencia: manualDocRef.trim() || `MAN-${Date.now().toString().slice(-4)}`,
+      cargo,
+      abono,
+      saldo: newSaldo,
+      montoNeto: abono - cargo,
+      estado: 'PENDIENTE',
+      matchCerteza: 0,
+    };
+
+    onUpdateBankMovements([newMov, ...accountMovements]);
+    setIsImportModalOpen(false);
+    setImportParsedResult(null);
+    setManualGlosa('');
+    setManualMonto(0);
+    setManualDocRef('');
+    setImportNotice(`Partida manual agregada: "${manualGlosa}" por ${formatCLP(manualMonto)}.`);
+    setTimeout(() => setImportNotice(null), 5000);
+  };
+
+  // 4. Confirmación de Incorporación de Movimientos a la Conciliación
+  const handleConfirmImportMovements = () => {
+    if (!importParsedResult || importParsedResult.movements.length === 0) return;
+
+    const newMovements = [...importParsedResult.movements];
+
+    // Auditoría en caliente si el Agente Autónomo está activo
+    if (isRealTimeAgentActive) {
+      newMovements.forEach((m) => {
+        const netAmt = m.abono > 0 ? m.abono : m.cargo;
+        const matchingCf = safeCashFlowMovements.find(
+          (cf) => cf.montoTotal === netAmt && (m.abono > 0 ? cf.tipo === 'INGRESO' : cf.tipo === 'EGRESO')
+        );
+        if (matchingCf) {
+          m.estado = 'CONCILIADO';
+          m.matchCerteza = 100;
+          m.movimientoIdConciliado = matchingCf.id;
+          m.matchSugeridoGlosa = matchingCf.concepto;
+        }
+      });
+    }
+
+    onUpdateBankMovements([...accountMovements, ...newMovements]);
+    setIsImportModalOpen(false);
+    setImportNotice(
+      `Cartola importada con éxito: ${newMovements.length} movimientos de ${importParsedResult.bancoDetectado || 'banco'} incorporados (${formatCLP(importParsedResult.totalAbonos)} abonos / ${formatCLP(importParsedResult.totalCargos)} cargos).`
+    );
+    setImportParsedResult(null);
+    setPastedCartolaText('');
+    setParseError(null);
     setTimeout(() => setImportNotice(null), 6000);
   };
 
@@ -515,17 +931,29 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-auto">
             {/* Account Switcher if multiple */}
             {safeBankAccounts.length > 1 && (
-              <select
-                value={selectedAccountId}
-                onChange={(e) => setSelectedAccountId(e.target.value)}
-                className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-2 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {safeBankAccounts.map(acc => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.banco} ({acc.numeroCuenta})
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs cursor-pointer"
+                >
+                  {safeBankAccounts.map(acc => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.banco} • {acc.moneda || 'CLP'} ({acc.tipoCuenta} N° {acc.numeroCuenta})
+                    </option>
+                  ))}
+                </select>
+                {currentAccount.moneda !== 'CLP' && (
+                  <span className={`px-2 py-1 rounded-md text-[11px] font-extrabold flex items-center gap-1 border shadow-2xs ${
+                    currentAccount.moneda === 'USD' 
+                      ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
+                      : 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                  }`}>
+                    <span>{currentAccount.moneda === 'USD' ? '🇺🇸 USD' : '🇪🇺 EUR'}</span>
+                    <span className="font-mono text-[10px] font-normal">(${currentExchangeRate.toFixed(2)} CLP)</span>
+                  </span>
+                )}
+              </div>
             )}
 
             {/* Real-Time Agent Autonomous Mode Toggle */}
@@ -697,6 +1125,54 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         </div>
       </div>
 
+      {/* Multicurrency & NIC 21 Regulatory Banner (USD / EUR) */}
+      {currentAccount.moneda !== 'CLP' && (
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-5 shadow-md border border-indigo-800/40 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16"></div>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2.5 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 rounded-lg text-xs font-bold flex items-center gap-1.5">
+                  <Landmark className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Cuenta Multimoneda: {currentAccount.moneda === 'USD' ? 'Dólar Estadounidense (USD 🇺🇸)' : 'Euro Europeo (EUR 🇪🇺)'}</span>
+                </span>
+                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 rounded-md text-[11px] font-mono font-bold">
+                  TCO Oficial Banco Central: ${currentExchangeRate.toFixed(2)} CLP/{currentAccount.moneda}
+                </span>
+                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-400/30 rounded-md text-[11px] font-semibold">
+                  Normativa Contable: NIC 21 / Art. 41 N° 4 LIR
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>Gestión Bimonetaria y Conciliación de Divisas Extranjeras</span>
+              </h3>
+              <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
+                El auxiliar bancario y la cartola se concilian en su <strong>divisa de origen ({currentAccount.moneda})</strong> para cuadrar exactamente con el extracto del banco. En paralelo, los asientos contables en el Libro Diario se registran en <strong>Moneda Funcional (CLP)</strong> aplicando el Tipo de Cambio Observado (TCO) oficial del Banco Central de Chile. Las fluctuaciones cambiarias se reconocen mensualmente en cuentas de Diferencia de Cambio.
+              </p>
+            </div>
+
+            <div className="flex flex-row md:flex-col items-end justify-between md:justify-center gap-3 shrink-0 bg-white/5 border border-white/10 rounded-xl p-3.5">
+              <div className="text-right">
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Saldo en Divisa Nominal</div>
+                <div className="text-xl font-bold font-mono text-emerald-400">
+                  {formatCurr(currentAccount.saldoEnLinea)}
+                </div>
+                <div className="text-xs text-slate-300 font-mono">
+                  ≈ {formatCLP(Math.round(currentAccount.saldoEnLinea * currentExchangeRate))} CLP
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDiffCambioModalOpen(true)}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Simular Asiento NIC 21 (Dif. Cambio)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Official Chilean Bank Reconciliation Summary Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Card 1: Saldo según Cartola */}
@@ -706,11 +1182,16 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             <Landmark className="w-4 h-4 text-blue-500" />
           </div>
           <div className="mt-2 text-2xl font-bold font-mono text-slate-900">
-            {formatCLP(summary.saldoSegunCartola)}
+            {formatCurr(summary.saldoSegunCartola)}
           </div>
+          {currentAccount.moneda !== 'CLP' && (
+            <div className="text-xs font-semibold text-emerald-700 font-mono mt-0.5">
+              ≈ {formatCLP(Math.round(summary.saldoSegunCartola * currentExchangeRate))} CLP
+            </div>
+          )}
           <div className="mt-1 text-[11px] text-slate-500 flex items-center justify-between">
             <span>{summary.totalMovimientosCartola} movs. en extracto</span>
-            <span className="text-emerald-600 font-semibold">Validado CMF</span>
+            <span className="text-emerald-600 font-semibold">{currentAccount.moneda !== 'CLP' ? `${currentAccount.moneda} / TCO` : 'Validado CMF'}</span>
           </div>
         </div>
 
@@ -722,11 +1203,11 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           </div>
           <div className="mt-2 text-lg font-bold font-mono text-slate-800 flex items-center justify-between">
             <span className="text-xs font-normal text-slate-500">(+) Depósitos:</span>
-            <span className="text-emerald-600 font-mono">+{formatCLP(summary.depositosEnTransito)}</span>
+            <span className="text-emerald-600 font-mono">+{formatCurr(summary.depositosEnTransito)}</span>
           </div>
           <div className="mt-0.5 text-lg font-bold font-mono text-slate-800 flex items-center justify-between">
             <span className="text-xs font-normal text-slate-500">(-) Cheques/TEF:</span>
-            <span className="text-rose-600 font-mono">-{formatCLP(summary.chequesTransferenciasEnTransito)}</span>
+            <span className="text-rose-600 font-mono">-{formatCurr(summary.chequesTransferenciasEnTransito)}</span>
           </div>
           <div className="mt-1 text-[10px] text-slate-400">
             Pendientes de cobro/acreditación en banco
@@ -746,7 +1227,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           <div className="mt-2 text-2xl font-bold font-mono text-slate-900 flex items-center gap-2">
             <span>{summary.totalNovedades}</span>
             <span className="text-xs font-normal text-slate-500">
-              ({formatCLP(summary.novedadesCargosPendientes + summary.novedadesAbonosPendientes)})
+              ({formatCurr(summary.novedadesCargosPendientes + summary.novedadesAbonosPendientes)})
             </span>
           </div>
           <div className="mt-1 flex items-center justify-between text-[11px]">
@@ -777,10 +1258,15 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             )}
           </div>
           <div className="mt-2 text-2xl font-bold font-mono">
-            {formatCLP(summary.saldoConciliado)}
+            {formatCurr(summary.saldoConciliado)}
           </div>
+          {currentAccount.moneda !== 'CLP' && (
+            <div className="text-xs font-semibold text-emerald-800 font-mono mt-0.5">
+              ≈ {formatCLP(Math.round(summary.saldoConciliado * currentExchangeRate))} CLP
+            </div>
+          )}
           <div className="mt-1.5 flex items-center justify-between text-xs">
-            <span className="text-slate-600">Libro Mayor: <strong>{formatCLP(summary.saldoSegunLibroBanco)}</strong></span>
+            <span className="text-slate-600">Libro Mayor: <strong>{formatCurr(summary.saldoSegunLibroBanco)}</strong></span>
             {summary.cuadrado ? (
               <span className="font-mono font-bold px-2 py-0.5 rounded text-[11px] bg-emerald-200 text-emerald-900 flex items-center gap-1">
                 <Check className="w-3 h-3 text-emerald-700" />
@@ -793,7 +1279,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 title="Generar asientos en tiempo real y cuadrar"
               >
                 <Sparkles className="w-3 h-3 text-amber-700" />
-                <span>Cuadrar Ahora ({formatCLP(summary.diferencia)})</span>
+                <span>Cuadrar Ahora ({formatCurr(summary.diferencia)})</span>
               </button>
             )}
           </div>
@@ -968,7 +1454,14 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   <div className="mt-4 space-y-3 text-xs">
                     <div className="flex items-center justify-between py-1">
                       <span className="text-slate-600">Saldo según Cartola Bancaria:</span>
-                      <span className="font-mono font-bold text-slate-900 text-sm">{formatCLP(summary.saldoSegunCartola)}</span>
+                      <div className="text-right">
+                        <span className="font-mono font-bold text-slate-900 text-sm">{formatCurr(summary.saldoSegunCartola)}</span>
+                        {currentAccount.moneda !== 'CLP' && (
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            ≈ {formatCLP(Math.round(summary.saldoSegunCartola * currentExchangeRate))} CLP
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="p-2.5 bg-emerald-50/60 border border-emerald-100 rounded-lg flex items-center justify-between">
@@ -978,7 +1471,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         </div>
                         <div className="text-[11px] text-emerald-700">Abonos contables aún no acreditados por el banco</div>
                       </div>
-                      <span className="font-mono font-bold text-emerald-700">+{formatCLP(summary.depositosEnTransito)}</span>
+                      <span className="font-mono font-bold text-emerald-700">+{formatCurr(summary.depositosEnTransito)}</span>
                     </div>
 
                     <div className="p-2.5 bg-rose-50/60 border border-rose-100 rounded-lg flex items-center justify-between">
@@ -988,7 +1481,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         </div>
                         <div className="text-[11px] text-rose-700">Egresos contables pendientes de débito en banco</div>
                       </div>
-                      <span className="font-mono font-bold text-rose-700">-{formatCLP(summary.chequesTransferenciasEnTransito)}</span>
+                      <span className="font-mono font-bold text-rose-700">-{formatCurr(summary.chequesTransferenciasEnTransito)}</span>
                     </div>
                   </div>
                 </div>
@@ -999,8 +1492,15 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     <div className="text-blue-950 text-xs uppercase tracking-wider font-bold">(=) Saldo Banco Ajustado</div>
                     <div className="text-[11px] text-blue-700 font-normal">Disponibilidad líquida real demostrada</div>
                   </div>
-                  <div className="font-mono text-base text-blue-800">
-                    {formatCLP(summary.saldoBancoAjustado || summary.saldoConciliado)}
+                  <div className="text-right">
+                    <div className="font-mono text-base text-blue-800">
+                      {formatCurr(summary.saldoBancoAjustado || summary.saldoConciliado)}
+                    </div>
+                    {currentAccount.moneda !== 'CLP' && (
+                      <div className="text-[10px] text-blue-600 font-mono">
+                        ≈ {formatCLP(Math.round((summary.saldoBancoAjustado || summary.saldoConciliado) * currentExchangeRate))} CLP
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1013,13 +1513,20 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                       <FileText className="w-4 h-4 text-indigo-600" />
                       <span className="font-bold text-sm text-slate-800">2. Conciliación desde Libro Mayor</span>
                     </div>
-                    <span className="text-[11px] text-slate-500 font-mono">Cuenta 1.1.01 Banco</span>
+                    <span className="text-[11px] text-slate-500 font-mono">Cuenta {currentAccount.cuentaContableIfrs || (currentAccount.moneda !== 'CLP' ? '1.1.02.003 Banco USD/EUR' : '1.1.01 Banco M/N')}</span>
                   </div>
 
                   <div className="mt-4 space-y-3 text-xs">
                     <div className="flex items-center justify-between py-1">
                       <span className="text-slate-600">Saldo según Libro Mayor de la Empresa:</span>
-                      <span className="font-mono font-bold text-slate-900 text-sm">{formatCLP(summary.saldoSegunLibroBanco)}</span>
+                      <div className="text-right">
+                        <span className="font-mono font-bold text-slate-900 text-sm">{formatCurr(summary.saldoSegunLibroBanco)}</span>
+                        {currentAccount.moneda !== 'CLP' && (
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            ≈ {formatCLP(Math.round(summary.saldoSegunLibroBanco * currentExchangeRate))} CLP
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="p-2.5 bg-emerald-50/60 border border-emerald-100 rounded-lg flex items-center justify-between">
@@ -1030,7 +1537,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         <div className="text-[11px] text-emerald-700">Transferencias recibidas pendientes de asiento</div>
                       </div>
                       <span className="font-mono font-bold text-emerald-700">
-                        {summary.novedadesAbonosPendientes > 0 ? `+${formatCLP(summary.novedadesAbonosPendientes)}` : '$0'}
+                        {summary.novedadesAbonosPendientes > 0 ? `+${formatCurr(summary.novedadesAbonosPendientes)}` : '$0'}
                       </span>
                     </div>
 
@@ -1042,7 +1549,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         <div className="text-[11px] text-rose-700">Comisiones bancarias y cargos PAC sin asiento</div>
                       </div>
                       <span className="font-mono font-bold text-rose-700">
-                        {summary.novedadesCargosPendientes > 0 ? `-${formatCLP(summary.novedadesCargosPendientes)}` : '$0'}
+                        {summary.novedadesCargosPendientes > 0 ? `-${formatCurr(summary.novedadesCargosPendientes)}` : '$0'}
                       </span>
                     </div>
                   </div>
@@ -1054,8 +1561,15 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     <div className="text-indigo-950 text-xs uppercase tracking-wider font-bold">(=) Saldo Libro Mayor Ajustado</div>
                     <div className="text-[11px] text-indigo-700 font-normal">Saldo contable una vez asentadas las novedades</div>
                   </div>
-                  <div className="font-mono text-base text-indigo-800">
-                    {formatCLP(summary.saldoLibroMayorAjustado || summary.saldoConciliado)}
+                  <div className="text-right">
+                    <div className="font-mono text-base text-indigo-800">
+                      {formatCurr(summary.saldoLibroMayorAjustado || summary.saldoConciliado)}
+                    </div>
+                    {currentAccount.moneda !== 'CLP' && (
+                      <div className="text-[10px] text-indigo-600 font-mono">
+                        ≈ {formatCLP(Math.round((summary.saldoLibroMayorAjustado || summary.saldoConciliado) * currentExchangeRate))} CLP
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1078,13 +1592,13 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     <span>
                       {summary.cuadrado 
                         ? 'DIFERENCIA DE CONCILIACIÓN: $0 (CUADRATURA EXACTA)' 
-                        : `DESFASE TRANSITORIO EN LIBRO MAYOR: ${formatCLP(summary.diferencia)}`}
+                        : `DESFASE TRANSITORIO EN LIBRO MAYOR: ${formatCurr(summary.diferencia)}`}
                     </span>
                   </div>
                   <div className="text-xs text-slate-700 mt-0.5">
                     {summary.cuadrado
-                      ? `Saldo Banco Ajustado (${formatCLP(summary.saldoConciliado)}) = Saldo Libro Mayor Ajustado (${formatCLP(summary.saldoConciliado)}). Cuadratura 100% certificada.`
-                      : `Ambos saldos ajustados convergen en ${formatCLP(summary.saldoConciliado)}. Al contabilizar las ${pendingNovedades.length} novedades, el Libro Mayor queda cuadrado en $0.`}
+                      ? `Saldo Banco Ajustado (${formatCurr(summary.saldoConciliado)}) = Saldo Libro Mayor Ajustado (${formatCurr(summary.saldoConciliado)}). Cuadratura 100% certificada.`
+                      : `Ambos saldos ajustados convergen en ${formatCurr(summary.saldoConciliado)}. Al contabilizar las ${pendingNovedades.length} novedades, el Libro Mayor queda cuadrado en $0.`}
                   </div>
                 </div>
               </div>
@@ -1137,9 +1651,14 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         </div>
                         <div className="text-[11px] font-mono text-slate-500 mt-0.5">
                           {nov.abono > 0 ? (
-                            <span className="text-emerald-600 font-bold">+{formatCLP(nov.abono)}</span>
+                            <span className="text-emerald-600 font-bold">+{formatCurr(nov.abono)}</span>
                           ) : (
-                            <span className="text-rose-600 font-bold">-{formatCLP(nov.cargo)}</span>
+                            <span className="text-rose-600 font-bold">-{formatCurr(nov.cargo)}</span>
+                          )}
+                          {currentAccount.moneda !== 'CLP' && (
+                            <span className="text-[10px] text-slate-400 ml-1">
+                              (≈ {formatCLP(Math.round((nov.abono || nov.cargo) * currentExchangeRate))} CLP)
+                            </span>
                           )}
                         </div>
                       </div>
@@ -1218,6 +1737,11 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                           </span>
                           <span className="text-xs text-slate-500 font-mono">Fecha: {nov.fecha}</span>
                           <span className="text-xs text-slate-400 font-mono">Ref: {nov.numeroReferencia}</span>
+                          {currentAccount.moneda !== 'CLP' && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              NIC 21 • TCO ${currentExchangeRate.toFixed(2)}
+                            </span>
+                          )}
                         </div>
 
                         <div className="font-bold text-slate-900 text-sm">
@@ -1228,15 +1752,20 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         {nov.cuentaContableSugerida && (
                           <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs font-mono text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div>
-                              <span className="font-bold text-blue-600">Tratamiento Contable Sugerido:</span>
+                              <span className="font-bold text-blue-600">Tratamiento Contable Sugerido (Partida Doble DL 825):</span>
                               <div className="mt-0.5 text-[11px] text-slate-600">
-                                Debe: <strong>{nov.cuentaContableSugerida.debeCodigo}</strong> {nov.cuentaContableSugerida.debeNombre} ({formatCLP(nov.cargo || nov.abono)})
+                                Debe: <strong>{nov.cuentaContableSugerida.debeCodigo}</strong> {nov.cuentaContableSugerida.debeNombre} ({formatCLP(Math.round((nov.cargo || nov.abono) * currentExchangeRate))})
                                 <br />
-                                Haber: <strong>{nov.cuentaContableSugerida.haberCodigo}</strong> {nov.cuentaContableSugerida.haberNombre} ({formatCLP(nov.cargo || nov.abono)})
+                                Haber: <strong>{nov.cuentaContableSugerida.haberCodigo}</strong> {nov.cuentaContableSugerida.haberNombre} ({formatCLP(Math.round((nov.cargo || nov.abono) * currentExchangeRate))})
                               </div>
+                              {currentAccount.moneda !== 'CLP' && (
+                                <div className="text-[10px] text-indigo-600 mt-1 font-sans">
+                                  Base Divisa: <strong>{formatCurr(nov.cargo || nov.abono)}</strong> @ ${currentExchangeRate.toFixed(2)} CLP/{currentAccount.moneda} (NIC 21)
+                                </div>
+                              )}
                             </div>
                             <span className="text-[10px] text-slate-400 bg-white px-2 py-1 rounded border self-start sm:self-auto font-sans">
-                              Plan CMF Estándar
+                              {currentAccount.moneda !== 'CLP' ? 'Bimonetario IFRS' : 'Plan CMF Estándar'}
                             </span>
                           </div>
                         )}
@@ -1247,8 +1776,13 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                         <div className="text-right">
                           <div className="text-xs text-slate-400">Monto Transacción</div>
                           <div className={`text-lg font-bold font-mono ${isCargo ? 'text-rose-600' : 'text-emerald-600'}`}>
-                            {isCargo ? `-${formatCLP(nov.cargo)}` : `+${formatCLP(nov.abono)}`}
+                            {isCargo ? `-${formatCurr(nov.cargo)}` : `+${formatCurr(nov.abono)}`}
                           </div>
+                          {currentAccount.moneda !== 'CLP' && (
+                            <div className="text-[11px] text-slate-400 font-mono">
+                              ≈ {formatCLP(Math.round((nov.cargo || nov.abono) * currentExchangeRate))} CLP
+                            </div>
+                          )}
                         </div>
 
                         <button
@@ -1399,13 +1933,38 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                             {m.numeroReferencia}
                           </td>
                           <td className="py-3 px-4 text-right font-mono font-semibold text-rose-600">
-                            {m.cargo > 0 ? `-${formatCLP(m.cargo)}` : '—'}
+                            {m.cargo > 0 ? (
+                              <div>
+                                <div>-{formatCurr(m.cargo)}</div>
+                                {currentAccount.moneda !== 'CLP' && (
+                                  <div className="text-[10px] text-slate-400 font-normal">
+                                    ≈ {formatCLP(Math.round(m.cargo * (m.tipoCambio || currentExchangeRate)))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : '—'}
                           </td>
                           <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-600">
-                            {m.abono > 0 ? `+${formatCLP(m.abono)}` : '—'}
+                            {m.abono > 0 ? (
+                              <div>
+                                <div>+{formatCurr(m.abono)}</div>
+                                {currentAccount.moneda !== 'CLP' && (
+                                  <div className="text-[10px] text-slate-400 font-normal">
+                                    ≈ {formatCLP(Math.round(m.abono * (m.tipoCambio || currentExchangeRate)))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : '—'}
                           </td>
                           <td className="py-3 px-4 text-right font-mono text-slate-700 font-bold whitespace-nowrap">
-                            {formatCLP(m.saldo)}
+                            <div>
+                              <div>{formatCurr(m.saldo)}</div>
+                              {currentAccount.moneda !== 'CLP' && (
+                                <div className="text-[10px] text-slate-400 font-normal">
+                                  ≈ {formatCLP(Math.round(m.saldo * currentExchangeRate))}
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
@@ -1498,7 +2057,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   <h4 className="font-bold text-slate-800 text-sm">Depósitos en Tránsito</h4>
                 </div>
                 <span className="font-mono font-bold text-emerald-700">
-                  +{formatCLP(totalTransitDeposits)}
+                  +{formatCurr(totalTransitDeposits)}
                 </span>
               </div>
 
@@ -1507,7 +2066,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   <div key={dep.id} className="p-3 bg-emerald-50/40 rounded-lg border border-emerald-100 text-xs">
                     <div className="flex items-center justify-between font-semibold text-slate-800">
                       <span>{dep.concepto}</span>
-                      <span className="font-mono text-emerald-700 font-bold">+{formatCLP(dep.monto)}</span>
+                      <span className="font-mono text-emerald-700 font-bold">+{formatCurr(dep.monto)}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-slate-500 text-[11px] font-mono">
                       <span>Ref: {dep.referencia}</span>
@@ -1528,7 +2087,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   <h4 className="font-bold text-slate-800 text-sm">Cheques / TEF Giradas no Cobradas</h4>
                 </div>
                 <span className="font-mono font-bold text-rose-700">
-                  -{formatCLP(totalTransitCheques)}
+                  -{formatCurr(totalTransitCheques)}
                 </span>
               </div>
 
@@ -1537,7 +2096,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   <div key={chq.id} className="p-3 bg-rose-50/40 rounded-lg border border-rose-100 text-xs">
                     <div className="flex items-center justify-between font-semibold text-slate-800">
                       <span>{chq.concepto}</span>
-                      <span className="font-mono text-rose-700 font-bold">-{formatCLP(chq.monto)}</span>
+                      <span className="font-mono text-rose-700 font-bold">-{formatCurr(chq.monto)}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-slate-500 text-[11px] font-mono">
                       <span>Beneficiario: {chq.beneficiario}</span>
@@ -1585,7 +2144,16 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800">{account.banco}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-800">{account.banco}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-extrabold border ${
+                        account.moneda === 'USD' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                        account.moneda === 'EUR' ? 'bg-indigo-50 text-indigo-800 border-indigo-200' :
+                        'bg-slate-100 text-slate-700 border-slate-200'
+                      }`}>
+                        {account.moneda || 'CLP'}
+                      </span>
+                    </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
                       {account.estadoConexion}
                     </span>
@@ -1596,7 +2164,12 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   </div>
 
                   <div className="mt-1 text-[11px] text-slate-500">
-                    Saldo en línea: <strong className="font-mono text-slate-800">{formatCLP(account.saldoEnLinea)}</strong>
+                    Saldo en línea: <strong className="font-mono text-slate-800">{formatAccountCurrency(account.saldoEnLinea, account.moneda)}</strong>
+                    {account.moneda !== 'CLP' && (
+                      <span className="text-[10px] text-slate-400 block font-mono">
+                        ≈ {formatCLP(Math.round(account.saldoEnLinea * (account.moneda === 'USD' ? (indicators?.dolar || 955.20) : 1042.80)))} CLP
+                      </span>
+                    )}
                   </div>
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -1618,88 +2191,545 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         </div>
       )}
 
-      {/* MODAL 1: IMPORTAR CARTOLA BANCARIA (CSV / EXCEL / OFX) */}
+      {/* MODAL 1: IMPORTAR CARTOLA BANCARIA MULTI-CANAL (EXCEL / CSV / OFX / PEGAR TEXTO / MANUAL / PRESETS) */}
       {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-xl w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full p-6 space-y-4 my-6 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl">
                   <Upload className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-base">Importar Cartola Bancaria</h3>
-                  <p className="text-xs text-slate-500">Formatos soportados: CSV, Excel (.xlsx), TXT o extracto OFX</p>
+                  <p className="text-xs text-slate-500">
+                    {currentAccount.banco} &bull; Cta {currentAccount.tipoCuenta} {currentAccount.numeroCuenta} ({currentAccount.moneda})
+                  </p>
                 </div>
               </div>
               <button 
-                onClick={() => setIsImportModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportParsedResult(null);
+                  setParseError(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Drag and Drop Zone */}
-            <div 
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOver(false);
-                handleLoadSampleCartola('Archivo Arrastrado');
-              }}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
-                dragOver ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 bg-slate-50/50'
-              }`}
-            >
-              <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-              <div className="font-bold text-sm text-slate-800">
-                Arrastre aquí su archivo de cartola bancaria
-              </div>
-              <div className="text-xs text-slate-500 mt-1">
-                o haga clic para examinar desde su computadora
-              </div>
-              <input 
-                type="file" 
-                className="hidden" 
-                id="cartola-file-input"
-                onChange={() => handleLoadSampleCartola('Archivo Seleccionado')}
-              />
-              <label 
-                htmlFor="cartola-file-input"
-                className="mt-4 inline-block px-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer shadow-2xs"
-              >
-                Seleccionar Archivo Local
-              </label>
-            </div>
-
-            {/* Instant Sample Presets for Testing */}
-            <div className="pt-2">
-              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-                O Pruebe Inmediatamente con Cartolas de Ejemplo:
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleLoadSampleCartola('Banco Santander Chile')}
-                  className="p-3 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg text-left transition-colors cursor-pointer"
+            {/* Error Banner */}
+            {parseError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-2 text-xs text-rose-800 shrink-0">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{parseError}</span>
+                </div>
+                <button 
+                  onClick={() => setParseError(null)}
+                  className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
                 >
-                  <div className="font-bold text-xs text-red-900">Cartola Banco Santander</div>
-                  <div className="text-[11px] text-red-700">Cuenta Corriente Empresas (3 movs)</div>
-                </button>
-                <button
-                  onClick={() => handleLoadSampleCartola('Banco de Chile')}
-                  className="p-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-left transition-colors cursor-pointer"
-                >
-                  <div className="font-bold text-xs text-blue-900">Cartola Banco de Chile</div>
-                  <div className="text-[11px] text-blue-700">Cuenta Vista / Corriente (3 movs)</div>
+                  Entendido
                 </button>
               </div>
-            </div>
+            )}
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            {/* Spinner when processing */}
+            {isParsingFile && (
+              <div className="py-12 text-center space-y-3">
+                <RefreshCw className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+                <div className="font-bold text-sm text-slate-800">Interpretando Cartola Bancaria...</div>
+                <div className="text-xs text-slate-500">
+                  Normalizando fechas chilenas, analizando columnas de cargos/abonos y calculando saldos.
+                </div>
+              </div>
+            )}
+
+            {/* PREVIEW OF PARSED RESULT (If parsed successfully from File or Paste) */}
+            {!isParsingFile && importParsedResult && (
+              <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                {/* Summary Card */}
+                <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <div className="font-bold text-slate-900 text-sm">
+                          Cartola Interpretada Exitosamente
+                        </div>
+                        <div className="text-xs text-slate-600">
+                          Origen detectado: <strong className="text-blue-700">{importParsedResult.bancoDetectado}</strong>
+                        </div>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 bg-blue-100 text-blue-800 font-bold rounded-lg text-xs self-start sm:self-auto">
+                      {importParsedResult.count} Partidas Detectadas
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-blue-200/60 text-xs">
+                    <div className="bg-white/80 p-2.5 rounded-lg border border-blue-100">
+                      <div className="text-[11px] text-slate-500">Total Abonos (+)</div>
+                      <div className="font-bold font-mono text-emerald-600 text-sm">
+                        +{formatCurr(importParsedResult.totalAbonos)}
+                      </div>
+                    </div>
+                    <div className="bg-white/80 p-2.5 rounded-lg border border-blue-100">
+                      <div className="text-[11px] text-slate-500">Total Cargos (-)</div>
+                      <div className="font-bold font-mono text-rose-600 text-sm">
+                        -{formatCurr(importParsedResult.totalCargos)}
+                      </div>
+                    </div>
+                    <div className="bg-white/80 p-2.5 rounded-lg border border-blue-100">
+                      <div className="text-[11px] text-slate-500">Saldo Inicial</div>
+                      <div className="font-bold font-mono text-slate-700 text-sm">
+                        {formatCurr(importParsedResult.saldoInicial || currentAccount.saldoEnLinea)}
+                      </div>
+                    </div>
+                    <div className="bg-white/80 p-2.5 rounded-lg border border-blue-100">
+                      <div className="text-[11px] text-slate-500">Saldo Final Est.</div>
+                      <div className="font-bold font-mono text-indigo-700 text-sm">
+                        {formatCurr(importParsedResult.saldoFinal || currentAccount.saldoEnLinea)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table Preview */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-bold text-slate-700">
+                      Previsualización de Partidas a Incorporar:
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      El Agente Autónomo cruzará automáticamente con el Libro Diario y Facturas
+                    </div>
+                  </div>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold sticky top-0">
+                        <tr>
+                          <th className="p-2.5">Fecha</th>
+                          <th className="p-2.5">Doc / Ref</th>
+                          <th className="p-2.5">Glosa Bancaria</th>
+                          <th className="p-2.5 text-right">Cargo (-)</th>
+                          <th className="p-2.5 text-right">Abono (+)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {importParsedResult.movements.map((m, idx) => (
+                          <tr key={m.id || idx} className="hover:bg-slate-50/70">
+                            <td className="p-2.5 font-mono text-slate-600 whitespace-nowrap">{m.fecha}</td>
+                            <td className="p-2.5 font-mono text-slate-500 whitespace-nowrap">{m.numeroReferencia}</td>
+                            <td className="p-2.5 text-slate-800 font-medium">{m.glosaBancaria}</td>
+                            <td className="p-2.5 text-right font-mono text-rose-600">
+                              {m.cargo > 0 ? `-${formatCurr(m.cargo)}` : '—'}
+                            </td>
+                            <td className="p-2.5 text-right font-mono text-emerald-600">
+                              {m.abono > 0 ? `+${formatCurr(m.abono)}` : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => {
+                      setImportParsedResult(null);
+                      setParseError(null);
+                    }}
+                    className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Descartar y Volver
+                  </button>
+                  <button
+                    onClick={handleConfirmImportMovements}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-2"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Confirmar e Incorporar {importParsedResult.count} Partidas a Conciliación</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* MAIN FORM: TABS AND INPUTS (When not in preview mode) */}
+            {!isParsingFile && !importParsedResult && (
+              <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                {/* Method Navigation Tabs */}
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold text-slate-600 shrink-0 overflow-x-auto">
+                  <button
+                    onClick={() => setImportMethod('FILE')}
+                    className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      importMethod === 'FILE'
+                        ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                        : 'hover:text-slate-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Archivo Excel / CSV / OFX</span>
+                  </button>
+
+                  <button
+                    onClick={() => setImportMethod('PASTE')}
+                    className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      importMethod === 'PASTE'
+                        ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                        : 'hover:text-slate-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <Clipboard className="w-3.5 h-3.5" />
+                    <span>Pegar desde Web Banking</span>
+                  </button>
+
+                  <button
+                    onClick={() => setImportMethod('MANUAL')}
+                    className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      importMethod === 'MANUAL'
+                        ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                        : 'hover:text-slate-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Ingreso Manual de Partida</span>
+                  </button>
+
+                  <button
+                    onClick={() => setImportMethod('PRESET')}
+                    className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      importMethod === 'PRESET'
+                        ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                        : 'hover:text-slate-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Cartolas Tipo de Ejemplo</span>
+                  </button>
+                </div>
+
+                {/* TAB 1: ARCHIVO EXCEL / CSV / OFX */}
+                {importMethod === 'FILE' && (
+                  <div className="space-y-4">
+                    <div 
+                      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOver(false);
+                        const file = e.dataTransfer.files?.[0];
+                        if (file) handleFileSelected(file);
+                      }}
+                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
+                        dragOver ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 bg-slate-50/50'
+                      }`}
+                    >
+                      <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
+                      <div className="font-bold text-sm text-slate-800">
+                        Arrastre aquí su archivo de cartola bancaria (.xlsx, .xls, .csv, .ofx)
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                        Descargue el extracto de su banco y súbalo directamente. Nuestro motor reconoce automáticamente los encabezados de columnas y formatos de fecha chilenos.
+                      </div>
+                      <input 
+                        type="file" 
+                        accept=".xlsx,.xls,.csv,.txt,.ofx"
+                        className="hidden" 
+                        id="cartola-file-input"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileSelected(file);
+                        }}
+                      />
+                      <label 
+                        htmlFor="cartola-file-input"
+                        className="mt-4 inline-block px-5 py-2.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer shadow-2xs"
+                      >
+                        Examinar Archivo Local
+                      </label>
+                    </div>
+
+                    {/* Supported Banks Badges */}
+                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                      <div className="text-[11px] font-bold text-slate-600 mb-2 uppercase tracking-wider flex items-center gap-1.5">
+                        <Landmark className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Formatos Compatibles y Probados en Chile:</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['Banco Santander', 'Banco de Chile / Edwards', 'BCI', 'BancoEstado', 'Scotiabank', 'Itaú Corpbanca', 'Banco BICE', 'Banco Security'].map(bank => (
+                          <span key={bank} className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-medium text-slate-700">
+                            {bank}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-2">
+                        * Admite archivos con columnas independientes de Cargo y Abono o columna única de Monto (+/-), montos con formato chileno ($ 1.500.000) y extractos OFX estándares.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: PEGAR DESDE WEB BANKING (CLIPBOARD) */}
+                {importMethod === 'PASTE' && (
+                  <div className="space-y-3">
+                    <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <Info className="w-4 h-4 text-amber-600" />
+                        <span>¿Cómo funciona el copiado directo desde el portal bancario?</span>
+                      </div>
+                      <ol className="list-decimal list-inside space-y-0.5 text-amber-800 text-[11px]">
+                        <li>Inicia sesión en la web de tu banco (Santander, Banco de Chile, BCI, etc.).</li>
+                        <li>Ve a la cartola o últimos movimientos y selecciona las filas de la tabla con el mouse.</li>
+                        <li>Copia con <kbd className="px-1 py-0.5 bg-white border border-amber-300 rounded font-mono">Ctrl + C</kbd> (o Cmd+C en Mac).</li>
+                        <li>Pega directamente en el recuadro inferior con <kbd className="px-1 py-0.5 bg-white border border-amber-300 rounded font-mono">Ctrl + V</kbd> y haz clic en "Interpretar Movimientos".</li>
+                      </ol>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-700">
+                          Pegar Filas de la Tabla Bancaria Aquí:
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPastedCartolaText(
+                              "02/09/2026\tTEF-774910\tABONO TRANSF. DESDE TERCEROS CLIENTE ALPHA SPA\t0\t5400000\n" +
+                              "06/09/2026\tCOM-09-ST\tCARGO GASTO COMISION MANTENCION CUENTA\t24990\t0\n" +
+                              "14/09/2026\tPAC-ENTEL-99\tCARGO PAC TELEFONIA ENTEL EMPRESAS\t78500\t0\n" +
+                              "22/09/2026\tTEF-189201\tABONO CLIENTE DISTRIBUIDORA SUR SPA\t0\t3200000"
+                            );
+                          }}
+                          className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer"
+                        >
+                          Cargar Texto de Ejemplo
+                        </button>
+                      </div>
+
+                      <textarea
+                        value={pastedCartolaText}
+                        onChange={(e) => setPastedCartolaText(e.target.value)}
+                        placeholder="Ejemplo:&#10;02/09/2026   TEF-774910   ABONO TRANSF CLIENTE   5.400.000&#10;06/09/2026   COM-09-ST    COMISION MANTENCION     24.990"
+                        rows={7}
+                        className="w-full p-3 font-mono text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden bg-slate-50/50"
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleProcessPastedText}
+                        disabled={!pastedCartolaText.trim()}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        <span>Interpretar Texto de la Cartola</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: INGRESO MANUAL DE PARTIDA */}
+                {importMethod === 'MANUAL' && (
+                  <div className="space-y-4">
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
+                      Ideal para registrar un movimiento individual que no vino en el archivo (ej: comisión imprevista de cheque, depósito por ventanilla, ajuste de intereses).
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Fecha Operación</label>
+                        <input
+                          type="date"
+                          value={manualDate}
+                          onChange={(e) => setManualDate(e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Tipo de Movimiento</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setManualTipo('CARGO')}
+                            className={`p-2 rounded-lg font-bold border text-center cursor-pointer transition-all ${
+                              manualTipo === 'CARGO'
+                                ? 'bg-rose-50 border-rose-400 text-rose-800'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Cargo (Egreso)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setManualTipo('ABONO')}
+                            className={`p-2 rounded-lg font-bold border text-center cursor-pointer transition-all ${
+                              manualTipo === 'ABONO'
+                                ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Abono (Ingreso)
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Monto en Pesos ($ CLP)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={manualMonto || ''}
+                          onChange={(e) => setManualMonto(Number(e.target.value))}
+                          placeholder="Ej: 45000"
+                          className="w-full p-2 font-mono border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">N° Comprobante / Referencia</label>
+                        <input
+                          type="text"
+                          value={manualDocRef}
+                          onChange={(e) => setManualDocRef(e.target.value)}
+                          placeholder="Ej: TEF-98124 o CHQ-4019"
+                          className="w-full p-2 font-mono border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="font-bold text-slate-700 block mb-1">Glosa Bancaria / Descripción</label>
+                        <input
+                          type="text"
+                          value={manualGlosa}
+                          onChange={(e) => setManualGlosa(e.target.value)}
+                          placeholder="Ej: CARGO COMISION POR CHEQUE SIN FONDOS o ABONO TRANSF CLIENTE"
+                          className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden uppercase"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleAddManualSingleMovement}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Agregar Partida a la Cartola</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: CARTOLAS TIPO DE EJEMPLO */}
+                {importMethod === 'PRESET' && (
+                  <div className="space-y-3">
+                    <div className="text-xs text-slate-500">
+                      Seleccione una cartola típica chilena para probar el ciclo de conciliación automática, detección de novedades (PAC, comisiones) y cuadratura contable:
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <button
+                        onClick={() => handleLoadSampleCartola('Banco Santander Chile')}
+                        className="p-4 bg-red-50/60 hover:bg-red-100/70 border border-red-200 rounded-xl text-left transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs text-red-950">Banco Santander</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-200/70 text-red-900 font-bold">3 Partidas</span>
+                        </div>
+                        <div className="text-xs text-red-800 font-medium">Cuenta Corriente Empresas</div>
+                        <div className="text-[11px] text-red-600 mt-2 space-y-0.5 font-mono">
+                          <div>+ Abono Cliente Alpha ($5.4M)</div>
+                          <div>- Comisión Mantención ($24K)</div>
+                          <div>- PAC Telefonía Entel ($78K)</div>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-red-200 text-[11px] text-red-700 font-bold group-hover:underline flex items-center gap-1">
+                          <span>Cargar Esta Cartola</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadSampleCartola('Banco de Chile')}
+                        className="p-4 bg-blue-50/60 hover:bg-blue-100/70 border border-blue-200 rounded-xl text-left transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs text-blue-950">Banco de Chile</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-200/70 text-blue-900 font-bold">3 Partidas</span>
+                        </div>
+                        <div className="text-xs text-blue-800 font-medium">Cta Corriente / Edwards</div>
+                        <div className="text-[11px] text-blue-600 mt-2 space-y-0.5 font-mono">
+                          <div>+ Abono Factura 1042 ($6.1M)</div>
+                          <div>- Comisión Tarifa ($26.5K)</div>
+                          <div>- PAC Aguas Andinas ($45.2K)</div>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-blue-200 text-[11px] text-blue-700 font-bold group-hover:underline flex items-center gap-1">
+                          <span>Cargar Esta Cartola</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadSampleCartola('BCI')}
+                        className="p-4 bg-teal-50/60 hover:bg-teal-100/70 border border-teal-200 rounded-xl text-left transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs text-teal-950">Banco BCI</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-200/70 text-teal-900 font-bold">3 Partidas</span>
+                        </div>
+                        <div className="text-xs text-teal-800 font-medium">Plan BCI Empresarios</div>
+                        <div className="text-[11px] text-teal-600 mt-2 space-y-0.5 font-mono">
+                          <div>+ Traspaso Retail ($4.8M)</div>
+                          <div>- Comisión Mantención ($21.9K)</div>
+                          <div>- PAC F29 TGR ($1.25M)</div>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-teal-200 text-[11px] text-teal-700 font-bold group-hover:underline flex items-center gap-1">
+                          <span>Cargar Esta Cartola</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadSampleCartola('USD')}
+                        className="p-4 bg-emerald-50/60 hover:bg-emerald-100/70 border border-emerald-200 rounded-xl text-left transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs text-emerald-950">🇺🇸 Santander (USD)</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 text-emerald-900 font-bold">Multimoneda</span>
+                        </div>
+                        <div className="text-xs text-emerald-800 font-medium">Cuenta Dólares / SWIFT</div>
+                        <div className="text-[11px] text-emerald-600 mt-2 space-y-0.5 font-mono">
+                          <div>+ SWIFT Export (+US$15K)</div>
+                          <div>- AWS Cloud Server (-US$1.85K)</div>
+                          <div>- Fee SWIFT (-US$35)</div>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-emerald-200 text-[11px] text-emerald-700 font-bold group-hover:underline flex items-center gap-1">
+                          <span>Cargar Esta Cartola</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 shrink-0">
+              <div className="text-[11px] text-slate-400">
+                Conciliación Bancaria Agéntica conforme a normativa CMF / Circular N° 1.501
+              </div>
               <button
-                onClick={() => setIsImportModalOpen(false)}
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportParsedResult(null);
+                  setParseError(null);
+                }}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
               >
                 Cerrar

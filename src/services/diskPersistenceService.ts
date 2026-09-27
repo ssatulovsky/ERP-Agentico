@@ -10,6 +10,8 @@ import {
   dtesRcv,
   employees,
   payrollSettlements,
+  costCenters,
+  fixedAssets,
 } from '../db/mysqlSchema';
 
 export interface DiskDataStore {
@@ -27,6 +29,9 @@ export interface DiskDataStore {
   warehouses: any[];
   inventoryItems: any[];
   clients: any[];
+  costCenters: any[];
+  fixedAssets: any[];
+  credentialsVault?: any[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -48,6 +53,9 @@ class DiskPersistenceService {
     warehouses: [],
     inventoryItems: [],
     clients: [],
+    costCenters: [],
+    fixedAssets: [],
+    credentialsVault: [],
   };
 
   private isInitialized = false;
@@ -83,6 +91,8 @@ class DiskPersistenceService {
         const parsed = JSON.parse(raw);
         this.store = {
           ...this.store,
+          costCenters: parsed.costCenters || [],
+          fixedAssets: parsed.fixedAssets || [],
           ...parsed,
         };
         // Purgar asientos ficticios de ventas con IVA para InnovAgile (empresa no afecta a IVA)
@@ -236,18 +246,125 @@ class DiskPersistenceService {
               montoTotal: String(dte.montoTotal),
               estadoAcuse: dte.estadoAcuse || null,
               estadoContable: dte.estadoContable || 'PENDIENTE',
+              glosa: dte.glosa || null,
+              centroCostoId: dte.centroCostoId || null,
+              centroCostoCodigo: dte.centroCostoCodigo || null,
+              centroCostoNombre: dte.centroCostoNombre || null,
+              cuentaGastoImputadaCodigo: dte.cuentaGastoImputadaCodigo || dte.cuentaCodigoAsignada || null,
+              cuentaGastoImputadaNombre: dte.cuentaGastoImputadaNombre || dte.cuentaNombreAsignada || null,
+              items: dte.items ? dte.items : null,
               entryIdRef: dte.entryIdRef || null,
               createdAt: new Date(dte.createdAt || Date.now()),
             })
             .onDuplicateKeyUpdate({
               set: {
                 montoTotal: String(dte.montoTotal),
+                centroCostoId: dte.centroCostoId || null,
+                centroCostoCodigo: dte.centroCostoCodigo || null,
+                centroCostoNombre: dte.centroCostoNombre || null,
+                cuentaGastoImputadaCodigo: dte.cuentaGastoImputadaCodigo || dte.cuentaCodigoAsignada || null,
+                cuentaGastoImputadaNombre: dte.cuentaGastoImputadaNombre || dte.cuentaNombreAsignada || null,
               },
             });
 
           syncedDtes++;
         } catch (e) {
           // Continuar
+        }
+      }
+
+      // 4. Centros de Costo (Mini-Empresas)
+      if (this.store.costCenters && this.store.costCenters.length > 0) {
+        for (const cc of this.store.costCenters) {
+          try {
+            await mysqlDb
+              .insert(costCenters)
+              .values({
+                id: cc.id || crypto.randomUUID(),
+                empresaId: cc.empresaId || 'client-retail-01',
+                codigo: cc.codigo,
+                nombre: cc.nombre,
+                categoria: cc.categoria || 'ADMINISTRACION',
+                responsableNombre: cc.responsableNombre || 'Responsable',
+                responsableEmail: cc.responsableEmail || cc.emailResponsable || null,
+                presupuestoMensualClp: String(cc.presupuestoMensualClp || '0.00'),
+                activo: cc.activo !== false,
+                descripcion: cc.descripcion || null,
+                ventasAcumuladasMes: String(cc.ventasAcumuladasMes || '0.00'),
+                costosDirectosMes: String(cc.costosDirectosMes || '0.00'),
+                gastosOperacionalesMes: String(cc.gastosOperacionalesMes || '0.00'),
+                remuneracionesMes: String(cc.remuneracionesMes || '0.00'),
+                depreciacionMes: String(cc.depreciacionMes || '0.00'),
+                createdAt: new Date(cc.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: cc.nombre,
+                  presupuestoMensualClp: String(cc.presupuestoMensualClp || '0.00'),
+                  activo: cc.activo !== false,
+                },
+              });
+          } catch (e) {
+            // Continuar
+          }
+        }
+      }
+
+      // 5. Activos Fijos (con Centro de Costo)
+      if (this.store.fixedAssets && this.store.fixedAssets.length > 0) {
+        for (const fa of this.store.fixedAssets) {
+          try {
+            await mysqlDb
+              .insert(fixedAssets)
+              .values({
+                id: fa.id || crypto.randomUUID(),
+                empresaId: fa.empresaId || 'client-retail-01',
+                codigoPlaca: fa.codigoPlaca || fa.id,
+                nombre: fa.nombre,
+                categoria: fa.categoria || 'MAQUINARIA_INDUSTRIAL',
+                fechaAdquisicion: fa.fechaAdquisicion || '2026-01-01',
+                proveedorRut: fa.proveedorRut || null,
+                proveedorRazonSocial: fa.proveedorRazonSocial || null,
+                folioDteCompra: fa.folioDteCompra ? Number(fa.folioDteCompra) : null,
+                valorAdquisicionOriginal: String(fa.valorAdquisicionOriginal || '0.00'),
+                valorResidualFinanciero: String(fa.valorResidualFinanciero || '0.00'),
+                vidaUtilMesesFinanciera: Number(fa.vidaUtilMesesFinanciera || 60),
+                vidaUtilMesesTributaria: Number(fa.vidaUtilMesesTributaria || 36),
+                mesesDepreciados: Number(fa.mesesDepreciados || 0),
+                vidaUtilRestanteMeses: Number(fa.vidaUtilRestanteMeses || 60),
+                metodoDepreciacion: fa.metodoDepreciacion || 'LINEAL_RECTA',
+                depreciacionAcumuladaFinanciera: String(fa.depreciacionAcumuladaFinanciera || '0.00'),
+                valorLibroFinanciero: String(fa.valorLibroFinanciero || '0.00'),
+                cuotaDepreciacionMensualFinanciera: String(fa.cuotaDepreciacionMensualFinanciera || '0.00'),
+                factorCorreccionMonetariaAcum: String(fa.factorCorreccionMonetariaAcum || '0.000000'),
+                correccionMonetariaAcumulada: String(fa.correccionMonetariaAcumulada || '0.00'),
+                depreciacionAcumuladaTributaria: String(fa.depreciacionAcumuladaTributaria || '0.00'),
+                valorTributarioNeto: String(fa.valorTributarioNeto || '0.00'),
+                cuotaDepreciacionMensualTributaria: String(fa.cuotaDepreciacionMensualTributaria || '0.00'),
+                centroCostoId: fa.centroCostoId || null,
+                centroCostoCodigo: fa.centroCostoCodigo || null,
+                centroCostoNombre: fa.centroCostoNombre || null,
+                ubicacionFisica: fa.ubicacionFisica || 'Planta Principal',
+                responsableCustodio: fa.responsableCustodio || 'Encargado de Operaciones',
+                estado: fa.estado || 'ACTIVO_OPERATIVO',
+                numeroSerie: fa.numeroSerie || null,
+                marcaModelo: fa.marcaModelo || null,
+                esFabrilProduccion: Boolean(fa.esFabrilProduccion),
+                asientoAltaId: fa.asientoAltaId || null,
+                createdAt: new Date(fa.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: fa.nombre,
+                  valorLibroFinanciero: String(fa.valorLibroFinanciero || '0.00'),
+                  centroCostoId: fa.centroCostoId || null,
+                  centroCostoCodigo: fa.centroCostoCodigo || null,
+                  centroCostoNombre: fa.centroCostoNombre || null,
+                },
+              });
+          } catch (e) {
+            // Continuar
+          }
         }
       }
 
@@ -378,6 +495,86 @@ class DiskPersistenceService {
     });
   }
 
+  public addCostCenter(cc: any) {
+    if (!this.store.costCenters) this.store.costCenters = [];
+    const existingIndex = this.store.costCenters.findIndex(
+      (c) => c.id === cc.id || (c.codigo === cc.codigo && c.empresaId === cc.empresaId)
+    );
+    if (existingIndex >= 0) {
+      this.store.costCenters[existingIndex] = { ...this.store.costCenters[existingIndex], ...cc };
+    } else {
+      this.store.costCenters.push(cc);
+    }
+    this.scheduleFlush();
+  }
+
+  public getCostCenters(empresaId?: string): any[] {
+    let result = this.store.costCenters || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((c) => {
+        const cNorm = (c.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !cNorm || cNorm === norm;
+      });
+    }
+    return result;
+  }
+
+  public addFixedAsset(fa: any) {
+    if (!this.store.fixedAssets) this.store.fixedAssets = [];
+    const existingIndex = this.store.fixedAssets.findIndex((a) => a.id === fa.id);
+    if (existingIndex >= 0) {
+      this.store.fixedAssets[existingIndex] = { ...this.store.fixedAssets[existingIndex], ...fa };
+    } else {
+      this.store.fixedAssets.unshift(fa);
+    }
+    this.scheduleFlush();
+  }
+
+  public getFixedAssets(empresaId?: string): any[] {
+    let result = this.store.fixedAssets || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((a) => {
+        const aNorm = (a.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !aNorm || aNorm === norm;
+      });
+    }
+    return result;
+  }
+
+  public saveVaultEntry(entry: any) {
+    if (!this.store.credentialsVault) this.store.credentialsVault = [];
+    const existingIndex = this.store.credentialsVault.findIndex(
+      (v) => v.empresaId === entry.empresaId || (entry.rut && v.rut === entry.rut)
+    );
+    if (existingIndex >= 0) {
+      this.store.credentialsVault[existingIndex] = {
+        ...this.store.credentialsVault[existingIndex],
+        ...entry,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      this.store.credentialsVault.push({
+        ...entry,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public getVaultEntry(empresaIdOrRut: string): any | null {
+    if (!this.store.credentialsVault || !empresaIdOrRut) return null;
+    const clean = empresaIdOrRut.replace(/[^0-9kK]/g, '').toUpperCase();
+    return (
+      this.store.credentialsVault.find((v) => {
+        const vEmpresa = (v.empresaId || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        const vRut = (v.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        return vEmpresa === clean || vRut === clean || v.empresaId === empresaIdOrRut;
+      }) || null
+    );
+  }
+
   public getStatus(): {
     diskPath: string;
     fileSizeBytes: number;
@@ -386,6 +583,8 @@ class DiskPersistenceService {
     linesCount: number;
     dtesCount: number;
     employeesCount: number;
+    costCentersCount: number;
+    fixedAssetsCount: number;
     mysqlActive: boolean;
   } {
     let size = 0;
@@ -403,6 +602,8 @@ class DiskPersistenceService {
       linesCount: this.store.lines.length,
       dtesCount: this.store.dtes.length,
       employeesCount: this.store.employees.length,
+      costCentersCount: (this.store.costCenters || []).length,
+      fixedAssetsCount: (this.store.fixedAssets || []).length,
       mysqlActive: isRealMysqlConnected,
     };
   }
@@ -540,6 +741,121 @@ class DiskPersistenceService {
       { codigo: 'UTM', valor: '71721.0000', fecha: '2026-09-09', fuente: 'sii.cl-oficial' },
       { codigo: 'IPC', valor: '0.6000', fecha: '2026-09-09', fuente: 'ine.cl-oficial' },
     ];
+
+    // Centros de Costo iniciales (Mini-Empresas)
+    if (!this.store.costCenters || this.store.costCenters.length === 0) {
+      this.store.costCenters = [
+        {
+          id: 'cc-01',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-ADM-01',
+          nombre: 'Administración Central & Finanzas',
+          categoria: 'ADMINISTRACION',
+          responsableNombre: 'Carla Morales Troncoso',
+          emailResponsable: 'carla.morales@maraustral.cl',
+          presupuestoMensualClp: 14500000,
+          activo: true,
+          descripcion: 'Gestión corporativa, contraloría interna, legal, compras generales y RRHH central.',
+          ventasAcumuladasMes: 0,
+          costosDirectosMes: 0,
+          gastosOperacionalesMes: 4850000,
+          remuneracionesMes: 7200000,
+          depreciacionMes: 450000,
+        },
+        {
+          id: 'cc-02',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-VTA-STGO',
+          nombre: 'Ventas & Distribución Zona Central (Mini-Empresa)',
+          categoria: 'VENTAS',
+          responsableNombre: 'Gonzalo Silva Valenzuela',
+          emailResponsable: 'gonzalo.silva@maraustral.cl',
+          presupuestoMensualClp: 28000000,
+          activo: true,
+          descripcion: 'Unidad comercial metropolitana y de exportaciones. Opera como centro de utilidad independiente.',
+          ventasAcumuladasMes: 48500000,
+          costosDirectosMes: 18200000,
+          gastosOperacionalesMes: 3400000,
+          remuneracionesMes: 5800000,
+          depreciacionMes: 350000,
+        },
+        {
+          id: 'cc-03',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-PRD-QUELLON',
+          nombre: 'Planta Fabril & Maestranza Quellón (Mini-Empresa)',
+          categoria: 'PRODUCCION',
+          responsableNombre: 'Ing. Rodrigo Cárdenas Soto',
+          emailResponsable: 'rodrigo.cardenas@maraustral.cl',
+          presupuestoMensualClp: 52000000,
+          activo: true,
+          descripcion: 'Fabricación y reparación de redes peceras, loberas y estructuras HDPE de acuicultura.',
+          ventasAcumuladasMes: 64200000,
+          costosDirectosMes: 28900000,
+          gastosOperacionalesMes: 6200000,
+          remuneracionesMes: 14800000,
+          depreciacionMes: 2100000,
+        },
+        {
+          id: 'cc-04',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-LOG-SUR',
+          nombre: 'Logística & Transporte Fluvial Décima Región',
+          categoria: 'LOGISTICA',
+          responsableNombre: 'Patricio Almonacid Vera',
+          emailResponsable: 'patricio.almonacid@maraustral.cl',
+          presupuestoMensualClp: 18500000,
+          activo: true,
+          descripcion: 'Flota de barcazas, camiones rampla, despacho de insumos a centros de cultivo en mar abierto.',
+          ventasAcumuladasMes: 12000000,
+          costosDirectosMes: 6400000,
+          gastosOperacionalesMes: 2100000,
+          remuneracionesMes: 4900000,
+          depreciacionMes: 980000,
+        },
+      ];
+    }
+
+    // Activos Fijos iniciales con Centro de Costo imputado
+    if (!this.store.fixedAssets || this.store.fixedAssets.length === 0) {
+      this.store.fixedAssets = [
+        {
+          id: 'af-001',
+          empresaId: 'client-retail-01',
+          codigoPlaca: 'AF-2026-001',
+          nombre: 'Grúa Horquilla Eléctrica Yale 2.5T',
+          categoria: 'MAQUINARIA_INDUSTRIAL',
+          fechaAdquisicion: '2026-01-15',
+          proveedorRut: '76.888.999-1',
+          proveedorRazonSocial: 'Yale Material Handling Chile SpA',
+          folioDteCompra: 8820,
+          valorAdquisicionOriginal: 24500000,
+          valorResidualFinanciero: 1000000,
+          vidaUtilMesesFinanciera: 84,
+          vidaUtilMesesTributaria: 36,
+          mesesDepreciados: 8,
+          vidaUtilRestanteMeses: 76,
+          metodoDepreciacion: 'LINEAL_RECTA',
+          depreciacionAcumuladaFinanciera: 2238095.24,
+          valorLibroFinanciero: 22261904.76,
+          cuotaDepreciacionMensualFinanciera: 279761.9,
+          factorCorreccionMonetariaAcum: 0.006,
+          correccionMonetariaAcumulada: 133571.43,
+          depreciacionAcumuladaTributaria: 5222222.22,
+          valorTributarioNeto: 19277777.78,
+          cuotaDepreciacionMensualTributaria: 652777.78,
+          centroCostoId: 'cc-03',
+          centroCostoCodigo: 'CC-PRD-QUELLON',
+          centroCostoNombre: 'Planta Fabril & Maestranza Quellón (Mini-Empresa)',
+          ubicacionFisica: 'Bodega Central Quellón - Nave 2',
+          responsableCustodio: 'Marcelo Gallardo - Jefe Operaciones',
+          estado: 'ACTIVO_OPERATIVO',
+          numeroSerie: 'YALE-EL25-98302',
+          marcaModelo: 'Yale ERP25VL 2026',
+          esFabrilProduccion: true,
+        },
+      ];
+    }
   }
 }
 

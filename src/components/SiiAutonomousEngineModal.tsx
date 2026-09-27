@@ -49,8 +49,10 @@ import {
   SiiPendingPeriodDiagnostic,
   AccountingEntry,
   CompanyProfile, 
-  ClientCompany 
+  ClientCompany,
+  CostCenterMaster,
 } from '../types';
+import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import { formatCLP } from '../utils/chileanAccounting';
 import { 
   detectPendingSiiMonths, 
@@ -77,6 +79,7 @@ interface SiiAutonomousEngineModalProps {
   onUpdateDte: (dte: DteDocument) => void;
   onAddAccountingEntry: (entry: AccountingEntry) => void;
   onClearAllDtes?: () => void;
+  costCenters?: CostCenterMaster[];
 }
 
 export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> = ({
@@ -88,8 +91,12 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   onUpdateDte,
   onAddAccountingEntry,
   onClearAllDtes,
+  costCenters,
 }) => {
   const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const availableCostCenters = useMemo(() => {
+    return Array.isArray(costCenters) && costCenters.length > 0 ? costCenters : SEED_COST_CENTERS;
+  }, [costCenters]);
   // Tabs principales del motor autónomo
   const [activeTab, setActiveTab] = useState<
     'DIAGNOSTICO_MESES' | 'PENDIENTES_CONTABILIZAR' | 'LIBROS_AUXILIARES' | 'CENTRALIZACION' | 'COBROS_PAGOS' | 'VISOR_CHROMIUM' | 'TERMINAL_LOGS' | 'PARAMETROS'
@@ -440,7 +447,10 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
           cuentaCodigo: sug.cuentaCodigo,
           cuentaNombre: sug.cuentaNombre,
           concepto: dte.glosa || 'Partida principal de mercadería / servicio',
-          montoNeto: dte.montoNeto
+          montoNeto: dte.montoNeto,
+          centroCostoId: dte.centroCostoId,
+          centroCostoCodigo: dte.centroCostoCodigo,
+          centroCostoNombre: dte.centroCostoNombre,
         }
       ]);
     }
@@ -459,7 +469,10 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
         cuentaCodigo: '5.1.07',
         cuentaNombre: 'Gasto Fletes y Transporte de Envíos',
         concepto: 'Gasto complementario / Flete asociado a la compra',
-        montoNeto: remaining
+        montoNeto: remaining,
+        centroCostoId: splitModalDte.centroCostoId,
+        centroCostoCodigo: splitModalDte.centroCostoCodigo,
+        centroCostoNombre: splitModalDte.centroCostoNombre,
       }
     ]);
   };
@@ -1248,8 +1261,17 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                                     <Split className="w-3 h-3" />
                                     Desglosada en {dte.partidasDesglosadas!.length} partidas
                                   </span>
-                                  <div className="text-[10px] text-slate-500 font-mono">
-                                    {dte.partidasDesglosadas!.map(p => `${p.cuentaCodigo} (${formatCLP(p.montoNeto)})`).join(' + ')}
+                                  <div className="text-[10px] text-slate-500 font-mono flex flex-wrap gap-1">
+                                    {dte.partidasDesglosadas!.map((p, pIdx) => (
+                                      <span key={p.id || pIdx} className="bg-slate-100 border border-slate-200 px-1 py-0.2 rounded">
+                                        {p.cuentaCodigo}
+                                        {p.centroCostoCodigo && (
+                                          <span className="ml-1 text-indigo-700 font-bold font-sans">
+                                            [{p.centroCostoCodigo}]
+                                          </span>
+                                        )}: {formatCLP(p.montoNeto)}
+                                      </span>
+                                    ))}
                                   </div>
                                 </div>
                               ) : (
@@ -2283,7 +2305,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                       )}
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                       <div>
                         <label className="block text-slate-600 mb-1 font-medium">Cuenta Contable:</label>
                         <select
@@ -2309,6 +2331,30 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                       </div>
 
                       <div>
+                        <label className="block text-slate-600 mb-1 font-medium">Centro de Costo:</label>
+                        <select
+                          value={partida.centroCostoCodigo || ''}
+                          onChange={(e) => {
+                            const found = availableCostCenters.find(c => c.codigo === e.target.value);
+                            setSplitPartidas(splitPartidas.map(p => p.id === partida.id ? {
+                              ...p,
+                              centroCostoId: found?.id,
+                              centroCostoCodigo: found?.codigo,
+                              centroCostoNombre: found?.nombre,
+                            } : p));
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-lg p-1.5 text-xs outline-none font-medium text-slate-800"
+                        >
+                          <option value="">-- Sin Centro de Costos --</option>
+                          {availableCostCenters.map(cc => (
+                            <option key={cc.id} value={cc.codigo}>
+                              {cc.codigo} - {cc.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
                         <label className="block text-slate-600 mb-1 font-medium">Monto Neto ($ CLP):</label>
                         <input
                           type="number"
@@ -2324,7 +2370,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                         />
                       </div>
 
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-3">
                         <label className="block text-slate-600 mb-1 font-medium">Concepto / Glosa de la Partida:</label>
                         <input
                           type="text"

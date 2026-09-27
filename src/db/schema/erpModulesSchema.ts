@@ -20,43 +20,16 @@ import { accountingEntries } from './accountingLedgerSchema';
 // MÓDULO 1 & 2: REGISTRO DE COMPRAS Y VENTAS (RCV) Y HONORARIOS (BHE)
 // ============================================================================
 
-export const dtesRcv = mysqlTable(
-  'dtes_rcv',
-  {
-    id: varchar('id', { length: 36 }).primaryKey(), // UUID v4
-    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
-    periodo: varchar('periodo', { length: 7 }).notNull(), // Formato: 'AAAA-MM'
-    tipoOperacion: mysqlEnum('tipo_operacion', ['COMPRA', 'VENTA']).notNull(),
-    tipoDte: int('tipo_dte').notNull(), // 33: Factura, 34: Exenta, 56: ND, 61: NC, 52: Guía
-    folio: bigint('folio', { mode: 'number' }).notNull(),
-    rutContraparte: varchar('rut_contraparte', { length: 20 }).notNull(),
-    razonSocialContraparte: varchar('razon_social_contraparte', { length: 255 }).notNull(),
-    fechaEmision: date('fecha_emision', { mode: 'string' }).notNull(),
-    montoExento: decimal('monto_exento', { precision: 15, scale: 2 }).notNull().default('0.00'),
-    montoNeto: decimal('monto_neto', { precision: 15, scale: 2 }).notNull().default('0.00'),
-    montoIva: decimal('monto_iva', { precision: 15, scale: 2 }).notNull().default('0.00'),
-    montoIvaRecuperable: decimal('monto_iva_recuperable', { precision: 15, scale: 2 }).notNull().default('0.00'),
-    montoIvaNoRecuperable: decimal('monto_iva_no_recuperable', { precision: 15, scale: 2 }).notNull().default('0.00'),
-    montoTotal: decimal('monto_total', { precision: 15, scale: 2 }).notNull(),
-    estadoAcuse: varchar('estado_acuse', { length: 50 }),
-    estadoContable: mysqlEnum('estado_contable', ['PENDIENTE', 'CENTRALIZADO']).notNull().default('PENDIENTE'),
-    entryIdRef: varchar('entry_id_ref', { length: 36 }).references(() => accountingEntries.id, {
-      onDelete: 'set null',
-    }),
-    createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-  },
-  (table) => ({
-    uqDtesRcv: uniqueIndex('uq_dtes_rcv_folio').on(
-      table.empresaId,
-      table.tipoOperacion,
-      table.tipoDte,
-      table.folio,
-      table.rutContraparte
-    ),
-    idxDtesPeriodo: index('idx_dtes_periodo').on(table.empresaId, table.periodo),
-    idxDtesEstado: index('idx_dtes_estado').on(table.empresaId, table.estadoContable),
-  })
-);
+export {
+  dtesRcv,
+  dteItems,
+  dtesRcvRelations,
+  dteItemsRelations,
+  type DteRcv,
+  type NewDteRcv,
+  type DteItemRecord,
+  type NewDteItemRecord,
+} from './dtesSchema';
 
 export const boletasHonorarios = mysqlTable(
   'boletas_honorarios',
@@ -99,6 +72,9 @@ export const bankAccounts = mysqlTable(
     moneda: varchar('moneda', { length: 10 }).notNull().default('CLP'),
     saldoContable: decimal('saldo_contable', { precision: 15, scale: 2 }).notNull().default('0.00'),
     saldoCartola: decimal('saldo_cartola', { precision: 15, scale: 2 }).notNull().default('0.00'),
+    tipoConexion: varchar('tipo_conexion', { length: 50 }).notNull().default('MANUAL'),
+    estadoConexion: varchar('estado_conexion', { length: 50 }).notNull().default('CONECTADO'),
+    esPrincipal: boolean('es_principal').notNull().default(false),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({
@@ -122,6 +98,14 @@ export const bankTransactions = mysqlTable(
       .notNull()
       .default('PENDIENTE'),
     matchedDteId: varchar('matched_dte_id', { length: 36 }),
+    moneda: varchar('moneda', { length: 10 }).notNull().default('CLP'),
+    tipoCambio: decimal('tipo_cambio', { precision: 12, scale: 4 }).default('1.0000'),
+    montoClpEquivalente: decimal('monto_clp_equivalente', { precision: 15, scale: 2 }),
+    matchCerteza: int('match_certeza'),
+    matchSugeridoId: varchar('match_sugerido_id', { length: 36 }),
+    matchSugeridoGlosa: varchar('match_sugerido_glosa', { length: 255 }),
+    origenImportacion: varchar('origen_importacion', { length: 50 }).default('MANUAL'),
+    rawHashTransaction: varchar('raw_hash_transaction', { length: 64 }),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({
@@ -449,9 +433,6 @@ export const stockMovementsRelations = relations(stockMovements, ({ one }) => ({
 // ============================================================================
 // TIPOS ESTRICTOS DE INFERENCIA DRIZZLE
 // ============================================================================
-export type DteRcv = typeof dtesRcv.$inferSelect;
-export type NewDteRcv = typeof dtesRcv.$inferInsert;
-
 export type BoletaHonorario = typeof boletasHonorarios.$inferSelect;
 export type NewBoletaHonorario = typeof boletasHonorarios.$inferInsert;
 

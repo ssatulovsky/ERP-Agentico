@@ -259,20 +259,21 @@ CREATE TABLE `company_module_subscriptions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 4. TABLA: company_credentials_vault (Bóveda Segura AES-256-GCM)
+-- 4. TABLA: company_credentials_vault (Bóveda Segura AES-256-GCM para SII y Bancos)
 -- ============================================================================
 DROP TABLE IF EXISTS `company_credentials_vault`;
 CREATE TABLE `company_credentials_vault` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
-  `servicio` ENUM('SII_CERT_DIGITAL', 'SII_CLAVE_TRIBUTARIA', 'PREVIRED', 'BANCO_API', 'DT_MI_DIRECTORIO') NOT NULL,
-  `encrypted_payload` TEXT NOT NULL,
-  `iv` VARCHAR(64) NOT NULL,
-  `auth_tag` VARCHAR(64) NOT NULL,
-  `key_version` INT NOT NULL DEFAULT 1,
+  `certificado_digital_encrypted` MEDIUMTEXT NULL,
+  `clave_certificado_encrypted` TEXT NULL,
+  `clave_sii_encrypted` TEXT NULL,
+  `api_bancos_encrypted` JSON NULL,
+  `iv` VARCHAR(32) NOT NULL,
+  `tag_auth` VARCHAR(32) NOT NULL,
   `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_vault_empresa_servicio` (`empresa_id`, `servicio`),
+  UNIQUE KEY `uq_vault_empresa` (`empresa_id`),
   KEY `idx_vault_empresa` (`empresa_id`),
   CONSTRAINT `fk_vault_company` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -429,8 +430,9 @@ CREATE TABLE `economic_indicators` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 12. TABLA: dtes_rcv (Registro de Compras y Ventas RCV SII)
+-- 12. TABLA: dtes_rcv (Registro de Compras y Ventas RCV SII & Imputación Analítica)
 -- ============================================================================
+DROP TABLE IF EXISTS `dte_items`;
 DROP TABLE IF EXISTS `dtes_rcv`;
 CREATE TABLE `dtes_rcv` (
   `id` VARCHAR(36) NOT NULL,
@@ -449,11 +451,47 @@ CREATE TABLE `dtes_rcv` (
   `estado_contable` ENUM('PENDIENTE', 'CONTABILIZADO', 'RECHAZADO') NOT NULL DEFAULT 'PENDIENTE',
   `acuse_recibo_ley19983` BOOLEAN NOT NULL DEFAULT FALSE,
   `fecha_acuse_recibo` DATETIME(3) NULL,
+  `glosa` TEXT NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `centro_costo_nombre` VARCHAR(200) NULL,
+  `cuenta_gasto_imputada_codigo` VARCHAR(50) NULL,
+  `cuenta_gasto_imputada_nombre` VARCHAR(200) NULL,
+  `items` JSON NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_dte_registro` (`empresa_id`, `tipo_operacion`, `tipo_dte`, `folio`, `rut_contraparte`),
   KEY `idx_dte_empresa_fecha` (`empresa_id`, `fecha_emision`),
-  KEY `idx_dte_estado_contable` (`estado_contable`)
+  KEY `idx_dte_estado_contable` (`estado_contable`),
+  KEY `idx_dte_centro_costo` (`centro_costo_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 12.1 TABLA: dte_items (Líneas de Detalle de Facturas e Imputación Analítica)
+-- ============================================================================
+CREATE TABLE `dte_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `dte_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo` VARCHAR(50) NULL,
+  `nombre` VARCHAR(200) NOT NULL,
+  `descripcion` TEXT NULL,
+  `cantidad` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  `unidad_medida` VARCHAR(20) NULL,
+  `precio_unitario` DECIMAL(15, 4) NOT NULL,
+  `descuento_pct` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
+  `es_exento` BOOLEAN NOT NULL DEFAULT FALSE,
+  `monto_total` DECIMAL(15, 2) NOT NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `centro_costo_nombre` VARCHAR(200) NULL,
+  `cuenta_codigo` VARCHAR(50) NULL,
+  `cuenta_nombre` VARCHAR(200) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_dte_items_dte` (`dte_id`),
+  KEY `idx_dte_items_cc` (`centro_costo_id`),
+  CONSTRAINT `fk_dte_items_dte` FOREIGN KEY (`dte_id`) REFERENCES `dtes_rcv` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -865,8 +903,65 @@ CREATE TABLE `karin_compliance_records` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
+-- 27.1 TABLA: cost_centers (Centros de Costo y Unidades de Negocio "Mini-Empresas")
+-- ============================================================================
+DROP TABLE IF EXISTS `cost_center_imputations`;
+DROP TABLE IF EXISTS `cost_centers`;
+CREATE TABLE `cost_centers` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo` VARCHAR(50) NOT NULL, -- ej: "CC-ADM-01", "CC-VTA-STGO", "CC-PRD-01"
+  `nombre` VARCHAR(200) NOT NULL,
+  `categoria` ENUM(
+    'ADMINISTRACION',
+    'COMERCIAL_VENTAS',
+    'OPERACIONES_PRODUCCION',
+    'LOGISTICA_DISTRIBUCION',
+    'PROYECTOS_INVERSION',
+    'TI_SOPORTE'
+  ) NOT NULL,
+  `responsable_nombre` VARCHAR(200) NOT NULL,
+  `responsable_email` VARCHAR(255) NULL,
+  `presupuesto_mensual_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `activo` BOOLEAN NOT NULL DEFAULT TRUE,
+  `descripcion` TEXT NULL,
+  `ventas_acumuladas_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `costos_directos_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `gastos_operacionales_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `remuneraciones_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `depreciacion_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cost_center_empresa_codigo` (`empresa_id`, `codigo`),
+  KEY `idx_cost_center_empresa` (`empresa_id`),
+  KEY `idx_cost_center_categoria` (`categoria`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 27.2 TABLA: cost_center_imputations (Trazabilidad de Imputaciones Directas)
+-- ============================================================================
+CREATE TABLE `cost_center_imputations` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `centro_costo_id` VARCHAR(36) NOT NULL,
+  `tipo_documento` VARCHAR(50) NOT NULL, -- 'DTE_FACTURA', 'NOMINA_REMUNERACIONES', 'VALE_BODEGA', 'ACTIVO_FIJO_DEPRECIACION'
+  `folio_referencia` VARCHAR(100) NOT NULL,
+  `fecha` DATE NOT NULL,
+  `monto_clp` DECIMAL(15, 2) NOT NULL,
+  `concepto` VARCHAR(255) NOT NULL,
+  `tipo_flujo` ENUM('INGRESO', 'COSTO', 'GASTO') NOT NULL,
+  `cuenta_contable` VARCHAR(50) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_cc_imputation_cc` (`centro_costo_id`),
+  KEY `idx_cc_imputation_empresa_fecha` (`empresa_id`, `fecha`),
+  CONSTRAINT `fk_cc_imputation_cc` FOREIGN KEY (`centro_costo_id`) REFERENCES `cost_centers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
 -- 28. TABLA: fixed_assets (Activos Fijos IFRS / NIC 16 y Art. 31/41 LIR Chile)
 -- ============================================================================
+DROP TABLE IF EXISTS `fixed_asset_depreciation_runs`;
 DROP TABLE IF EXISTS `fixed_assets`;
 CREATE TABLE `fixed_assets` (
   `id` VARCHAR(36) NOT NULL,
@@ -906,6 +1001,9 @@ CREATE TABLE `fixed_assets` (
   `depreciacion_acumulada_tributaria` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `valor_tributario_neto` DECIMAL(15, 2) NOT NULL,
   `cuota_depreciacion_mensual_tributaria` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `centro_costo_nombre` VARCHAR(200) NULL,
   `ubicacion_fisica` VARCHAR(255) NOT NULL,
   `responsable_custodio` VARCHAR(200) NOT NULL,
   `estado` ENUM(
@@ -927,7 +1025,9 @@ CREATE TABLE `fixed_assets` (
   UNIQUE KEY `uq_fixed_asset_placa` (`empresa_id`, `codigo_placa`),
   KEY `idx_fixed_asset_empresa` (`empresa_id`),
   KEY `idx_fixed_asset_categoria` (`categoria`),
-  CONSTRAINT `fk_asset_asiento` FOREIGN KEY (`asiento_alta_id`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+  KEY `idx_fixed_asset_centro_costo` (`centro_costo_id`),
+  CONSTRAINT `fk_asset_asiento` FOREIGN KEY (`asiento_alta_id`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_asset_centro_costo` FOREIGN KEY (`centro_costo_id`) REFERENCES `cost_centers` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -1483,296 +1583,180 @@ CREATE TABLE `agent_learnings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 45. MÓDULO INGENIERÍA NAVAL Y ACUICULTURA CHILENA (RG 1821 / RG 941)
--- Detección de anomalías, auditoría 3D, inspección ROV/taller y trazabilidad
+-- 45. ARQUITECTURA ERP AGÉNTICO: AGENTE PRINCIPAL, SUB-AGENTES Y GOBERNANZA
+-- Coordinación jerárquica de procesos, bus de eventos y persistencia transitoria
 -- ============================================================================
 
--- 45.1 TABLA: aquaculture_centers (Centros de Cultivo de Salmónidos con Código RNA)
-DROP TABLE IF EXISTS `aquaculture_anomalies`;
-DROP TABLE IF EXISTS `aquaculture_inspections`;
-DROP TABLE IF EXISTS `aquaculture_mooring_lines`;
-DROP TABLE IF EXISTS `aquaculture_components`;
-DROP TABLE IF EXISTS `aquaculture_nets`;
-DROP TABLE IF EXISTS `aquaculture_drawings`;
-DROP TABLE IF EXISTS `aquaculture_modules`;
-DROP TABLE IF EXISTS `aquaculture_centers`;
+DROP TABLE IF EXISTS `agent_inter_communications`;
+DROP TABLE IF EXISTS `agent_coordination_tasks`;
+DROP TABLE IF EXISTS `agent_transient_states`;
+DROP TABLE IF EXISTS `enterprise_agent_profiles`;
 
-CREATE TABLE `aquaculture_centers` (
+-- 45.1 TABLA: enterprise_agent_profiles (Padrón de Agentes Autónomos por Empresa)
+CREATE TABLE `enterprise_agent_profiles` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
-  `codigo_rna` VARCHAR(20) NOT NULL, -- Código RNA Sernapesca ej: 102450
-  `nombre_centro` VARCHAR(150) NOT NULL,
-  `titular_nombre` VARCHAR(200) NOT NULL,
-  `titular_rut` VARCHAR(20) NOT NULL,
-  `region` VARCHAR(100) NOT NULL,
-  `comuna` VARCHAR(100) NOT NULL,
-  `agrupacion_concesiones_acs` VARCHAR(50) NULL,
-  `coordenadas_utm_norte` DECIMAL(12, 2) NOT NULL,
-  `coordenadas_utm_este` DECIMAL(12, 2) NOT NULL,
-  `latitud` DECIMAL(10, 7) NULL,
-  `longitud` DECIMAL(10, 7) NULL,
-  `profundidad_media_metros` DECIMAL(6, 2) NOT NULL,
-  `profundidad_maxima_metros` DECIMAL(6, 2) NOT NULL,
-  `tipo_fondo_marino` ENUM('FANGO_BLANDO', 'ARENA_COMPACTA', 'ROCOSO', 'MIXTO') NOT NULL,
-  `corriente_maxima_nudos` DECIMAL(5, 2) NOT NULL,
-  `altura_ola_significativa_hs` DECIMAL(5, 2) NOT NULL,
-  `memoria_calculo_fondeo_rg941_url` VARCHAR(500) NULL,
-  `certificacion_naval_vigente` BOOLEAN NOT NULL DEFAULT TRUE,
-  `fecha_vencimiento_certificado` DATE NULL,
-  `estado_operativo` ENUM('EN_OPERACION', 'DESCANSO_SANITARIO', 'INSTALACION', 'MANTENCION') NOT NULL DEFAULT 'EN_OPERACION',
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_centro_rna` (`codigo_rna`),
-  KEY `idx_centro_empresa` (`empresa_id`),
-  KEY `idx_centro_region` (`region`),
-  CONSTRAINT `fk_centro_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 45.2 TABLA: aquaculture_modules (Trenes y Módulos de Balsas Jaulas)
-CREATE TABLE `aquaculture_modules` (
-  `id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `codigo_tren` VARCHAR(50) NOT NULL,
-  `numero_jaulas` INT NOT NULL,
-  `tipo_geometria` ENUM('CUADRADA_30X30', 'CUADRADA_40X40', 'CIRCULAR_D30', 'CIRCULAR_D40', 'RECTANGULAR') NOT NULL,
-  `dimension_largo_m` DECIMAL(6, 2) NOT NULL,
-  `dimension_ancho_m` DECIMAL(6, 2) NOT NULL,
-  `material_pasillos` VARCHAR(100) NOT NULL DEFAULT 'HDPE Termofusionado Grado PE100',
-  `azimut_orientacion_grados` DECIMAL(5, 1) NOT NULL DEFAULT 0.0,
-  `posicion_relativa_x` DECIMAL(8, 2) NOT NULL DEFAULT 0.00,
-  `posicion_relativa_y` DECIMAL(8, 2) NOT NULL DEFAULT 0.00,
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_modulo_codigo` (`centro_id`, `codigo_tren`),
-  KEY `idx_modulo_centro` (`centro_id`),
-  CONSTRAINT `fk_modulo_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 45.3 TABLA: aquaculture_drawings (Ingesta de Planos de Ingeniería Naval en PDF/CAD)
-CREATE TABLE `aquaculture_drawings` (
-  `id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `tipo_plano` ENUM(
-    'PLANO_GENERAL_CENTRO',
-    'PLANO_FONDEO_BATIMETRIA',
-    'PLANO_RED_PECERA',
-    'PLANO_RED_LOBERA',
-    'PLANO_SISTEMA_SEPARADORES',
-    'PLANO_DETALLE_RELIÑAS_LASTRES'
+  `agente_codigo` ENUM(
+    'MASTER_ORCHESTRATOR',
+    'ACCOUNTING_LEDGER',
+    'SII_RCV',
+    'F29_TAX',
+    'BANK_RECON',
+    'INVENTORY_WMS',
+    'RRHH',
+    'PRODUCTION_COSTS',
+    'FIXED_ASSETS',
+    'FORENSIC_AUDITOR',
+    'SALES_COMMERCIAL'
   ) NOT NULL,
-  `titulo_plano` VARCHAR(255) NOT NULL,
-  `codigo_plano` VARCHAR(100) NOT NULL,
-  `revision` VARCHAR(10) NOT NULL DEFAULT 'Rev.0',
-  `ingeniero_naval_firma` VARCHAR(150) NOT NULL,
-  `registro_colegio_naval` VARCHAR(50) NULL,
-  `archivo_pdf_url` VARCHAR(500) NOT NULL,
-  `archivo_cad_url` VARCHAR(500) NULL,
-  `datos_ingeridos_json` JSON NULL,
-  `modelo_3d_vertices_json` JSON NULL,
-  `es_plano_oficial_vigente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `nombre_descriptivo` VARCHAR(150) NOT NULL,
+  `rol_proceso` VARCHAR(100) NOT NULL,
+  `es_agente_principal` BOOLEAN NOT NULL DEFAULT FALSE,
+  `nivel_autonomia` ENUM(
+    'ASISTIDO',
+    'SEMI_AUTONOMO',
+    'AUTONOMO_CON_SUPERVISION',
+    'AUTONOMO_TOTAL'
+  ) NOT NULL DEFAULT 'AUTONOMO_CON_SUPERVISION',
+  `estado_operativo` ENUM('ACTIVO', 'EN_ESPERA', 'EJECUTANDO', 'EN_PAUSA', 'ERROR') NOT NULL DEFAULT 'ACTIVO',
+  `instrucciones_sistema` TEXT NULL,
+  `capacidades_json` JSON NULL,
+  `metricas_rendimiento` JSON NULL,
+  `ultimo_latido` DATETIME(3) NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_plano_centro` (`centro_id`),
-  KEY `idx_plano_tipo` (`tipo_plano`),
-  CONSTRAINT `fk_plano_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
+  UNIQUE KEY `uq_empresa_agente_perfil` (`empresa_id`, `agente_codigo`),
+  KEY `idx_perfil_empresa` (`empresa_id`),
+  KEY `idx_perfil_agente` (`agente_codigo`),
+  KEY `idx_perfil_principal` (`empresa_id`, `es_agente_principal`),
+  CONSTRAINT `fk_perfil_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 45.4 TABLA: aquaculture_nets (Padrón de Redes Peceras y Loberas)
-CREATE TABLE `aquaculture_nets` (
+-- 45.2 TABLA: agent_coordination_tasks (Tareas Orquestadas por el Agente Principal)
+CREATE TABLE `agent_coordination_tasks` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NULL,
-  `modulo_id` VARCHAR(36) NULL,
-  `codigo_red` VARCHAR(50) NOT NULL,
-  `tipo_red` ENUM(
-    'PECERA',
-    'LOBERA_PERIMETRAL',
-    'LOBERA_FONDO',
-    'PAJARERA_TECHO',
-    'SEGREGADOR_INTERNO'
+  `agente_principal_id` VARCHAR(36) NULL,
+  `agente_asignado_codigo` ENUM(
+    'MASTER_ORCHESTRATOR',
+    'ACCOUNTING_LEDGER',
+    'SII_RCV',
+    'F29_TAX',
+    'BANK_RECON',
+    'INVENTORY_WMS',
+    'RRHH',
+    'PRODUCTION_COSTS',
+    'FIXED_ASSETS',
+    'FORENSIC_AUDITOR',
+    'SALES_COMMERCIAL'
   ) NOT NULL,
-  `crotal_oficial_sernapesca` VARCHAR(50) NULL,
-  `dimension_boca_m` DECIMAL(6, 2) NOT NULL,
-  `dimension_profundidad_m` DECIMAL(6, 2) NOT NULL,
-  `material_filamento` ENUM(
-    'HDPE_ALTA_DENSIDAD',
-    'NYLON_POLIAMIDA_PA6',
-    'UHMWPE_ULTRA_RESISTENTE',
-    'POLIESTER_ALTA_TENACIDAD',
-    'ACERO_INOX_COPPER_ALLOY'
-  ) NOT NULL,
-  `tipo_tejido` ENUM('RASCHEL_SIN_NUDO', 'INGLES_CON_NUDO', 'TRENZADO_KNOTLESS') NOT NULL,
-  `tamano_malla_pulgadas` DECIMAL(4, 2) NOT NULL,
-  `denier_filamento` INT NULL,
-  `carga_rotura_malla_kg` DECIMAL(6, 2) NOT NULL,
-  `relinga_superior_cabo_mm` DECIMAL(5, 2) NOT NULL DEFAULT 24.00,
-  `relinga_inferior_plomada_kg` DECIMAL(8, 2) NOT NULL DEFAULT 1200.00,
-  `horas_inmersion_acumuladas` INT NOT NULL DEFAULT 0,
-  `fecha_ultimo_bano_antifouling` DATE NULL,
-  `taller_mantencion_ultimo` VARCHAR(150) NULL,
-  `orden_produccion_origen_id` VARCHAR(36) NULL,
-  `estado_conservacion` ENUM(
-    'OPTIMO_NUEVO',
-    'OPERATIVO_CONFORME',
-    'OBSERVADO_REQUIERE_MANTENCION',
-    'CRITICO_RIESGO_ROTURA',
-    'EN_TALLER_REPARACION',
-    'DADA_DE_BAJA'
-  ) NOT NULL DEFAULT 'OPTIMO_NUEVO',
+  `flujo_proceso` VARCHAR(100) NOT NULL,
+  `titulo_tarea` VARCHAR(255) NOT NULL,
+  `descripcion` TEXT NULL,
+  `payload_entrada` JSON NOT NULL,
+  `prioridad` ENUM('BAJA', 'MEDIA', 'ALTA', 'CRITICA') NOT NULL DEFAULT 'MEDIA',
+  `estado` ENUM(
+    'PENDIENTE',
+    'DELEGADA_POR_PRINCIPAL',
+    'EN_PROCESO',
+    'ESPERANDO_SUPERVISION',
+    'COMPLETADA',
+    'RECHAZADA_POR_SUPERVISOR',
+    'FALLIDA'
+  ) NOT NULL DEFAULT 'PENDIENTE',
+  `progreso_pct` INT NOT NULL DEFAULT 0,
+  `resultado_salida` JSON NULL,
+  `requiere_aprobacion_humana` BOOLEAN NOT NULL DEFAULT FALSE,
+  `aprobado_por_usuario` VARCHAR(100) NULL,
+  `trace_id` VARCHAR(64) NOT NULL,
+  `error_mensaje` TEXT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `started_at` DATETIME(3) NULL,
+  `completed_at` DATETIME(3) NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_red_codigo` (`empresa_id`, `codigo_red`),
-  KEY `idx_red_crotal` (`crotal_oficial_sernapesca`),
-  KEY `idx_red_centro` (`centro_id`),
-  KEY `idx_red_estado` (`estado_conservacion`),
-  CONSTRAINT `fk_red_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_red_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_red_op` FOREIGN KEY (`orden_produccion_origen_id`) REFERENCES `production_orders` (`id`) ON DELETE SET NULL
+  KEY `idx_coord_task_empresa` (`empresa_id`),
+  KEY `idx_coord_task_estado` (`estado`),
+  KEY `idx_coord_task_agente` (`agente_asignado_codigo`),
+  KEY `idx_coord_task_trace` (`trace_id`),
+  CONSTRAINT `fk_coord_task_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 45.5 TABLA: aquaculture_components (Separadores, Crotales y Lastres)
-CREATE TABLE `aquaculture_components` (
+-- 45.3 TABLA: agent_inter_communications (Bus de Comunicación Inter-Agentes A2A)
+CREATE TABLE `agent_inter_communications` (
   `id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `modulo_id` VARCHAR(36) NULL,
-  `tipo_componente` ENUM(
-    'SEPARADOR_PECERA_LOBERA',
-    'CROTAL_TRAZABILIDAD_RG1821',
-    'PESO_LASTRE_FONDO',
-    'BOYA_TENSION_LOBERA',
-    'GRILLETE_INSPECCIONADO',
-    'TENSIOMETRO_LINEA'
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `task_id` VARCHAR(36) NULL,
+  `agente_emisor` ENUM(
+    'MASTER_ORCHESTRATOR',
+    'ACCOUNTING_LEDGER',
+    'SII_RCV',
+    'F29_TAX',
+    'BANK_RECON',
+    'INVENTORY_WMS',
+    'RRHH',
+    'PRODUCTION_COSTS',
+    'FIXED_ASSETS',
+    'FORENSIC_AUDITOR',
+    'SALES_COMMERCIAL'
   ) NOT NULL,
-  `codigo_identificador` VARCHAR(50) NOT NULL,
-  `separacion_real_metros` DECIMAL(5, 2) NULL,
-  `separacion_normativa_minima_m` DECIMAL(5, 2) NULL DEFAULT 1.50,
-  `material` VARCHAR(100) NOT NULL,
-  `peso_kg` DECIMAL(8, 2) NULL,
-  `posicion_jaula_cara` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'ESQUINA_NE', 'ESQUINA_NO', 'ESQUINA_SE', 'ESQUINA_SO', 'FONDO') NOT NULL,
-  `estado_normativo` ENUM('CONFORME_RG1821', 'EN_RIESGO_CONTACTO', 'COLAPSADO_ROTURA', 'EXTRAVIADO') NOT NULL DEFAULT 'CONFORME_RG1821',
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `agente_receptor` ENUM(
+    'MASTER_ORCHESTRATOR',
+    'ACCOUNTING_LEDGER',
+    'SII_RCV',
+    'F29_TAX',
+    'BANK_RECON',
+    'INVENTORY_WMS',
+    'RRHH',
+    'PRODUCTION_COSTS',
+    'FIXED_ASSETS',
+    'FORENSIC_AUDITOR',
+    'SALES_COMMERCIAL'
+  ) NOT NULL,
+  `tipo_mensaje` ENUM(
+    'DELEGACION_TAREA',
+    'SOLICITUD_DATOS',
+    'REPORTE_RESULTADO',
+    'ALERTA_DISCREPANCIA',
+    'VEREDICTO_SUPERVISION',
+    'ORDEN_BLOQUEO',
+    'CONFIRMACION_ASIENTO'
+  ) NOT NULL,
+  `asunto` VARCHAR(255) NOT NULL,
+  `contenido_json` JSON NOT NULL,
+  `leido` BOOLEAN NOT NULL DEFAULT FALSE,
+  `fecha_emision` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_componente_centro` (`centro_id`),
-  KEY `idx_componente_tipo` (`tipo_componente`),
-  CONSTRAINT `fk_comp_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_comp_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL
+  KEY `idx_inter_comm_empresa` (`empresa_id`),
+  KEY `idx_inter_comm_emisor` (`agente_emisor`),
+  KEY `idx_inter_comm_receptor` (`agente_receptor`),
+  KEY `idx_inter_comm_task` (`task_id`),
+  CONSTRAINT `fk_inter_comm_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_inter_comm_task` FOREIGN KEY (`task_id`) REFERENCES `agent_coordination_tasks` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 45.6 TABLA: aquaculture_mooring_lines (Líneas de Fondeo y Fondeaderos RG 941)
-CREATE TABLE `aquaculture_mooring_lines` (
+-- 45.4 TABLA: agent_transient_states (Respaldo Persistente de Memoria Rápida / Redis)
+CREATE TABLE `agent_transient_states` (
   `id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `codigo_linea` VARCHAR(50) NOT NULL,
-  `cuadrante_geografico` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'NORESTE', 'NOROESTE', 'SURESTE', 'SUROESTE') NOT NULL,
-  `longitud_total_metros` DECIMAL(8, 2) NOT NULL,
-  `tipo_anclaje` ENUM('BLOQUE_HORMIGON_MUERTO', 'ANCLA_STEVPRIS', 'ANCLA_DANFORTH', 'PASADOR_ROCA_MICROPOZOS') NOT NULL,
-  `peso_anclaje_toneladas` DECIMAL(6, 2) NOT NULL,
-  `diametro_cabo_principal_mm` DECIMAL(6, 2) NOT NULL,
-  `material_cabo` VARCHAR(100) NOT NULL DEFAULT 'Polipropileno Virgen 8 Cordones Multifilamento',
-  `tramo_cadena_grado_mm` VARCHAR(100) NOT NULL DEFAULT 'Cadena Grado 2 D=32mm 15m fondo',
-  `carga_rotura_certificada_mbl_tn` DECIMAL(6, 2) NOT NULL,
-  `factor_seguridad_diseno` DECIMAL(4, 2) NOT NULL DEFAULT 2.50,
-  `tension_trabajo_estimada_ton` DECIMAL(6, 2) NOT NULL,
-  `ultima_inspeccion_acustica_fecha` DATE NULL,
-  `estado_estructural` ENUM('APTO_OPERACION', 'TENSION_ANORMAL', 'CORROSION_CADENA_AVANZADA', 'DESPLAZAMIENTO_MUERTO', 'REEMPLAZO_INMEDIATO') NOT NULL DEFAULT 'APTO_OPERACION',
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `redis_key` VARCHAR(255) NOT NULL,
+  `tipo_cache` ENUM(
+    'SESSION_AGENT',
+    'LOCK_DISTRIBUIDO',
+    'QUEUE_SNAPSHOT',
+    'FAST_METRICS',
+    'AGENT_MEMORY_HOT'
+  ) NOT NULL,
+  `valor_json` JSON NOT NULL,
+  `ttl_segundos` INT NOT NULL DEFAULT 3600,
+  `expires_at` DATETIME(3) NULL,
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_linea_codigo` (`centro_id`, `codigo_linea`),
-  KEY `idx_linea_centro` (`centro_id`),
-  CONSTRAINT `fk_mooring_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 45.7 TABLA: aquaculture_inspections (Inspecciones Submarinas ROV y Taller de Redes)
-CREATE TABLE `aquaculture_inspections` (
-  `id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `fecha_inspeccion` DATE NOT NULL,
-  `tipo_inspeccion` ENUM(
-    'ROV_SUBMARINA_ROBOTICA',
-    'TALLER_REDES_RECEPCION',
-    'TALLER_REDES_POST_LAVADO',
-    'FONDEO_BATIMETRIA_ACUSTICA',
-    'AUDITORIA_PERICIAL_SERNAPESCA'
-  ) NOT NULL,
-  `inspector_naval_nombre` VARCHAR(150) NOT NULL,
-  `matricula_armada_o_identificacion` VARCHAR(50) NOT NULL,
-  `empresa_certificadora` VARCHAR(150) NOT NULL,
-  `robot_rov_modelo` VARCHAR(100) NULL,
-  `profundidad_maxima_alcanzada_m` DECIMAL(6, 2) NOT NULL,
-  `total_horas_grabacion` DECIMAL(5, 2) NOT NULL DEFAULT 1.00,
-  `total_fotografias_analizadas` INT NOT NULL DEFAULT 0,
-  `total_anomalias_detectadas` INT NOT NULL DEFAULT 0,
-  `anomalias_criticas_rg1821` INT NOT NULL DEFAULT 0,
-  `dictamen_conformidad` ENUM(
-    'CONFORME_100_NORMATIVO',
-    'CONFORME_CON_OBSERVACIONES_MENORES',
-    'NO_CONFORME_CRITICO_REQUIERE_ACCION_INMEDIATA',
-    'CLAUSURA_PREVENTIVA_JAULA'
-  ) NOT NULL,
-  `video_evidencia_url` VARCHAR(500) NULL,
-  `informe_tecnico_pdf_url` VARCHAR(500) NULL,
-  `observaciones_tecnicas` TEXT NULL,
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  KEY `idx_inspeccion_centro_fecha` (`centro_id`, `fecha_inspeccion`),
-  KEY `idx_inspeccion_dictamen` (`dictamen_conformidad`),
-  CONSTRAINT `fk_insp_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 45.8 TABLA: aquaculture_anomalies (Mapeo de Anomalías y Roturas sobre Modelo 3D)
-CREATE TABLE `aquaculture_anomalies` (
-  `id` VARCHAR(36) NOT NULL,
-  `inspeccion_id` VARCHAR(36) NOT NULL,
-  `centro_id` VARCHAR(36) NOT NULL,
-  `modulo_id` VARCHAR(36) NULL,
-  `net_id` VARCHAR(36) NULL,
-  `tipo_anomalia` ENUM(
-    'ROTURA_MALLA_CORTE_FILAMENTO',
-    'DESGASTE_POR_ABRASION_ROCE',
-    'CORTE_CABO_RELINGA',
-    'PERDIDA_CROTAL_TRAZABILIDAD',
-    'FALLA_SEPARADOR_CONTACTO_REDES',
-    'DESPRENDIMIENTO_LASTRE_FONDO',
-    'FATIGA_FONDEO_GRILLADA',
-    'INCUMPLIMIENTO_NORMATIVO_RG1821',
-    'INCUMPLIMIENTO_NORMATIVO_RG941'
-  ) NOT NULL,
-  `nivel_criticidad` ENUM(
-    'LEVE_MONITOREO',
-    'MEDIA_PROGRAMAR_TALLER',
-    'CRITICA_ALTO_RIESGO_ESCAPE_SALMONES',
-    'EMERGENCIA_ACCION_SUBMARINA_INMEDIATA'
-  ) NOT NULL,
-  `tamano_abertura_cm` DECIMAL(6, 2) NULL DEFAULT 0.00,
-  `numero_mallas_cortadas` INT NULL DEFAULT 0,
-  -- Coordenadas Tridimensionales Espaciales relativas a la Jaula (en metros)
-  `coordenada_relativa_x` DECIMAL(6, 2) NOT NULL,
-  `coordenada_relativa_y` DECIMAL(6, 2) NOT NULL,
-  `profundidad_z_metros` DECIMAL(6, 2) NOT NULL,
-  `cara_jaula` ENUM('NORTE', 'SUR', 'ESTE', 'OESTE', 'FONDO_PLANCHA', 'RELINGA_SUPERIOR', 'CABO_FONDEO') NOT NULL,
-  `fotograma_evidencia_url` VARCHAR(500) NOT NULL,
-  `timestamp_video_segundo` INT NULL,
-  `orden_produccion_reparacion_id` VARCHAR(36) NULL,
-  `estado_reparacion` ENUM(
-    'DETECTADA_PENDIENTE',
-    'REPARADA_IN_SITU_BUZO',
-    'REPARADA_EN_TALLER_REDERIA',
-    'VALIDADA_POR_INSPECTOR_NAVAL',
-    'DESESTIMADA_FALSO_POSITIVO'
-  ) NOT NULL DEFAULT 'DETECTADA_PENDIENTE',
-  `fecha_reparacion` DATE NULL,
-  `observacion_naval` TEXT NOT NULL,
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  KEY `idx_anomalia_inspeccion` (`inspeccion_id`),
-  KEY `idx_anomalia_centro` (`centro_id`),
-  KEY `idx_anomalia_criticidad` (`nivel_criticidad`),
-  KEY `idx_anomalia_estado` (`estado_reparacion`),
-  CONSTRAINT `fk_anom_inspeccion` FOREIGN KEY (`inspeccion_id`) REFERENCES `aquaculture_inspections` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_anom_centro` FOREIGN KEY (`centro_id`) REFERENCES `aquaculture_centers` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_anom_modulo` FOREIGN KEY (`modulo_id`) REFERENCES `aquaculture_modules` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_anom_net` FOREIGN KEY (`net_id`) REFERENCES `aquaculture_nets` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_anom_op` FOREIGN KEY (`orden_produccion_reparacion_id`) REFERENCES `production_orders` (`id`) ON DELETE SET NULL
+  UNIQUE KEY `uq_transient_redis_key` (`empresa_id`, `redis_key`),
+  KEY `idx_transient_empresa` (`empresa_id`),
+  KEY `idx_transient_tipo` (`tipo_cache`),
+  KEY `idx_transient_expires` (`expires_at`),
+  CONSTRAINT `fk_transient_empresa` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -1909,6 +1893,36 @@ VALUES
 ('sub-09', 'client-retail-01', 'CASH_FLOW_PROJECTION', 'ESTUDIO', 'ACTIVO', NOW())
 ON DUPLICATE KEY UPDATE `estado` = VALUES(`estado`);
 
+-- Bóveda de Credenciales Cifradas AES-256-GCM (Certificados Digitales & Claves SII)
+INSERT INTO `company_credentials_vault` (
+  `id`, `empresa_id`, `certificado_digital_encrypted`, `clave_certificado_encrypted`,
+  `clave_sii_encrypted`, `api_bancos_encrypted`, `iv`, `tag_auth`, `updated_at`
+)
+VALUES
+(
+  'vault-seed-01',
+  'client-retail-01',
+  NULL,
+  '7608c29c4661', -- Clave '123456' cifrada con AES-256-GCM
+  'b14f89d3102a', -- Clave Tributaria SII cifrada
+  '{"banco": "BANCO_DE_CHILE", "cuenta": "102948", "tipo": "API_B2B"}',
+  '4b6013aa89753c461ed238166a8e01c4',
+  '2f18a79c2bc26a48edc2ca72e5ef1976',
+  NOW()
+),
+(
+  'vault-seed-02',
+  'client-agro-02',
+  NULL,
+  '7608c29c4661',
+  'e29d71c4908f',
+  '{"banco": "SANTANDER", "cuenta": "981240", "tipo": "API_HOST_TO_HOST"}',
+  '4b6013aa89753c461ed238166a8e01c4',
+  '2f18a79c2bc26a48edc2ca72e5ef1976',
+  NOW()
+)
+ON DUPLICATE KEY UPDATE `clave_certificado_encrypted` = VALUES(`clave_certificado_encrypted`), `updated_at` = NOW();
+
 -- Plan de Cuentas IFRS Estándar
 INSERT INTO `chart_of_accounts` (`id`, `empresa_id`, `codigo_cuenta`, `nombre_cuenta`, `clasificacion`, `acepta_auxiliar`, `created_at`)
 VALUES
@@ -1990,6 +2004,20 @@ VALUES
 ('line-init-06', 'entry-init-002', 3, '2.1.01.001', 'Proveedores Nacionales (Amazon Web Services Chile)', 0.00, 5712000.00, '76.999.888-2', NULL)
 ON DUPLICATE KEY UPDATE `debe` = VALUES(`debe`), `haber` = VALUES(`haber`);
 
+-- Centros de Costo Iniciales (Mini-Empresas)
+INSERT INTO `cost_centers` (
+  `id`, `empresa_id`, `codigo`, `nombre`, `categoria`, `responsable_nombre`, `responsable_email`,
+  `presupuesto_mensual_clp`, `activo`, `descripcion`, `ventas_acumuladas_mes`, `costos_directos_mes`,
+  `gastos_operacionales_mes`, `remuneraciones_mes`, `depreciacion_mes`, `created_at`
+)
+VALUES
+('cc-01', 'client-retail-01', 'CC-ADM-01', 'Administración y Finanzas Central', 'ADMINISTRACION', 'María Paz Donoso', 'mpaz@empresa.cl', 18500000.00, TRUE, 'Gerencia de finanzas, auditoría, contabilidad y RRHH corporativo', 0.00, 0.00, 4200000.00, 8500000.00, 350000.00, NOW()),
+('cc-02', 'client-retail-01', 'CC-VTA-STGO', 'Ventas & Sucursal Santiago (Mini-Empresa)', 'COMERCIAL_VENTAS', 'Carlos Valenzuela', 'carlos.v@empresa.cl', 28000000.00, TRUE, 'Unidad estratégica de ventas retail, corporativas y e-commerce RM', 85000000.00, 32000000.00, 6800000.00, 11200000.00, 580000.00, NOW()),
+('cc-03', 'client-retail-01', 'CC-PRD-01', 'Operaciones & Logística Centro', 'OPERACIONES_PRODUCCION', 'Marcelo Gallardo', 'marcelo.g@empresa.cl', 35000000.00, TRUE, 'Operaciones de almacenamiento, preparación de pedidos y packing San Bernardo', 0.00, 18500000.00, 3900000.00, 9400000.00, 932539.68, NOW()),
+('cc-04', 'client-retail-01', 'CC-LOG-VALPO', 'Distribución Valparaíso', 'LOGISTICA_DISTRIBUCION', 'Andrea Soto', 'asoto@empresa.cl', 12000000.00, TRUE, 'Distribución última milla y fletes V Región', 14200000.00, 5600000.00, 1950000.00, 4100000.00, 210000.00, NOW()),
+('cc-05', 'client-retail-01', 'CC-TI-01', 'Tecnología & Soporte TI', 'TI_SOPORTE', 'Felipe Morales', 'fmorales@empresa.cl', 8500000.00, TRUE, 'Infraestructura cloud, licencias ERP, soporte técnico y hardware', 0.00, 2400000.00, 1800000.00, 3900000.00, 150000.00, NOW())
+ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`);
+
 -- Activo Fijo Semilla
 INSERT INTO `fixed_assets` (
   `id`, `empresa_id`, `codigo_placa`, `nombre`, `categoria`, `fecha_adquisicion`,
@@ -1999,6 +2027,7 @@ INSERT INTO `fixed_assets` (
   `depreciacion_acumulada_financiera`, `valor_libro_financiero`, `cuota_depreciacion_mensual_financiera`,
   `factor_correccion_monetaria_acum`, `correccion_monetaria_acumulada`,
   `depreciacion_acumulada_tributaria`, `valor_tributario_neto`, `cuota_depreciacion_mensual_tributaria`,
+  `centro_costo_id`, `centro_costo_codigo`, `centro_costo_nombre`,
   `ubicacion_fisica`, `responsable_custodio`, `estado`, `numero_serie`, `marca_modelo`,
   `es_fabril_produccion`, `created_at`
 )
@@ -2007,11 +2036,13 @@ VALUES (
   'MAQUINARIA_INDUSTRIAL', '2026-01-15', '76.888.999-1', 'Yale Material Handling Chile SpA',
   8820, 24500000.00, 1000000.00, 84, 36, 8, 76, 'LINEAL_RECTA',
   2238095.24, 22261904.76, 279761.90, 0.006000, 133571.43,
-  5222222.22, 19277777.78, 652777.78, 'Bodega Central San Bernardo',
+  5222222.22, 19277777.78, 652777.78,
+  'cc-03', 'CC-PRD-01', 'Operaciones & Logística Centro',
+  'Bodega Central San Bernardo',
   'Marcelo Gallardo - Jefe Operaciones', 'ACTIVO_OPERATIVO', 'YALE-EL25-98302',
   'Yale ERP25VL 2026', FALSE, NOW()
 )
-ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`);
+ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`), `centro_costo_id` = VALUES(`centro_costo_id`);
 
 -- Colaboradores Iniciales
 INSERT INTO `employees` (
@@ -2153,214 +2184,188 @@ VALUES
 ON DUPLICATE KEY UPDATE `insumo_nombre` = VALUES(`insumo_nombre`);
 
 -- ============================================================================
--- 46.2 DATOS SEMILLA: INGENIERÍA NAVAL Y ACUICULTURA (RG 1821 / RG 941)
+-- 46.2 DATOS SEMILLA: ARQUITECTURA ERP AGÉNTICO Y GOBERNANZA MULTI-AGENTE
+-- Coordinador Principal, Sub-Agentes de Proceso, Tareas y Bus Inter-Agentes
 -- ============================================================================
 
--- Centros de Cultivo de Salmónidos con Código RNA Oficial
-INSERT INTO `aquaculture_centers` (
-  `id`, `empresa_id`, `codigo_rna`, `nombre_centro`, `titular_nombre`, `titular_rut`,
-  `region`, `comuna`, `agrupacion_concesiones_acs`, `coordenadas_utm_norte`, `coordenadas_utm_este`,
-  `latitud`, `longitud`, `profundidad_media_metros`, `profundidad_maxima_metros`,
-  `tipo_fondo_marino`, `corriente_maxima_nudos`, `altura_ola_significativa_hs`,
-  `memoria_calculo_fondeo_rg941_url`, `certificacion_naval_vigente`, `fecha_vencimiento_certificado`,
-  `estado_operativo`, `created_at`
+-- Padrón de Agentes Autónomos Asignados a la Empresa Piloto (client-retail-01)
+INSERT INTO `enterprise_agent_profiles` (
+  `id`, `empresa_id`, `agente_codigo`, `nombre_descriptivo`, `rol_proceso`,
+  `es_agente_principal`, `nivel_autonomia`, `estado_operativo`, `instrucciones_sistema`,
+  `capacidades_json`, `metricas_rendimiento`, `ultimo_latido`, `created_at`
 )
 VALUES
 (
-  'centro-rna-102450', 'client-retail-01', '102450', 'Centro Punta Pilluco', 'Salmones del Fiordo Reloncaví S.A.', '76.320.440-1',
-  'Región de Los Lagos', 'Hornopirén', 'ACS 17A', 5354200.00, 684300.00,
-  -41.9324000, -72.4821000, 48.50, 72.00,
-  'FANGO_BLANDO', 1.85, 2.10,
-  'https://storage.armada.cl/fondeos/102450_memoria_rg941.pdf', TRUE, '2027-06-30',
-  'EN_OPERACION', NOW()
+  'ag-prof-principal-01', 'client-retail-01', 'MASTER_ORCHESTRATOR', 'Agente Principal (COO / CFO Digital)',
+  'Orquestación General y Coordinación de Procesos de Toda la Empresa',
+  TRUE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Actúa como el Director General y Coordinador Supremo de la empresa. Supervisa y delega tareas a cada agente de proceso (Contable, Tributario, Tesorería, Inventario, Remuneraciones, Producción, Activos Fijos y Auditoría Forense). Garantiza que ninguna transacción descuadre los balances ni vulnere normativas IFRS o del SII.',
+  '["COORDINACION_PROCESOS", "SUPERVISION_CRIPTOGRAFICA_HMAC", "CONTROL_INTEGRIDAD_IFRS", "DESPACHO_COLAS_REDIS", "DELEGACION_SUBAGENTES", "AUDITORIA_FORENSE_CONTINUA"]',
+  '{"tareasCompletadas": 1284, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 145, "tasaAprobacionSupervisor": 0.998}',
+  NOW(), NOW()
 ),
 (
-  'centro-rna-103890', 'client-retail-01', '103890', 'Centro Canal Lemuy - Cheniao', 'Chiloé Pesquera & Salmon SpA', '76.452.190-8',
-  'Región de Los Lagos', 'Puqueldón / Quellón', 'ACS 18B', 5289100.00, 621450.00,
-  -42.5412000, -73.6120000, 36.00, 55.00,
-  'ARENA_COMPACTA', 2.40, 2.80,
-  'https://storage.armada.cl/fondeos/103890_memoria_rg941.pdf', TRUE, '2027-11-15',
-  'EN_OPERACION', NOW()
+  'ag-prof-contable-02', 'client-retail-01', 'ACCOUNTING_LEDGER', 'Agente Contable IFRS',
+  'Contabilización Automática de Comprobantes, Libros Diario/Mayor y Balances',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Especialista en partida doble inmutable, devengos, asientos de regularización y balance tributario de 8 columnas según normas IFRS y Código Tributario chileno.',
+  '["PARTIDA_DOBLE", "BALANCES_IFRS", "CIERRES_EJERCICIO", "VALIDACION_CUADRATURA", "ASIENTOS_COMPENSACION"]',
+  '{"tareasCompletadas": 8420, "tareasFallidas": 2, "tiempoPromedioEjecucionMs": 85, "tasaAprobacionSupervisor": 0.999}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-tributario-03', 'client-retail-01', 'SII_RCV', 'Agente Tributario & RCV SII',
+  'Sincronización RCV, Determinación Débito/Crédito y Cumplimiento Tributario',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Monitorea el Registro de Compras y Ventas del SII, valida acuses de recibo DTE (Ley 19.983), calcula retenciones de honorarios BHE y pre-liquida el F29 mensual.',
+  '["SINCRONIZACION_RCV", "LIQUIDACION_F29", "CALCULO_PPM", "VALIDACION_DTE", "ACUSES_RECIBO_8DIAS"]',
+  '{"tareasCompletadas": 5120, "tareasFallidas": 1, "tiempoPromedioEjecucionMs": 110, "tasaAprobacionSupervisor": 0.995}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-tesoreria-04', 'client-retail-01', 'BANK_RECON', 'Agente de Tesorería & Bancos',
+  'Conciliación Bancaria Automática Cartola vs Libro Banco y Gestión de Flujo',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Concilia movimientos de cuentas corrientes bancarias chilenas (Banco de Chile, Santander, Bci), gestiona nóminas de transferencias TEF y proyecta el flujo de caja.',
+  '["CONCILIACION_CARTOLA", "CASHFLOW_PROYECTADO", "GESTION_COBRANZA", "PAGO_PROVEEDORES_TEF"]',
+  '{"tareasCompletadas": 3940, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 95, "tasaAprobacionSupervisor": 1.000}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-inventario-05', 'client-retail-01', 'INVENTORY_WMS', 'Agente Inventario & Bodegas WMS',
+  'Control de Existencias Multibodega, Valuación PMP/FIFO y Despachos',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Administra stocks en bodegas físicas, calcula costo medio ponderado PMP según NIC 2, supervisa niveles críticos y genera guías de despacho electrónicas DTE 52.',
+  '["VALUACION_PMP", "STOCK_CRITICO", "EMISION_GUIA_DESPACHO_52", "ROTACION_INVENTARIO", "RECEPCION_INSUMOS"]',
+  '{"tareasCompletadas": 6210, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 75, "tasaAprobacionSupervisor": 0.997}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-remun-06', 'client-retail-01', 'RRHH', 'Agente de Remuneraciones & RRHH',
+  'Cálculo de Sueldos, Cotizaciones Previred, Libro LRE y Contratos DT',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Aplica topes imponibles de AFP, Fonasa/Isapre, Seguro de Cesantía, genera archivos de Previred, Libro de Remuneraciones Electrónico LRE y fiscaliza cláusulas DT.',
+  '["CALCULO_LIQUIDACIONES", "INTEGRACION_PREVIRED", "LIBRO_REMUNERACIONES_LRE", "MONITOREO_CLAUSULAS_DT", "FINIQUITOS"]',
+  '{"tareasCompletadas": 2400, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 130, "tasaAprobacionSupervisor": 1.000}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-costos-07', 'client-retail-01', 'PRODUCTION_COSTS', 'Agente Costos Industriales NIC 2',
+  'Presupuestos Fabriles, Órdenes de Producción y Vales de Consumo',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Supervisa órdenes de producción, vales de retiro de bodega, detecta sobreconsumos de insumos en tiempo real y calcula márgenes de contribución fabril.',
+  '["COSTEO_NIC2", "PRESUPUESTOS_PRODUCCION", "CONTROL_SOBRECONSUMO", "ANALISIS_MARGEN", "LIQUIDACION_ORDEN"]',
+  '{"tareasCompletadas": 1150, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 105, "tasaAprobacionSupervisor": 0.996}',
+  NOW(), NOW()
+),
+(
+  'ag-prof-auditor-08', 'client-retail-01', 'FORENSIC_AUDITOR', 'Agente Auditor Forense',
+  'Supervisión Continua de Control Interno, Verificación HMAC y Prevención de Fraude',
+  FALSE, 'AUTONOMO_CON_SUPERVISION', 'ACTIVO',
+  'Verifica la integridad de cada comprobante contable, firma criptográfica HMAC-SHA256, cuadratura de balance y alertas preventivas para gerencia.',
+  '["AUDITORIA_INMUTABLE_HMAC", "ALERTAS_DESCUADRE", "PREVENCION_FRAUDE", "INSPECCION_FISCAL_SII"]',
+  '{"tareasCompletadas": 9800, "tareasFallidas": 0, "tiempoPromedioEjecucionMs": 40, "tasaAprobacionSupervisor": 1.000}',
+  NOW(), NOW()
 )
-ON DUPLICATE KEY UPDATE `nombre_centro` = VALUES(`nombre_centro`);
+ON DUPLICATE KEY UPDATE `nombre_descriptivo` = VALUES(`nombre_descriptivo`), `updated_at` = NOW();
 
--- Módulos y Trenes de Jaulas
-INSERT INTO `aquaculture_modules` (
-  `id`, `centro_id`, `codigo_tren`, `numero_jaulas`, `tipo_geometria`,
-  `dimension_largo_m`, `dimension_ancho_m`, `material_pasillos`,
-  `azimut_orientacion_grados`, `posicion_relativa_x`, `posicion_relativa_y`, `created_at`
+-- Tareas de Coordinación Delegadas por el Agente Principal
+INSERT INTO `agent_coordination_tasks` (
+  `id`, `empresa_id`, `agente_principal_id`, `agente_asignado_codigo`, `flujo_proceso`,
+  `titulo_tarea`, `descripcion`, `payload_entrada`, `prioridad`, `estado`,
+  `progreso_pct`, `resultado_salida`, `requiere_aprobacion_humana`, `aprobado_por_usuario`,
+  `trace_id`, `created_at`, `started_at`, `completed_at`
 )
 VALUES
 (
-  'mod-pilluco-tren-norte', 'centro-rna-102450', 'TREN-NORTE-01', 8, 'CUADRADA_30X30',
-  120.00, 60.00, 'HDPE Termofusionado PE100 con Pasillos Antideslizantes',
-  315.0, 0.00, 0.00, NOW()
+  'task-coord-2026-001', 'client-retail-01', 'ag-prof-principal-01', 'SII_RCV', 'SINCRONIZACION_RCV_MENSUAL',
+  'Sincronización RCV Septiembre 2026 y Verificación de Acuses de Recibo',
+  'Descarga automática de facturas de compras y ventas desde el SII, cálculo preliminar de crédito fiscal recuperable y verificación de plazos de 8 días para acuse comercial.',
+  '{"periodo": "2026-09", "tipoDocumentos": ["33", "34", "61", "56"], "verificarAcuseLey19983": true}',
+  'ALTA', 'COMPLETADA', 100,
+  '{"totalDocumentosIngeridos": 48, "creditoFiscalCLP": 14280500, "debitoFiscalCLP": 28940200, "ivaNetoPagarCLP": 14659700}',
+  FALSE, NULL, 'trace-sii-sync-202609-8819',
+  NOW() - INTERVAL 2 HOUR, NOW() - INTERVAL 2 HOUR, NOW() - INTERVAL 1 HOUR
 ),
 (
-  'mod-pilluco-tren-sur', 'centro-rna-102450', 'TREN-SUR-02', 8, 'CUADRADA_30X30',
-  120.00, 60.00, 'HDPE Termofusionado PE100 con Pasillos Antideslizantes',
-  315.0, 0.00, 90.00, NOW()
+  'task-coord-2026-002', 'client-retail-01', 'ag-prof-principal-01', 'BANK_RECON', 'CONCILIACION_BANCARIA_DIARIA',
+  'Conciliación Cartola Banco de Chile Cta Cte 198-24890-01',
+  'Cruce automatizado de abonos TEF de clientes y cargos por pago a proveedores contra comprobantes contables registrados en el Libro Banco.',
+  '{"bancoId": "BANCO_CHILE", "cuenta": "198-24890-01", "fechaCorte": "2026-09-20"}',
+  'MEDIA', 'COMPLETADA', 100,
+  '{"partidasConciliadas": 34, "montoConciliadoCLP": 65400000, "partidasPendientes": 0, "diferenciaCLP": 0}',
+  FALSE, NULL, 'trace-recon-bch-202609-3312',
+  NOW() - INTERVAL 1 HOUR, NOW() - INTERVAL 1 HOUR, NOW() - INTERVAL 30 MINUTE
+),
+(
+  'task-coord-2026-003', 'client-retail-01', 'ag-prof-principal-01', 'PRODUCTION_COSTS', 'SUPERVISION_CONSUMO_FABRIL',
+  'Inspección de Desvíos de Consumo en Orden de Fabricación OP-2026-101',
+  'Comparación de insumos presupuestados vs vales de retiro reales emitidos por bodega. Alerta de sobreconsumo de material.',
+  '{"ordenId": "op-2026-101", "umbralAlertaMargenPct": 5.0}',
+  'CRITICA', 'ESPERANDO_SUPERVISION', 85,
+  '{"desvioDetectado": true, "insumo": "Paño Malla HDPE Virgen 1.5 pulgadas", "sobreconsumoKg": 50, "impactoFinancieroCLP": -260000, "requiereAprobacion": true}',
+  TRUE, NULL, 'trace-prod-cost-202609-5501',
+  NOW() - INTERVAL 20 MINUTE, NOW() - INTERVAL 15 MINUTE, NULL
+),
+(
+  'task-coord-2026-004', 'client-retail-01', 'ag-prof-principal-01', 'ACCOUNTING_LEDGER', 'PREPARACION_PRE_CIERRE_F29',
+  'Generación de Asiento Devengo IVA y PPM Provisorio Septiembre 2026',
+  'El Agente Principal instruye al Agente Contable la preparación del asiento de centralización con firma de auditoría pericial inmutable.',
+  '{"periodo": "2026-09", "ppmTasa": 0.015, "baseImponibleCLP": 152316842}',
+  'ALTA', 'EN_PROCESO', 60,
+  NULL,
+  FALSE, NULL, 'trace-acct-f29-202609-9941',
+  NOW() - INTERVAL 10 MINUTE, NOW() - INTERVAL 5 MINUTE, NULL
 )
-ON DUPLICATE KEY UPDATE `codigo_tren` = VALUES(`codigo_tren`);
+ON DUPLICATE KEY UPDATE `titulo_tarea` = VALUES(`titulo_tarea`), `progreso_pct` = VALUES(`progreso_pct`);
 
--- Planos de Ingeniería Naval Ingeridos
-INSERT INTO `aquaculture_drawings` (
-  `id`, `centro_id`, `tipo_plano`, `titulo_plano`, `codigo_plano`, `revision`,
-  `ingeniero_naval_firma`, `registro_colegio_naval`, `archivo_pdf_url`,
-  `datos_ingeridos_json`, `modelo_3d_vertices_json`, `es_plano_oficial_vigente`, `created_at`
+-- Mensajes en el Bus de Comunicación Inter-Agentes (A2A)
+INSERT INTO `agent_inter_communications` (
+  `id`, `empresa_id`, `task_id`, `agente_emisor`, `agente_receptor`, `tipo_mensaje`,
+  `asunto`, `contenido_json`, `leido`, `fecha_emision`
 )
 VALUES
 (
-  'plano-pilluco-gen-01', 'centro-rna-102450', 'PLANO_GENERAL_CENTRO',
-  'Plano General Disposición de Módulos y Trenes de Cultivo RNA 102450', 'PLN-NAV-102450-G01', 'Rev.3',
-  'Ing. Naval Christian E. Heins (UACH Valdivia)', 'CIN-CHILE-3942',
-  'https://archivos-acuicultura.cl/planos/PLN-NAV-102450-G01-Rev3.pdf',
-  '{"trenes": 2, "jaulas_totales": 16, "dimension_jaula": "30x30m", "espacio_entre_trenes_m": 90, "azimut": 315}',
-  '{"vertices": [{"x":0,"y":0,"z":0},{"x":30,"y":0,"z":0},{"x":30,"y":30,"z":0},{"x":0,"y":30,"z":0},{"x":0,"y":0,"z":-15},{"x":30,"y":0,"z":-15},{"x":30,"y":30,"z":-15},{"x":0,"y":30,"z":-15}]}',
-  TRUE, NOW()
+  'msg-a2a-001', 'client-retail-01', 'task-coord-2026-001', 'SII_RCV', 'MASTER_ORCHESTRATOR', 'REPORTE_RESULTADO',
+  'Sincronización RCV Finalizada Exitosamente',
+  '{"status": "OK", "documentosNuevos": 48, "totalDebitoCLP": 28940200, "totalCreditoCLP": 14280500, "mensaje": "Listos para centralización contable y determinación F29"}',
+  TRUE, NOW() - INTERVAL 1 HOUR
 ),
 (
-  'plano-pilluco-red-02', 'centro-rna-102450', 'PLANO_RED_PECERA',
-  'Memoria y Plano Estructural Red Pecera HDPE 30x30x15m Reforzada', 'PLN-RED-303015-PE', 'Rev.2',
-  'Ing. Naval Christian E. Heins (UACH Valdivia)', 'CIN-CHILE-3942',
-  'https://archivos-acuicultura.cl/planos/PLN-RED-303015-PE-Rev2.pdf',
-  '{"malla": "1.5 pulgadas", "material": "HDPE Virgen", "relinga_superior": "24mm", "lastre_fondo_kg": 1200, "carga_rotura_kg": 185}',
-  '{"malla_3d": {"caras": ["Norte", "Sur", "Este", "Oeste", "Fondo"], "profundidad_m": 15.0}}',
-  TRUE, NOW()
+  'msg-a2a-002', 'client-retail-01', 'task-coord-2026-004', 'MASTER_ORCHESTRATOR', 'ACCOUNTING_LEDGER', 'DELEGACION_TAREA',
+  'Instrucción de Centralización de Compras y Ventas RCV en Libro Diario',
+  '{"instruccion": "Generar asientos de débito y crédito fiscal con imputación a cuentas 2.1.03.01 y 1.1.06.01. Validar partida doble estricta.", "traceId": "trace-acct-f29-202609-9941"}',
+  TRUE, NOW() - INTERVAL 10 MINUTE
+),
+(
+  'msg-a2a-003', 'client-retail-01', 'task-coord-2026-003', 'PRODUCTION_COSTS', 'MASTER_ORCHESTRATOR', 'ALERTA_DISCREPANCIA',
+  'Alerta de Sobreconsumo de Insumos en OP-2026-101',
+  '{"alerta": "SOBRECONSUMO_MATERIAL", "insumoCodigo": "PAÑO-HDPE-1.5", "cantidadExtra": 50, "costoCLP": 260000, "solicitud": "Requiere ratificación de Jefe de Planta o Consultor Senior"}',
+  FALSE, NOW() - INTERVAL 5 MINUTE
 )
-ON DUPLICATE KEY UPDATE `titulo_plano` = VALUES(`titulo_plano`);
+ON DUPLICATE KEY UPDATE `asunto` = VALUES(`asunto`), `leido` = VALUES(`leido`);
 
--- Redes Peceras y Loberas con Crotales Oficiales RG 1821
-INSERT INTO `aquaculture_nets` (
-  `id`, `empresa_id`, `centro_id`, `modulo_id`, `codigo_red`, `tipo_red`,
-  `crotal_oficial_sernapesca`, `dimension_boca_m`, `dimension_profundidad_m`,
-  `material_filamento`, `tipo_tejido`, `tamano_malla_pulgadas`, `denier_filamento`,
-  `carga_rotura_malla_kg`, `relinga_superior_cabo_mm`, `relinga_inferior_plomada_kg`,
-  `horas_inmersion_acumuladas`, `fecha_ultimo_bano_antifouling`, `taller_mantencion_ultimo`,
-  `orden_produccion_origen_id`, `estado_conservacion`, `created_at`
+-- Respaldo Persistente de la Memoria Rápida / Capa Transitoria Redis
+INSERT INTO `agent_transient_states` (
+  `id`, `empresa_id`, `redis_key`, `tipo_cache`, `valor_json`, `ttl_segundos`, `expires_at`, `updated_at`
 )
 VALUES
 (
-  'net-pecera-j01', 'client-retail-01', 'centro-rna-102450', 'mod-pilluco-tren-norte',
-  'RED-PEC-TN-J01', 'PECERA', 'CRT-SERNA-2026-08819', 30.00, 15.00,
-  'HDPE_ALTA_DENSIDAD', 'RASCHEL_SIN_NUDO', 1.50, 21048, 185.00, 24.00, 1200.00,
-  2480, '2026-05-10', 'Taller Redería Austral Puerto Montt', 'op-2026-101',
-  'OPERATIVO_CONFORME', NOW()
+  'state-red-01', 'client-retail-01', 'agent:master:session:client-retail-01', 'SESSION_AGENT',
+  '{"empresaRut": "76.452.190-8", "estadoGlobal": "OPERATIVO_OPTIMO", "balanceCuadrado": true, "tareasActivas": 2, "alertasPendientes": 1}',
+  86400, NOW() + INTERVAL 24 HOUR, NOW()
 ),
 (
-  'net-lobera-j01', 'client-retail-01', 'centro-rna-102450', 'mod-pilluco-tren-norte',
-  'RED-LOB-TN-J01', 'LOBERA_PERIMETRAL', 'CRT-SERNA-2026-09402', 34.00, 18.00,
-  'UHMWPE_ULTRA_RESISTENTE', 'TRENZADO_KNOTLESS', 8.00, 42080, 850.00, 32.00, 2500.00,
-  4200, '2026-01-15', 'Taller Redería Austral Puerto Montt', NULL,
-  'OPERATIVO_CONFORME', NOW()
+  'state-red-02', 'client-retail-01', 'lock:empresa:client-retail-01:f29-calculation', 'LOCK_DISTRIBUIDO',
+  '{"lockedBy": "ag-prof-tributario-03", "acquiredAt": "2026-09-21T11:00:00Z", "fencingToken": 4209}',
+  300, NOW() + INTERVAL 5 MINUTE, NOW()
+),
+(
+  'state-red-03', 'client-retail-01', 'bullmq:queue:agent-rcv-sync:snapshot', 'QUEUE_SNAPSHOT',
+  '{"waiting": 0, "active": 0, "completed": 512, "failed": 0, "redisEngine": "BullMQ-Redis-Cluster"}',
+  3600, NOW() + INTERVAL 1 HOUR, NOW()
 )
-ON DUPLICATE KEY UPDATE `codigo_red` = VALUES(`codigo_red`);
+ON DUPLICATE KEY UPDATE `valor_json` = VALUES(`valor_json`), `updated_at` = NOW();
 
--- Separadores Pecera-Lobera y Componentes RG 1821
-INSERT INTO `aquaculture_components` (
-  `id`, `centro_id`, `modulo_id`, `tipo_componente`, `codigo_identificador`,
-  `separacion_real_metros`, `separacion_normativa_minima_m`, `material`,
-  `peso_kg`, `posicion_jaula_cara`, `estado_normativo`, `created_at`
-)
-VALUES
-(
-  'comp-sep-01', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'SEPARADOR_PECERA_LOBERA', 'SEP-TN-J01-OESTE',
-  1.85, 1.50, 'Tubería HDPE D=110mm Rígida con Grilletes Inox 316', 42.00, 'OESTE', 'CONFORME_RG1821', NOW()
-),
-(
-  'comp-sep-02', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'SEPARADOR_PECERA_LOBERA', 'SEP-TN-J01-NORTE',
-  1.10, 1.50, 'Tubería HDPE D=110mm Rígida con Grilletes Inox 316', 42.00, 'NORTE', 'EN_RIESGO_CONTACTO', NOW()
-),
-(
-  'comp-lastre-01', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'PESO_LASTRE_FONDO', 'LST-TN-J01-ESQ-SO',
-  NULL, 1.50, 'Bloque de Plomo Forrado en Goma de Alta Resistencia', 350.00, 'ESQUINA_SO', 'CONFORME_RG1821', NOW()
-)
-ON DUPLICATE KEY UPDATE `codigo_identificador` = VALUES(`codigo_identificador`);
-
--- Líneas de Fondeo RG 941
-INSERT INTO `aquaculture_mooring_lines` (
-  `id`, `centro_id`, `codigo_linea`, `cuadrante_geografico`, `longitud_total_metros`,
-  `tipo_anclaje`, `peso_anclaje_toneladas`, `diametro_cabo_principal_mm`,
-  `material_cabo`, `tramo_cadena_grado_mm`, `carga_rotura_certificada_mbl_tn`,
-  `factor_seguridad_diseno`, `tension_trabajo_estimada_ton`,
-  `ultima_inspeccion_acustica_fecha`, `estado_estructural`, `created_at`
-)
-VALUES
-(
-  'moor-nw-01', 'centro-rna-102450', 'FONDEO-NW-01', 'NOROESTE', 240.00,
-  'BLOQUE_HORMIGON_MUERTO', 15.00, 64.00,
-  'Polipropileno Virgen 8 Cordones Multifilamento', 'Cadena Grado 2 D=38mm tramo 20m fondo', 85.00,
-  2.85, 22.40, '2026-07-20', 'APTO_OPERACION', NOW()
-),
-(
-  'moor-se-02', 'centro-rna-102450', 'FONDEO-SE-02', 'SURESTE', 220.00,
-  'ANCLA_STEVPRIS', 5.00, 64.00,
-  'Polipropileno Virgen 8 Cordones Multifilamento', 'Cadena Grado 3 D=32mm tramo 25m fondo', 92.00,
-  3.10, 19.80, '2026-07-20', 'APTO_OPERACION', NOW()
-)
-ON DUPLICATE KEY UPDATE `codigo_linea` = VALUES(`codigo_linea`);
-
--- Inspección Submarina ROV y Taller
-INSERT INTO `aquaculture_inspections` (
-  `id`, `centro_id`, `fecha_inspeccion`, `tipo_inspeccion`,
-  `inspector_naval_nombre`, `matricula_armada_o_identificacion`, `empresa_certificadora`,
-  `robot_rov_modelo`, `profundidad_maxima_alcanzada_m`, `total_horas_grabacion`,
-  `total_fotografias_analizadas`, `total_anomalias_detectadas`, `anomalias_criticas_rg1821`,
-  `dictamen_conformidad`, `video_evidencia_url`, `informe_tecnico_pdf_url`,
-  `observaciones_tecnicas`, `created_at`
-)
-VALUES
-(
-  'insp-rov-2026-0912', 'centro-rna-102450', '2026-09-12', 'ROV_SUBMARINA_ROBOTICA',
-  'Sebastián Bahamonde Cárdenas (Piloto ROV)', 'MAT-ARMADA-7419-PMO', 'Austral Robotic Subsea Surveys SpA',
-  'BlueROV2 Heavy HD 4K Sonar Micron', 18.50, 3.50,
-  142, 3, 1,
-  'NO_CONFORME_CRITICO_REQUIERE_ACCION_INMEDIATA',
-  'https://storage.inspecciones.cl/videos/ROV-102450-20260912-4K.mp4',
-  'https://storage.inspecciones.cl/informes/INF-TEC-ROV-102450-0912.pdf',
-  'Inspección pericial en Jaula 01 Tren Norte detecta rotura de malla por desgarro en paño lateral cara Oeste a -8.5 metros de profundidad. Separador norte presenta inclinación con distancia a lobera reducida a 1.10m (incumple mínimo 1.50m RG 1821).',
-  NOW()
-)
-ON DUPLICATE KEY UPDATE `inspector_naval_nombre` = VALUES(`inspector_naval_nombre`);
-
--- Mapeo 3D de Anomalías y Roturas Detectadas
-INSERT INTO `aquaculture_anomalies` (
-  `id`, `inspeccion_id`, `centro_id`, `modulo_id`, `net_id`,
-  `tipo_anomalia`, `nivel_criticidad`, `tamano_abertura_cm`, `numero_mallas_cortadas`,
-  `coordenada_relativa_x`, `coordenada_relativa_y`, `profundidad_z_metros`,
-  `cara_jaula`, `fotograma_evidencia_url`, `timestamp_video_segundo`,
-  `orden_produccion_reparacion_id`, `estado_reparacion`, `fecha_reparacion`,
-  `observacion_naval`, `created_at`
-)
-VALUES
-(
-  'anom-rotura-01', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
-  'ROTURA_MALLA_CORTE_FILAMENTO', 'CRITICA_ALTO_RIESGO_ESCAPE_SALMONES', 24.50, 6,
-  15.20, 0.00, -8.50,
-  'OESTE', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-ROTURA-8M5-OESTE.jpg', 1845,
-  'op-2026-101', 'DETECTADA_PENDIENTE', NULL,
-  'Corte limpio de 6 mallas consecutivas con apertura elástica de 24.5 cm en paño HDPE lateral a 8.5 metros de profundidad. Alerta inmediata Sernapesca según protocolo RG 1821 para evitar escape de peces.',
-  NOW()
-),
-(
-  'anom-separador-02', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
-  'FALLA_SEPARADOR_CONTACTO_REDES', 'MEDIA_PROGRAMAR_TALLER', 0.00, 0,
-  15.00, 30.00, -6.00,
-  'NORTE', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-SEP-NORTE.jpg', 2420,
-  NULL, 'DETECTADA_PENDIENTE', NULL,
-  'Separador HDPE con deformación angular por tensión de corrientes submarinas. Separación efectiva medida con sónar láser es 1.10 metros, inferior a los 1.50 metros mínimos obligatorios estipulados en la RG 1821.',
-  NOW()
-),
-(
-  'anom-relinga-03', 'insp-rov-2026-0912', 'centro-rna-102450', 'mod-pilluco-tren-norte', 'net-pecera-j01',
-  'DESGASTE_POR_ABRASION_ROCE', 'LEVE_MONITOREO', 0.00, 0,
-  2.40, 0.00, -1.20,
-  'RELINGA_SUPERIOR', 'https://storage.inspecciones.cl/evidencias/ANOM-102450-ROCE-PASILLO.jpg', 615,
-  NULL, 'DETECTADA_PENDIENTE', NULL,
-  'Abrasión superficial en protección de cabo de relinga superior por roce contra estructura flotante de pasillo HDPE en esquina Noroeste. Sin compromiso de carga de rotura.',
-  NOW()
-)
-ON DUPLICATE KEY UPDATE `observacion_naval` = VALUES(`observacion_naval`);
-
--- Fin del script actualizado de inicialización MySQL
+-- Fin del script actualizado de inicialización MySQL para ERP Agéntico Multi-Proceso
 

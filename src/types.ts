@@ -134,6 +134,43 @@ export interface ClientCompany extends CompanyProfile {
   contabilidadConfig?: ClientAccountingConfig;
   comercialConfig?: ClientCommercialConfig;
   ubicacionConfig?: ClientLocationInfo;
+  // Bóveda criptográfica DTE (Certificados y CAFs por cliente)
+  bovedaDteConfig?: {
+    modoFirma: 'CERTIFICADO_PROPIO' | 'MANDATO_ESTUDIO';
+    certificadoNombre?: string;
+    mandatarioRut?: string;
+    mandatarioNombre?: string;
+    cafsDisponibles?: number[];
+  };
+}
+
+export interface TenantCafItem {
+  tipoDte: number;
+  nombreTipo: string;
+  exists: boolean;
+  filePath?: string;
+  rangoDesde?: number;
+  rangoHasta?: number;
+  fechaAutorizacion?: string;
+  foliosDisponibles?: number;
+  folioActualSugerido?: number;
+}
+
+export interface TaxCryptographicVaultStatus {
+  rut: string;
+  cleanRut: string;
+  razonSocial?: string;
+  modoFirma: 'CERTIFICADO_PROPIO' | 'MANDATO_ESTUDIO' | 'DEMO_SIMULADO';
+  hasOwnCert: boolean;
+  certNombre?: string;
+  certPath?: string;
+  certVencimiento?: string;
+  hasPassword?: boolean;
+  passwordStorageType?: 'VAULT_DATABASE_AES256' | 'SECURE_FILE_VAULT' | 'ENV_FALLBACK' | 'NOT_SET';
+  passwordMasked?: string;
+  mandatarioRut?: string;
+  mandatarioNombre?: string;
+  cafs: TenantCafItem[];
 }
 
 export type BankName = 
@@ -187,7 +224,7 @@ export interface BankAccountConfig {
   bancoCodigo: BankName;
   tipoCuenta: BankAccountType;
   numeroCuenta: string;
-  moneda: 'CLP' | 'USD';
+  moneda: 'CLP' | 'USD' | 'EUR';
   saldoEnLinea: number;
   estadoConexion: BankConnectionStatus;
   tipoConexion: 'OPEN_BANKING_API' | 'EMPRESAS_CONNECT' | 'SCRAPING_ROBOT' | 'IMPORTACION_CARTOLA';
@@ -196,6 +233,7 @@ export interface BankAccountConfig {
   rutApoderado?: string;
   ultimaSincronizacion?: string;
   esPrincipal: boolean;
+  cuentaContableIfrs?: string;
 }
 
 export type BankMovementStatus = 'CONCILIADO' | 'PENDIENTE' | 'NOVEDAD';
@@ -222,6 +260,9 @@ export interface BankStatementMovement {
   saldo: number; // Saldo posterior en cuenta
   montoNeto: number; // Positivo si abono, negativo si cargo
   estado: BankMovementStatus;
+  moneda?: 'CLP' | 'USD' | 'EUR';
+  tipoCambio?: number; // TCO del día oficial Banco Central
+  montoCLPEquivalente?: number; // Monto convertido a CLP según TCO
   
   // Datos de conciliación
   movimientoIdConciliado?: string; // ID de CashFlowMovement o AccountingEntry
@@ -276,6 +317,29 @@ export interface DteSplitItem {
   montoNeto: number;
   montoExento?: number;
   porcentaje?: number;
+  // Relación con Centro de Costos
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
+}
+
+export interface DteItemDetail {
+  id: string;
+  codigo?: string;
+  nombre: string;
+  descripcion?: string;
+  cantidad: number;
+  unidadMedida?: string;
+  precioUnitario: number;
+  descuentoPct?: number;
+  esExento?: boolean;
+  montoTotal: number;
+  // Relación con Centro de Costos
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
+  cuentaCodigo?: string;
+  cuentaNombre?: string;
 }
 
 export interface SupplierAccountRule {
@@ -339,6 +403,12 @@ export interface DteDocument {
   cuentaContableDebe?: string;
   cuentaContableHaber?: string;
   glosa: string;
+  // Centro de Costo a nivel documento
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
+  // Items de la factura electrónica (vinculados a Centro de Costo)
+  items?: DteItemDetail[];
   // Campos del motor de imputación y centralización
   partidasDesglosadas?: DteSplitItem[];
   imputacionEstado?: 'PENDIENTE' | 'IMPUTADO' | 'CENTRALIZADO';
@@ -348,6 +418,12 @@ export interface DteDocument {
   reglaSugeridaOrigen?: 'HISTORIAL_PROVEEDOR' | 'INTELIGENCIA_ARTIFICIAL' | 'MANUAL';
   cuentaCodigoAsignada?: string;
   cuentaNombreAsignada?: string;
+  // HTTP-DTE / LibreDTE & SII Fields
+  trackId?: string;
+  tedXml?: string;
+  xmlTimbrado?: string;
+  pdfUrl?: string;
+  ambienteSii?: number; // 1: Certificación, 2: Producción
 }
 
 export interface F29Declaration {
@@ -578,6 +654,10 @@ export type CashFlowCategory =
   | 'SERVICIOS_BASICOS' 
   | 'FINANCIAMIENTO' 
   | 'HONORARIOS' 
+  | 'CHEQUE_CARTERA_COBRO'
+  | 'CHEQUE_EMITIDO_PAGO'
+  | 'DEUDA_FINANCIERA_CUOTA'
+  | 'PROVISION_EGRESO'
   | 'OTRO';
 
 export type CashFlowOriginModule = 
@@ -589,7 +669,139 @@ export type CashFlowOriginModule =
   | 'PRESUPUESTO_PRODUCCION' 
   | 'ORDEN_PRODUCCION' 
   | 'LEASING_IFRS16' 
-  | 'CONCILIACION_BANCARIA';
+  | 'CONCILIACION_BANCARIA'
+  | 'CHEQUES_CARTERA'
+  | 'CHEQUES_EMITIDOS'
+  | 'DEUDA_FINANCIERA'
+  | 'PROVISIONES';
+
+// Cheques en Cartera por Cobrar (Custodia de cheques a fecha de clientes)
+export interface ChequeCartera {
+  id: string;
+  empresaId: string;
+  numeroCheque: string;
+  bancoEmisor: string; // ej: "Banco de Chile", "Santander", "BCI", "Banco Estado", "Scotiabank"
+  giradorNombre: string; // Cliente
+  giradorRut: string;
+  fechaRecepcion: string;
+  fechaCobro: string; // Fecha en que vence / se deposita en el banco
+  monto: number;
+  moneda: 'CLP' | 'USD';
+  estado: 'EN_CARTERA' | 'DEPOSITADO' | 'COBRADO' | 'PROTESTADO';
+  ordenCompraReferencia?: string;
+  dteFolioAsociado?: number;
+  observaciones?: string;
+}
+
+// Cheques Emitidos por Pagar (Cheques a fecha girados a proveedores pendientes de cobro)
+export interface ChequeEmitido {
+  id: string;
+  empresaId: string;
+  numeroCheque: string;
+  cuentaBancariaId: string; // Cuenta corriente de origen
+  bancoNombre: string;
+  beneficiarioNombre: string; // Proveedor o acreedor
+  beneficiarioRut: string;
+  fechaEmision: string;
+  fechaPago: string; // Fecha estimada o fijada para que el beneficiario cobre el cheque
+  monto: number;
+  moneda: 'CLP';
+  estado: 'GIRADO_PENDIENTE' | 'COBRADO' | 'CADUCADO' | 'ANULADO';
+  facturaReferencia?: string;
+  observaciones?: string;
+}
+
+// Deudas con Instituciones Financieras (Créditos Comerciales, Leasing, Pagarés, Cuotas)
+export type TipoDeudaFinanciera = 'CREDITO_COMERCIAL' | 'LEASING_FINANCIERO' | 'LINEA_CREDITO' | 'PAGARE' | 'CREDITO_FOGAPE';
+
+export interface CuotaDeudaFinanciera {
+  numeroCuota: number;
+  fechaVencimiento: string;
+  montoCapital: number;
+  montoInteres: number;
+  montoCuota: number;
+  estado: 'PENDIENTE' | 'PAGADO' | 'EN_MORA';
+}
+
+export interface DeudaFinanciera {
+  id: string;
+  empresaId: string;
+  institucionFinanciera: string; // ej: "Banco Santander", "Banco de Chile", "BCI", "Banco Estado"
+  tipoCredito: TipoDeudaFinanciera;
+  numeroOperacion: string; // ej: "CRE-2024-819"
+  montoOriginal: number;
+  tasaInteresMensualPct: number;
+  plazoMesesTotal: number;
+  fechaOtorgamiento: string;
+  fechaPrimerVencimiento: string;
+  montoCuotaMensual: number;
+  cuotas: CuotaDeudaFinanciera[];
+  estado: 'VIGENTE' | 'EXTINGUIDO' | 'EN_RENEGOCIACION';
+  glosa?: string;
+}
+
+// Provisiones de Egresos (Gratificaciones, Indemnizaciones IAS, Auditorías, Mantenciones, Servicios)
+export type NaturalezaProvisionEgreso = 'CONTABLE' | 'EXTRACONTABLE';
+
+export type AfectacionIvaProvision = 
+  | 'AFECTO_IVA_19' 
+  | 'EXENTO' 
+  | 'HONORARIOS_RETENCION' 
+  | 'NO_APLICA';
+
+export type PeriodicidadProvision = 
+  | 'NO_PERIODICA_PUNTUAL' 
+  | 'MENSUAL' 
+  | 'TRIMESTRAL' 
+  | 'SEMESTRAL' 
+  | 'ANUAL';
+
+export type TipoProvisionEgreso = 
+  | 'GRATIFICACIONES' 
+  | 'INDEMNIZACION_IAS' 
+  | 'HONORARIOS_AUDITORIA' 
+  | 'MANTENCION_MAYOR' 
+  | 'SERVICIOS_DEVENGADOS' 
+  | 'LICENCIAS_SOFTWARE'
+  | 'ASESORIA_LEGAL_TRIBUTARIA'
+  | 'SEGUROS_GENERALES'
+  | 'EVENTOS_CORPORATIVOS'
+  | 'OTRO';
+
+export interface ProvisionEgreso {
+  id: string;
+  empresaId: string;
+  tipoProvision: TipoProvisionEgreso;
+  concepto: string; // ej: "Provisión Honorarios Auditoría Externa y Dictamen Tributario"
+  fechaEstimadaPago: string; // Fecha estimada de materialización del egreso en banco
+
+  // Parámetros Contables y Tributarios (Doctrina NIC 37 y Flujo de Caja Financiero)
+  naturaleza: NaturalezaProvisionEgreso; // 'CONTABLE' (con devengo en pasivo) vs 'EXTRACONTABLE' (presupuestaria de flujo de caja)
+  afectacionIva: AfectacionIvaProvision; // 'AFECTO_IVA_19' | 'EXENTO' | 'HONORARIOS_RETENCION' | 'NO_APLICA'
+  periodicidad: PeriodicidadProvision; // 'NO_PERIODICA_PUNTUAL' | 'MENSUAL' | etc.
+
+  // Desglose de Montos (Neto, IVA y Total a Pagar en Caja)
+  montoEstimado: number; // Monto Base / Neto
+  montoNeto?: number;
+  montoIva?: number; // IVA Crédito Fiscal (19%) simulado o calculado
+  montoTotal?: number; // Monto Total Bruto (egreso real en banco) = Neto + IVA (o Líquido honorarios)
+  tasaIvaPct?: number; // 19 por defecto
+  simularCreditoFiscalF29?: boolean; // Si true, el IVA Crédito Fiscal se integra a la proyección del F29
+
+  // Proveedor y Clasificación
+  proveedorNombre?: string;
+  proveedorRut?: string;
+  probabilidadMaterializacionPct: number; // 0 a 100%
+  cuentaContableProvision: string; // ej: "2.1.03.015"
+  cuentaGastoAsociada?: string; // ej: "6.1.02.001"
+  centroCostoId?: string;
+  estado: 'PENDIENTE' | 'LIQUIDADA' | 'REVERSADA';
+  observaciones?: string;
+
+  // Trazabilidad Contable (Asiento de Devengo en Libro Diario)
+  asientoContableGenerado?: boolean;
+  asientoContableId?: string;
+}
 
 export interface CashFlowMovement {
   id: string;
@@ -606,10 +818,12 @@ export interface CashFlowMovement {
   montoNeto: number;
   montoIva: number;
   montoTotal: number;
-  moneda: 'CLP' | 'UF';
+  moneda: 'CLP' | 'UF' | 'USD' | 'EUR';
   valorUfReferencia?: number;
+  tipoCambio?: number;
+  montoCLPEquivalente?: number;
   // 5. Estado
-  estado: 'PENDIENTE' | 'FACTURADO' | 'COBRADO' | 'PAGADO' | 'VENCIDO';
+  estado: 'PENDIENTE' | 'FACTURADO' | 'COBRADO' | 'PAGADO' | 'CONCILIADO' | 'VENCIDO';
   tipo: 'INGRESO' | 'EGRESO';
   categoria: CashFlowCategory;
   dteFolioAsociado?: number;
@@ -618,6 +832,9 @@ export interface CashFlowMovement {
   cuentaBancariaId?: string;
   alertaRiesgo?: string;
   documentoReferencia?: string;
+  fechaOriginal?: string;
+  reprogramado?: boolean;
+  motivoReprogramacion?: string;
 }
 
 export interface DailyCashFlowPoint {
@@ -627,6 +844,7 @@ export interface DailyCashFlowPoint {
   egresosDia: number;
   flujoNetoDia: number;
   saldoProyectado: number;
+  saldoInicialDia?: number;
   estaEnDeficit: boolean;
   quiebreCajaMonto: number;
   eventosClave: {
@@ -635,6 +853,96 @@ export interface DailyCashFlowPoint {
     monto: number;
     categoria: CashFlowCategory;
   }[];
+}
+
+// Cuentas de Efectivo (Caja, Fondo Fijo, Caja Chica)
+export type CashAccountType = 'CAJA_EFECTIVO' | 'FONDO_FIJO' | 'CAJA_CHICA' | 'RECAUDACION_POR_DEPOSITAR';
+
+export interface CashAccountConfig {
+  id: string;
+  nombre: string; // ej: "Caja Central Oficina", "Fondo Fijo Planta Quellón"
+  tipoCuenta: CashAccountType;
+  codigoContable: string; // ej: "1.1.01.001"
+  responsableNombre: string;
+  montoSaldo: number;
+  moneda: 'CLP' | 'USD';
+  activo: boolean;
+  centroCostoId?: string;
+  descripcion?: string;
+}
+
+// Horizontes de Proyección del Flujo de Caja
+export type CashFlowHorizonType =
+  | 'DIA_DEL_MES'
+  | '15_DIAS'
+  | '30_DIAS'
+  | '60_DIAS'
+  | '90_DIAS'
+  | '1_ANIO'
+  | 'MES_COMPLETO'
+  | 'PROXIMO_MES';
+
+// Parametrización de Partidas a Incluir en el Flujo de Caja
+export interface CashFlowInclusionParameters {
+  incluirCuentasBancarias: boolean;
+  incluirCuentasEfectivo: boolean; // Caja Central, Fondos Fijos
+  incluirCobranzaDtePendientes: boolean; // Facturas emitidas por cobrar
+  incluirVentasProyectadasHistoria: boolean; // Proyección de ventas s/ historia RCV
+  tasaCrecimientoVentasPct: number; // Tasa de crecimiento estimada mensual (ej: 5%)
+  diasCreditoVentasPromedio: number; // Plazo medio de cobro (ej: 30 días)
+  pctVentasContado: number; // % Venta al contado (ej: 30%)
+  incluirHitosProduccion: boolean; // Anticipos y saldos de presupuestos
+  incluirChequesCartera: boolean; // Cheques en cartera por cobrar
+  incluirChequesEmitidos: boolean; // Cheques emitidos por pagar diferidos
+  incluirDeudaFinanciera: boolean; // Cuotas créditos y deudas bancarias
+  incluirProvisionesEgresos: boolean; // Provisiones de egresos y gastos devengados
+  incluirPagoProveedoresDte: boolean; // Facturas de proveedores por pagar
+  incluirInsumosMpdProduccion: boolean; // Insumos y materias primas MPD
+  incluirNominaSueldos: boolean; // Sueldos líquidos fin de mes
+  incluirPreviredLeyesSociales: boolean; // Imposiciones día 10-13
+  incluirF29Impuestos: boolean; // Impuesto F29 IVA+PPM día 20
+  incluirArriendosIfrs16: boolean; // Arriendos operativos y financieros
+  incluirGastosFondoFijo: boolean; // Reposiciones de caja chica
+}
+
+// Proyección Mensual Anual (12 Meses)
+export interface MonthlyCashFlowPoint {
+  periodo: string; // "2026-09"
+  mesLabel: string; // "Septiembre 2026"
+  mesAnio?: string;
+  numeroMes: number; // 1 a 12
+  saldoInicial: number;
+  ingresosTotales: number;
+  totalIngresos?: number;
+  ingresosVentasHistoria: number;
+  ventasHistoria?: number;
+  ingresosDtes: number;
+  cobranzasDte?: number;
+  ingresosHitos: number;
+  ingresosChequesCartera?: number;
+  chequesCartera?: number;
+  egresosTotales: number;
+  totalEgresos?: number;
+  egresosProveedores: number;
+  pagoProveedores?: number;
+  egresosNomina: number;
+  nominaSueldos?: number;
+  egresosPrevired: number;
+  previredLeyesSociales?: number;
+  egresosF29: number;
+  f29Impuestos?: number;
+  egresosArriendos: number;
+  arriendos?: number;
+  egresosChequesEmitidos?: number;
+  chequesEmitidos?: number;
+  egresosDeudaFinanciera?: number;
+  deudaFinanciera?: number;
+  egresosProvisiones?: number;
+  provisionesEgresos?: number;
+  egresosCajaFondoFijo: number;
+  flujoNeto: number;
+  saldoFinal: number;
+  estaEnDeficit: boolean;
 }
 
 export interface LiquidityCrisisAlert {
@@ -689,7 +997,74 @@ export interface ErpCommitmentsScanResult {
     comprasPorPagarCount: number;
     comprasPorPagarTotal: number;
   };
+  chequesCartera?: {
+    totalCheques: number;
+    montoTotalCobro: number;
+    partidas: { numeroCheque: string; bancoEmisor: string; giradorNombre: string; fechaCobro: string; monto: number }[];
+  };
+  chequesEmitidos?: {
+    totalCheques: number;
+    montoTotalPago: number;
+    partidas: { numeroCheque: string; bancoNombre: string; beneficiarioNombre: string; fechaPago: string; monto: number }[];
+  };
+  deudaFinanciera?: {
+    totalOperaciones: number;
+    montoTotalCuotasPendientes: number;
+    partidas: { institucion: string; operacion: string; numeroCuota: number; fechaVencimiento: string; montoCuota: number }[];
+  };
+  provisionesEgresos?: {
+    totalProvisiones: number;
+    montoTotalEstimado: number;
+    partidas: { concepto: string; tipo: TipoProvisionEgreso; fechaEstimadaPago: string; montoEstimado: number }[];
+  };
   totalCompromisosIdentificados: number;
+}
+
+// Configuración y Diseño Gráfico de Plantilla Excel para Flujo de Caja
+export type CashFlowExcelFont = 'Calibri' | 'Arial' | 'Segoe UI' | 'Aptos' | 'Trebuchet MS';
+export type CashFlowExcelNumberFormat = 'CLP_NO_DECIMALS' | 'CLP_WITH_DECIMALS' | 'USD_STANDARD' | 'EUR_STANDARD';
+export type CashFlowExcelNegativeFormat = 'PARENTHESIS_RED' | 'MINUS_RED' | 'STANDARD_MINUS';
+
+export interface CashFlowExcelThemeConfig {
+  id: string;
+  name: string;
+  description?: string;
+  fontFamily: CashFlowExcelFont;
+  fontSizeHeader: number;
+  fontSizeData: number;
+  
+  // Paleta de Colores (Hex #RRGGBB)
+  headerBgColor: string; // Cabecera principal
+  headerTextColor: string;
+  
+  kpiBannerBgColor: string; // Banner de KPIs superiores
+  kpiBannerTextColor: string;
+  
+  summaryRowBgColor: string; // Resumen inicial y saldos
+  summaryRowTextColor: string;
+  
+  ingresosSectionColor: string; // Barra divisora ingresos
+  ingresosRowBgColor: string; // Filas de cobranzas
+  ingresosTextColor: string;
+  
+  egresosSectionColor: string; // Barra divisora egresos
+  egresosRowBgColor: string; // Filas de egresos/proveedores
+  egresosTextColor: string;
+  
+  saldosAcumRowBgColor: string; // Fila de saldo acumulado de cierre
+  saldosAcumRowTextColor: string;
+  
+  // Opciones de Maquetación y Formato
+  numberFormat: CashFlowExcelNumberFormat;
+  negativeFormat: CashFlowExcelNegativeFormat;
+  enableZebraStripes: boolean;
+  zebraBgColor: string;
+  enableDoubleUnderlineTotals: boolean;
+  enableFreezePanes: boolean;
+  enableKpiCards: boolean;
+  enableCompanyHeader: boolean;
+  includeFlatMovementsSheet: boolean;
+  autoColumnWidths: boolean;
 }
 
 export interface AccountingEntryLine {
@@ -1469,6 +1844,10 @@ export interface FixedAsset {
   ubicacionFisica: string; // ej: "Centro de Cultivo Hornopirén #3", "Taller de Redes Quellón", "Bodega Central"
   responsableCustodio: string; // ej: "Juan Pablo Soto - Jefe de Mantenimiento"
   estado: FixedAssetStatus;
+  // Relación con Centro de Costos
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
   numeroSerie?: string;
   marcaModelo?: string;
   esFabrilProduccion?: boolean; // Si genera cuota de depreciación imputable a CIF (Costos Indirectos)
@@ -1801,8 +2180,19 @@ export interface WarehouseWithdrawal {
   fecha: string;
   fechaRetiro?: string;
   horaRetiro?: string;
-  ordenProduccionId: string; // OBLIGATORIO
-  ordenProduccionFolio: string;
+  tipoRetiro?: 'ORDEN_PRODUCCION' | 'NOTA_PEDIDO_CC'; // Soporte para empresas productivas vs comerciales/servicios
+  ordenProduccionId?: string; // OBLIGATORIO si es ORDEN_PRODUCCION
+  ordenProduccionFolio?: string;
+  notaPedidoFolio?: string; // Folio de Nota de Pedido / Solicitud Autorizada
+  notaPedidoAutorizadaPor?: string;
+  centroCostoId?: string;
+  centroCostoNombre?: string;
+  distribucionMultiCentroCosto?: {
+    centroCostoId: string;
+    centroCostoNombre: string;
+    porcentaje: number;
+    montoClp: number;
+  }[];
   clienteNombre?: string;
   bodegaOrigenId: string;
   bodegaOrigenNombre: string;
@@ -1816,6 +2206,132 @@ export interface WarehouseWithdrawal {
   folioGuiaDespacho52?: string;
   observaciones?: string;
   asientoId?: string;
+}
+
+// ==========================================
+// MAESTRO DE CENTROS DE COSTO (Mini-Empresas Transversales)
+// ==========================================
+export type CostCenterCategory = 'ADMINISTRACION' | 'VENTAS' | 'OPERACIONES' | 'PRODUCCION' | 'LOGISTICA' | 'SERVICIOS';
+
+export interface CostCenterMaster {
+  id: string;
+  empresaId?: string;
+  clienteId?: string;
+  codigo: string; // ej: "CC-ADM-01", "CC-VTA-STGO", "CC-PRD-QUELLON"
+  nombre: string; // ej: "Ventas & Sucursal Santiago (Mini-Empresa)"
+  categoria: CostCenterCategory;
+  responsableNombre: string;
+  emailResponsable?: string;
+  responsableEmail?: string;
+  presupuestoMensualClp: number;
+  activo: boolean;
+  descripcion?: string;
+  // Indicadores consolidados de la "Mini Empresa"
+  ventasAcumuladasMes: number;
+  costosDirectosMes: number;
+  gastosOperacionalesMes: number;
+  remuneracionesMes: number;
+  depreciacionMes?: number;
+  margenContribucionClp?: number;
+  margenContribucionMes?: number;
+  margenContribucionPct?: number;
+  rentabilidadPct?: number;
+  desviacionPresupuestariaClp?: number;
+  alertaDesvioPresupuestario?: boolean;
+}
+
+export interface CostCenterImputation {
+  id: string;
+  centroCostoId: string;
+  tipoDocumento: string; // DTE, Nomina, Vale Bodega, etc.
+  folioReferencia: string;
+  fecha: string;
+  montoClp: number;
+  concepto: string;
+  tipoFlujo: 'INGRESO' | 'COSTO' | 'GASTO';
+}
+
+// ==========================================
+// RECETAS Y FÓRMULAS DE FABRICACIÓN (BOM - BILL OF MATERIALS)
+// ==========================================
+export interface RecipeMaterialItem {
+  insumoId: string;
+  insumoCodigo: string;
+  insumoNombre: string;
+  unidadMedida: string;
+  cantidadRequerida: number; // Por unidad de producto final
+  mermaPorcentaje: number; // ej: 2.5%
+  costoUnitarioPMP: number;
+  costoSubtotal: number;
+}
+
+export interface ProductRecipe {
+  id: string;
+  empresaId: string;
+  codigo: string; // ej: "REC-RED-40X40"
+  nombre: string; // ej: "Red Lobera Polietileno Reforzada 40x40m"
+  productoTerminadoSku: string;
+  categoria: ProductionProductCategory;
+  unidadMedida: string; // "UNID", "METRO", etc.
+  centroCostoFabricacion: string; // ej: "CC-PRD-QUELLON"
+  rendimientoLoteBase: number; // ej: 1 unidad
+  materiales: RecipeMaterialItem[];
+  costoManoObraDirectaEstimado: number; // MOD unitario
+  costosIndirectosFabricacionEstimado: number; // CIF unitario
+  costoTotalMateriales: number; // Suma materiales
+  costoTotalUnitarioFabricacion: number; // Materiales + MOD + CIF
+  precioVentaSugerido: number;
+  margenEstimadoPct: number;
+  tiempoFabricacionHoras?: number;
+  version: string;
+  activa: boolean;
+  notasTecnicas?: string;
+}
+
+// ==========================================
+// REPOSICIÓN Y COTIZACIÓN AUTOMÁTICA POR PROXIMIDAD (RFQ)
+// ==========================================
+export interface AutoRfqRuleConfig {
+  activa: boolean;
+  disparadorNivelStock: 'BAJO_MINIMO' | 'CRITICO';
+  radioMaximoKm: number; // ej: 50 km
+  comunaBaseBodega: string; // ej: "Quellón"
+  calificacionMinimaProveedor: number; // ej: 4.0
+  plazoMaximoEntregaDias: number; // ej: 5 días
+  enviarEmailAutomatico: boolean;
+  solicitarMinimoCotizaciones: number; // ej: 2
+  copiaEmailCompras: string;
+  mensajePersonalizadoRfq?: string;
+}
+
+export interface RfqSupplierContact {
+  rut: string;
+  razonSocial: string;
+  email: string;
+  comuna: string;
+  distanciaKm: number;
+  calificacion: number;
+  estadoEnvio: 'ENVIADA' | 'RESPONDIENDO' | 'COTIZADA';
+  precioCotizadoUnitario?: number;
+  plazoEntregaOfrecidoDias?: number;
+  cumpleCriterios?: boolean;
+}
+
+export interface AutoGeneratedRfq {
+  id: string;
+  folioRfq: string; // ej: "RFQ-2026-001"
+  fechaEmision: string;
+  itemId: string;
+  itemSku: string;
+  itemNombre: string;
+  unidadMedida: string;
+  stockActual: number;
+  stockMinimo: number;
+  cantidadSolicitada: number;
+  bodegaDestinoNombre: string;
+  motivoDisparo: string;
+  proveedoresContactados: RfqSupplierContact[];
+  estado: 'EMITIDA' | 'EN_EVALUACION' | 'ORDENADA';
 }
 
 export interface CostOfGoodsManufacturedReport {
@@ -2038,6 +2554,10 @@ export interface BillingItemDetail {
   descuentoPct?: number;
   esExento?: boolean;
   montoTotal: number;
+  // Relación con Centro de Costos
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
 }
 
 export interface BillingDteReference {
@@ -2115,5 +2635,178 @@ export interface PlaywrightRobotRunReport {
   pasos: PlaywrightRobotStep[];
   logs: string[];
 }
+
+// ============================================================================
+// ESTRUCTURAS HTTP-DTE / LIBREDTE (API REST LOCAL SLIM / PHP)
+// Endpoint: POST http://localhost:8050/dte/emitir
+// ============================================================================
+
+export interface HttpDteEmisor {
+  rut: string; // Ej: "76123456-7"
+  razonSocial: string;
+  giro: string;
+  acteco: number | number[]; // Ej: 139400
+  direccion: string;
+  comuna: string;
+  ciudad?: string;
+  telefono?: string;
+  correo?: string;
+}
+
+export interface HttpDteReceptor {
+  rut: string; // Ej: "77123456-K"
+  razonSocial: string;
+  giro: string;
+  direccion: string;
+  comuna: string;
+  ciudad?: string;
+  contacto?: string;
+  correo?: string;
+}
+
+export interface HttpDteDetalleItem {
+  NroLinDet?: number;
+  NmbItem: string;
+  DscItem?: string;
+  QtyItem: number;
+  UnmdItem?: string;
+  PrcItem: number; // Precio unitario neto o exento
+  MontoItem?: number; // Total de la línea (QtyItem * PrcItem)
+  IndExe?: number; // 1 si es ítem no afecto o exento de IVA
+  DescuentoMonto?: number;
+  DescuentoPct?: number;
+  // Campos analíticos de trazabilidad interna ERP
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
+}
+
+export interface HttpDteFirmaConfig {
+  data: string; // Base64 del certificado digital (.p12 / .pfx)
+  password: string; // Contraseña del certificado digital (desde env var)
+}
+
+export interface HttpDteReferencia {
+  NroLinRef?: number;
+  TpoDocRef: number | string; // 33: Factura, 34: Factura Exenta, etc.
+  FolioRef: number | string;
+  FchRef: string; // YYYY-MM-DD
+  CodRef: number; // 1: Anula, 2: Corrige Texto, 3: Corrige Montos
+  RazonRef: string;
+}
+
+export interface HttpDteEmissionPayload {
+  tipoDte: number; // 33, 34, 52, 56, 61, etc.
+  folio?: number; // Opcional si el CAF lo determina automáticamente
+  fechaEmision: string; // YYYY-MM-DD
+  fechaVencimiento?: string; // YYYY-MM-DD
+  formaPago?: number; // 1: Contado, 2: Crédito, 3: Sin Costo
+  emisor: HttpDteEmisor;
+  receptor: HttpDteReceptor;
+  detalles: HttpDteDetalleItem[];
+  firma: HttpDteFirmaConfig;
+  caf: string; // Contenido string del XML del CAF
+  ambiente: 1 | 2; // 1: Certificación, 2: Producción
+  referencia?: HttpDteReferencia;
+  totales?: {
+    montoNeto?: number;
+    montoExento?: number;
+    montoIva?: number;
+    montoTotal?: number;
+  };
+}
+
+export interface HttpDteEmissionResponse {
+  success: boolean;
+  folio?: number;
+  tipoDte?: number;
+  trackId?: string; // Identificador oficial de recepción y envío del SII
+  ted?: string; // Timbre Electrónico DTE (<TED>...</TED>)
+  xmlTimbrado?: string; // XML oficial firmado digitalmente
+  pdfBase64?: string; // PDF generado en base64
+  pdfUrl?: string; // Ruta local o URL del PDF almacenado
+  dteId?: string; // ID asignado en la base de datos del ERP
+  ambiente?: 1 | 2;
+  timestamp?: string;
+  error?: string;
+  rawResponse?: any;
+}
+
+// ============================================================================
+// DISEÑADOR DE FORMATO DE FACTURA & DTE (SII CHILE)
+// ============================================================================
+
+export type DteLayoutPreset = 'CORPORATE' | 'OFFICIAL_SII' | 'MINIMALIST' | 'INDUSTRIAL' | 'EXECUTIVE_DARK';
+
+export interface DteDocumentLayoutConfig {
+  id: string;
+  companyId: string;
+  preset: DteLayoutPreset;
+  updatedAt: string;
+
+  // Marca & Logotipo
+  logoUrl?: string;
+  logoPosition: 'left' | 'center' | 'right';
+  logoSize: 'sm' | 'md' | 'lg' | 'xl';
+  showCompanyNameWithLogo: boolean;
+  nombreFantasia?: string;
+
+  // Estilo y Tipografía
+  primaryColor: string;
+  accentColor: string;
+  textColor: string;
+  fontFamily: 'sans' | 'serif' | 'mono';
+  fontSize: 'sm' | 'md' | 'lg';
+  headerStyle: 'filled' | 'outlined' | 'clean';
+  tableBorders: 'full' | 'horizontal' | 'minimal';
+  stripedRows: boolean;
+
+  // Datos Obligatorios Emisor (SII)
+  emisorRut: string;
+  emisorRazonSocial: string;
+  emisorGiro: string;
+  emisorDireccion: string;
+  emisorComuna: string;
+  emisorCiudad: string;
+  emisorUnidadSii: string; // Ej: "S.I.I. - PUERTO MONTT"
+  emisorActecoTexto?: string;
+  emisorTelefono?: string;
+  emisorEmail?: string;
+  emisorWeb?: string;
+  emisorSucursalesTexto?: string;
+
+  // Recuadro Rojo Obligatorio SII (Resolución Ex. N° 11)
+  recuadroRojoBorderWidth: number; // 2, 3 o 4 px
+  recuadroRojoBorderStyle: 'double' | 'solid';
+  recuadroRojoColor: string; // '#dc2626'
+  customFolioPrefix?: string;
+
+  // Elementos Legales de Facturación
+  showLey19983Cedible: boolean; // Recuadro de Acuse de Recibo para Mérito Ejecutivo
+  tipoEjemplar: 'ORIGINAL_CLIENTE' | 'CEDIBLE_MERITO_EJECUTIVO' | 'CEDIBLE' | 'TRIPLICADO_CONTROL';
+  showTedBarcode: boolean;
+  tedLeyendaTexto: string;
+  watermark: 'NONE' | 'ORIGINAL' | 'CEDIBLE' | 'MERITO_EJECUTIVO' | 'MUESTRA' | 'PAGADO';
+
+  // Opciones de Columnas en Tabla de Detalles
+  showItemCode: boolean;
+  showItemDescription: boolean;
+  showItemUnit: boolean;
+  showItemDiscount: boolean;
+  showCostCenterTag: boolean;
+
+  // Totales y Pie de Factura
+  showTotalInWords: boolean;
+  showBankDetails: boolean;
+  bankDetailsText: string;
+  commercialNotes: string;
+  footerDisclaimer: string;
+
+  // Formato de Papel para Impresión / PDF
+  paperSize: 'LETTER' | 'A4';
+  pageOrientation: 'PORTRAIT';
+  marginSize: 'compact' | 'normal' | 'wide';
+}
+
 
 

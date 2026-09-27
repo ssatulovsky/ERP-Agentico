@@ -1,6 +1,10 @@
 import {
   CashFlowMovement,
   BankAccountConfig,
+  CashAccountConfig,
+  CashFlowHorizonType,
+  CashFlowInclusionParameters,
+  MonthlyCashFlowPoint,
   EmployeePayroll,
   F29Declaration,
   ProductionBudget,
@@ -10,40 +14,185 @@ import {
   DailyCashFlowPoint,
   LiquidityCrisisAlert,
   ErpCommitmentsScanResult,
+  ChequeCartera,
+  ChequeEmitido,
+  DeudaFinanciera,
+  ProvisionEgreso,
 } from '../types';
 
 /**
  * Motor Agéntico de Proyección de Flujo de Caja y Liquidez
- * Conecta saldos reales de cuentas bancarias y proyecta compromisos del ERP:
- * - Nómina y Sueldos Líquidos (fin de mes)
- * - Previred e Imposiciones (día 10-13)
- * - F29 IVA y PPM (día 20)
- * - Hitos de Presupuestos de Producción y OPs
- * - DTEs del RCV (Facturas de Venta y Compra)
- * - Arriendos IFRS 16
+ * Conecta saldos reales de cuentas bancarias y de efectivo (Caja, Fondo Fijo, Caja Chica),
+ * proyecta ventas en base al comportamiento histórico del RCV parametrizable,
+ * cheques en cartera por cobrar, cheques emitidos por pagar,
+ * cuotas de deudas con instituciones financieras y provisiones de egresos,
+ * y proyecta compromisos del ERP a nivel diario, 30, 60, 90 días y 1 año de horizonte.
  */
 
-export function calculateConsolidatedBankBalance(bankAccounts: BankAccountConfig[] = []) {
-  const safeAccounts = Array.isArray(bankAccounts) ? bankAccounts : [];
-  const totalSaldo = safeAccounts.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
-  
-  const cuentas = safeAccounts.map(b => ({
-    id: b.id,
-    banco: b.banco,
-    bancoCodigo: b.bancoCodigo,
-    numero: b.numeroCuenta,
-    tipo: b.tipoCuenta,
-    moneda: b.moneda,
-    saldo: b.saldoEnLinea || 0,
-    estadoConexion: b.estadoConexion,
-    esPrincipal: b.esPrincipal,
-    ultimaSincronizacion: b.ultimaSincronizacion,
+export const DEFAULT_CASH_FLOW_PARAMETERS: CashFlowInclusionParameters = {
+  incluirCuentasBancarias: true,
+  incluirCuentasEfectivo: true,
+  incluirCobranzaDtePendientes: true,
+  incluirVentasProyectadasHistoria: true,
+  tasaCrecimientoVentasPct: 5,
+  diasCreditoVentasPromedio: 30,
+  pctVentasContado: 30,
+  incluirHitosProduccion: true,
+  incluirChequesCartera: true,
+  incluirChequesEmitidos: true,
+  incluirDeudaFinanciera: true,
+  incluirProvisionesEgresos: true,
+  incluirPagoProveedoresDte: true,
+  incluirInsumosMpdProduccion: true,
+  incluirNominaSueldos: true,
+  incluirPreviredLeyesSociales: true,
+  incluirF29Impuestos: true,
+  incluirArriendosIfrs16: true,
+  incluirGastosFondoFijo: true,
+};
+
+export const DEFAULT_CASH_FLOW_INCLUSION_PARAMS = DEFAULT_CASH_FLOW_PARAMETERS;
+
+// 1. CÁLCULO CONSOLIDADO DE SALDO INICIAL: BANCOS + EFECTIVO (CAJA, FONDO FIJO)
+export function calculateConsolidatedCashPosition(
+  bankAccounts: BankAccountConfig[] = [],
+  cashAccounts: CashAccountConfig[] = [],
+  includeBanks = true,
+  includeCash = true,
+  dolarRate: number = 955.20,
+  euroRate: number = 1042.80
+) {
+  const safeBanks = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const safeCash = Array.isArray(cashAccounts) ? cashAccounts : [];
+
+  const totalSaldoBancos = includeBanks
+    ? safeBanks.reduce((acc, b) => {
+        const rate = b.moneda === 'USD' ? dolarRate : b.moneda === 'EUR' ? euroRate : 1;
+        return acc + Math.round((b.saldoEnLinea || 0) * rate);
+      }, 0)
+    : 0;
+
+  const totalSaldoEfectivo = includeCash
+    ? safeCash.filter(c => c.activo).reduce((acc, c) => acc + (c.montoSaldo || 0), 0)
+    : 0;
+
+  const totalSaldoConsolidado = totalSaldoBancos + totalSaldoEfectivo;
+
+  const cuentasBancarias = safeBanks.map(b => {
+    const rate = b.moneda === 'USD' ? dolarRate : b.moneda === 'EUR' ? euroRate : 1;
+    const saldoCLP = Math.round((b.saldoEnLinea || 0) * rate);
+    return {
+      id: b.id,
+      banco: b.banco,
+      bancoCodigo: b.bancoCodigo,
+      numero: b.numeroCuenta,
+      tipo: b.tipoCuenta,
+      moneda: b.moneda,
+      saldo: b.saldoEnLinea || 0,
+      saldoNominal: b.saldoEnLinea || 0,
+      saldoCLP,
+      tipoCambio: rate,
+      estadoConexion: b.estadoConexion,
+      esPrincipal: b.esPrincipal,
+      ultimaSincronizacion: b.ultimaSincronizacion,
+    };
+  });
+
+  const cuentasEfectivo = safeCash.map(c => ({
+    id: c.id,
+    nombre: c.nombre,
+    tipo: c.tipoCuenta,
+    codigoContable: c.codigoContable,
+    responsable: c.responsableNombre,
+    saldo: c.montoSaldo || 0,
+    saldoInicial: c.montoSaldo || 0,
+    activo: c.activo,
+    centroCostoId: c.centroCostoId,
   }));
 
   return {
-    totalSaldo,
-    cuentas,
-    cantidadCuentas: cuentas.length,
+    totalSaldo: totalSaldoConsolidado,
+    totalSaldoBancos,
+    totalSaldoEfectivo,
+    totalSaldoConsolidado,
+    cuentas: cuentasBancarias,
+    cuentasBancos: cuentasBancarias,
+    cuentasBancarias,
+    cuentasEfectivo,
+    cantidadCuentas: cuentasBancarias.length + cuentasEfectivo.length,
+  };
+}
+
+export function calculateConsolidatedBankBalance(bankAccounts: BankAccountConfig[] = []) {
+  return calculateConsolidatedCashPosition(bankAccounts, [], true, false);
+}
+
+// 2. ANÁLISIS Y PROYECCIÓN DE VENTAS EN BASE A LA HISTORIA (RCV)
+export interface HistoricalSalesAnalysis {
+  totalVentasHistoricasNeto: number;
+  totalVentasHistoricasBruto: number;
+  cantidadDocumentosVenta: number;
+  promedioMensualVentasNeto: number;
+  promedioMensualVentasBruto: number;
+  ticketPromedio: number;
+  periodosAnalizados: number;
+  mesesDetalle: {
+    periodo: string; // "2026-06"
+    montoNeto: number;
+    montoBruto: number;
+    cantidadDtes: number;
+  }[];
+}
+
+export function analyzeHistoricalSales(dtes: DteDocument[] = [], growthRatePct: number = 5): HistoricalSalesAnalysis {
+  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const salesDtes = safeDtes.filter(d => 
+    d.tipoOperacion === 'VENTA' || 
+    d.tipoDte === '33' || 
+    d.tipoDte === '34' || 
+    d.tipoDte === '39' || 
+    d.tipoDte === '61'
+  );
+
+  const monthMap: Record<string, { neto: number; bruto: number; count: number }> = {};
+
+  salesDtes.forEach(d => {
+    const period = d.fechaEmision ? d.fechaEmision.substring(0, 7) : '2026-08';
+    if (!monthMap[period]) {
+      monthMap[period] = { neto: 0, bruto: 0, count: 0 };
+    }
+    const sign = d.tipoDte === '61' ? -1 : 1; // NC resta
+    monthMap[period].neto += (d.montoNeto || 0) * sign;
+    monthMap[period].bruto += (d.montoTotal || 0) * sign;
+    monthMap[period].count += 1;
+  });
+
+  const periodKeys = Object.keys(monthMap).sort();
+  const mesesDetalle = periodKeys.map(k => ({
+    periodo: k,
+    montoNeto: Math.max(0, monthMap[k].neto),
+    montoBruto: Math.max(0, monthMap[k].bruto),
+    cantidadDtes: monthMap[k].count,
+  }));
+
+  const periodCount = Math.max(1, mesesDetalle.length);
+  const totalNeto = mesesDetalle.reduce((s, m) => s + m.montoNeto, 0);
+  const totalBruto = mesesDetalle.reduce((s, m) => s + m.montoBruto, 0);
+  const totalDocs = mesesDetalle.reduce((s, m) => s + m.cantidadDtes, 0);
+
+  // Run-rate baseline para empresas medianas en caso de historial inicial
+  const baselinePromedioNeto = totalNeto > 0 ? Math.round(totalNeto / periodCount) : 48500000;
+  const baselinePromedioBruto = totalBruto > 0 ? Math.round(totalBruto / periodCount) : Math.round(baselinePromedioNeto * 1.19);
+
+  return {
+    totalVentasHistoricasNeto: totalNeto > 0 ? totalNeto : baselinePromedioNeto * 3,
+    totalVentasHistoricasBruto: totalBruto > 0 ? totalBruto : baselinePromedioBruto * 3,
+    cantidadDocumentosVenta: totalDocs > 0 ? totalDocs : 18,
+    promedioMensualVentasNeto: baselinePromedioNeto,
+    promedioMensualVentasBruto: baselinePromedioBruto,
+    ticketPromedio: totalDocs > 0 ? Math.round(totalBruto / totalDocs) : Math.round(baselinePromedioBruto / 6),
+    periodosAnalizados: periodCount,
+    mesesDetalle,
   };
 }
 
@@ -54,7 +203,13 @@ export function scanErpCommitments({
   productionOrders = [],
   dtes = [],
   leases = [],
+  cashAccounts = [],
+  chequesCartera = [],
+  chequesEmitidos = [],
+  deudasFinancieras = [],
+  provisionesEgresos = [],
   existingMovements = [],
+  params = DEFAULT_CASH_FLOW_PARAMETERS,
 }: {
   payrolls?: EmployeePayroll[];
   f29?: F29Declaration;
@@ -62,7 +217,13 @@ export function scanErpCommitments({
   productionOrders?: ProductionOrder[];
   dtes?: DteDocument[];
   leases?: LeaseContract[];
+  cashAccounts?: CashAccountConfig[];
+  chequesCartera?: ChequeCartera[];
+  chequesEmitidos?: ChequeEmitido[];
+  deudasFinancieras?: DeudaFinanciera[];
+  provisionesEgresos?: ProvisionEgreso[];
   existingMovements?: CashFlowMovement[];
+  params?: CashFlowInclusionParameters;
 }): {
   scanResult: ErpCommitmentsScanResult;
   projectedMovements: CashFlowMovement[];
@@ -73,6 +234,10 @@ export function scanErpCommitments({
   const safeOrders = Array.isArray(productionOrders) ? productionOrders : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
   const safeLeases = Array.isArray(leases) ? leases : [];
+  const safeChequesCartera = Array.isArray(chequesCartera) ? chequesCartera : [];
+  const safeChequesEmitidos = Array.isArray(chequesEmitidos) ? chequesEmitidos : [];
+  const safeDeudasFinancieras = Array.isArray(deudasFinancieras) ? deudasFinancieras : [];
+  const safeProvisiones = Array.isArray(provisionesEgresos) ? provisionesEgresos : [];
 
   const newMovements: CashFlowMovement[] = [];
 
@@ -497,19 +662,289 @@ export function scanErpCommitments({
     }
   });
 
+  // 8. PROYECCIÓN DE VENTAS EN BASE A LA HISTORIA RCV
+  if (params.incluirVentasProyectadasHistoria !== false) {
+    const historicalAnalysis = analyzeHistoricalSales(safeDtes);
+    const growthMult = 1 + (params.tasaCrecimientoVentasPct || 0) / 100;
+    const monthlyGrossSales = Math.round(historicalAnalysis.promedioMensualVentasBruto * growthMult);
+    const pctContado = (params.pctVentasContado ?? 30) / 100;
+    const pctCredito = Math.max(0, 1 - pctContado);
+
+    // Mes 1 Contado (15 del mes actual)
+    const refHistVta1Contado = `vta-hist-${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-contado`;
+    if (!existsMovementWithRef(refHistVta1Contado)) {
+      const montoContado = Math.round(monthlyGrossSales * pctContado);
+      newMovements.push({
+        id: `mov-${refHistVta1Contado}`,
+        fechaEstimada: new Date(currentYear, currentMonth, 15).toISOString().split('T')[0],
+        concepto: `Proyección Ventas Contado s/ Historial RCV (${params.pctVentasContado ?? 30}% de ${Math.round(monthlyGrossSales / 1000000)}M)`,
+        contraparte: 'Cartera Clientes Recurrentes (Venta Directa / POS)',
+        montoNeto: Math.round(montoContado / 1.19),
+        montoIva: montoContado - Math.round(montoContado / 1.19),
+        montoTotal: montoContado,
+        moneda: 'CLP',
+        tipo: 'INGRESO',
+        categoria: 'VENTAS_OPERACIONALES',
+        estado: 'PENDIENTE',
+        origenModulo: 'MANUAL',
+        documentoReferencia: refHistVta1Contado,
+        probabilidadCobroPct: 90,
+      });
+    }
+
+    // Mes 1 Crédito (Cobro en Mes 2)
+    const refHistVta1Credito = `vta-hist-${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-credito`;
+    if (!existsMovementWithRef(refHistVta1Credito)) {
+      const montoCredito = Math.round(monthlyGrossSales * pctCredito);
+      newMovements.push({
+        id: `mov-${refHistVta1Credito}`,
+        fechaEstimada: new Date(currentYear, currentMonth + 1, 15).toISOString().split('T')[0],
+        concepto: `Cobranza Proyectada Ventas a Crédito 30d s/ Historia (${Math.round(pctCredito * 100)}%)`,
+        contraparte: 'Clientes Crédito 30 días s/ Histórico RCV',
+        montoNeto: Math.round(montoCredito / 1.19),
+        montoIva: montoCredito - Math.round(montoCredito / 1.19),
+        montoTotal: montoCredito,
+        moneda: 'CLP',
+        tipo: 'INGRESO',
+        categoria: 'VENTAS_OPERACIONALES',
+        estado: 'PENDIENTE',
+        origenModulo: 'MANUAL',
+        documentoReferencia: refHistVta1Credito,
+        probabilidadCobroPct: 85,
+      });
+    }
+
+    // Mes 2 Contado
+    const refHistVta2Contado = `vta-hist-${currentYear}-${String(currentMonth + 2).padStart(2, '0')}-contado`;
+    if (!existsMovementWithRef(refHistVta2Contado)) {
+      const montoContado = Math.round(monthlyGrossSales * pctContado);
+      newMovements.push({
+        id: `mov-${refHistVta2Contado}`,
+        fechaEstimada: new Date(currentYear, currentMonth + 1, 15).toISOString().split('T')[0],
+        concepto: `Proyección Ventas Contado Mes Siguiente s/ Historial RCV`,
+        contraparte: 'Cartera Clientes Recurrentes (Venta Directa)',
+        montoNeto: Math.round(montoContado / 1.19),
+        montoIva: montoContado - Math.round(montoContado / 1.19),
+        montoTotal: montoContado,
+        moneda: 'CLP',
+        tipo: 'INGRESO',
+        categoria: 'VENTAS_OPERACIONALES',
+        estado: 'PENDIENTE',
+        origenModulo: 'MANUAL',
+        documentoReferencia: refHistVta2Contado,
+        probabilidadCobroPct: 90,
+      });
+    }
+  }
+
+  // 9. REPOSICIÓN DE FONDOS FIJOS Y CAJA CHICA
+  if (params.incluirGastosFondoFijo !== false) {
+    const refFondoFijo1 = `fondo-fijo-${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    if (!existsMovementWithRef(refFondoFijo1)) {
+      newMovements.push({
+        id: `mov-${refFondoFijo1}`,
+        fechaEstimada: new Date(currentYear, currentMonth, 10).toISOString().split('T')[0],
+        concepto: `Reposición Fondos Fijos y Cajas Chicas (Planta Quellón y Oficina)`,
+        contraparte: 'Custodios de Fondos Fijos / Rendiciones Operacionales',
+        montoNeto: 1200000,
+        montoIva: 0,
+        montoTotal: 1200000,
+        moneda: 'CLP',
+        tipo: 'EGRESO',
+        categoria: 'PROVEEDORES',
+        estado: 'PENDIENTE',
+        origenModulo: 'MANUAL',
+        documentoReferencia: refFondoFijo1,
+        probabilidadCobroPct: 100,
+      });
+    }
+  }
+
+  // 10. CHEQUES EN CARTERA POR COBRAR (Custodia de documentos a fecha de clientes)
+  const partidasChequesCartera: { numeroCheque: string; bancoEmisor: string; giradorNombre: string; fechaCobro: string; monto: number }[] = [];
+  let totalChequesCarteraMonto = 0;
+
+  if (params.incluirChequesCartera !== false) {
+    const pendingChequesCartera = safeChequesCartera.filter(c => c.estado === 'EN_CARTERA');
+    pendingChequesCartera.forEach(c => {
+      totalChequesCarteraMonto += c.monto;
+      partidasChequesCartera.push({
+        numeroCheque: c.numeroCheque,
+        bancoEmisor: c.bancoEmisor,
+        giradorNombre: c.giradorNombre,
+        fechaCobro: c.fechaCobro,
+        monto: c.monto,
+      });
+
+      const refCheque = `chq-cart-${c.id}`;
+      if (!existsMovementWithRef(refCheque)) {
+        newMovements.push({
+          id: `mov-${refCheque}`,
+          fechaEstimada: c.fechaCobro,
+          concepto: `Depósito Cheque en Cartera N° ${c.numeroCheque} (${c.bancoEmisor}) - ${c.giradorNombre}`,
+          contraparte: c.giradorNombre,
+          rutContraparte: c.giradorRut,
+          montoNeto: c.monto,
+          montoIva: 0,
+          montoTotal: c.monto,
+          moneda: c.moneda,
+          tipo: 'INGRESO',
+          categoria: 'CHEQUE_CARTERA_COBRO',
+          estado: 'PENDIENTE',
+          origenModulo: 'CHEQUES_CARTERA',
+          documentoReferencia: refCheque,
+          probabilidadCobroPct: 98,
+          alertaRiesgo: 'Documento en Custodia - Fecha de Depósito',
+        });
+      }
+    });
+  }
+
+  // 11. CHEQUES EMITIDOS POR PAGAR (Cheques a fecha girados a proveedores)
+  const partidasChequesEmitidos: { numeroCheque: string; bancoNombre: string; beneficiarioNombre: string; fechaPago: string; monto: number }[] = [];
+  let totalChequesEmitidosMonto = 0;
+
+  if (params.incluirChequesEmitidos !== false) {
+    const pendingChequesEmitidos = safeChequesEmitidos.filter(c => c.estado === 'GIRADO_PENDIENTE');
+    pendingChequesEmitidos.forEach(c => {
+      totalChequesEmitidosMonto += c.monto;
+      partidasChequesEmitidos.push({
+        numeroCheque: c.numeroCheque,
+        bancoNombre: c.bancoNombre,
+        beneficiarioNombre: c.beneficiarioNombre,
+        fechaPago: c.fechaPago,
+        monto: c.monto,
+      });
+
+      const refCheque = `chq-emit-${c.id}`;
+      if (!existsMovementWithRef(refCheque)) {
+        newMovements.push({
+          id: `mov-${refCheque}`,
+          fechaEstimada: c.fechaPago,
+          concepto: `Cobro Cheque Emitido N° ${c.numeroCheque} (${c.bancoNombre}) a ${c.beneficiarioNombre}`,
+          contraparte: c.beneficiarioNombre,
+          rutContraparte: c.beneficiarioRut,
+          montoNeto: c.monto,
+          montoIva: 0,
+          montoTotal: c.monto,
+          moneda: c.moneda,
+          tipo: 'EGRESO',
+          categoria: 'CHEQUE_EMITIDO_PAGO',
+          estado: 'PENDIENTE',
+          origenModulo: 'CHEQUES_EMITIDOS',
+          documentoReferencia: refCheque,
+          probabilidadCobroPct: 100,
+          alertaRiesgo: 'Cheque Diferido - Provisión de Fondos en Cuenta Corriente',
+        });
+      }
+    });
+  }
+
+  // 12. DEUDAS CON INSTITUCIONES FINANCIERAS (Créditos Comerciales, Leasing, Pagarés)
+  const partidasDeudaFinanciera: { institucion: string; operacion: string; numeroCuota: number; fechaVencimiento: string; montoCuota: number }[] = [];
+  let totalDeudaFinancieraMonto = 0;
+
+  if (params.incluirDeudaFinanciera !== false) {
+    const activeDebts = safeDeudasFinancieras.filter(d => d.estado === 'VIGENTE');
+    activeDebts.forEach(d => {
+      (d.cuotas || []).filter(c => c.estado === 'PENDIENTE').forEach(c => {
+        totalDeudaFinancieraMonto += c.montoCuota;
+        partidasDeudaFinanciera.push({
+          institucion: d.institucionFinanciera,
+          operacion: d.numeroOperacion,
+          numeroCuota: c.numeroCuota,
+          fechaVencimiento: c.fechaVencimiento,
+          montoCuota: c.montoCuota,
+        });
+
+        const refDeudaCuota = `deuda-${d.id}-cuota-${c.numeroCuota}`;
+        if (!existsMovementWithRef(refDeudaCuota)) {
+          newMovements.push({
+            id: `mov-${refDeudaCuota}`,
+            fechaEstimada: c.fechaVencimiento,
+            concepto: `Cuota ${c.numeroCuota} ${d.tipoCredito.replace(/_/g, ' ')} - ${d.institucionFinanciera} (Op: ${d.numeroOperacion})`,
+            contraparte: d.institucionFinanciera,
+            montoNeto: c.montoCapital,
+            montoIva: c.montoInteres,
+            montoTotal: c.montoCuota,
+            moneda: 'CLP',
+            tipo: 'EGRESO',
+            categoria: 'DEUDA_FINANCIERA_CUOTA',
+            estado: 'PENDIENTE',
+            origenModulo: 'DEUDA_FINANCIERA',
+            documentoReferencia: refDeudaCuota,
+            probabilidadCobroPct: 100,
+            alertaRiesgo: 'Vencimiento Obligación Financiera Bancaria',
+          });
+        }
+      });
+    });
+  }
+
+  // 13. PROVISIONES DE EGRESOS (Gratificaciones, IAS, Honorarios devengados, Mantenciones)
+  const partidasProvisiones: { concepto: string; tipo: any; fechaEstimadaPago: string; montoEstimado: number }[] = [];
+  let totalProvisionesMonto = 0;
+
+  if (params.incluirProvisionesEgresos !== false) {
+    const pendingProvisions = safeProvisiones.filter(p => p.estado === 'PENDIENTE');
+    pendingProvisions.forEach(p => {
+      const esAfectoIva = p.afectacionIva === 'AFECTO_IVA_19';
+      const tasaIva = p.tasaIvaPct !== undefined ? p.tasaIvaPct : 19;
+      const montoNeto = p.montoNeto !== undefined ? p.montoNeto : p.montoEstimado;
+      const montoIva = p.montoIva !== undefined 
+        ? p.montoIva 
+        : (esAfectoIva ? Math.round(montoNeto * (tasaIva / 100)) : 0);
+      const montoTotalCaja = p.montoTotal !== undefined 
+        ? p.montoTotal 
+        : (montoNeto + montoIva);
+
+      totalProvisionesMonto += montoTotalCaja;
+      partidasProvisiones.push({
+        concepto: p.concepto,
+        tipo: p.tipoProvision,
+        fechaEstimadaPago: p.fechaEstimadaPago,
+        montoEstimado: montoTotalCaja,
+      });
+
+      const refProv = `prov-${p.id}`;
+      if (!existsMovementWithRef(refProv)) {
+        newMovements.push({
+          id: `mov-${refProv}`,
+          fechaEstimada: p.fechaEstimadaPago,
+          concepto: p.concepto,
+          contraparte: p.proveedorNombre || `Provisión ${p.tipoProvision.replace(/_/g, ' ')}`,
+          rutContraparte: p.proveedorRut,
+          montoNeto: montoNeto,
+          montoIva: montoIva,
+          montoTotal: montoTotalCaja,
+          moneda: 'CLP',
+          tipo: 'EGRESO',
+          categoria: 'PROVISION_EGRESO',
+          estado: 'PENDIENTE',
+          origenModulo: 'PROVISIONES',
+          documentoReferencia: refProv,
+          probabilidadCobroPct: p.probabilidadMaterializacionPct || 90,
+          alertaRiesgo: p.naturaleza === 'EXTRACONTABLE' 
+            ? 'Partida Presupuestaria Extracontable' 
+            : 'Provisión Pasivo Estimado Devengado',
+        });
+      }
+    });
+  }
+
   const scanResult: ErpCommitmentsScanResult = {
     nominaSueldos: {
       totalTrabajadores,
       totalLiquidoMensual,
       fechaPagoEstimada: fechaPagoNominaMes1,
-      proyectado: totalLiquidoMensual > 0,
+      proyectado: totalLiquidoMensual > 0 && params.incluirNominaSueldos !== false,
     },
     previredLeyesSociales: {
       totalAporteTrabajador,
       totalAportePatronal,
       totalPreviredMensual,
       fechaVencimientoPrevired: previredDateMes1,
-      proyectado: totalPreviredMensual > 0,
+      proyectado: totalPreviredMensual > 0 && params.incluirPreviredLeyesSociales !== false,
     },
     f29Impuestos: {
       periodoFiscal: periodoF29,
@@ -518,7 +953,7 @@ export function scanErpCommitments({
       retenciones: f29Retenciones,
       totalAPagarF29: f29Total,
       fechaVencimientoF29: f29DueDate,
-      proyectado: f29Total > 0,
+      proyectado: f29Total > 0 && params.incluirF29Impuestos !== false,
     },
     produccionHitos: {
       totalPresupuestosAprobados: approvedBudgets.length,
@@ -532,6 +967,26 @@ export function scanErpCommitments({
       comprasPorPagarCount,
       comprasPorPagarTotal,
     },
+    chequesCartera: {
+      totalCheques: partidasChequesCartera.length,
+      montoTotalCobro: totalChequesCarteraMonto,
+      partidas: partidasChequesCartera,
+    },
+    chequesEmitidos: {
+      totalCheques: partidasChequesEmitidos.length,
+      montoTotalPago: totalChequesEmitidosMonto,
+      partidas: partidasChequesEmitidos,
+    },
+    deudaFinanciera: {
+      totalOperaciones: safeDeudasFinancieras.filter(d => d.estado === 'VIGENTE').length,
+      montoTotalCuotasPendientes: totalDeudaFinancieraMonto,
+      partidas: partidasDeudaFinanciera,
+    },
+    provisionesEgresos: {
+      totalProvisiones: partidasProvisiones.length,
+      montoTotalEstimado: totalProvisionesMonto,
+      partidas: partidasProvisiones,
+    },
     totalCompromisosIdentificados: newMovements.length,
   };
 
@@ -544,7 +999,7 @@ export function scanErpCommitments({
 export function buildDailyCashFlowProjection(
   movements: CashFlowMovement[] = [],
   initialBalance: number = 0,
-  daysHorizon: number = 60,
+  horizon: number | CashFlowHorizonType = 60,
   scenario: 'BASE' | 'OPTIMISTA' | 'ESTRESADO' = 'BASE',
   safetyReserve: number = 2000000 // Colchón de seguridad mínimo recomendado
 ): {
@@ -575,34 +1030,59 @@ export function buildDailyCashFlowProjection(
   };
   const mult = getMultiplier();
 
-  // Create calendar days starting today
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+  // Determinar si es apertura por día del mes o por horizonte corrido
+  const isMonthDayView = horizon === 'DIA_DEL_MES' || horizon === 'MES_COMPLETO';
+  let startDate: Date;
+  let totalDaysCount: number;
+
+  if (isMonthDayView) {
+    // Desde el día 1 del mes actual hasta el último día del mes actual
+    startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    totalDaysCount = lastDayOfMonth;
+  } else if (horizon === 'PROXIMO_MES') {
+    // Mes siguiente completo
+    startDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const lastDayNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0).getDate();
+    totalDaysCount = lastDayNextMonth;
+  } else {
+    startDate = new Date(today.getTime());
+    if (horizon === '15_DIAS' || horizon === 15) totalDaysCount = 15;
+    else if (horizon === '30_DIAS' || horizon === 30) totalDaysCount = 30;
+    else if (horizon === '60_DIAS' || horizon === 60) totalDaysCount = 60;
+    else if (horizon === '90_DIAS' || horizon === 90) totalDaysCount = 90;
+    else if (horizon === '1_ANIO' || horizon === 365) totalDaysCount = 365;
+    else totalDaysCount = typeof horizon === 'number' ? horizon : 60;
+  }
 
   const dailyPoints: DailyCashFlowPoint[] = [];
   let runningBalance = initialBalance;
   let totalIngresos = 0;
   let totalEgresos = 0;
   let saldoMinimo = initialBalance;
-  let fechaSaldoMinimo = today.toISOString().split('T')[0];
+  let fechaSaldoMinimo = startDate.toISOString().split('T')[0];
 
   let firstDeficitDate: string | null = null;
   let daysToFirstDeficit: number | null = null;
   let maxDeficitAmount = 0;
   const causesMap: { [key: string]: number } = {};
 
-  const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  for (let i = 0; i < totalDaysCount; i++) {
+    const currentDay = isMonthDayView
+      ? new Date(startDate.getFullYear(), startDate.getMonth(), i + 1)
+      : new Date(startDate.getTime() + i * 86400000);
 
-  for (let i = 0; i <= daysHorizon; i++) {
-    const currentDay = new Date(today.getTime() + i * 86400000);
     const dateStr = currentDay.toISOString().split('T')[0];
     const diaSemana = daysOfWeek[currentDay.getDay()];
+    const saldoInicialDia = runningBalance;
 
-    // Find movements on this day
-    const dayMovements = safeMovs.filter(m => {
-      const mDate = m.fechaEstimada;
-      return mDate === dateStr;
-    });
+    // Movimientos del día
+    const dayMovements = safeMovs.filter(m => m.fechaEstimada === dateStr);
 
     let dayIngresos = 0;
     let dayEgresos = 0;
@@ -646,13 +1126,14 @@ export function buildDailyCashFlowProjection(
     if (estaEnDeficit) {
       if (!firstDeficitDate) {
         firstDeficitDate = dateStr;
-        daysToFirstDeficit = i;
+        daysToFirstDeficit = isMonthDayView
+          ? Math.max(0, Math.round((currentDay.getTime() - today.getTime()) / 86400000))
+          : i;
       }
       if (quiebreCajaMonto > maxDeficitAmount) {
         maxDeficitAmount = quiebreCajaMonto;
       }
 
-      // Record causes of high expenses
       eventosClave.filter(e => e.tipo === 'EGRESO').forEach(e => {
         causesMap[e.concepto] = (causesMap[e.concepto] || 0) + e.monto;
       });
@@ -665,6 +1146,7 @@ export function buildDailyCashFlowProjection(
       egresosDia: dayEgresos,
       flujoNetoDia,
       saldoProyectado: runningBalance,
+      saldoInicialDia,
       estaEnDeficit,
       quiebreCajaMonto,
       eventosClave,
@@ -693,7 +1175,7 @@ export function buildDailyCashFlowProjection(
     const lastDay = chunk[chunk.length - 1];
 
     weeklyTimeline.push({
-      semanaLabel: `Semana ${weekNum}`,
+      semanaLabel: isMonthDayView ? `Semana ${weekNum} del Mes` : `Semana ${weekNum}`,
       fechaInicio: chunk[0].fecha,
       fechaFin: lastDay.fecha,
       ingresos: wIng,
@@ -710,7 +1192,7 @@ export function buildDailyCashFlowProjection(
     const sortedCauses = Object.entries(causesMap)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
-      .map(([concept, amount]) => `${concept} ($${amount.toLocaleString('es-CL')})`);
+      .map(([concept, amount]) => `${concept} (${amount.toLocaleString('es-CL')})`);
 
     const recomendaciones: string[] = [
       'Anticipar cobranza de facturas por cobrar del RCV mediante pronto pago comercial (descuento 2%) o factoring bancario.',
@@ -723,7 +1205,7 @@ export function buildDailyCashFlowProjection(
 
     alert = {
       fechaQuiebre: firstDeficitDate,
-      diasParaQuiebre: daysToFirstDeficit,
+      diasParaQuiebre: Math.max(0, daysToFirstDeficit),
       saldoMinimoProyectado: saldoMinimo,
       deficitMaximo: maxDeficitAmount,
       causasPrincipales: sortedCauses.length > 0 ? sortedCauses : ['Concurrencia de egresos operacionales y nómina'],
@@ -754,5 +1236,220 @@ export function buildDailyCashFlowProjection(
     saldoFinalProyectado: runningBalance,
     saldoMinimo,
     fechaSaldoMinimo,
+  };
+}
+
+// 10. PROYECCIÓN ANUAL A 12 MESES
+export function buildAnnualCashFlowProjection({
+  initialBalance = 0,
+  historicalSales,
+  payrolls = [],
+  f29,
+  leases = [],
+  dtes = [],
+  productionBudgets = [],
+  chequesCartera = [],
+  chequesEmitidos = [],
+  deudasFinancieras = [],
+  provisionesEgresos = [],
+  params = DEFAULT_CASH_FLOW_PARAMETERS,
+  scenario = 'BASE',
+}: {
+  initialBalance: number;
+  historicalSales: HistoricalSalesAnalysis;
+  payrolls?: EmployeePayroll[];
+  f29?: F29Declaration;
+  leases?: LeaseContract[];
+  dtes?: DteDocument[];
+  productionBudgets?: ProductionBudget[];
+  chequesCartera?: ChequeCartera[];
+  chequesEmitidos?: ChequeEmitido[];
+  deudasFinancieras?: DeudaFinanciera[];
+  provisionesEgresos?: ProvisionEgreso[];
+  params?: CashFlowInclusionParameters;
+  scenario?: 'BASE' | 'OPTIMISTA' | 'ESTRESADO';
+}): {
+  monthlyPoints: MonthlyCashFlowPoint[];
+  totalIngresosAnio: number;
+  totalEgresosAnio: number;
+  totalIngresos12m?: number;
+  totalEgresos12m?: number;
+  flujoNetoAnio: number;
+  saldoFinalAnio: number;
+  saldoMinimoAnio: number;
+  mesMinimo: string;
+} {
+  const getMultiplier = () => {
+    if (scenario === 'OPTIMISTA') return { ing: 1.15, egr: 0.95 };
+    if (scenario === 'ESTRESADO') return { ing: 0.70, egr: 1.10 };
+    return { ing: 1.0, egr: 1.0 };
+  };
+  const mult = getMultiplier();
+
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth(); // 0-indexed
+
+  const monthNames = [
+    'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
+  ];
+
+  const totalLiquidoMensual = (payrolls || []).reduce((s, p) => s + (p.sueldoLiquido || 0), 0) || 14850000;
+  const totalPreviredMensual = (payrolls || []).reduce(
+    (s, p) => s + (p.afpMonto || 0) + (p.saludMonto || 0) + (p.sisEmpleadorMonto || 0) + (p.mutualEmpleadorMonto || 0),
+    0
+  ) || 4920000;
+  const totalArriendosMensual = (leases || []).reduce((s, l) => s + (l.montoMensualClp || l.montoCanonMensual || 0), 0) || 1850000;
+
+  const baseVentasBruto = historicalSales.promedioMensualVentasBruto || 48500000;
+  const monthlyPoints: MonthlyCashFlowPoint[] = [];
+
+  let runningBalance = initialBalance;
+  let totalIngresosAnio = 0;
+  let totalEgresosAnio = 0;
+  let saldoMinimoAnio = initialBalance;
+  let mesMinimo = `${monthNames[currentMonth]} ${currentYear}`;
+
+  for (let m = 0; m < 12; m++) {
+    const targetDate = new Date(currentYear, currentMonth + m, 1);
+    const y = targetDate.getFullYear();
+    const mo = targetDate.getMonth();
+    const periodo = `${y}-${String(mo + 1).padStart(2, '0')}`;
+    const mesLabel = `${monthNames[mo]} ${y}`;
+
+    const growth = Math.pow(1 + (params.tasaCrecimientoVentasPct || 0) / 100, m / 12);
+    const monthSales = Math.round(baseVentasBruto * growth * mult.ing);
+
+    // Ingresos
+    const ingresosVentasHistoria = params.incluirVentasProyectadasHistoria !== false ? monthSales : 0;
+    
+    // DTEs por cobrar que caen en este mes
+    const dtesInMonth = (dtes || [])
+      .filter(d => d.tipoOperacion === 'VENTA' && d.estadoPago === 'PENDIENTE')
+      .filter(d => (d.fechaVencimiento || '').startsWith(periodo))
+      .reduce((s, d) => s + d.montoTotal, 0);
+    const ingresosDtes = params.incluirCobranzaDtePendientes !== false ? Math.round(dtesInMonth * mult.ing) : 0;
+
+    // Hitos producción
+    const hitosInMonth = (productionBudgets || [])
+      .filter(b => b.estado === 'APROBADO')
+      .reduce((s, b) => s + ((b.precioVentaNetoCliente || b.costoTotalInterno || 0) * 0.15), 0);
+    const ingresosHitos = params.incluirHitosProduccion !== false && m < 4 ? Math.round(hitosInMonth * mult.ing) : 0;
+
+    // Cheques en Cartera por Cobrar en este mes
+    const chequesCarteraInMonth = (chequesCartera || [])
+      .filter(c => c.estado === 'EN_CARTERA' && (c.fechaCobro || '').startsWith(periodo))
+      .reduce((s, c) => s + c.monto, 0);
+    const ingresosChequesCartera = params.incluirChequesCartera !== false ? Math.round(chequesCarteraInMonth * mult.ing) : 0;
+
+    const ingresosTotales = ingresosVentasHistoria + ingresosDtes + ingresosHitos + ingresosChequesCartera;
+
+    // Egresos
+    const egresosNomina = params.incluirNominaSueldos !== false ? Math.round(totalLiquidoMensual * mult.egr) : 0;
+    const egresosPrevired = params.incluirPreviredLeyesSociales !== false ? Math.round(totalPreviredMensual * mult.egr) : 0;
+    
+    // F29: IVA Débito ~19% de ventas - Crédito ~10% de compras + PPM ~1.5%
+    const f29Estimado = Math.round(monthSales * 0.055);
+    const egresosF29 = params.incluirF29Impuestos !== false ? Math.round(f29Estimado * mult.egr) : 0;
+
+    // Proveedores e insumos: ~42% de ventas
+    const provEstimado = Math.round(monthSales * 0.42);
+    const egresosProveedores = params.incluirPagoProveedoresDte !== false ? Math.round(provEstimado * mult.egr) : 0;
+
+    const egresosArriendos = params.incluirArriendosIfrs16 !== false ? Math.round(totalArriendosMensual * 1.19 * mult.egr) : 0;
+    const egresosCajaFondoFijo = params.incluirGastosFondoFijo !== false ? 1200000 : 0;
+
+    // Cheques Emitidos por Pagar en este mes
+    const chequesEmitidosInMonth = (chequesEmitidos || [])
+      .filter(c => c.estado === 'GIRADO_PENDIENTE' && (c.fechaPago || '').startsWith(periodo))
+      .reduce((s, c) => s + c.monto, 0);
+    const egresosChequesEmitidos = params.incluirChequesEmitidos !== false ? Math.round(chequesEmitidosInMonth * mult.egr) : 0;
+
+    // Deudas con Instituciones Financieras (Cuotas que vencen en este mes)
+    let deudasInMonth = 0;
+    (deudasFinancieras || []).filter(d => d.estado === 'VIGENTE').forEach(d => {
+      (d.cuotas || []).filter(c => c.estado === 'PENDIENTE' && (c.fechaVencimiento || '').startsWith(periodo)).forEach(c => {
+        deudasInMonth += c.montoCuota;
+      });
+    });
+    const egresosDeudaFinanciera = params.incluirDeudaFinanciera !== false ? Math.round(deudasInMonth * mult.egr) : 0;
+
+    // Provisiones de Egresos a materializarse en este mes (Monto Bruto con IVA si aplica)
+    const provisionesInMonth = (provisionesEgresos || [])
+      .filter(p => p.estado === 'PENDIENTE' && (p.fechaEstimadaPago || '').startsWith(periodo))
+      .reduce((s, p) => {
+        const total = p.montoTotal !== undefined 
+          ? p.montoTotal 
+          : (p.afectacionIva === 'AFECTO_IVA_19' ? Math.round(p.montoEstimado * 1.19) : p.montoEstimado);
+        return s + total;
+      }, 0);
+    const egresosProvisiones = params.incluirProvisionesEgresos !== false ? Math.round(provisionesInMonth * mult.egr) : 0;
+
+    const egresosTotales = egresosNomina + egresosPrevired + egresosF29 + egresosProveedores + egresosArriendos + egresosCajaFondoFijo + egresosChequesEmitidos + egresosDeudaFinanciera + egresosProvisiones;
+
+    const saldoInicial = runningBalance;
+    const flujoNeto = ingresosTotales - egresosTotales;
+    const saldoFinal = saldoInicial + flujoNeto;
+
+    runningBalance = saldoFinal;
+    totalIngresosAnio += ingresosTotales;
+    totalEgresosAnio += egresosTotales;
+
+    if (saldoFinal < saldoMinimoAnio) {
+      saldoMinimoAnio = saldoFinal;
+      mesMinimo = mesLabel;
+    }
+
+    monthlyPoints.push({
+      periodo,
+      mesLabel,
+      mesAnio: periodo,
+      numeroMes: m + 1,
+      saldoInicial,
+      ingresosTotales,
+      totalIngresos: ingresosTotales,
+      ingresosVentasHistoria,
+      ventasHistoria: ingresosVentasHistoria,
+      ingresosDtes,
+      cobranzasDte: ingresosDtes,
+      ingresosHitos,
+      ingresosChequesCartera,
+      chequesCartera: ingresosChequesCartera,
+      egresosTotales,
+      totalEgresos: egresosTotales,
+      egresosProveedores,
+      pagoProveedores: egresosProveedores,
+      egresosNomina,
+      nominaSueldos: egresosNomina,
+      egresosPrevired,
+      previredLeyesSociales: egresosPrevired,
+      egresosF29,
+      f29Impuestos: egresosF29,
+      egresosArriendos,
+      arriendos: egresosArriendos,
+      egresosChequesEmitidos,
+      chequesEmitidos: egresosChequesEmitidos,
+      egresosDeudaFinanciera,
+      deudaFinanciera: egresosDeudaFinanciera,
+      egresosProvisiones,
+      provisionesEgresos: egresosProvisiones,
+      egresosCajaFondoFijo,
+      flujoNeto,
+      saldoFinal,
+      estaEnDeficit: saldoFinal < 0,
+    });
+  }
+
+  return {
+    monthlyPoints,
+    totalIngresosAnio,
+    totalEgresosAnio,
+    totalIngresos12m: totalIngresosAnio,
+    totalEgresos12m: totalEgresosAnio,
+    flujoNetoAnio: totalIngresosAnio - totalEgresosAnio,
+    saldoFinalAnio: runningBalance,
+    saldoMinimoAnio,
+    mesMinimo,
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Plus, 
   Receipt, 
@@ -24,9 +24,12 @@ import {
   Trash2,
   Download,
   DownloadCloud,
-  ShieldAlert
+  ShieldAlert,
+  Target,
+  Layers
 } from 'lucide-react';
-import { DteDocument, DteType, AccountingEntry, CompanyProfile, ClientCompany } from '../types';
+import { DteDocument, DteItemDetail, DteType, AccountingEntry, CompanyProfile, ClientCompany, CostCenterMaster } from '../types';
+import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import { 
   formatCLP, 
   formatNumberCL, 
@@ -48,6 +51,8 @@ interface DteManagerProps {
   company?: CompanyProfile | ClientCompany;
   onSyncPendingToCashFlow?: () => void;
   onClearAllDtes?: () => void;
+  onNavigateToBilling?: () => void;
+  costCenters?: CostCenterMaster[];
 }
 
 export const DteManager: React.FC<DteManagerProps> = ({
@@ -58,9 +63,14 @@ export const DteManager: React.FC<DteManagerProps> = ({
   onAddEntry,
   company,
   onSyncPendingToCashFlow,
-  onClearAllDtes
+  onClearAllDtes,
+  onNavigateToBilling,
+  costCenters,
 }) => {
   const safeDtes = Array.isArray(dtes) ? dtes : [];
+  const availableCostCenters = useMemo(() => {
+    return Array.isArray(costCenters) && costCenters.length > 0 ? costCenters : SEED_COST_CENTERS;
+  }, [costCenters]);
   const [activeSubTab, setActiveSubTab] = useState<'TODOS' | 'VENTA' | 'COMPRA' | 'HONORARIOS' | 'BOLETAS' | 'PENDIENTES_CONTABILIZAR'>('TODOS');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('TODOS');
@@ -73,6 +83,128 @@ export const DteManager: React.FC<DteManagerProps> = ({
   const [viewEntryModal, setViewEntryModal] = useState<AccountingEntry | null>(null);
   const [copied, setCopied] = useState(false);
   const [syncAlert, setSyncAlert] = useState<string | null>(null);
+
+  // Estado para gestión y desglose de Centro de Costos por Ítem de la Factura
+  const [selectedDteForItems, setSelectedDteForItems] = useState<DteDocument | null>(null);
+  const [editingItems, setEditingItems] = useState<DteItemDetail[]>([]);
+  const [itemsSuccessMsg, setItemsSuccessMsg] = useState<string | null>(null);
+
+  const handleOpenItemsModal = (doc: DteDocument) => {
+    setSelectedDteForItems(doc);
+    if (doc.items && doc.items.length > 0) {
+      setEditingItems(doc.items.map(it => ({ ...it })));
+    } else {
+      const defaultMonto = (doc.montoNeto || 0) + (doc.montoExento || 0) || doc.montoTotal;
+      setEditingItems([
+        {
+          id: `item-${Date.now()}-1`,
+          nombre: doc.glosa || `Ítem Principal Folio ${doc.folio}`,
+          cantidad: 1,
+          unidadMedida: 'UN',
+          precioUnitario: defaultMonto,
+          montoTotal: defaultMonto,
+          esExento: Boolean(doc.montoExento && doc.montoExento > 0 && (!doc.montoNeto || doc.montoNeto === 0)),
+          centroCostoId: doc.centroCostoId || availableCostCenters[0]?.id,
+          centroCostoCodigo: doc.centroCostoCodigo || availableCostCenters[0]?.codigo,
+          centroCostoNombre: doc.centroCostoNombre || availableCostCenters[0]?.nombre,
+          cuentaCodigo: doc.tipoOperacion === 'VENTA' ? '4.1.01' : ((doc as any).cuentaGastoImputadaCodigo || '5.1.01'),
+          cuentaNombre: doc.tipoOperacion === 'VENTA' ? 'Ingresos por Ventas' : ((doc as any).cuentaGastoImputadaNombre || 'Costos Operacionales Directos'),
+        }
+      ]);
+    }
+    setItemsSuccessMsg(null);
+  };
+
+  const handleAddItemRow = () => {
+    const firstCC = availableCostCenters[0];
+    setEditingItems(prev => [
+      ...prev,
+      {
+        id: `item-${Date.now()}-${prev.length + 1}`,
+        nombre: `Ítem ${prev.length + 1}`,
+        cantidad: 1,
+        unidadMedida: 'UN',
+        precioUnitario: 0,
+        montoTotal: 0,
+        esExento: false,
+        centroCostoId: firstCC?.id,
+        centroCostoCodigo: firstCC?.codigo,
+        centroCostoNombre: firstCC?.nombre,
+        cuentaCodigo: selectedDteForItems?.tipoOperacion === 'VENTA' ? '4.1.01' : '5.1.01',
+        cuentaNombre: selectedDteForItems?.tipoOperacion === 'VENTA' ? 'Ingresos por Ventas' : 'Costos Operacionales Directos',
+      }
+    ]);
+  };
+
+  const handleRemoveItemRow = (index: number) => {
+    setEditingItems(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleItemFieldChange = (index: number, field: string, value: any) => {
+    setEditingItems(prev => {
+      const copy = [...prev];
+      const item = { ...copy[index] };
+      if (field === 'centroCostoCodigo') {
+        const foundCc = availableCostCenters.find(c => c.codigo === value);
+        item.centroCostoCodigo = value;
+        item.centroCostoId = foundCc?.id;
+        item.centroCostoNombre = foundCc?.nombre;
+      } else if (field === 'cantidad' || field === 'precioUnitario') {
+        (item as any)[field] = Number(value) || 0;
+        item.montoTotal = Math.round(Number(item.cantidad || 0) * Number(item.precioUnitario || 0));
+      } else if (field === 'montoTotal') {
+        item.montoTotal = Number(value) || 0;
+        if (item.cantidad && item.cantidad > 0) {
+          item.precioUnitario = Math.round(item.montoTotal / item.cantidad);
+        }
+      } else {
+        (item as any)[field] = value;
+      }
+      copy[index] = item;
+      return copy;
+    });
+  };
+
+  const handleApplyCostCenterToAllItems = (ccCodigo: string) => {
+    const foundCc = availableCostCenters.find(c => c.codigo === ccCodigo);
+    setEditingItems(prev => prev.map(it => ({
+      ...it,
+      centroCostoCodigo: ccCodigo,
+      centroCostoId: foundCc?.id,
+      centroCostoNombre: foundCc?.nombre,
+    })));
+  };
+
+  const handleSaveItemsForDte = () => {
+    if (!selectedDteForItems) return;
+    const firstItemWithCc = editingItems.find(it => it.centroCostoCodigo);
+    const updatedDoc: DteDocument = {
+      ...selectedDteForItems,
+      items: editingItems,
+      centroCostoId: firstItemWithCc?.centroCostoId || selectedDteForItems.centroCostoId,
+      centroCostoCodigo: firstItemWithCc?.centroCostoCodigo || selectedDteForItems.centroCostoCodigo,
+      centroCostoNombre: firstItemWithCc?.centroCostoNombre || selectedDteForItems.centroCostoNombre,
+    };
+
+    onUpdateDte(updatedDoc);
+
+    // Regenerar asiento contable para reflejar los centros de costo de los ítems
+    try {
+      let newEntry: AccountingEntry | null = null;
+      if (updatedDoc.tipoOperacion === 'VENTA') {
+        newEntry = createSalesDteEntry(updatedDoc);
+      } else if (updatedDoc.tipoOperacion === 'COMPRA') {
+        newEntry = createPurchaseDteEntry(updatedDoc);
+      }
+      if (newEntry) {
+        onAddEntry(newEntry);
+      }
+    } catch (err) {
+      console.error('Error al regenerar asiento contable con ítems:', err);
+    }
+
+    setItemsSuccessMsg(`¡Ítems y Centros de Costo actualizados! El asiento contable ha sido regenerado reflejando la imputación analítica de cada partida.`);
+  };
 
   // Verificación de condición tributaria: No Afecta a IVA (Art. 12 Letra E / DL 825)
   const isCompanyExento = Boolean(
@@ -233,6 +365,9 @@ export const DteManager: React.FC<DteManagerProps> = ({
       retencionMonto: newDte.retencionMonto,
       estadoSii: (newDte.estadoSii as any) || 'ACEPTADO',
       estadoPago: (newDte.estadoPago as any) || 'PENDIENTE',
+      centroCostoId: newDte.centroCostoId,
+      centroCostoCodigo: newDte.centroCostoCodigo,
+      centroCostoNombre: newDte.centroCostoNombre,
       glosa: newDte.glosa || 'Registro DTE',
     };
 
@@ -646,10 +781,22 @@ export const DteManager: React.FC<DteManagerProps> = ({
           <button
             onClick={() => setShowManualModal(true)}
             className="flex items-center gap-1.5 bg-[#2563eb] hover:bg-blue-600 text-white px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Registrar documento tributario en la contabilidad interna del ERP (No emite ante el SII)"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Emitir / Registrar DTE</span>
+            <span>Registrar DTE (Interno)</span>
           </button>
+
+          {onNavigateToBilling && (
+            <button
+              onClick={onNavigateToBilling}
+              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+              title="Emitir y timbrar facturas electrónicas oficiales en el SII con Robot Playwright"
+            >
+              <Bot className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Emitir Factura (Robot SII)</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -725,6 +872,21 @@ export const DteManager: React.FC<DteManagerProps> = ({
                               {doc.partidasDesglosadas.length} partidas
                             </span>
                           )}
+                          {doc.centroCostoCodigo && (
+                            <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-1.5 py-0.2 rounded border border-indigo-200" title={doc.centroCostoNombre}>
+                              CC: {doc.centroCostoCodigo}
+                            </span>
+                          )}
+                          {doc.items && doc.items.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenItemsModal(doc)}
+                              className="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium px-1.5 py-0.2 rounded border border-blue-200 cursor-pointer transition-colors"
+                              title={`${doc.items.length} ítems. Click para ver y asignar centros de costo`}
+                            >
+                              {doc.items.length} ítems (CC)
+                            </button>
+                          )}
                           {doc.asientoCentralizacionId && (
                             <span className="text-[10px] bg-emerald-50 text-emerald-700 font-medium px-1.5 py-0.2 rounded border border-emerald-200">
                               Centralizado
@@ -789,15 +951,25 @@ export const DteManager: React.FC<DteManagerProps> = ({
                         </button>
                       </td>
 
-                      {/* Botón Ver Asiento */}
+                      {/* Acciones */}
                       <td className="px-4 py-3 text-right font-sans">
-                        <button
-                          onClick={() => handleViewEntry(doc)}
-                          className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-[#2563eb] border border-blue-200 px-2.5 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
-                        >
-                          <FileCode className="w-3 h-3 text-[#2563eb]" />
-                          <span>Ver Asiento</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => handleOpenItemsModal(doc)}
+                            className="inline-flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                            title="Desglose por Ítem y Centro de Costos"
+                          >
+                            <Target className="w-3 h-3 text-indigo-600" />
+                            <span>Ítems & CC</span>
+                          </button>
+                          <button
+                            onClick={() => handleViewEntry(doc)}
+                            className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-[#2563eb] border border-blue-200 px-2.5 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                          >
+                            <FileCode className="w-3 h-3 text-[#2563eb]" />
+                            <span>Ver Asiento</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -983,9 +1155,14 @@ export const DteManager: React.FC<DteManagerProps> = ({
             <div className="px-6 py-4 bg-[#0f172a] text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold text-white text-sm sm:text-base">
-                  Emitir / Registrar Nuevo Documento Tributario (DTE)
-                </h3>
+                <div>
+                  <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
+                    <span>Registrar Documento Tributario (DTE)</span>
+                    <span className="text-[10px] uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-400/30 px-2 py-0.5 rounded font-bold">
+                      Registro Contable Interno
+                    </span>
+                  </h3>
+                </div>
               </div>
               <button
                 onClick={() => setShowManualModal(false)}
@@ -996,6 +1173,43 @@ export const DteManager: React.FC<DteManagerProps> = ({
             </div>
 
             <form onSubmit={handleCreateDte} className="p-6 space-y-4 text-xs">
+              {/* Alerta de Control Interno: Aclaración de Registro vs Emisión SII */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 text-xs text-amber-900 flex flex-col gap-2.5">
+                <div className="flex items-start gap-2.5">
+                  <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold text-amber-950">
+                      Aviso de Control Interno: Esta función SOLO REGISTRA en el ERP, NO EMITE ante el SII
+                    </p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      Este formulario incorpora el DTE a los libros auxiliares de compra/venta y genera el <strong>asiento contable automático IFRS</strong> en el Libro Diario. <strong>No transmite, no emite ni timbra facturas ante el Servicio de Impuestos Internos</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-amber-200/80">
+                  <span className="text-[11px] text-amber-900 font-medium">
+                    ¿Desea <strong>emitir y timbrar</strong> formalmente con el <strong>Robot Playwright</strong> en el SII?
+                  </span>
+                  {onNavigateToBilling ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowManualModal(false);
+                        onNavigateToBilling();
+                      }}
+                      className="inline-flex items-center gap-1.5 bg-[#2563eb] hover:bg-blue-600 text-white font-semibold px-3 py-1 rounded text-[11px] transition-colors shadow-xs cursor-pointer"
+                    >
+                      <Bot className="w-3.5 h-3.5" />
+                      <span>Presione aquí para emitir</span>
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-blue-700 font-semibold">
+                      Vaya al menú lateral: <strong>Facturación & Cobranza</strong>
+                    </span>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1">Tipo de Operación:</label>
@@ -1123,6 +1337,30 @@ export const DteManager: React.FC<DteManagerProps> = ({
               </div>
 
               <div>
+                <label className="block text-slate-700 font-semibold mb-1">Centro de Costo Imputado:</label>
+                <select
+                  value={newDte.centroCostoCodigo || ''}
+                  onChange={(e) => {
+                    const found = availableCostCenters.find(c => c.codigo === e.target.value);
+                    setNewDte(prev => ({
+                      ...prev,
+                      centroCostoId: found?.id,
+                      centroCostoCodigo: found?.codigo,
+                      centroCostoNombre: found?.nombre,
+                    }));
+                  }}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-md p-2 text-slate-800 text-sm focus:outline-none focus:border-[#2563eb]"
+                >
+                  <option value="">-- Sin Centro de Costos Asignado --</option>
+                  {availableCostCenters.map(cc => (
+                    <option key={cc.id} value={cc.codigo}>
+                      {cc.codigo} - {cc.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-slate-700 font-semibold mb-1">Glosa / Descripción:</label>
                 <input
                   type="text"
@@ -1220,7 +1458,242 @@ export const DteManager: React.FC<DteManagerProps> = ({
           onUpdateDte={onUpdateDte}
           onAddAccountingEntry={onAddEntry}
           onClearAllDtes={onClearAllDtes}
+          costCenters={costCenters}
         />
+      )}
+
+      {/* MODAL: GESTIÓN DE CENTROS DE COSTO POR ÍTEM DE FACTURA */}
+      {selectedDteForItems && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-xl w-full max-w-4xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150 my-6">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-[#0f172a] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Target className="w-5 h-5 text-indigo-400" />
+                <div>
+                  <h3 className="font-bold text-base flex items-center gap-2">
+                    <span>Desglose por Ítem y Centro de Costos</span>
+                    <span className="font-mono text-xs text-amber-400 bg-slate-800 px-2 py-0.5 rounded">
+                      Folio {selectedDteForItems.folio} ({selectedDteForItems.tipoOperacion})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    {selectedDteForItems.razonSocialContraparte} • RUT: {selectedDteForItems.rutContraparte}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedDteForItems(null)}
+                className="text-slate-400 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+              {/* Info banner */}
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-lg p-3.5 flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-indigo-700" />
+                    Contabilidad Analítica por Centro de Costos (Mini-Empresa)
+                  </h4>
+                  <p className="text-xs text-indigo-700 mt-0.5">
+                    Cada ítem o línea de detalle de la factura electrónica imputa su costo o ingreso directamente al Centro de Costos correspondiente, alimentando el Estado de Resultados analítico.
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-[11px] text-slate-500 block uppercase font-medium">Monto Total DTE</span>
+                  <span className="font-mono text-base font-bold text-slate-900">
+                    {formatCLP(selectedDteForItems.montoTotal)}
+                  </span>
+                </div>
+              </div>
+
+              {itemsSuccessMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{itemsSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Quick Batch Actions */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-700">Asignación Masiva:</span>
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) handleApplyCostCenterToAllItems(e.target.value);
+                    }}
+                    defaultValue=""
+                    className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="" disabled>Seleccionar Centro de Costos para todos...</option>
+                    {availableCostCenters.map(cc => (
+                      <option key={cc.id} value={cc.codigo}>
+                        {cc.codigo} - {cc.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleAddItemRow}
+                  className="px-3 py-1 bg-white hover:bg-slate-100 text-indigo-700 border border-indigo-200 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Agregar Ítem</span>
+                </button>
+              </div>
+
+              {/* Items Table */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Descripción del Ítem / Servicio</th>
+                      <th className="py-2.5 px-3 w-20 text-center">Cant.</th>
+                      <th className="py-2.5 px-3 w-28 text-right">P. Unitario</th>
+                      <th className="py-2.5 px-3 w-28 text-right">Monto Total</th>
+                      <th className="py-2.5 px-3 w-52">Centro de Costo Asignado</th>
+                      <th className="py-2.5 px-3 w-32">Cuenta</th>
+                      <th className="py-2.5 px-2 text-center w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {editingItems.map((item, idx) => (
+                      <tr key={item.id || idx} className="hover:bg-slate-50">
+                        <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">{idx + 1}</td>
+                        <td className="py-2.5 px-3">
+                          <input
+                            type="text"
+                            value={item.nombre}
+                            onChange={(e) => handleItemFieldChange(idx, 'nombre', e.target.value)}
+                            className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-xs focus:outline-none focus:border-indigo-500"
+                            placeholder="Nombre del producto o servicio"
+                          />
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.cantidad}
+                            onChange={(e) => handleItemFieldChange(idx, 'cantidad', e.target.value)}
+                            className="w-16 bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-center text-xs focus:outline-none focus:border-indigo-500"
+                          />
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            value={item.precioUnitario}
+                            onChange={(e) => handleItemFieldChange(idx, 'precioUnitario', e.target.value)}
+                            className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-right font-mono text-xs focus:outline-none focus:border-indigo-500"
+                          />
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            value={item.montoTotal}
+                            onChange={(e) => handleItemFieldChange(idx, 'montoTotal', e.target.value)}
+                            className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-right font-mono font-bold text-xs focus:outline-none focus:border-indigo-500"
+                          />
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <select
+                            value={item.centroCostoCodigo || ''}
+                            onChange={(e) => handleItemFieldChange(idx, 'centroCostoCodigo', e.target.value)}
+                            className="w-full bg-white border border-indigo-300 rounded px-2 py-1 text-xs font-medium text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          >
+                            <option value="">-- Sin Centro de Costos --</option>
+                            {availableCostCenters.map(cc => (
+                              <option key={cc.id} value={cc.codigo}>
+                                {cc.codigo} - {cc.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono">
+                          <input
+                            type="text"
+                            value={item.cuentaCodigo || ''}
+                            onChange={(e) => handleItemFieldChange(idx, 'cuentaCodigo', e.target.value)}
+                            className="w-24 bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] text-slate-700 focus:outline-none focus:border-indigo-500 font-mono"
+                            placeholder="Cta. contable"
+                          />
+                        </td>
+                        <td className="py-2.5 px-2 text-center">
+                          {editingItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemRow(idx)}
+                              className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
+                              title="Eliminar este ítem"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Resumen por Centro de Costos de esta Factura */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  Distribución Analítica de la Factura por Centro de Costo
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(
+                    editingItems.reduce((acc, it) => {
+                      const key = it.centroCostoCodigo ? `${it.centroCostoCodigo} (${it.centroCostoNombre || 'CC'})` : 'Sin Centro Asignado';
+                      acc[key] = (acc[key] || 0) + (it.montoTotal || 0);
+                      return acc;
+                    }, {} as Record<string, number>)
+                  ).map(([ccLabel, monto]) => (
+                    <div
+                      key={ccLabel}
+                      className="bg-white border border-slate-200 px-3 py-1.5 rounded text-xs flex items-center gap-2 shadow-2xs"
+                    >
+                      <span className="font-semibold text-slate-700">{ccLabel}:</span>
+                      <span className="font-mono font-bold text-indigo-700">{formatCLP(Number(monto))}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Total Ítems: <strong className="font-mono text-slate-800">{formatCLP(editingItems.reduce((s, it) => s + (it.montoTotal || 0), 0))}</strong>
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDteForItems(null)}
+                  className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveItemsForDte}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Guardar y Actualizar Asiento Contable</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

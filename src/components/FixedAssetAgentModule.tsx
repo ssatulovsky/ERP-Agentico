@@ -6,7 +6,9 @@ import {
   DepreciationMethod,
   AccountingEntry,
   ClientCompany,
+  CostCenterMaster,
 } from '../types';
+import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import {
   formatCLP,
   createFixedAssetAcquisitionEntry,
@@ -31,6 +33,12 @@ import {
   ArrowUpRight,
   Calculator,
   RefreshCw,
+  Pencil,
+  Trash2,
+  X,
+  Target,
+  Building2,
+  PieChart,
 } from 'lucide-react';
 
 interface FixedAssetAgentModuleProps {
@@ -39,9 +47,11 @@ interface FixedAssetAgentModuleProps {
   fixedAssets?: FixedAsset[];
   onAddAsset: (asset: FixedAsset) => void;
   onUpdateAsset: (asset: FixedAsset) => void;
+  onDeleteAsset?: (assetId: string) => void;
   onAddAccountingEntry: (entry: AccountingEntry) => void;
   accountingEntries?: AccountingEntry[];
   indicators?: any;
+  costCenters?: CostCenterMaster[];
 }
 
 export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
@@ -50,19 +60,28 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
   fixedAssets,
   onAddAsset,
   onUpdateAsset,
+  onDeleteAsset,
   onAddAccountingEntry,
   accountingEntries = [],
+  costCenters,
 }) => {
+  const availableCostCenters = useMemo(() => {
+    return Array.isArray(costCenters) && costCenters.length > 0 ? costCenters : SEED_COST_CENTERS;
+  }, [costCenters]);
+
   const assetList = useMemo(() => {
     return Array.isArray(assets) ? assets : Array.isArray(fixedAssets) ? fixedAssets : [];
   }, [assets, fixedAssets]);
 
-  const [activeTab, setActiveTab] = useState<'INVENTARIO' | 'DEPRECIACION' | 'CUADRO_OFICIAL' | 'MANTENCION' | 'CONTABILIDAD'>('INVENTARIO');
+  const [activeTab, setActiveTab] = useState<'INVENTARIO' | 'DEPRECIACION' | 'CENTROS_COSTO' | 'CUADRO_OFICIAL' | 'MANTENCION' | 'CONTABILIDAD'>('INVENTARIO');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('TODAS');
   const [selectedStatus, setSelectedStatus] = useState<string>('TODOS');
+  const [selectedCostCenter, setSelectedCostCenter] = useState<string>('TODOS');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState<FixedAsset | null>(null);
   const [selectedAssetDetail, setSelectedAssetDetail] = useState<FixedAsset | null>(null);
+  const [assetToDelete, setAssetToDelete] = useState<FixedAsset | null>(null);
   const [showDisposalModal, setShowDisposalModal] = useState<FixedAsset | null>(null);
   const [disposalPrice, setDisposalPrice] = useState<number>(0);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
@@ -80,6 +99,9 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
     cuentaContableActivo: '1.2.05',
     cuentaContableDepreciacion: '1.2.99',
     cuentaContableGasto: '5.2.13',
+    centroCostoId: 'cc-04',
+    centroCostoCodigo: 'CC-OP-MAR',
+    centroCostoNombre: 'Operaciones Marítimas & Fondeos Puerto Montt (Mini-Empresa)',
     fechaAdquisicion: new Date().toISOString().split('T')[0],
     fechaInicioUso: new Date().toISOString().split('T')[0],
     proveedorRut: '',
@@ -99,6 +121,9 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
     notasTecnicas: '',
   });
 
+  // Form State para Edición de Activo
+  const [editAssetForm, setEditAssetForm] = useState<Partial<FixedAsset>>({});
+
   // Notificación temporal
   const triggerSuccess = (msg: string) => {
     setActionSuccessMessage(msg);
@@ -115,9 +140,10 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
         (item.responsableCustodio && item.responsableCustodio.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchCat = selectedCategory === 'TODAS' || item.categoria === selectedCategory;
       const matchStatus = selectedStatus === 'TODOS' || item.estado === selectedStatus;
-      return matchSearch && matchCat && matchStatus;
+      const matchCostCenter = selectedCostCenter === 'TODOS' || item.centroCostoCodigo === selectedCostCenter || item.centroCostoId === selectedCostCenter;
+      return matchSearch && matchCat && matchStatus && matchCostCenter;
     });
-  }, [assetList, searchTerm, selectedCategory, selectedStatus]);
+  }, [assetList, searchTerm, selectedCategory, selectedStatus, selectedCostCenter]);
 
   // Métricas Consolidadas
   const metrics = useMemo(() => {
@@ -158,6 +184,32 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
       diffTemporalNic12,
       enMantencion,
     };
+  }, [assetList]);
+
+  // Distribución y Métricas por Centro de Costos
+  const costCenterSummary = useMemo(() => {
+    return availableCostCenters.map((cc) => {
+      const ccAssets = assetList.filter(
+        (a) => a.centroCostoCodigo === cc.codigo || a.centroCostoId === cc.id
+      );
+      const totalHistorico = ccAssets.reduce((s, a) => s + a.valorAdquisicionOriginal, 0);
+      const totalDepAcum = ccAssets.reduce((s, a) => s + a.depreciacionAcumuladaFinanciera, 0);
+      const totalValorLibro = ccAssets.reduce((s, a) => s + a.valorLibroFinanciero, 0);
+      const cuotaMensual = ccAssets.reduce((s, a) => s + (a.cuotaDepreciacionMensualFinanciera || 0), 0);
+      return {
+        cc,
+        assets: ccAssets,
+        count: ccAssets.length,
+        totalHistorico,
+        totalDepAcum,
+        totalValorLibro,
+        cuotaMensual,
+      };
+    });
+  }, [availableCostCenters, assetList]);
+
+  const unassignedAssets = useMemo(() => {
+    return assetList.filter((a) => !a.centroCostoCodigo && !a.centroCostoId);
   }, [assetList]);
 
   // Asientos relacionados con Activo Fijo
@@ -218,6 +270,9 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
       depreciacionAcumuladaTributaria: 0,
       valorTributarioNeto: valorNeto,
       cuotaDepreciacionMensualTributaria: cuotaTrib,
+      centroCostoId: newAssetForm.centroCostoId,
+      centroCostoCodigo: newAssetForm.centroCostoCodigo,
+      centroCostoNombre: newAssetForm.centroCostoNombre,
       ubicacionFisica: newAssetForm.ubicacionFisica || 'Sede Central',
       responsableCustodio: newAssetForm.responsableCustodio || 'Administración',
       estado: (newAssetForm.estado as FixedAssetStatus) || 'OPERATIVO',
@@ -351,6 +406,66 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
     );
   };
 
+  // Handler para Abrir Modal de Edición (M)
+  const handleOpenEditModal = (asset: FixedAsset) => {
+    setEditAssetForm({ ...asset });
+    setShowEditModal(asset);
+  };
+
+  // Handler para Guardar Edición de Activo (M)
+  const handleSaveEditAsset = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditModal || !editAssetForm.nombre) {
+      alert('El nombre del activo es obligatorio.');
+      return;
+    }
+
+    const updated: FixedAsset = {
+      ...showEditModal,
+      nombre: editAssetForm.nombre || showEditModal.nombre,
+      codigoPlaca: editAssetForm.codigoPlaca || showEditModal.codigoPlaca,
+      categoria: (editAssetForm.categoria as FixedAssetCategory) || showEditModal.categoria,
+      ubicacionFisica: editAssetForm.ubicacionFisica || showEditModal.ubicacionFisica,
+      responsableCustodio: editAssetForm.responsableCustodio || showEditModal.responsableCustodio,
+      centroCostoId: editAssetForm.centroCostoId !== undefined ? editAssetForm.centroCostoId : showEditModal.centroCostoId,
+      centroCostoCodigo: editAssetForm.centroCostoCodigo !== undefined ? editAssetForm.centroCostoCodigo : showEditModal.centroCostoCodigo,
+      centroCostoNombre: editAssetForm.centroCostoNombre !== undefined ? editAssetForm.centroCostoNombre : showEditModal.centroCostoNombre,
+      estado: (editAssetForm.estado as FixedAssetStatus) || showEditModal.estado,
+      vidaUtilRestanteMeses: editAssetForm.vidaUtilRestanteMeses !== undefined ? Number(editAssetForm.vidaUtilRestanteMeses) : showEditModal.vidaUtilRestanteMeses,
+      marcaModelo: editAssetForm.marcaModelo !== undefined ? editAssetForm.marcaModelo : showEditModal.marcaModelo,
+      numeroSerie: editAssetForm.numeroSerie !== undefined ? editAssetForm.numeroSerie : showEditModal.numeroSerie,
+      notasTecnicas: editAssetForm.notasTecnicas !== undefined ? editAssetForm.notasTecnicas : showEditModal.notasTecnicas,
+      esFabrilProduccion: editAssetForm.esFabrilProduccion !== undefined ? Boolean(editAssetForm.esFabrilProduccion) : showEditModal.esFabrilProduccion,
+    };
+
+    onUpdateAsset(updated);
+    setShowEditModal(null);
+    triggerSuccess(`Activo ${updated.codigoPlaca} (${updated.nombre}) actualizado exitosamente.`);
+  };
+
+  // Handler para Eliminación de Activo (B)
+  const handleDeleteAsset = (asset: FixedAsset) => {
+    setAssetToDelete(asset);
+  };
+
+  const handleConfirmDeleteAsset = () => {
+    if (!assetToDelete) return;
+    if (onDeleteAsset) {
+      onDeleteAsset(assetToDelete.id);
+      triggerSuccess(`Activo ${assetToDelete.codigoPlaca} eliminado del registro.`);
+    } else {
+      // Fallback: marcar como dado de baja
+      onUpdateAsset({
+        ...assetToDelete,
+        estado: 'DADO_DE_BAJA',
+        valorLibroFinanciero: 0,
+        notasTecnicas: `${assetToDelete.notasTecnicas || ''}\nEliminado el ${new Date().toISOString().split('T')[0]}.`,
+      });
+      triggerSuccess(`Activo ${assetToDelete.codigoPlaca} marcado como inactivo/dado de baja.`);
+    }
+    setAssetToDelete(null);
+  };
+
   return (
     <div id="fixed-asset-agent-module" className="space-y-6">
       {/* Header con Perfil del Agente */}
@@ -381,10 +496,11 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
             <button
               onClick={() => setShowAddModal(true)}
               id="btn-register-fixed-asset"
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+              title="Registrar un nuevo activo fijo (Alta ABM)"
             >
               <PlusCircle className="w-4 h-4" />
-              Incorporar Activo Fijo
+              <span>+ ABM: Registrar Activo Fijo</span>
             </button>
           </div>
         </div>
@@ -478,6 +594,18 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveTab('CENTROS_COSTO')}
+          className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+            activeTab === 'CENTROS_COSTO'
+              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+          }`}
+        >
+          <Target className="w-3.5 h-3.5" />
+          Distribución Centros de Costo
+        </button>
+
+        <button
           onClick={() => setActiveTab('CUADRO_OFICIAL')}
           className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors ${
             activeTab === 'CUADRO_OFICIAL'
@@ -553,6 +681,29 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 <option value="DADO_DE_BAJA">Dado de Baja</option>
                 <option value="ENAJENADO">Enajenado</option>
               </select>
+
+              <select
+                value={selectedCostCenter}
+                onChange={(e) => setSelectedCostCenter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500 max-w-[200px] truncate"
+                title="Filtrar por Centro de Costos"
+              >
+                <option value="TODOS">Todos los Centros de Costo</option>
+                {availableCostCenters.map(cc => (
+                  <option key={cc.id} value={cc.codigo}>
+                    {cc.codigo} - {cc.nombre}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="bg-amber-600 hover:bg-amber-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+                title="Registrar nuevo activo fijo (Alta ABM)"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>+ ABM: Nuevo Activo</span>
+              </button>
             </div>
           </div>
 
@@ -564,18 +715,19 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                   <tr>
                     <th className="py-3.5 px-4">Código / Placa</th>
                     <th className="py-3.5 px-4">Descripción del Activo</th>
+                    <th className="py-3.5 px-4">Centro de Costo</th>
                     <th className="py-3.5 px-4">Ubicación / Custodio</th>
                     <th className="py-3.5 px-4 text-right">Costo Histórico</th>
                     <th className="py-3.5 px-4 text-right">Deprec. Acumulada</th>
                     <th className="py-3.5 px-4 text-right">Valor Libro IFRS</th>
                     <th className="py-3.5 px-4 text-center">Estado</th>
-                    <th className="py-3.5 px-4 text-center">Acciones</th>
+                    <th className="py-3.5 px-4 text-center">Acciones (ABM)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredAssets.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-500">
+                      <td colSpan={9} className="py-8 text-center text-slate-500">
                         No se encontraron activos fijos con los filtros seleccionados.
                       </td>
                     </tr>
@@ -604,6 +756,22 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                               </span>
                             )}
                           </div>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          {asset.centroCostoCodigo ? (
+                            <div>
+                              <span className="inline-flex items-center gap-1 bg-indigo-950 text-indigo-300 border border-indigo-700/60 px-2 py-0.5 rounded text-xs font-bold font-mono">
+                                <Target className="w-3 h-3 text-indigo-400" />
+                                {asset.centroCostoCodigo}
+                              </span>
+                              <div className="text-[11px] text-slate-400 truncate max-w-[160px] mt-0.5" title={asset.centroCostoNombre}>
+                                {asset.centroCostoNombre || 'Centro de Costos'}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-500 italic">No asignado</span>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -638,24 +806,40 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                         </td>
 
                         <td className="py-3.5 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
+                          <div className="flex items-center justify-center gap-1">
                             <button
                               onClick={() => setSelectedAssetDetail(asset)}
                               title="Ver Ficha Técnica"
-                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-300 rounded transition-colors"
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-300 rounded transition-colors cursor-pointer"
                             >
                               <BookOpen className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenEditModal(asset)}
+                              title="Modificar / Editar Activo (M)"
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-cyan-400 rounded transition-colors cursor-pointer"
+                            >
+                              <Pencil className="w-4 h-4" />
                             </button>
 
                             {asset.estado !== 'DADO_DE_BAJA' && asset.estado !== 'ENAJENADO' && (
                               <button
                                 onClick={() => setShowDisposalModal(asset)}
-                                title="Dar de Baja o Enajenar"
-                                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                                title="Dar de Baja o Enajenar (NIC 16)"
+                                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors cursor-pointer"
                               >
                                 <TrendingDown className="w-4 h-4" />
                               </button>
                             )}
+
+                            <button
+                              onClick={() => handleDeleteAsset(asset)}
+                              title="Eliminar Activo (Baja física/anulación de registro)"
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -738,6 +922,66 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
             </div>
           </div>
 
+          {/* Resumen de Depreciación por Centro de Costo */}
+          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-400" />
+                <h4 className="text-sm font-bold text-slate-200 uppercase tracking-wide">
+                  Distribución de Cuota Mensual por Centro de Costos
+                </h4>
+              </div>
+              <span className="text-xs text-slate-400">
+                Imputación analítica automática en asientos de diario
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(() => {
+                const ccDistribution: Record<string, { codigo: string; nombre: string; cant: number; gastoAdmin: number; cifFabril: number }> = {};
+                assetList.forEach(a => {
+                  const ccCod = a.centroCostoCodigo || (a.esFabrilProduccion ? 'CC-PRD-QUELLON' : 'CC-ADM-01');
+                  const ccNom = a.centroCostoNombre || (a.esFabrilProduccion ? 'Planta Fabril & Producción' : 'Administración Central');
+                  if (!ccDistribution[ccCod]) {
+                    ccDistribution[ccCod] = { codigo: ccCod, nombre: ccNom, cant: 0, gastoAdmin: 0, cifFabril: 0 };
+                  }
+                  ccDistribution[ccCod].cant += 1;
+                  if (a.esFabrilProduccion) {
+                    ccDistribution[ccCod].cifFabril += a.cuotaDepreciacionMensualFinanciera;
+                  } else {
+                    ccDistribution[ccCod].gastoAdmin += a.cuotaDepreciacionMensualFinanciera;
+                  }
+                });
+
+                return Object.values(ccDistribution).map(item => (
+                  <div key={item.codigo} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono text-xs font-bold text-indigo-300 bg-indigo-950/90 border border-indigo-800 px-1.5 py-0.5 rounded">
+                        {item.codigo}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {item.cant} {item.cant === 1 ? 'activo' : 'activos'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-300 font-medium truncate" title={item.nombre}>
+                      {item.nombre}
+                    </div>
+                    <div className="pt-2 border-t border-slate-800/60 grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-slate-500 block">Gasto Admin (5.2.13):</span>
+                        <span className="font-mono font-semibold text-slate-200">{formatCLP(item.gastoAdmin)}</span>
+                      </div>
+                      <div>
+                        <span className="text-cyan-400/80 block">CIF Fabril (5.1.04):</span>
+                        <span className="font-mono font-semibold text-cyan-300">{formatCLP(item.cifFabril)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+
           {/* Tabla Comparativa: Financiera vs Tributaria por Activo */}
           <div className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
             <div className="p-4 border-b border-slate-800 bg-slate-950/40 flex items-center justify-between">
@@ -745,7 +989,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 Detalle de Cuotas Calculadas para el Período {depreciationPeriod}
               </span>
               <span className="text-xs text-slate-400">
-                {assets.length} activos evaluados por el motor
+                {assetList.length} activos evaluados por el motor
               </span>
             </div>
 
@@ -754,6 +998,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 <thead className="bg-slate-950 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
                   <tr>
                     <th className="py-3 px-4">Activo</th>
+                    <th className="py-3 px-4">Centro Costo</th>
                     <th className="py-3 px-4 text-right">Valor Adquisición</th>
                     <th className="py-3 px-4 text-center">Vida Útil IFRS / Trib.</th>
                     <th className="py-3 px-4 text-right">Cuota Financiera (NIC 16)</th>
@@ -763,13 +1008,22 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
-                  {assets.map((item) => {
+                  {assetList.map((item) => {
                     const diffCuota = item.cuotaDepreciacionMensualTributaria - item.cuotaDepreciacionMensualFinanciera;
                     return (
                       <tr key={item.id} className="hover:bg-slate-800/20">
                         <td className="py-3 px-4">
                           <div className="font-medium text-slate-200">{item.nombre}</div>
-                          <span className="font-mono text-xs text-amber-400">{item.codigoPlaca}</span>
+                          <div className="text-xs text-slate-500 font-mono">{item.codigoPlaca}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          {item.centroCostoCodigo ? (
+                            <span className="font-mono text-xs font-semibold text-indigo-300 bg-indigo-950/80 border border-indigo-800/60 px-1.5 py-0.5 rounded">
+                              {item.centroCostoCodigo}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">-</span>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-right font-mono">
                           {formatCLP(item.valorAdquisicionOriginal)}
@@ -806,6 +1060,244 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: DISTRIBUCIÓN POR CENTRO DE COSTOS (NIC 16 / COSTEO ANALÍTICO) */}
+      {activeTab === 'CENTROS_COSTO' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-slate-100">
+                  Matriz de Distribución de Activos Fijos por Centro de Costos
+                </h3>
+                <span className="bg-indigo-950 text-indigo-300 border border-indigo-700/60 text-[11px] font-semibold px-2 py-0.5 rounded">
+                  NIC 16 / Costeo Analítico
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Atribución directa de la inversión en propiedad, planta y equipos (PPE) y su cuota mensual de depreciación a cada unidad de negocio y faena productiva (Mini-Empresas).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setSelectedCostCenter('TODOS');
+                  setActiveTab('INVENTARIO');
+                }}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                Ver Todo el Inventario
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+              <span className="text-xs text-slate-400 block font-medium">Centros con Activos Asignados</span>
+              <div className="text-2xl font-black text-slate-100 mt-1 font-mono flex items-baseline gap-2">
+                {costCenterSummary.filter(c => c.count > 0).length}
+                <span className="text-xs font-normal text-slate-400 font-sans">
+                  de {availableCostCenters.length} Centros
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {assetList.length - unassignedAssets.length} activos con asignación
+              </p>
+            </div>
+
+            <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+              <span className="text-xs text-slate-400 block font-medium">Inversión PPE Asignada</span>
+              <div className="text-2xl font-black text-slate-100 mt-1 font-mono">
+                {formatCLP(costCenterSummary.reduce((s, c) => s + c.totalHistorico, 0))}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">Costo de adquisición original</p>
+            </div>
+
+            <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+              <span className="text-xs text-slate-400 block font-medium">Valor Libro IFRS en Operación</span>
+              <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+                {formatCLP(costCenterSummary.reduce((s, c) => s + c.totalValorLibro, 0))}
+              </div>
+              <p className="text-[11px] text-emerald-500/80 mt-1">Patrimonio productivo neto</p>
+            </div>
+
+            <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+              <span className="text-xs text-slate-400 block font-medium">Depreciación Mensual Total</span>
+              <div className="text-2xl font-black text-rose-400 mt-1 font-mono">
+                {formatCLP(costCenterSummary.reduce((s, c) => s + c.cuotaMensual, 0))}
+                <span className="text-xs font-normal text-slate-400 font-sans">/mes</span>
+              </div>
+              <p className="text-[11px] text-rose-400/80 mt-1">Impacto mensual en P&L analítico</p>
+            </div>
+          </div>
+
+          {/* Alerta de Activos sin Centro de Costo */}
+          {unassignedAssets.length > 0 && (
+            <div className="bg-amber-950/40 border border-amber-500/40 rounded-xl p-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <h4 className="text-xs font-bold text-amber-200">
+                    {unassignedAssets.length} activo(s) sin Centro de Costos asignado
+                  </h4>
+                  <p className="text-[11px] text-amber-300/80 mt-0.5">
+                    Se recomienda vincular cada activo a su Centro de Costos para reflejar con precisión su depreciación en el Estado de Resultados por Mini-Empresa.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedCostCenter('TODOS');
+                  setActiveTab('INVENTARIO');
+                }}
+                className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer"
+              >
+                Revisar Activos
+              </button>
+            </div>
+          )}
+
+          {/* Tabla de Centros de Costo y su Asignación */}
+          <div className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-slate-200 text-sm">Resumen por Centro de Costos (Mini-Empresa)</h4>
+                <p className="text-xs text-slate-400">Desglose de inversión patrimonial y carga mensual por amortización</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-300">
+                <thead className="bg-slate-950/80 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">Centro de Costo</th>
+                    <th className="py-3 px-4">Categoría / Responsable</th>
+                    <th className="py-3 px-4 text-center">N° Activos</th>
+                    <th className="py-3 px-4 text-right">Inversión Histórica</th>
+                    <th className="py-3 px-4 text-right">Deprec. Acumulada</th>
+                    <th className="py-3 px-4 text-right">Valor Libro IFRS</th>
+                    <th className="py-3 px-4 text-right">Deprec. Mensual</th>
+                    <th className="py-3 px-4 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {costCenterSummary.map((item) => (
+                    <tr key={item.cc.id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
+                            {item.cc.codigo}
+                          </span>
+                          <span className="font-medium text-slate-200">{item.cc.nombre}</span>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-xs">
+                        <span className="bg-slate-800 px-2 py-0.5 rounded text-[11px] text-slate-300 font-medium">
+                          {item.cc.categoria}
+                        </span>
+                        <div className="text-slate-400 mt-1">{item.cc.responsableNombre}</div>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center">
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-mono font-bold ${
+                          item.count > 0 ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/60' : 'bg-slate-800 text-slate-500'
+                        }`}>
+                          {item.count}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-mono font-medium text-slate-200">
+                        {formatCLP(item.totalHistorico)}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-mono text-rose-300">
+                        {formatCLP(item.totalDepAcum)}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-400">
+                        {formatCLP(item.totalValorLibro)}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-300">
+                        {formatCLP(item.cuotaMensual)}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => {
+                            setSelectedCostCenter(item.cc.codigo);
+                            setActiveTab('INVENTARIO');
+                          }}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded transition-colors cursor-pointer"
+                        >
+                          Ver Activos
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Detalle Desplegado de Activos por Centro de Costo */}
+          <div className="space-y-4">
+            <h4 className="font-bold text-slate-200 text-sm flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-amber-400" />
+              Padrón Detallado de Activos por Centro de Costos
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {costCenterSummary.filter(c => c.count > 0).map((summary) => (
+                <div key={summary.cc.id} className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start justify-between border-b border-slate-800 pb-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-bold text-indigo-400">{summary.cc.codigo}</span>
+                        <span className="text-xs text-slate-400">({summary.cc.categoria})</span>
+                      </div>
+                      <h5 className="font-bold text-slate-100 text-sm mt-0.5">{summary.cc.nombre}</h5>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                      {summary.count} activo(s)
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {summary.assets.map((asset) => (
+                      <div
+                        key={asset.id}
+                        className="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-amber-400">{asset.codigoPlaca}</span>
+                            <span className="font-semibold text-slate-200">{asset.nombre}</span>
+                            {asset.esFabrilProduccion && (
+                              <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-1 py-0.2 rounded font-bold">
+                                CIF
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-400">{asset.ubicacionFisica} • {asset.responsableCustodio}</span>
+                        </div>
+                        <div className="text-right font-mono">
+                          <span className="text-emerald-400 font-bold block">{formatCLP(asset.valorLibroFinanciero)}</span>
+                          <span className="text-[10px] text-slate-400 block">Deprec: {formatCLP(asset.cuotaDepreciacionMensualFinanciera)}/m</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1174,6 +1666,33 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                   />
                 </div>
 
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1 flex items-center justify-between">
+                    <span>Centro de Costos Asignado (NIC 16 / Costeo)</span>
+                    <span className="text-[10px] text-amber-400 font-normal">Imputación directa de gasto/CIF</span>
+                  </label>
+                  <select
+                    value={newAssetForm.centroCostoCodigo || ''}
+                    onChange={(e) => {
+                      const found = availableCostCenters.find(c => c.codigo === e.target.value);
+                      setNewAssetForm({
+                        ...newAssetForm,
+                        centroCostoId: found?.id,
+                        centroCostoCodigo: found?.codigo,
+                        centroCostoNombre: found?.nombre,
+                      });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500 font-medium"
+                  >
+                    <option value="">-- Sin Centro de Costos Asignado --</option>
+                    {availableCostCenters.map(cc => (
+                      <option key={cc.id} value={cc.codigo}>
+                        {cc.codigo} - {cc.nombre} ({cc.categoria})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
                     Ubicación Física
@@ -1291,6 +1810,25 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 </div>
               </div>
 
+              <div className="bg-indigo-950/40 border border-indigo-700/50 p-3 rounded-lg flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider block">
+                    Centro de Costos Asignado (NIC 16 / Costeo Analítico):
+                  </span>
+                  <div className="font-bold text-white text-sm flex items-center gap-2 mt-0.5">
+                    <span className="font-mono text-amber-300 bg-indigo-900/80 px-2 py-0.5 rounded border border-indigo-700 text-xs">
+                      {selectedAssetDetail.centroCostoCodigo || 'SIN CC'}
+                    </span>
+                    <span>{selectedAssetDetail.centroCostoNombre || 'Sin Centro de Costo asignado'}</span>
+                  </div>
+                </div>
+                {selectedAssetDetail.esFabrilProduccion && (
+                  <span className="bg-cyan-950 text-cyan-300 border border-cyan-700 px-2.5 py-1 rounded text-xs font-bold uppercase">
+                    CIF FABRIL
+                  </span>
+                )}
+              </div>
+
               <div className="space-y-1 text-slate-300">
                 <p><strong>Ubicación:</strong> {selectedAssetDetail.ubicacionFisica}</p>
                 <p><strong>Custodio:</strong> {selectedAssetDetail.responsableCustodio}</p>
@@ -1372,6 +1910,266 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-lg text-xs shadow-sm"
               >
                 Confirmar Baja y Asentar Contablemente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MODIFICAR / EDITAR ACTIVO FIJO (M de ABM) */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-6 space-y-4 shadow-2xl my-8">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-cyan-400" />
+                <span>Modificar Ficha de Activo Fijo (ABM)</span>
+                <span className="font-mono text-xs text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+                  {showEditModal.codigoPlaca}
+                </span>
+              </h3>
+              <button
+                onClick={() => setShowEditModal(null)}
+                className="text-slate-400 hover:text-slate-200 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditAsset} className="space-y-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Código Placa / Identificador
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editAssetForm.codigoPlaca || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, codigoPlaca: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Categoría del Bien
+                  </label>
+                  <select
+                    value={editAssetForm.categoria || 'MAQUINARIA_EQUIPOS'}
+                    onChange={(e) =>
+                      setEditAssetForm({
+                        ...editAssetForm,
+                        categoria: e.target.value as FixedAssetCategory,
+                      })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="MAQUINARIA_EQUIPOS">Maquinaria, Equipos y Embarcaciones</option>
+                    <option value="INSTALACIONES_REDES">Instalaciones, Redes y Fondeos Acuícolas</option>
+                    <option value="TECNOLOGIA_COMPUTO">Tecnología, Servidores y Cómputo</option>
+                    <option value="VEHICULOS">Vehículos y Flota</option>
+                    <option value="INFRAESTRUCTURA_EDIFICIOS">Infraestructura, Plantas y Galpones</option>
+                    <option value="MUEBLES_UTILES">Muebles y Útiles de Oficina</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Nombre o Denominación del Activo
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editAssetForm.nombre || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, nombre: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1 flex items-center justify-between">
+                    <span>Centro de Costos Asignado (NIC 16 / Costeo)</span>
+                    <span className="text-[10px] text-cyan-400 font-normal">Reasignación para depreciación</span>
+                  </label>
+                  <select
+                    value={editAssetForm.centroCostoCodigo || ''}
+                    onChange={(e) => {
+                      const found = availableCostCenters.find(c => c.codigo === e.target.value);
+                      setEditAssetForm({
+                        ...editAssetForm,
+                        centroCostoId: found?.id,
+                        centroCostoCodigo: found?.codigo,
+                        centroCostoNombre: found?.nombre,
+                      });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-medium"
+                  >
+                    <option value="">-- Sin Centro de Costos Asignado --</option>
+                    {availableCostCenters.map(cc => (
+                      <option key={cc.id} value={cc.codigo}>
+                        {cc.codigo} - {cc.nombre} ({cc.categoria})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Ubicación Física / Faena
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editAssetForm.ubicacionFisica || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, ubicacionFisica: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Responsable / Custodio Asignado
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editAssetForm.responsableCustodio || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, responsableCustodio: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Estado Operativo
+                  </label>
+                  <select
+                    value={editAssetForm.estado || 'OPERATIVO'}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, estado: e.target.value as FixedAssetStatus })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="OPERATIVO">Operativo</option>
+                    <option value="MANTENCION">En Mantención</option>
+                    <option value="DADO_DE_BAJA">Dado de Baja</option>
+                    <option value="ENAJENADO">Enajenado</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Vida Útil Restante (Meses)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editAssetForm.vidaUtilRestanteMeses !== undefined ? editAssetForm.vidaUtilRestanteMeses : ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, vidaUtilRestanteMeses: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Marca y Modelo
+                  </label>
+                  <input
+                    type="text"
+                    value={editAssetForm.marcaModelo || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, marcaModelo: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Número de Serie
+                  </label>
+                  <input
+                    type="text"
+                    value={editAssetForm.numeroSerie || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, numeroSerie: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editAssetForm.esFabrilProduccion)}
+                      onChange={(e) => setEditAssetForm({ ...editAssetForm, esFabrilProduccion: e.target.checked })}
+                      className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                    />
+                    <span className="text-xs text-slate-300">
+                      Activo vinculado a Planta de Fabricación / Procesos (Imputable a Costos Indirectos de Fabricación CIF)
+                    </span>
+                  </label>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                    Notas Técnicas y Observaciones
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editAssetForm.notasTecnicas || ''}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, notasTecnicas: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-lg text-xs shadow-md transition-colors cursor-pointer"
+                >
+                  Guardar Modificaciones
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIRMAR ELIMINACIÓN DE ACTIVO FIJO */}
+      {assetToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-400">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <h3 className="text-base font-bold text-slate-100">Confirmar Eliminación de Activo</h3>
+            </div>
+            <p className="text-xs text-slate-300">
+              ¿Está seguro de eliminar el activo <strong className="text-amber-400">{assetToDelete.nombre}</strong> (Placa <span className="font-mono">{assetToDelete.codigoPlaca}</span>)?
+            </p>
+            {assetToDelete.centroCostoCodigo && (
+              <div className="bg-slate-950 p-2.5 rounded border border-slate-800 text-xs text-slate-400">
+                Centro de Costos vinculado: <span className="text-indigo-400 font-mono font-bold">{assetToDelete.centroCostoCodigo}</span> - {assetToDelete.centroCostoNombre}
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setAssetToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteAsset}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+              >
+                Eliminar Activo
               </button>
             </div>
           </div>

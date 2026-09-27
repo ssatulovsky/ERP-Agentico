@@ -36,74 +36,22 @@ ON DUPLICATE KEY UPDATE `precio_uf_mensual` = VALUES(`precio_uf_mensual`), `nomb
 -- ----------------------------------------------------------------------------
 -- 2. MODIFICACIÓN TABLA: companies (Extensión Cliente Ancla y Planes)
 -- ----------------------------------------------------------------------------
--- Procedimiento seguro para agregar columnas sin fallar si ya existen
-DROP PROCEDURE IF EXISTS `AddCompanyErpColumns`;
-DELIMITER $$
-CREATE PROCEDURE `AddCompanyErpColumns`()
-BEGIN
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'plan_contratado_id') THEN
-    ALTER TABLE `companies` ADD COLUMN `plan_contratado_id` VARCHAR(50) NULL DEFAULT 'PLAN_PRO';
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'plan_precio_uf') THEN
-    ALTER TABLE `companies` ADD COLUMN `plan_precio_uf` DECIMAL(10, 2) NULL DEFAULT 4.50;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'fecha_inicio_contrato') THEN
-    ALTER TABLE `companies` ADD COLUMN `fecha_inicio_contrato` DATE NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'fecha_termino_contrato') THEN
-    ALTER TABLE `companies` ADD COLUMN `fecha_termino_contrato` DATE NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'limite_credito_comercial') THEN
-    ALTER TABLE `companies` ADD COLUMN `limite_credito_comercial` DECIMAL(15, 2) NULL DEFAULT 15000000.00;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'dias_credito') THEN
-    ALTER TABLE `companies` ADD COLUMN `dias_credito` INT NOT NULL DEFAULT 30;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'cuenta_contable_cobro_id') THEN
-    ALTER TABLE `companies` ADD COLUMN `cuenta_contable_cobro_id` VARCHAR(30) NULL DEFAULT '1.1.03.001';
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'cuenta_contable_pago_id') THEN
-    ALTER TABLE `companies` ADD COLUMN `cuenta_contable_pago_id` VARCHAR(30) NULL DEFAULT '2.1.01.001';
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'contacto_cobranza_nombre') THEN
-    ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_nombre` VARCHAR(150) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'contacto_cobranza_email') THEN
-    ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_email` VARCHAR(150) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'contacto_cobranza_telefono') THEN
-    ALTER TABLE `companies` ADD COLUMN `contacto_cobranza_telefono` VARCHAR(50) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'direccion_comercial') THEN
-    ALTER TABLE `companies` ADD COLUMN `direccion_comercial` VARCHAR(255) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'ciudad_comercial') THEN
-    ALTER TABLE `companies` ADD COLUMN `ciudad_comercial` VARCHAR(100) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'region_comercial') THEN
-    ALTER TABLE `companies` ADD COLUMN `region_comercial` VARCHAR(100) NULL;
-  END IF;
-
-  IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'comuna_comercial') THEN
-    ALTER TABLE `companies` ADD COLUMN `comuna_comercial` VARCHAR(100) NULL;
-  END IF;
-END$$
-DELIMITER ;
-CALL `AddCompanyErpColumns`();
-DROP PROCEDURE IF EXISTS `AddCompanyErpColumns`;
+ALTER TABLE `companies`
+  ADD COLUMN IF NOT EXISTS `plan_contratado_id` VARCHAR(50) NULL DEFAULT 'PLAN_PRO',
+  ADD COLUMN IF NOT EXISTS `plan_precio_uf` DECIMAL(10, 2) NULL DEFAULT 4.50,
+  ADD COLUMN IF NOT EXISTS `fecha_inicio_contrato` DATE NULL,
+  ADD COLUMN IF NOT EXISTS `fecha_termino_contrato` DATE NULL,
+  ADD COLUMN IF NOT EXISTS `limite_credito_comercial` DECIMAL(15, 2) NULL DEFAULT 15000000.00,
+  ADD COLUMN IF NOT EXISTS `dias_credito` INT NOT NULL DEFAULT 30,
+  ADD COLUMN IF NOT EXISTS `cuenta_contable_cobro_id` VARCHAR(30) NULL DEFAULT '1.1.03.001',
+  ADD COLUMN IF NOT EXISTS `cuenta_contable_pago_id` VARCHAR(30) NULL DEFAULT '2.1.01.001',
+  ADD COLUMN IF NOT EXISTS `contacto_cobranza_nombre` VARCHAR(150) NULL,
+  ADD COLUMN IF NOT EXISTS `contacto_cobranza_email` VARCHAR(150) NULL,
+  ADD COLUMN IF NOT EXISTS `contacto_cobranza_telefono` VARCHAR(50) NULL,
+  ADD COLUMN IF NOT EXISTS `direccion_comercial` VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS `ciudad_comercial` VARCHAR(100) NULL,
+  ADD COLUMN IF NOT EXISTS `region_comercial` VARCHAR(100) NULL,
+  ADD COLUMN IF NOT EXISTS `comuna_comercial` VARCHAR(100) NULL;
 
 -- ----------------------------------------------------------------------------
 -- 3. TABLA: erp_system_parameters (Parámetros Generales de Cierre Art. 16 CT)
@@ -325,6 +273,249 @@ INSERT INTO `client_onboarding_audit` (`id`, `firm_id`, `empresa_id`, `plan_id`,
 VALUES
 ('onboard-001', 'firm-001-audicon', 'client-retail-01', 'PLAN_PRO', 4.50, '2026-01-01', '2026-12-31', 'admin@audicon.cl', NOW())
 ON DUPLICATE KEY UPDATE `valor_uf_mensual` = VALUES(`valor_uf_mensual`);
+
+-- ----------------------------------------------------------------------------
+-- 8. TABLA: cost_centers (Centros de Costo / Unidades de Negocio "Mini-Empresas")
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `cost_centers` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo` VARCHAR(50) NOT NULL,
+  `nombre` VARCHAR(200) NOT NULL,
+  `categoria` VARCHAR(50) NOT NULL,
+  `responsable_nombre` VARCHAR(200) NOT NULL,
+  `responsable_email` VARCHAR(255) NULL,
+  `presupuesto_mensual_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `activo` BOOLEAN NOT NULL DEFAULT TRUE,
+  `descripcion` TEXT NULL,
+  `ventas_acumuladas_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `costos_directos_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `gastos_operacionales_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `remuneraciones_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `depreciacion_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cost_center_empresa_codigo` (`empresa_id`, `codigo`),
+  KEY `idx_cost_center_empresa` (`empresa_id`),
+  KEY `idx_cost_center_categoria` (`categoria`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------------------------------------------------------
+-- 9. TABLA: cost_center_imputations (Trazabilidad de Imputaciones Analíticas)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `cost_center_imputations` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `centro_costo_id` VARCHAR(36) NOT NULL,
+  `tipo_documento` VARCHAR(50) NOT NULL,
+  `folio_referencia` VARCHAR(100) NOT NULL,
+  `fecha` DATE NOT NULL,
+  `monto_clp` DECIMAL(15, 2) NOT NULL,
+  `concepto` VARCHAR(255) NOT NULL,
+  `tipo_flujo` ENUM('INGRESO', 'COSTO', 'GASTO') NOT NULL,
+  `cuenta_contable` VARCHAR(50) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_cc_imputation_cc` (`centro_costo_id`),
+  KEY `idx_cc_imputation_empresa_fecha` (`empresa_id`, `fecha`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------------------------------------------------------
+-- 10. TABLA: dte_items (Líneas de Detalle de Facturas e Imputación Analítica)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `dte_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `dte_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo` VARCHAR(50) NULL,
+  `nombre` VARCHAR(200) NOT NULL,
+  `descripcion` TEXT NULL,
+  `cantidad` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  `unidad_medida` VARCHAR(20) NULL,
+  `precio_unitario` DECIMAL(15, 4) NOT NULL,
+  `descuento_pct` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
+  `es_exento` BOOLEAN NOT NULL DEFAULT FALSE,
+  `monto_total` DECIMAL(15, 2) NOT NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `centro_costo_nombre` VARCHAR(200) NULL,
+  `cuenta_codigo` VARCHAR(50) NULL,
+  `cuenta_nombre` VARCHAR(200) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_dte_items_dte` (`dte_id`),
+  KEY `idx_dte_items_cc` (`centro_costo_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------------------------------------------------------
+-- 11. COLUMNAS DE INTEGRACIÓN HTTP-DTE / LIBREDTE (dtes_rcv)
+-- ----------------------------------------------------------------------------
+ALTER TABLE `dtes_rcv`
+  ADD COLUMN IF NOT EXISTS `track_id` VARCHAR(100) NULL AFTER `items`,
+  ADD COLUMN IF NOT EXISTS `ted_xml` TEXT NULL AFTER `track_id`,
+  ADD COLUMN IF NOT EXISTS `xml_timbrado` MEDIUMTEXT NULL AFTER `ted_xml`,
+  ADD COLUMN IF NOT EXISTS `pdf_url` VARCHAR(500) NULL AFTER `xml_timbrado`,
+  ADD COLUMN IF NOT EXISTS `ambiente_sii` INT NOT NULL DEFAULT 1 AFTER `pdf_url`;
+
+-- ----------------------------------------------------------------------------
+-- 12. TABLA: company_credentials_vault (Bóveda Segura AES-256-GCM para SII y Certificados)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `company_credentials_vault` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `certificado_digital_encrypted` MEDIUMTEXT NULL,
+  `clave_certificado_encrypted` TEXT NULL,
+  `clave_sii_encrypted` TEXT NULL,
+  `api_bancos_encrypted` JSON NULL,
+  `iv` VARCHAR(32) NOT NULL,
+  `tag_auth` VARCHAR(32) NOT NULL,
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_vault_empresa` (`empresa_id`),
+  KEY `idx_vault_empresa` (`empresa_id`),
+  CONSTRAINT `fk_vault_company` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Semillas de Bóveda Criptográfica AES-256-GCM
+INSERT INTO `company_credentials_vault` (
+  `id`, `empresa_id`, `certificado_digital_encrypted`, `clave_certificado_encrypted`,
+  `clave_sii_encrypted`, `api_bancos_encrypted`, `iv`, `tag_auth`, `updated_at`
+)
+VALUES
+(
+  'vault-seed-01', 'client-retail-01', NULL,
+  '7608c29c4661', 'b14f89d3102a',
+  '{"banco": "BANCO_DE_CHILE", "cuenta": "102948", "tipo": "API_B2B"}',
+  '4b6013aa89753c461ed238166a8e01c4', '2f18a79c2bc26a48edc2ca72e5ef1976', NOW()
+),
+(
+  'vault-seed-02', 'client-agro-02', NULL,
+  '7608c29c4661', 'e29d71c4908f',
+  '{"banco": "SANTANDER", "cuenta": "981240", "tipo": "API_HOST_TO_HOST"}',
+  '4b6013aa89753c461ed238166a8e01c4', '2f18a79c2bc26a48edc2ca72e5ef1976', NOW()
+)
+ON DUPLICATE KEY UPDATE `clave_certificado_encrypted` = VALUES(`clave_certificado_encrypted`), `updated_at` = NOW();
+
+-- Semillas de Centros de Costo (Mini-Empresas)
+INSERT INTO `cost_centers` (
+  `id`, `empresa_id`, `codigo`, `nombre`, `categoria`, `responsable_nombre`, `responsable_email`,
+  `presupuesto_mensual_clp`, `activo`, `descripcion`, `ventas_acumuladas_mes`, `costos_directos_mes`,
+  `gastos_operacionales_mes`, `remuneraciones_mes`, `depreciacion_mes`, `created_at`
+)
+VALUES
+('cc-01', 'client-retail-01', 'CC-ADM-01', 'Administración Central & Finanzas', 'ADMINISTRACION', 'Carla Morales Troncoso', 'carla.morales@maraustral.cl', 14500000.00, TRUE, 'Gestión corporativa, contraloría interna, legal, compras generales y RRHH central.', 0.00, 0.00, 4850000.00, 7200000.00, 450000.00, NOW()),
+('cc-02', 'client-retail-01', 'CC-VTA-STGO', 'Ventas & Distribución Zona Central (Mini-Empresa)', 'VENTAS', 'Gonzalo Silva Valenzuela', 'gonzalo.silva@maraustral.cl', 28000000.00, TRUE, 'Unidad comercial metropolitana y de exportaciones. Opera como centro de utilidad independiente.', 48500000.00, 18200000.00, 3400000.00, 5800000.00, 350000.00, NOW()),
+('cc-03', 'client-retail-01', 'CC-PRD-QUELLON', 'Planta Fabril & Maestranza Quellón (Mini-Empresa)', 'PRODUCCION', 'Ing. Rodrigo Cárdenas Soto', 'rodrigo.cardenas@maraustral.cl', 52000000.00, TRUE, 'Fabricación y reparación de redes peceras, loberas y estructuras HDPE de acuicultura.', 64200000.00, 28900000.00, 6200000.00, 14800000.00, 2100000.00, NOW()),
+('cc-04', 'client-retail-01', 'CC-LOG-SUR', 'Logística & Transporte Fluvial Décima Región', 'LOGISTICA', 'Patricio Almonacid Vera', 'patricio.almonacid@maraustral.cl', 18500000.00, TRUE, 'Flota de barcazas, camiones rampla, despacho de insumos a centros de cultivo.', 12000000.00, 6400000.00, 2100000.00, 4900000.00, 980000.00, NOW())
+ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`);
+
+-- ----------------------------------------------------------------------------
+-- 13. ACTUALIZACIÓN INTEGRAL DE TESORERÍA, CONCILIACIÓN BANCARIA Y FLUJO DE CAJA
+-- ----------------------------------------------------------------------------
+-- Extensión Multidivisa en Cuentas Bancarias
+ALTER TABLE `bank_accounts`
+  ADD COLUMN IF NOT EXISTS `tipo_conexion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL',
+  ADD COLUMN IF NOT EXISTS `estado_conexion` VARCHAR(50) NOT NULL DEFAULT 'CONECTADO',
+  ADD COLUMN IF NOT EXISTS `es_principal` BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Extensión Multidivisa y Match Inteligente en Transacciones de Cartola
+ALTER TABLE `bank_transactions`
+  ADD COLUMN IF NOT EXISTS `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  ADD COLUMN IF NOT EXISTS `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  ADD COLUMN IF NOT EXISTS `monto_clp_equivalente` DECIMAL(15, 2) NULL,
+  ADD COLUMN IF NOT EXISTS `match_certeza` INT NULL,
+  ADD COLUMN IF NOT EXISTS `match_sugerido_id` VARCHAR(36) NULL,
+  ADD COLUMN IF NOT EXISTS `match_sugerido_glosa` VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS `origen_importacion` VARCHAR(50) NOT NULL DEFAULT 'MANUAL',
+  ADD COLUMN IF NOT EXISTS `raw_hash_transaction` VARCHAR(64) NULL;
+
+-- Extensión NIC 21 Diferencial de Cambio en Conciliaciones
+ALTER TABLE `bank_reconciliations`
+  ADD COLUMN IF NOT EXISTS `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  ADD COLUMN IF NOT EXISTS `tipo_cambio_cierre` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  ADD COLUMN IF NOT EXISTS `diferencial_cambio_monto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS `asiento_diferencial_cambio_id` VARCHAR(36) NULL;
+
+-- TABLA: cash_flow_movements (Proyecciones y Partidas Diarias de Tesorería)
+CREATE TABLE IF NOT EXISTS `cash_flow_movements` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `fecha_estimada` DATE NOT NULL,
+  `fecha_real` DATE NULL,
+  `concepto` VARCHAR(255) NOT NULL,
+  `contraparte` VARCHAR(255) NOT NULL,
+  `rut_contraparte` VARCHAR(20) NULL,
+  `monto_neto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_iva` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_total` DECIMAL(15, 2) NOT NULL,
+  `monto_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `moneda` ENUM('CLP', 'UF', 'USD', 'EUR') NOT NULL DEFAULT 'CLP',
+  `valor_uf_referencia` DECIMAL(12, 4) NULL,
+  `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  `estado` ENUM('PENDIENTE', 'FACTURADO', 'COBRADO', 'PAGADO', 'VENCIDO') NOT NULL DEFAULT 'PENDIENTE',
+  `tipo` ENUM('INGRESO', 'EGRESO') NOT NULL,
+  `categoria` VARCHAR(50) NOT NULL,
+  `dte_folio_asociado` INT NULL,
+  `origen_modulo` VARCHAR(50) NOT NULL DEFAULT 'MANUAL',
+  `probabilidad_cobro_pct` INT NOT NULL DEFAULT 100,
+  `cuenta_bancaria_id` VARCHAR(36) NULL,
+  `alerta_riesgo` VARCHAR(255) NULL,
+  `documento_referencia` VARCHAR(100) NULL,
+  `fecha_original` DATE NULL,
+  `reprogramado` BOOLEAN NOT NULL DEFAULT FALSE,
+  `motivo_reprogramacion` VARCHAR(255) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_cf_empresa_fecha` (`empresa_id`, `fecha_estimada`),
+  KEY `idx_cf_tipo_estado` (`empresa_id`, `tipo`, `estado`),
+  KEY `idx_cf_cuenta_banco` (`cuenta_bancaria_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: cash_flow_excel_styles (Plantillas y Diseños Gráficos Excel Personalizados)
+CREATE TABLE IF NOT EXISTS `cash_flow_excel_styles` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `nombre_tema` VARCHAR(100) NOT NULL,
+  `config_json` VARCHAR(4000) NOT NULL,
+  `es_default` BOOLEAN NOT NULL DEFAULT FALSE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_excel_styles_empresa` (`empresa_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: treasury_expense_provisions (Provisiones de Egresos Contables vs Extracontables e IVA 19%)
+CREATE TABLE IF NOT EXISTS `treasury_expense_provisions` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `concepto` VARCHAR(255) NOT NULL,
+  `tipo_provision` VARCHAR(50) NOT NULL DEFAULT 'OTRO',
+  `naturaleza` VARCHAR(20) NOT NULL DEFAULT 'CONTABLE',
+  `afectacion_iva` VARCHAR(30) NOT NULL DEFAULT 'AFECTO_IVA_19',
+  `periodicidad` VARCHAR(30) NOT NULL DEFAULT 'NO_PERIODICA_PUNTUAL',
+  `fecha_estimada_pago` DATE NOT NULL,
+  `monto_neto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_iva` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_total` DECIMAL(15, 2) NOT NULL,
+  `tasa_iva_pct` DECIMAL(5, 2) NOT NULL DEFAULT 19.00,
+  `simular_credito_fiscal_f29` BOOLEAN NOT NULL DEFAULT TRUE,
+  `proveedor_nombre` VARCHAR(255) NULL,
+  `proveedor_rut` VARCHAR(20) NULL,
+  `probabilidad_pct` INT NOT NULL DEFAULT 90,
+  `cuenta_contable_provision` VARCHAR(30) NOT NULL,
+  `cuenta_gasto_asociada` VARCHAR(30) NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `estado` VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+  `asiento_contable_generado` BOOLEAN NOT NULL DEFAULT FALSE,
+  `asiento_contable_id` VARCHAR(50) NULL,
+  `observaciones` VARCHAR(500) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_provisions_empresa` (`empresa_id`),
+  KEY `idx_provisions_fecha` (`fecha_estimada_pago`),
+  KEY `idx_provisions_naturaleza` (`naturaleza`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================================================

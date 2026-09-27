@@ -14,7 +14,8 @@ import {
   LeaseContract, 
   ClientCompany,
   ChileIndicators,
-  Balance8ColumnasReport 
+  Balance8ColumnasReport,
+  WarehouseWithdrawal 
 } from '../types';
 
 // Helper to format Chilean Peso
@@ -592,8 +593,13 @@ export function downloadFinancialStatementsPdf(
     ['RESULTADO INTEGRAL NETO DEL EJERCICIO', fmtClp(res.resultadoNeto || 0)]
   ];
 
+  if (finalY > 195) {
+    doc.addPage();
+  }
+  const nextStartY = finalY > 195 ? 25 : finalY;
+
   autoTable(doc, {
-    startY: finalY > 220 ? 25 : finalY,
+    startY: nextStartY,
     head: [['2. Estado de Resultados por Función (Estado de Ganancias y Pérdidas)', 'Monto CLP']],
     body: resBody,
     theme: 'grid',
@@ -1271,18 +1277,147 @@ export function downloadInventoryExcel(items: InventoryItem[] = [], company: Cli
 // 9. FLUJO DE CAJA Y TESORERÍA (PDF & EXCEL)
 // ============================================================================
 
-export function downloadCashFlowPdf(movements: CashFlowMovement[] = [], company: ClientCompany) {
+export function downloadCashFlowPdf(
+  movements: CashFlowMovement[] = [], 
+  company: ClientCompany,
+  options?: {
+    saldoInicialBancos?: number;
+    saldoInicialCajas?: number;
+    saldoInicialTotal?: number;
+    horizonteLabel?: string;
+    scenario?: string;
+    timeline?: any[];
+    monthlyPoints?: any[];
+  }
+) {
   const safeMovs = Array.isArray(movements) ? movements : [];
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   
+  const horizonText = options?.horizonteLabel ? ` | Horizonte: ${options.horizonteLabel}` : '';
+  const scenarioText = options?.scenario ? ` [Escenario: ${options.scenario}]` : '';
+
   addPdfHeader(
     doc, 
     company, 
-    'Informe de Flujo de Caja y Proyecciones de Tesorería', 
-    'Ingresos y Egresos Operacionales, Inversión y Financiamiento',
+    'Informe de Flujo de Caja y Posición de Tesorería', 
+    `Consolidación de Bancos, Cajas y Proyecciones Operacionales${horizonText}${scenarioText}`,
     false
   );
 
+  let currentY = 44;
+
+  // Resumen de Posición Inicial si está disponible
+  if (options?.saldoInicialTotal !== undefined) {
+    const totalIng = safeMovs.filter(m => m.tipo === 'INGRESO').reduce((s, m) => s + m.montoTotal, 0);
+    const totalEgr = safeMovs.filter(m => m.tipo === 'EGRESO').reduce((s, m) => s + m.montoTotal, 0);
+    const saldoFinalEst = (options.saldoInicialTotal || 0) + totalIng - totalEgr;
+
+    const summaryData = [
+      [
+        { content: '1. SALDO INICIAL EN CUENTAS BANCARIAS', styles: { fontStyle: 'bold' } },
+        fmtClp(options.saldoInicialBancos || 0)
+      ],
+      [
+        { content: '2. SALDO INICIAL EN EFECTIVO (CAJAS Y FONDOS FIJOS)', styles: { fontStyle: 'bold' } },
+        fmtClp(options.saldoInicialCajas || 0)
+      ],
+      [
+        { content: 'DISPONIBILIDAD TOTAL INICIAL CONSOLIDADA', styles: { fontStyle: 'bold', fillColor: [241, 245, 249] } },
+        { content: fmtClp(options.saldoInicialTotal || 0), styles: { fontStyle: 'bold', fillColor: [241, 245, 249] } }
+      ],
+      [
+        '(+) Total Ingresos Operacionales y Cobranzas Proyectadas',
+        fmtClp(totalIng)
+      ],
+      [
+        '(-) Total Egresos Operacionales, Nómina, Impuestos y Proveedores',
+        fmtClp(totalEgr)
+      ],
+      [
+        { 
+          content: 'SALDO FINAL DE TESORERÍA PROYECTADO', 
+          styles: { fontStyle: 'bold', fillColor: saldoFinalEst >= 0 ? [220, 252, 231] : [254, 226, 226] } 
+        },
+        { 
+          content: fmtClp(saldoFinalEst), 
+          styles: { fontStyle: 'bold', fillColor: saldoFinalEst >= 0 ? [220, 252, 231] : [254, 226, 226] } 
+        }
+      ]
+    ];
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Resumen de Posición Consolidada y Proyección', 'Monto CLP']],
+      body: summaryData as any,
+      theme: 'grid',
+      styles: { fontSize: 7.5, cellPadding: 1.6 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 135 },
+        1: { cellWidth: 45, halign: 'right' }
+      }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+  }
+
+  // Cronograma Mensual (si es proyección a 1 año o mensual)
+  if (options?.monthlyPoints && options.monthlyPoints.length > 0) {
+    if (currentY > 200) {
+      doc.addPage();
+      currentY = 25;
+    }
+
+    const monthlyBody = options.monthlyPoints.map((m: any) => [
+      m.mesLabel || m.periodo,
+      fmtClp(m.saldoInicial),
+      fmtClp(m.ingresosTotales),
+      fmtClp(m.ventasHistoria || 0),
+      fmtClp(m.egresosTotales),
+      fmtClp(m.nomina || 0),
+      fmtClp(m.f29 || 0),
+      fmtClp(m.flujoNeto),
+      fmtClp(m.saldoFinal),
+      m.estaEnDeficit ? 'DÉFICIT' : 'OK'
+    ]);
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Mes', 'Saldo Inicial', 'Ingresos Tot.', 'Vtas Hist.', 'Egresos Tot.', 'Nómina', 'F29', 'Flujo Neto', 'Saldo Final', 'Est.']],
+      body: monthlyBody,
+      theme: 'grid',
+      styles: { fontSize: 6.5, cellPadding: 1.2 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 20 },
+        1: { cellWidth: 18, halign: 'right' },
+        2: { cellWidth: 18, halign: 'right' },
+        3: { cellWidth: 18, halign: 'right' },
+        4: { cellWidth: 18, halign: 'right' },
+        5: { cellWidth: 16, halign: 'right' },
+        6: { cellWidth: 16, halign: 'right' },
+        7: { cellWidth: 18, halign: 'right' },
+        8: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
+        9: { cellWidth: 14, halign: 'center' }
+      },
+      didParseCell: (data) => {
+        if (data.column.index === 9 && data.cell.raw === 'DÉFICIT') {
+          data.cell.styles.fillColor = [254, 226, 226];
+          data.cell.styles.textColor = [185, 28, 28];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+  }
+
+  if (currentY > 210) {
+    doc.addPage();
+    currentY = 25;
+  }
+
+  // Detalle de Movimientos
   const tableBody = safeMovs.map(m => [
     m.fechaEstimada,
     m.concepto.substring(0, 36),
@@ -1298,17 +1433,17 @@ export function downloadCashFlowPdf(movements: CashFlowMovement[] = [], company:
   const flujoNeto = totalIngresos - totalEgresos;
 
   tableBody.push([
-    'TOTALES', `${safeMovs.length} movimientos`, '', '',
+    'TOTALES', `${safeMovs.length} partidas`, '', '',
     fmtClp(totalIngresos), fmtClp(totalEgresos), flujoNeto >= 0 ? `Neto: +${fmtClp(flujoNeto)}` : `Déficit: ${fmtClp(flujoNeto)}`
   ]);
 
   autoTable(doc, {
-    startY: 45,
+    startY: currentY,
     head: [['Fecha', 'Concepto / Destinatario', 'Tipo', 'Categoría', 'Ingresos (+)', 'Egresos (-)', 'Estado']],
     body: tableBody,
     theme: 'grid',
-    styles: { fontSize: 7.5, cellPadding: 1.5 },
-    headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+    styles: { fontSize: 7, cellPadding: 1.4 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
     columnStyles: {
       0: { cellWidth: 20, halign: 'center' },
       1: { cellWidth: 54 },
@@ -1324,25 +1459,234 @@ export function downloadCashFlowPdf(movements: CashFlowMovement[] = [], company:
   doc.save(`Flujo_Caja_${company.rut}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-export function downloadCashFlowExcel(movements: CashFlowMovement[] = [], company: ClientCompany) {
+export function downloadCashFlowExcel(
+  movements: CashFlowMovement[] = [], 
+  company: ClientCompany,
+  options?: {
+    saldoInicialBancos?: number;
+    saldoInicialCajas?: number;
+    saldoInicialTotal?: number;
+    horizonteLabel?: string;
+    scenario?: string;
+    timeline?: any[];
+    monthlyPoints?: any[];
+  }
+) {
   const safeMovs = Array.isArray(movements) ? movements : [];
   const wb = XLSX.utils.book_new();
 
+  // Hoja 1: Resumen de Posición Consolidada
+  if (options?.saldoInicialTotal !== undefined) {
+    const totalIng = safeMovs.filter(m => m.tipo === 'INGRESO').reduce((s, m) => s + m.montoTotal, 0);
+    const totalEgr = safeMovs.filter(m => m.tipo === 'EGRESO').reduce((s, m) => s + m.montoTotal, 0);
+    const saldoFinalEst = (options.saldoInicialTotal || 0) + totalIng - totalEgr;
+
+    const resumenData = [
+      { 'Concepto': 'Empresa', 'Valor': company.razonSocial || company.nombreCorto },
+      { 'Concepto': 'RUT', 'Valor': company.rut },
+      { 'Concepto': 'Fecha de Emisión', 'Valor': new Date().toLocaleString('es-CL') },
+      { 'Concepto': 'Horizonte de Proyección', 'Valor': options.horizonteLabel || '60 Días' },
+      { 'Concepto': 'Escenario Evaluado', 'Valor': options.scenario || 'BASE' },
+      { 'Concepto': '1. Saldo Inicial Bancos (Cuentas Corrientes)', 'Valor': options.saldoInicialBancos || 0 },
+      { 'Concepto': '2. Saldo Inicial Cajas y Fondos Fijos (Efectivo)', 'Valor': options.saldoInicialCajas || 0 },
+      { 'Concepto': 'Disponibilidad Total Inicial Consolidada', 'Valor': options.saldoInicialTotal || 0 },
+      { 'Concepto': 'Total Ingresos y Cobranzas Proyectadas', 'Valor': totalIng },
+      { 'Concepto': 'Total Egresos Proyectados', 'Valor': totalEgr },
+      { 'Concepto': 'Flujo Neto del Período', 'Valor': totalIng - totalEgr },
+      { 'Concepto': 'Saldo Final Proyectado de Tesorería', 'Valor': saldoFinalEst }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenData), 'Resumen Tesorería');
+  }
+
+  // Hoja 2: Cronograma Mensual a 12 Meses (si existe)
+  if (options?.monthlyPoints && options.monthlyPoints.length > 0) {
+    const monthlyData = options.monthlyPoints.map((m: any) => ({
+      'Período / Mes': m.periodo || m.mesLabel,
+      'Mes': m.mesLabel,
+      'Saldo Inicial': m.saldoInicial,
+      'Ingresos Totales': m.ingresosTotales,
+      'Ventas Proyectadas Historia RCV': m.ventasHistoria || 0,
+      'Cobranzas DTEs Pendientes': m.cobranzasDtes || 0,
+      'Hitos Producción': m.hitosProduccion || 0,
+      'Egresos Totales': m.egresosTotales,
+      'Nómina y Sueldos': m.nomina || 0,
+      'Previred e Imposiciones': m.previred || 0,
+      'Impuestos F29': m.f29 || 0,
+      'Proveedores e Insumos': m.proveedores || 0,
+      'Arriendos IFRS 16': m.arriendos || 0,
+      'Cajas y Fondo Fijo': m.cajasFondoFijo || 0,
+      'Flujo Neto del Mes': m.flujoNeto,
+      'Saldo Final Proyectado': m.saldoFinal,
+      'Condición': m.estaEnDeficit ? 'DEFICIT / QUIEBRE' : 'SUPERÁVIT'
+    }));
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthlyData), 'Proyección 12 Meses');
+  }
+
+  // Hoja 3: Cronograma Diario / Temporal
+  if (options?.timeline && options.timeline.length > 0) {
+    const timelineData = options.timeline.map((point: any) => ({
+      'Fecha / Período': point.fecha || point.periodo || point.mesLabel,
+      'Día / Mes': point.diaSemana || point.mesLabel || `Día ${point.diaNumero || 1}`,
+      'Saldo Inicial': point.saldoInicialDia ?? point.saldoInicial ?? 0,
+      'Ingresos Totales': point.ingresosDia ?? point.ingresosTotales ?? 0,
+      'Egresos Totales': point.egresosDia ?? point.egresosTotales ?? 0,
+      'Flujo Neto': point.flujoNetoDia ?? point.flujoNeto ?? 0,
+      'Saldo Proyectado': point.saldoProyectado ?? point.saldoFinal ?? 0,
+      'Estado Déficit': (point.estaEnDeficit ? 'DEFICIT / QUIEBRE' : 'SUPERÁVIT')
+    }));
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(timelineData), 'Cronograma Temporal');
+  }
+
+  // Hoja 4: Partidas y Movimientos Detallados
   const data = safeMovs.map(m => ({
     'Fecha Estimada': m.fechaEstimada,
     'Fecha Real': m.fechaReal || '-',
     'Concepto': m.concepto,
     'Contraparte': m.contraparte,
+    'RUT Contraparte': m.rutContraparte || '-',
     'Tipo': m.tipo,
     'Categoría': m.categoria,
-    'Ingreso': m.tipo === 'INGRESO' ? m.montoTotal : 0,
-    'Egreso': m.tipo === 'EGRESO' ? m.montoTotal : 0,
+    'Monto Neto': m.montoNeto,
+    'Monto IVA': m.montoIva,
+    'Ingreso Total': m.tipo === 'INGRESO' ? m.montoTotal : 0,
+    'Egreso Total': m.tipo === 'EGRESO' ? m.montoTotal : 0,
     'Estado': m.estado,
-    'Folio DTE': m.dteFolioAsociado || '-'
+    'Origen': m.origenModulo,
+    'Folio DTE': m.dteFolioAsociado || '-',
+    'Ref Interna': m.documentoReferencia || '-'
   }));
 
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Flujo de Caja');
-  XLSX.writeFile(wb, `Flujo_Caja_${company.rut}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Partidas de Flujo');
+
+  XLSX.writeFile(wb, `Flujo_Caja_${company.rut}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// ============================================================================
+// 9. VALES DE SALIDA DE BODEGA / CONSUMO INTERNO (PDF & EXCEL)
+// ============================================================================
+
+export function downloadWarehouseWithdrawalsPdf(
+  withdrawals: WarehouseWithdrawal[] = [],
+  company: ClientCompany
+) {
+  const safeWithdrawals = Array.isArray(withdrawals) ? withdrawals : [];
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  addPdfHeader(
+    doc,
+    company,
+    'Registro Oficial de Vales de Salida y Consumo de Bodega',
+    'Imputación de Materiales a Órdenes de Producción y Centros de Costo - NIC 2 Inventarios',
+    true
+  );
+
+  const tableBody: any[] = [];
+  safeWithdrawals.forEach(w => {
+    const destino = w.tipoRetiro === 'ORDEN_PRODUCCION' 
+      ? `OP: ${w.ordenProduccionFolio || w.ordenProduccionId || '-'}` 
+      : `CC: ${w.centroCostoNombre || w.centroCostoId || '-'}`;
+
+    tableBody.push([
+      w.folioVale,
+      w.fecha,
+      w.bodegaOrigenNombre || w.bodegaOrigenId,
+      destino,
+      w.solicitanteNombre,
+      w.responsableBodegaNombre || w.responsableBodega,
+      w.items?.length || 0,
+      fmtClp(w.costoTotalVale || w.costoTotalRetiro || 0),
+      w.alertaSobreconsumo ? 'ALERTA SOBRECONSUMO' : 'NORMAL'
+    ]);
+  });
+
+  const totalCosto = safeWithdrawals.reduce((s, w) => s + (w.costoTotalVale || w.costoTotalRetiro || 0), 0);
+  tableBody.push([
+    'TOTALES', `${safeWithdrawals.length} vales`, '', '', '', '', '',
+    fmtClp(totalCosto), ''
+  ]);
+
+  autoTable(doc, {
+    startY: 45,
+    head: [['Folio Vale', 'Fecha', 'Bodega Origen', 'Destino (OP / CC)', 'Solicitante', 'Responsable Bodega', 'Ítems', 'Costo Total', 'Estado']],
+    body: tableBody,
+    theme: 'grid',
+    styles: { fontSize: 7.5, cellPadding: 1.5 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+    columnStyles: {
+      0: { cellWidth: 26, fontStyle: 'bold' },
+      1: { cellWidth: 22, halign: 'center' },
+      2: { cellWidth: 32 },
+      3: { cellWidth: 46 },
+      4: { cellWidth: 36 },
+      5: { cellWidth: 36 },
+      6: { cellWidth: 14, halign: 'center' },
+      7: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+      8: { cellWidth: 32, halign: 'center' }
+    },
+    didParseCell: (data) => {
+      if (data.column.index === 8 && String(data.cell.raw).includes('ALERTA')) {
+        data.cell.styles.textColor = [220, 38, 38];
+        data.cell.styles.fontStyle = 'bold';
+      }
+    }
+  });
+
+  addPdfFooterAndSignatures(doc, true);
+  doc.save(`Vales_Salida_Bodega_${company.rut}_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+export function downloadWarehouseWithdrawalsExcel(
+  withdrawals: WarehouseWithdrawal[] = [],
+  company: ClientCompany
+) {
+  const safeWithdrawals = Array.isArray(withdrawals) ? withdrawals : [];
+  const wb = XLSX.utils.book_new();
+
+  // Hoja 1: Resumen de Vales
+  const resumen = safeWithdrawals.map(w => ({
+    'Folio Vale': w.folioVale,
+    'Fecha': w.fecha,
+    'Tipo': w.tipoRetiro || 'ORDEN_PRODUCCION',
+    'Bodega': w.bodegaOrigenNombre || w.bodegaOrigenId,
+    'OP Destino': w.ordenProduccionFolio || w.ordenProduccionId || '-',
+    'Centro Costo Destino': w.centroCostoNombre || w.centroCostoId || '-',
+    'Solicitante': w.solicitanteNombre,
+    'Responsable Bodega': w.responsableBodegaNombre || w.responsableBodega,
+    'Cantidad Ítems': w.items?.length || 0,
+    'Costo Total Vale': w.costoTotalVale || w.costoTotalRetiro || 0,
+    'Sobreconsumo Detectado': w.alertaSobreconsumo ? 'SÍ' : 'NO',
+    'Guía Despacho N° 52': w.folioGuiaDespacho52 || '-',
+    'Asiento Centralización': w.asientoId || 'PENDIENTE'
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Vales de Salida');
+
+  // Hoja 2: Detalle por Ítem de Material
+  const detalleItems: any[] = [];
+  safeWithdrawals.forEach(w => {
+    (w.items || []).forEach(item => {
+      detalleItems.push({
+        'Folio Vale': w.folioVale,
+        'Fecha': w.fecha,
+        'Bodega': w.bodegaOrigenNombre,
+        'Destino': w.tipoRetiro === 'ORDEN_PRODUCCION' ? (w.ordenProduccionFolio || w.ordenProduccionId) : (w.centroCostoNombre || w.centroCostoId),
+        'Item SKU': item.insumoCodigo || (item as any).itemSku || '-',
+        'Nombre Material': item.insumoNombre || (item as any).itemNombre || '-',
+        'Cantidad Despachada': item.cantidadSolicitada ?? (item as any).cantidadDespachada ?? 0,
+        'Unidad': item.unidadMedida,
+        'Costo Unitario PMP': item.costoUnitarioPMP ?? 0,
+        'Costo Total': item.costoTotal ?? 0,
+        'Sobreconsumo': item.haySobreconsumo ? 'SÍ' : 'NO',
+        'Desvío Cantidad': item.desvioCantidad || 0,
+        'Impacto en Margen': item.impactoEstimadoEnMargenClp || 0
+      });
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalleItems), 'Detalle Insumos Despachados');
+
+  XLSX.writeFile(wb, `Vales_Salida_Bodega_${company.rut}_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 // ============================================================================

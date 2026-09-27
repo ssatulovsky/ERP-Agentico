@@ -13,7 +13,10 @@ import {
   ArrowRight,
   TrendingDown,
   Building2,
-  HelpCircle
+  HelpCircle,
+  Receipt,
+  CreditCard,
+  Landmark,
 } from 'lucide-react';
 import {
   CashFlowMovement,
@@ -24,6 +27,10 @@ import {
   DteDocument,
   LeaseContract,
   ErpCommitmentsScanResult,
+  ChequeCartera,
+  ChequeEmitido,
+  DeudaFinanciera,
+  ProvisionEgreso,
 } from '../types';
 import { scanErpCommitments } from '../utils/cashFlowProjectionEngine';
 
@@ -34,6 +41,10 @@ interface CashFlowAutonomousAgentModalProps {
   productionOrders?: ProductionOrder[];
   dtes?: DteDocument[];
   leases?: LeaseContract[];
+  chequesCartera?: ChequeCartera[];
+  chequesEmitidos?: ChequeEmitido[];
+  deudasFinancieras?: DeudaFinanciera[];
+  provisionesEgresos?: ProvisionEgreso[];
   existingMovements: CashFlowMovement[];
   onClose: () => void;
   onSyncMovements: (movementsToSync: CashFlowMovement[]) => void;
@@ -46,6 +57,10 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
   productionOrders = [],
   dtes = [],
   leases = [],
+  chequesCartera = [],
+  chequesEmitidos = [],
+  deudasFinancieras = [],
+  provisionesEgresos = [],
   existingMovements = [],
   onClose,
   onSyncMovements,
@@ -57,6 +72,10 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
     productionOrders,
     dtes,
     leases,
+    chequesCartera,
+    chequesEmitidos,
+    deudasFinancieras,
+    provisionesEgresos,
     existingMovements,
   });
 
@@ -182,6 +201,62 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
               </strong>
               <span className="text-[10px] text-slate-500 block">
                 {scanResult.produccionHitos.totalPresupuestosAprobados} presupuestos aprobados
+              </span>
+            </div>
+
+            {/* Cheques en Cartera */}
+            <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Cheques en Cartera</span>
+              </div>
+              <strong className="text-sm font-bold font-mono text-emerald-300 block">
+                +{formatCLP(scanResult.chequesCartera?.montoTotalCobro || 0)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {scanResult.chequesCartera?.totalCheques || 0} cheques por cobrar en custodia
+              </span>
+            </div>
+
+            {/* Cheques Emitidos */}
+            <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Receipt className="w-3.5 h-3.5 text-rose-400" />
+                <span>Cheques Emitidos</span>
+              </div>
+              <strong className="text-sm font-bold font-mono text-rose-300 block">
+                {formatCLP(scanResult.chequesEmitidos?.montoTotalPago || 0)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {scanResult.chequesEmitidos?.totalCheques || 0} diferidos girados
+              </span>
+            </div>
+
+            {/* Deuda Financiera */}
+            <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Landmark className="w-3.5 h-3.5 text-rose-400" />
+                <span>Deuda Financiera</span>
+              </div>
+              <strong className="text-sm font-bold font-mono text-rose-300 block">
+                {formatCLP(scanResult.deudaFinanciera?.montoTotalCuotasPendientes || 0)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {scanResult.deudaFinanciera?.totalOperaciones || 0} créditos vigentes
+              </span>
+            </div>
+
+            {/* Provisiones de Egresos */}
+            <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                <CreditCard className="w-3.5 h-3.5 text-amber-400" />
+                <span>Provisiones Egresos</span>
+              </div>
+              <strong className="text-sm font-bold font-mono text-amber-300 block">
+                {formatCLP(scanResult.provisionesEgresos?.montoTotalEstimado || 0)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {scanResult.provisionesEgresos?.totalProvisiones || 0} pasivos devengados
               </span>
             </div>
           </div>

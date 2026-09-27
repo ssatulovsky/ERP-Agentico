@@ -15,7 +15,11 @@ import {
   karinComplianceRecords,
   marketingCampaignLogs,
   customerServiceTickets,
-} from '../db/schema/erpModulesSchema';
+  costCenters,
+  costCenterImputations,
+  fixedAssets,
+} from '../db/mysqlSchema';
+import { diskPersistence } from '../services/diskPersistenceService';
 import { postModuleTransaction } from '../services/centralizedJournalService';
 
 export const erpModulesRouter = Router();
@@ -447,6 +451,189 @@ erpModulesRouter.get('/anchor/tickets', async (req: Request, res: Response) => {
     ];
 
     res.json({ success: true, count: tickets.length, data: tickets });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// 12. CENTROS DE COSTO & UNIDADES DE NEGOCIO "MINI-EMPRESAS"
+// ============================================================================
+erpModulesRouter.get('/cost-centers', async (req: Request, res: Response) => {
+  try {
+    const empresaId = (req.query.empresaId as string) || '';
+    const db = getMysqlDb();
+
+    if (isRealMysqlConnected && db) {
+      const records = empresaId
+        ? await db.select().from(costCenters).where(eq(costCenters.empresaId, empresaId))
+        : await db.select().from(costCenters);
+      if (records && records.length > 0) {
+        return res.json({ success: true, count: records.length, data: records, source: 'mysql' });
+      }
+    }
+
+    const diskRecords = diskPersistence.getCostCenters(empresaId);
+    res.json({ success: true, count: diskRecords.length, data: diskRecords, source: 'disk' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/cost-centers', async (req: Request, res: Response) => {
+  try {
+    const body = req.body;
+    const newCC = {
+      id: body.id || crypto.randomUUID(),
+      empresaId: body.empresaId || 'client-retail-01',
+      codigo: body.codigo,
+      nombre: body.nombre,
+      categoria: body.categoria || 'ADMINISTRACION',
+      responsableNombre: body.responsableNombre || 'Responsable',
+      responsableEmail: body.responsableEmail || body.emailResponsable || null,
+      presupuestoMensualClp: Number(body.presupuestoMensualClp || 0),
+      activo: body.activo !== false,
+      descripcion: body.descripcion || null,
+      ventasAcumuladasMes: Number(body.ventasAcumuladasMes || 0),
+      costosDirectosMes: Number(body.costosDirectosMes || 0),
+      gastosOperacionalesMes: Number(body.gastosOperacionalesMes || 0),
+      remuneracionesMes: Number(body.remuneracionesMes || 0),
+      depreciacionMes: Number(body.depreciacionMes || 0),
+      createdAt: new Date().toISOString(),
+    };
+
+    diskPersistence.addCostCenter(newCC);
+
+    const db = getMysqlDb();
+    if (isRealMysqlConnected && db) {
+      await db
+        .insert(costCenters)
+        .values({
+          ...newCC,
+          presupuestoMensualClp: String(newCC.presupuestoMensualClp),
+          ventasAcumuladasMes: String(newCC.ventasAcumuladasMes),
+          costosDirectosMes: String(newCC.costosDirectosMes),
+          gastosOperacionalesMes: String(newCC.gastosOperacionalesMes),
+          remuneracionesMes: String(newCC.remuneracionesMes),
+          depreciacionMes: String(newCC.depreciacionMes),
+          createdAt: new Date(),
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            nombre: newCC.nombre,
+            presupuestoMensualClp: String(newCC.presupuestoMensualClp),
+            activo: newCC.activo,
+          },
+        });
+    }
+
+    res.json({ success: true, message: 'Centro de costo guardado con éxito', data: newCC });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// 13. ACTIVOS FIJOS (IFRS / Art. 31 LIR) CON CENTRO DE COSTO
+// ============================================================================
+erpModulesRouter.get('/fixed-assets', async (req: Request, res: Response) => {
+  try {
+    const empresaId = (req.query.empresaId as string) || '';
+    const db = getMysqlDb();
+
+    if (isRealMysqlConnected && db) {
+      const records = empresaId
+        ? await db.select().from(fixedAssets).where(eq(fixedAssets.empresaId, empresaId))
+        : await db.select().from(fixedAssets);
+      if (records && records.length > 0) {
+        return res.json({ success: true, count: records.length, data: records, source: 'mysql' });
+      }
+    }
+
+    const diskRecords = diskPersistence.getFixedAssets(empresaId);
+    res.json({ success: true, count: diskRecords.length, data: diskRecords, source: 'disk' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/fixed-assets', async (req: Request, res: Response) => {
+  try {
+    const body = req.body;
+    const newAsset = {
+      id: body.id || crypto.randomUUID(),
+      empresaId: body.empresaId || 'client-retail-01',
+      codigoPlaca: body.codigoPlaca || `AF-${Date.now().toString().slice(-4)}`,
+      nombre: body.nombre,
+      categoria: body.categoria || 'MAQUINARIA_INDUSTRIAL',
+      fechaAdquisicion: body.fechaAdquisicion || new Date().toISOString().split('T')[0],
+      proveedorRut: body.proveedorRut || null,
+      proveedorRazonSocial: body.proveedorRazonSocial || null,
+      folioDteCompra: body.folioDteCompra ? Number(body.folioDteCompra) : null,
+      valorAdquisicionOriginal: Number(body.valorAdquisicionOriginal || 0),
+      valorResidualFinanciero: Number(body.valorResidualFinanciero || 0),
+      vidaUtilMesesFinanciera: Number(body.vidaUtilMesesFinanciera || 60),
+      vidaUtilMesesTributaria: Number(body.vidaUtilMesesTributaria || 36),
+      mesesDepreciados: Number(body.mesesDepreciados || 0),
+      vidaUtilRestanteMeses: Number(body.vidaUtilRestanteMeses || 60),
+      metodoDepreciacion: body.metodoDepreciacion || 'LINEAL_RECTA',
+      depreciacionAcumuladaFinanciera: Number(body.depreciacionAcumuladaFinanciera || 0),
+      valorLibroFinanciero: Number(body.valorLibroFinanciero || 0),
+      cuotaDepreciacionMensualFinanciera: Number(body.cuotaDepreciacionMensualFinanciera || 0),
+      factorCorreccionMonetariaAcum: Number(body.factorCorreccionMonetariaAcum || 0),
+      correccionMonetariaAcumulada: Number(body.correccionMonetariaAcumulada || 0),
+      depreciacionAcumuladaTributaria: Number(body.depreciacionAcumuladaTributaria || 0),
+      valorTributarioNeto: Number(body.valorTributarioNeto || 0),
+      cuotaDepreciacionMensualTributaria: Number(body.cuotaDepreciacionMensualTributaria || 0),
+      centroCostoId: body.centroCostoId || null,
+      centroCostoCodigo: body.centroCostoCodigo || null,
+      centroCostoNombre: body.centroCostoNombre || null,
+      ubicacionFisica: body.ubicacionFisica || 'Planta Principal',
+      responsableCustodio: body.responsableCustodio || 'Encargado de Operaciones',
+      estado: body.estado || 'ACTIVO_OPERATIVO',
+      numeroSerie: body.numeroSerie || null,
+      marcaModelo: body.marcaModelo || null,
+      esFabrilProduccion: Boolean(body.esFabrilProduccion),
+      asientoAltaId: body.asientoAltaId || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    diskPersistence.addFixedAsset(newAsset);
+
+    const db = getMysqlDb();
+    if (isRealMysqlConnected && db) {
+      await db
+        .insert(fixedAssets)
+        .values({
+          ...newAsset,
+          valorAdquisicionOriginal: String(newAsset.valorAdquisicionOriginal),
+          valorResidualFinanciero: String(newAsset.valorResidualFinanciero),
+          depreciacionAcumuladaFinanciera: String(newAsset.depreciacionAcumuladaFinanciera),
+          valorLibroFinanciero: String(newAsset.valorLibroFinanciero),
+          cuotaDepreciacionMensualFinanciera: String(newAsset.cuotaDepreciacionMensualFinanciera),
+          factorCorreccionMonetariaAcum: String(newAsset.factorCorreccionMonetariaAcum),
+          correccionMonetariaAcumulada: String(newAsset.correccionMonetariaAcumulada),
+          depreciacionAcumuladaTributaria: String(newAsset.depreciacionAcumuladaTributaria),
+          valorTributarioNeto: String(newAsset.valorTributarioNeto),
+          cuotaDepreciacionMensualTributaria: String(newAsset.cuotaDepreciacionMensualTributaria),
+          createdAt: new Date(),
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            nombre: newAsset.nombre,
+            valorLibroFinanciero: String(newAsset.valorLibroFinanciero),
+            centroCostoId: newAsset.centroCostoId,
+            centroCostoCodigo: newAsset.centroCostoCodigo,
+            centroCostoNombre: newAsset.centroCostoNombre,
+          },
+        });
+    }
+
+    res.json({
+      success: true,
+      message: 'Activo fijo guardado e imputado a Centro de Costo',
+      data: newAsset,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

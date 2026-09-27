@@ -506,20 +506,36 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
   } 
   // CASO 2: FACTURA DE EXPORTACIÓN (DTE 110)
   else if (dte.tipoDte === '110') {
-    lineas.push(
-      {
-        cuentaCodigo: '1.1.04',
-        cuentaNombre: `Clientes del Exterior / Exportación (${dte.razonSocialContraparte})`,
-        debe: dte.montoTotal,
-        haber: 0,
-      },
-      {
+    lineas.push({
+      cuentaCodigo: '1.1.04',
+      cuentaNombre: `Clientes del Exterior / Exportación (${dte.razonSocialContraparte})`,
+      debe: dte.montoTotal,
+      haber: 0,
+      rutAuxiliar: dte.rutContraparte,
+      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+    });
+
+    if (dte.items && dte.items.length > 0) {
+      dte.items.forEach(it => {
+        lineas.push({
+          cuentaCodigo: it.cuentaCodigo || '4.1.03',
+          cuentaNombre: it.cuentaNombre || `Exportación - ${it.nombre}`,
+          debe: 0,
+          haber: it.montoTotal,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      });
+    } else {
+      lineas.push({
         cuentaCodigo: '4.1.03',
         cuentaNombre: 'Ingresos por Exportaciones (Art. 12 Letra D DL 825)',
         debe: 0,
         haber: dte.montoTotal,
-      }
-    );
+        rutAuxiliar: dte.rutContraparte,
+        centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      });
+    }
   }
   // CASO 3: BOLETA ELECTRÓNICA AFECTA (DTE 39) O BOLETA EXENTA (DTE 41)
   else if (dte.tipoDte === '39' || dte.tipoDte === '41') {
@@ -528,21 +544,55 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Boletas / Venta Menor (${dte.razonSocialContraparte || 'Consumidor Final'})`,
       debe: dte.montoTotal,
       haber: 0,
+      rutAuxiliar: dte.rutContraparte,
+      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
     });
     if (dte.tipoDte === '41' || (dte.montoExento > 0 && dte.montoIva === 0)) {
-      lineas.push({
-        cuentaCodigo: '4.1.02',
-        cuentaNombre: 'Ingresos por Ventas Exentas con Boleta',
-        debe: 0,
-        haber: dte.montoTotal,
-      });
+      if (dte.items && dte.items.length > 0) {
+        dte.items.forEach(it => {
+          lineas.push({
+            cuentaCodigo: it.cuentaCodigo || '4.1.02',
+            cuentaNombre: it.cuentaNombre || `Ingresos Boleta Exenta - ${it.nombre}`,
+            debe: 0,
+            haber: it.montoTotal,
+            rutAuxiliar: dte.rutContraparte,
+            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          });
+        });
+      } else {
+        lineas.push({
+          cuentaCodigo: '4.1.02',
+          cuentaNombre: 'Ingresos por Ventas Exentas con Boleta',
+          debe: 0,
+          haber: dte.montoTotal,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      }
     } else {
-      if (dte.montoNeto > 0) {
+      if (dte.items && dte.items.length > 0) {
+        dte.items.forEach(it => {
+          const netoCalc = it.esExento ? 0 : Math.round(it.montoTotal / 1.19);
+          const exentoCalc = it.esExento ? it.montoTotal : 0;
+          const montoIngreso = (it.montoTotal && !it.precioUnitario) ? it.montoTotal : (netoCalc > 0 ? netoCalc : (exentoCalc > 0 ? exentoCalc : it.montoTotal));
+
+          lineas.push({
+            cuentaCodigo: it.cuentaCodigo || (it.esExento ? '4.1.02' : '4.1.01'),
+            cuentaNombre: it.cuentaNombre || `Ingresos Boleta - ${it.nombre}`,
+            debe: 0,
+            haber: montoIngreso,
+            rutAuxiliar: dte.rutContraparte,
+            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          });
+        });
+      } else if (dte.montoNeto > 0) {
         lineas.push({
           cuentaCodigo: '4.1.01',
           cuentaNombre: 'Ingresos por Ventas con Boleta Electrónica',
           debe: 0,
           haber: dte.montoNeto,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
         });
       }
       if (dte.montoIva > 0) {
@@ -557,20 +607,36 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
   }
   // CASO 4: FACTURA NO AFECTA O EXENTA (DTE 34)
   else if (dte.tipoDte === '34' || (dte.montoExento > 0 && dte.montoIva === 0)) {
-    lineas.push(
-      {
-        cuentaCodigo: '1.1.03',
-        cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
-        debe: dte.montoTotal,
-        haber: 0,
-      },
-      {
+    lineas.push({
+      cuentaCodigo: '1.1.03',
+      cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
+      debe: dte.montoTotal,
+      haber: 0,
+      rutAuxiliar: dte.rutContraparte,
+      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+    });
+
+    if (dte.items && dte.items.length > 0) {
+      dte.items.forEach(it => {
+        lineas.push({
+          cuentaCodigo: it.cuentaCodigo || '4.1.02',
+          cuentaNombre: it.cuentaNombre || `Ingresos Servicios Exentos - ${it.nombre}`,
+          debe: 0,
+          haber: it.montoTotal,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      });
+    } else {
+      lineas.push({
         cuentaCodigo: '4.1.02',
         cuentaNombre: 'Ingresos por Servicios Exentos y No Afectos a IVA',
         debe: 0,
         haber: dte.montoExento || dte.montoTotal,
-      }
-    );
+        rutAuxiliar: dte.rutContraparte,
+        centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      });
+    }
   }
   // CASO 5: FACTURA ELECTRÓNICA (DTE 33) O NOTA DE DÉBITO (DTE 56)
   else {
@@ -579,15 +645,61 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
+      rutAuxiliar: dte.rutContraparte,
+      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
     });
 
-    if (dte.montoNeto > 0) {
-      lineas.push({
-        cuentaCodigo: dte.tipoDte === '56' ? '4.2.01' : '4.1.01',
-        cuentaNombre: dte.tipoDte === '56' ? 'Otros Ingresos / Recargos ND Emitida' : 'Ingresos por Ventas Afectas a IVA',
-        debe: 0,
-        haber: dte.montoNeto,
+    // Desglose por Ítems de la Factura Electrónica vinculados a Centro de Costo
+    if (dte.items && dte.items.length > 0) {
+      dte.items.forEach(it => {
+        const ctaCod = it.cuentaCodigo || (dte.tipoDte === '56' ? '4.2.01' : it.esExento ? '4.1.02' : '4.1.01');
+        const ctaNom = it.cuentaNombre || (it.esExento ? `Ingresos Servicios Exentos - ${it.nombre}` : `Ingresos por Ventas - ${it.nombre}`);
+        const netoCalc = it.esExento ? 0 : Math.round(it.montoTotal / (dte.tipoDte === '34' ? 1 : 1.19));
+        const exentoCalc = it.esExento ? it.montoTotal : 0;
+        const montoIngreso = (it.montoTotal && !it.precioUnitario) ? it.montoTotal : (netoCalc > 0 ? netoCalc : (exentoCalc > 0 ? exentoCalc : it.montoTotal));
+
+        lineas.push({
+          cuentaCodigo: ctaCod,
+          cuentaNombre: ctaNom,
+          debe: 0,
+          haber: montoIngreso,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
       });
+    } else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
+      dte.partidasDesglosadas.forEach(p => {
+        lineas.push({
+          cuentaCodigo: p.cuentaCodigo || (dte.tipoDte === '56' ? '4.2.01' : '4.1.01'),
+          cuentaNombre: p.cuentaNombre || `Venta - ${p.concepto}`,
+          debe: 0,
+          haber: (p.montoNeto || 0) + (p.montoExento || 0),
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      });
+    } else {
+      if (dte.montoNeto > 0) {
+        lineas.push({
+          cuentaCodigo: dte.tipoDte === '56' ? '4.2.01' : '4.1.01',
+          cuentaNombre: dte.tipoDte === '56' ? 'Otros Ingresos / Recargos ND Emitida' : 'Ingresos por Ventas Afectas a IVA',
+          debe: 0,
+          haber: dte.montoNeto,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      }
+
+      if (dte.montoExento > 0) {
+        lineas.push({
+          cuentaCodigo: '4.1.02',
+          cuentaNombre: 'Ingresos por Servicios Exentos',
+          debe: 0,
+          haber: dte.montoExento,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      }
     }
 
     if (dte.montoIva > 0) {
@@ -596,15 +708,6 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'IVA Débito Fiscal',
         debe: 0,
         haber: dte.montoIva,
-      });
-    }
-
-    if (dte.montoExento > 0) {
-      lineas.push({
-        cuentaCodigo: '4.1.02',
-        cuentaNombre: 'Ingresos por Servicios Exentos',
-        debe: 0,
-        haber: dte.montoExento,
       });
     }
   }
@@ -693,22 +796,57 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
     }
   } else {
     // FACTURA O NOTA DE DÉBITO DE COMPRA
-    if (dte.montoExento > 0) {
-      lineas.push({
-        cuentaCodigo: '5.2.10',
-        cuentaNombre: 'Gastos Exentos / Otros Servicios',
-        debe: dte.montoExento,
-        haber: 0,
-      });
-    }
+    // Desglose por Ítems o Partidas de la Factura Electrónica vinculados a Centro de Costo
+    if (dte.items && dte.items.length > 0) {
+      dte.items.forEach(it => {
+        const ctaCod = it.cuentaCodigo || dte.cuentaCodigoAsignada || '5.1.01';
+        const ctaNom = it.cuentaNombre || dte.cuentaNombreAsignada || `Gasto / Insumo - ${it.nombre}`;
+        const netoCalc = it.esExento ? 0 : Math.round(it.montoTotal / (dte.tipoDte === '34' ? 1 : 1.19));
+        const exentoCalc = it.esExento ? it.montoTotal : 0;
+        const montoGasto = (it.montoTotal && !it.precioUnitario) ? it.montoTotal : (netoCalc > 0 ? netoCalc : (exentoCalc > 0 ? exentoCalc : it.montoTotal));
 
-    if (dte.montoNeto > 0) {
-      lineas.push({
-        cuentaCodigo: '5.1.01',
-        cuentaNombre: 'Costo de Ventas / Gastos Operacionales',
-        debe: dte.montoNeto,
-        haber: 0,
+        lineas.push({
+          cuentaCodigo: ctaCod,
+          cuentaNombre: ctaNom,
+          debe: montoGasto,
+          haber: 0,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
       });
+    } else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
+      dte.partidasDesglosadas.forEach(p => {
+        lineas.push({
+          cuentaCodigo: p.cuentaCodigo || '5.1.01',
+          cuentaNombre: p.cuentaNombre || `Compra - ${p.concepto}`,
+          debe: (p.montoNeto || 0) + (p.montoExento || 0),
+          haber: 0,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      });
+    } else {
+      if (dte.montoExento > 0) {
+        lineas.push({
+          cuentaCodigo: '5.2.10',
+          cuentaNombre: 'Gastos Exentos / Otros Servicios',
+          debe: dte.montoExento,
+          haber: 0,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      }
+
+      if (dte.montoNeto > 0) {
+        lineas.push({
+          cuentaCodigo: dte.cuentaCodigoAsignada || '5.1.01',
+          cuentaNombre: dte.cuentaNombreAsignada || 'Costo de Ventas / Gastos Operacionales',
+          debe: dte.montoNeto,
+          haber: 0,
+          rutAuxiliar: dte.rutContraparte,
+          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        });
+      }
     }
 
     if (dte.montoIva > 0) {
@@ -725,6 +863,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Proveedores Nacionales (${dte.razonSocialContraparte})`,
       debe: 0,
       haber: dte.montoTotal,
+      rutAuxiliar: dte.rutContraparte,
+      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
     });
   }
 
@@ -1048,54 +1188,67 @@ export function formatRutChileno(rutRaw: string): string {
  */
 export function createBankNovedadEntry(
   movement: BankStatementMovement,
-  bancoNombre: string = 'Banco Santander'
+  bancoNombre: string = 'Banco Santander',
+  moneda: 'CLP' | 'USD' | 'EUR' = 'CLP',
+  tipoCambio: number = 955.20
 ): AccountingEntry {
+  const accountMoneda = movement.moneda || moneda;
+  const tc = movement.tipoCambio || (accountMoneda === 'EUR' ? 1042.80 : 955.20);
+  const esExtranjera = accountMoneda !== 'CLP';
+
   const lineas: AccountingEntryLine[] = [];
   const fecha = movement.fecha;
   const doc = `Cartola Bancaria Ref: ${movement.numeroReferencia || movement.id}`;
 
+  const montoNominal = movement.abono > 0 ? movement.abono : movement.cargo;
+  const montoContableCLP = esExtranjera ? Math.round(montoNominal * tc) : Math.round(montoNominal);
+
+  const monedaPrefijo = accountMoneda === 'USD' ? 'US$' : accountMoneda === 'EUR' ? '€' : '$';
+  const glosaSufijo = esExtranjera ? ` [${monedaPrefijo}${montoNominal.toFixed(2)} @ $${tc} CLP/${accountMoneda}]` : '';
+
+  const cuentaBancoCodigo = esExtranjera ? '1.1.02.003' : '1.1.01.001';
+  const cuentaBancoNombre = esExtranjera 
+    ? `${bancoNombre} Moneda Extranjera (${accountMoneda})`
+    : `${bancoNombre} (Cta. Cte. M/N)`;
+
   if (movement.abono > 0) {
     // Abono recibido en la cuenta bancaria (Debe Banco / Haber Contrapartida)
-    const monto = movement.abono;
     lineas.push({
-      cuentaCodigo: '1.1.01',
-      cuentaNombre: `${bancoNombre} (Abono en Cta. Cte.)`,
-      debe: monto,
+      cuentaCodigo: cuentaBancoCodigo,
+      cuentaNombre: cuentaBancoNombre,
+      debe: montoContableCLP,
       haber: 0,
     });
     lineas.push({
       cuentaCodigo: movement.cuentaContableSugerida?.haberCodigo || '2.1.08',
       cuentaNombre: movement.cuentaContableSugerida?.haberNombre || 'Anticipos de Clientes / Partidas por Aplicar',
       debe: 0,
-      haber: monto,
+      haber: montoContableCLP,
     });
   } else {
     // Cargo debitado por el banco (Debe Gasto/Costo / Haber Banco)
-    const monto = movement.cargo;
     lineas.push({
       cuentaCodigo: movement.cuentaContableSugerida?.debeCodigo || '5.1.09',
       cuentaNombre: movement.cuentaContableSugerida?.debeNombre || 'Gastos y Comisiones Bancarias',
-      debe: monto,
+      debe: montoContableCLP,
       haber: 0,
     });
     lineas.push({
-      cuentaCodigo: '1.1.01',
-      cuentaNombre: `${bancoNombre} (Cargo en Cta. Cte.)`,
+      cuentaCodigo: cuentaBancoCodigo,
+      cuentaNombre: cuentaBancoNombre,
       debe: 0,
-      haber: monto,
+      haber: montoContableCLP,
     });
   }
-
-  const montoTotal = movement.abono > 0 ? movement.abono : movement.cargo;
 
   return {
     id: `entry-bank-nov-${movement.id}-${Date.now()}`,
     fecha,
-    concepto: `Registro Novedad Bancaria: ${movement.glosaBancaria}`,
+    concepto: `Registro Novedad Bancaria: ${movement.glosaBancaria}${glosaSufijo}`,
     documento: doc,
     lineas,
-    totalDebe: montoTotal,
-    totalHaber: montoTotal,
+    totalDebe: montoContableCLP,
+    totalHaber: montoContableCLP,
     balanceado: true,
     origen: 'CAJA_BANCO',
     creadoEn: new Date().toISOString(),
@@ -1271,7 +1424,7 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
       debe: neto,
       haber: 0,
       rutAuxiliar: asset.proveedorRut,
-      centroCosto: asset.ubicacionFisica,
+      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre || asset.ubicacionFisica,
     },
     {
       cuentaCodigo: '1.1.05',
@@ -1285,6 +1438,7 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
       debe: 0,
       haber: total,
       rutAuxiliar: asset.proveedorRut,
+      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
     },
   ];
 
@@ -1305,6 +1459,7 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
 
 /**
  * Asiento de Depreciación del Período (Mensual / Anual NIC 16 e IFRS)
+ * Desglosado y atribuido a cada Centro de Costos
  */
 export function createFixedAssetDepreciationEntry(
   periodo: string,
@@ -1316,44 +1471,66 @@ export function createFixedAssetDepreciationEntry(
   fechaCustom?: string
 ): AccountingEntry {
   const fecha = fechaCustom || `${periodo}-28`;
-  let totalGastoAdmin = 0;
-  let totalCifFabril = 0;
   let totalDepAcum = 0;
 
+  // Agrupación de la cuota de depreciación por Centro de Costo
+  interface CcDepGroup {
+    codigo: string;
+    nombre: string;
+    gastoAdmin: number;
+    cifFabril: number;
+  }
+  const ccMap: Record<string, CcDepGroup> = {};
+
   depreciaciones.forEach((d) => {
+    const ccKey = d.activo.centroCostoCodigo || (d.activo.esFabrilProduccion ? 'CC-PRD-QUELLON' : 'CC-ADM-01');
+    const ccNom = d.activo.centroCostoNombre || (d.activo.esFabrilProduccion ? 'Planta Fabril & Producción' : 'Administración Central');
+
+    if (!ccMap[ccKey]) {
+      ccMap[ccKey] = {
+        codigo: ccKey,
+        nombre: ccNom,
+        gastoAdmin: 0,
+        cifFabril: 0,
+      };
+    }
+
     if (d.activo.esFabrilProduccion) {
-      totalCifFabril += d.cuotaFabrilCif;
+      ccMap[ccKey].cifFabril += d.cuotaFabrilCif;
     } else {
-      totalGastoAdmin += d.cuotaFinanciera;
+      ccMap[ccKey].gastoAdmin += d.cuotaFinanciera;
     }
     totalDepAcum += d.cuotaFinanciera;
   });
 
-  totalGastoAdmin = Math.round(totalGastoAdmin);
-  totalCifFabril = Math.round(totalCifFabril);
   totalDepAcum = Math.round(totalDepAcum);
 
   const lineas: AccountingEntryLine[] = [];
 
-  if (totalGastoAdmin > 0) {
-    lineas.push({
-      cuentaCodigo: '5.2.13',
-      cuentaNombre: 'Gasto Depreciación Activo Fijo (NIC 16)',
-      debe: totalGastoAdmin,
-      haber: 0,
-      centroCosto: 'ADMINISTRACION_CENTRAL',
-    });
-  }
+  Object.values(ccMap).forEach((cc) => {
+    const adminRound = Math.round(cc.gastoAdmin);
+    const cifRound = Math.round(cc.cifFabril);
 
-  if (totalCifFabril > 0) {
-    lineas.push({
-      cuentaCodigo: '5.1.04',
-      cuentaNombre: 'Costos Indirectos de Fabricación (Depreciación Maquinaria Fabril)',
-      debe: totalCifFabril,
-      haber: 0,
-      centroCosto: 'PLANTA_PRODUCCION',
-    });
-  }
+    if (adminRound > 0) {
+      lineas.push({
+        cuentaCodigo: '5.2.13',
+        cuentaNombre: `Gasto Depreciación Activo Fijo (NIC 16) - [${cc.codigo}]`,
+        debe: adminRound,
+        haber: 0,
+        centroCosto: cc.codigo,
+      });
+    }
+
+    if (cifRound > 0) {
+      lineas.push({
+        cuentaCodigo: '5.1.04',
+        cuentaNombre: `CIF Depreciación Maquinaria Fabril - [${cc.codigo}]`,
+        debe: cifRound,
+        haber: 0,
+        centroCosto: cc.codigo,
+      });
+    }
+  });
 
   lineas.push({
     cuentaCodigo: '1.2.99',
@@ -1453,6 +1630,7 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: `Clientes / Cuentas por Cobrar Venta AF (${asset.codigoPlaca})`,
       debe: totalCobrar,
       haber: 0,
+      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
     });
   }
 
@@ -1461,6 +1639,7 @@ export function createFixedAssetDisposalEntry(
     cuentaNombre: 'Depreciación Acumulada Activo Fijo (Eliminación por Baja)',
     debe: depAcum,
     haber: 0,
+    centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
   });
 
   if (resultado < 0) {
@@ -1469,6 +1648,7 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: 'Pérdida en Retiro o Enajenación de Activo Fijo',
       debe: Math.abs(resultado),
       haber: 0,
+      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
     });
   }
 
@@ -1477,6 +1657,7 @@ export function createFixedAssetDisposalEntry(
     cuentaNombre: `${asset.nombre} (Baja de Costo Histórico)`,
     debe: 0,
     haber: costoHist,
+    centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
   });
 
   if (iva > 0) {
@@ -1494,6 +1675,7 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: 'Utilidad en Enajenación de Activo Fijo',
       debe: 0,
       haber: resultado,
+      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
     });
   }
 

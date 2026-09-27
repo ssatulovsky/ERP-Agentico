@@ -37,6 +37,7 @@ import {
   FileWarning,
   Trash2,
   Edit2,
+  Pencil,
   RefreshCw,
   Search
 } from 'lucide-react';
@@ -211,6 +212,8 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
 
   // Modals & UI States
   const [showAddCollabModal, setShowAddCollabModal] = useState(false);
+  const [showEditCollabModal, setShowEditCollabModal] = useState<EmployeePayroll | null>(null);
+  const [editCollabForm, setEditCollabForm] = useState<Partial<EmployeePayroll>>({});
   const [collabSearch, setCollabSearch] = useState('');
   const [showAddKarinModal, setShowAddKarinModal] = useState(false);
 
@@ -467,6 +470,31 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
 
     setShowAddCollabModal(false);
     showToast(`Colaborador ${calculated.nombreCompleto} registrado con éxito. Contrato MiDT y ficha creados.`);
+  };
+
+  // Open Edit Collaborator Modal (M de ABM)
+  const handleOpenEditCollabModal = (emp: EmployeePayroll) => {
+    setEditCollabForm({ ...emp });
+    setShowEditCollabModal(emp);
+  };
+
+  // Submit Edit Collaborator (M de ABM)
+  const handleEditCollaboratorSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditCollabModal || !editCollabForm.nombreCompleto) {
+      showToast('El nombre del colaborador es obligatorio.');
+      return;
+    }
+
+    const merged: EmployeePayroll = {
+      ...showEditCollabModal,
+      ...editCollabForm,
+    } as EmployeePayroll;
+
+    const recalculated = calculatePayroll(merged, indicators);
+    onUpdateEmployee(recalculated);
+    setShowEditCollabModal(null);
+    showToast(`Ficha de ${recalculated.nombreCompleto} (${recalculated.rut}) actualizada y liquidación recalculada.`);
   };
 
   // Copy to clipboard helper
@@ -1190,10 +1218,17 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                                   MiDT
                                 </button>
                               )}
+                              <button
+                                onClick={() => handleOpenEditCollabModal(emp)}
+                                title="Modificar / Editar Ficha Colaborador (M de ABM)"
+                                className="text-cyan-600 hover:text-cyan-800 p-1 rounded-md hover:bg-cyan-50 cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
                               {onDeleteEmployee && payrolls.length > 1 && (
                                 <button
                                   onClick={() => onDeleteEmployee(emp.id)}
-                                  title="Eliminar Colaborador"
+                                  title="Eliminar Colaborador (Baja ABM)"
                                   className="text-rose-500 hover:text-rose-700 p-1 rounded-md hover:bg-rose-50 cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -2054,6 +2089,215 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                   className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
                 >
                   Registrar e Ingresar a Nómina
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Modificar / Editar Colaborador (M de ABM) */}
+      {showEditCollabModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-cyan-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Modificar Ficha de Colaborador (ABM)
+                </h3>
+                <span className="font-mono text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                  {showEditCollabModal.rut}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowEditCollabModal(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditCollaboratorSubmit} className="space-y-4 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Nombre Completo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCollabForm.nombreCompleto || ''}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, nombreCompleto: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">RUT con Guión y Dígito *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCollabForm.rut || ''}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, rut: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Cargo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCollabForm.cargo || ''}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, cargo: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Departamento</label>
+                  <select
+                    value={editCollabForm.departamento || 'Operaciones'}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, departamento: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="Operaciones Submarinas">Operaciones Submarinas</option>
+                    <option value="Taller de Redes & Loberas">Taller de Redes & Loberas</option>
+                    <option value="Calidad y Normativa">Calidad y Normativa</option>
+                    <option value="Administración y Finanzas">Administración y Finanzas</option>
+                    <option value="Logística Marítima">Logística Marítima</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Fecha de Ingreso</label>
+                  <input
+                    type="date"
+                    required
+                    value={editCollabForm.fechaIngreso || ''}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, fechaIngreso: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Tipo de Contrato</label>
+                  <select
+                    value={editCollabForm.tipoContrato || 'INDEFINIDO'}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, tipoContrato: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="INDEFINIDO">Indefinido</option>
+                    <option value="PLAZO_FIJO">Plazo Fijo</option>
+                    <option value="POR_OBRA_FAENA">Por Obra o Faena</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Sueldo Base (CLP) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="500000"
+                    step="10000"
+                    value={editCollabForm.sueldoBase || 0}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, sueldoBase: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono font-bold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Modalidad Gratificación</label>
+                  <select
+                    value={editCollabForm.gratificacionModalidad || 'ART_50'}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, gratificacionModalidad: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="ART_50">Art. 50 (25% con tope 4.75 IMM)</option>
+                    <option value="ART_47">Art. 47 (30% utilidades líquidas)</option>
+                    <option value="CONVENIDA">Pactada / Convenida</option>
+                    <option value="SIN_GRATIFICACION">Sin Gratificación</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">AFP</label>
+                  <select
+                    value={editCollabForm.afpNombre || 'HABITAT'}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, afpNombre: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="CAPITAL">AFP Capital (11.44%)</option>
+                    <option value="CUPRUM">AFP Cuprum (11.44%)</option>
+                    <option value="HABITAT">AFP Habitat (11.27%)</option>
+                    <option value="MODELO">AFP Modelo (10.58%)</option>
+                    <option value="PLANVITAL">AFP PlanVital (11.16%)</option>
+                    <option value="PROVIDA">AFP ProVida (11.45%)</option>
+                    <option value="UNO">AFP UNO (10.49%)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Salud</label>
+                  <select
+                    value={editCollabForm.saludTipo || 'FONASA'}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, saludTipo: e.target.value as any }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="FONASA">FONASA (7% Legal)</option>
+                    <option value="ISAPRE_BANMEDICA">Isapre Banmédica</option>
+                    <option value="ISAPRE_COLMENA">Isapre Colmena</option>
+                    <option value="ISAPRE_CONSALUD">Isapre Consalud</option>
+                    <option value="ISAPRE_CRUZ_BLANCA">Isapre Cruz Blanca</option>
+                    <option value="ISAPRE_NUEVA_MASVIDA">Isapre Nueva Masvida</option>
+                    <option value="ISAPRE_VIDA_TRES">Isapre Vida Tres</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Colación (No Imponible)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5000"
+                    value={editCollabForm.asignacionColacion || 0}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, asignacionColacion: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Movilización (No Imponible)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5000"
+                    value={editCollabForm.asignacionMovilizacion || 0}
+                    onChange={(e) => setEditCollabForm(prev => ({ ...prev, asignacionMovilizacion: Number(e.target.value) }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-[11px] text-cyan-800 flex items-start gap-2">
+                <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Al guardar las modificaciones, el motor de nómina recalculará automáticamente la liquidación, imponibles, descuentos previsionales e impuesto único de segunda categoría según parámetros 2026.
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCollabModal(null)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-cyan-600 hover:bg-cyan-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  Guardar Modificaciones
                 </button>
               </div>
             </form>

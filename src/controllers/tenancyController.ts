@@ -8,23 +8,9 @@ import {
   companyModuleSubscriptions,
   companyCredentialsVault,
 } from '../db/schema/tenancySchema';
+import { encryptVaultSecret } from '../utils/vaultCrypto';
 
 export const tenancyRouter = Router();
-
-const VAULT_SECRET = process.env.VAULT_MASTER_SECRET || 'SIEX_VAULT_AES256_MASTER_SECRET_2026_PROD';
-const VAULT_KEY = crypto.createHash('sha256').update(VAULT_SECRET).digest();
-
-/**
- * Cifra un texto confidencial utilizando AES-256-GCM
- */
-function encryptVaultSecret(plainText: string): { encrypted: string; iv: string; tag: string } {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-gcm', VAULT_KEY, iv);
-  let encrypted = cipher.update(plainText, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const tag = cipher.getAuthTag().toString('hex');
-  return { encrypted, iv: iv.toString('hex'), tag };
-}
 
 // ============================================================================
 // 1. ESTUDIOS CONTABLES (NIVEL 1)

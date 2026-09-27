@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "db:init:mysql": "tsx src/scripts/initMysqlDb.ts",
+    "db:update:mysql": "tsx src/scripts/updateMysqlDb.ts",
     "db:migrate:mysql": "tsx src/scripts/migrateMysql.ts",
     "lint": "tsc --noEmit"
   },
@@ -21,6 +22,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "ioredis": "^6.0.0",
     "jspdf": "^4.2.1",
