@@ -96,8 +96,17 @@ import {
   ChequeEmitido,
   DeudaFinanciera,
   ProvisionEgreso,
+  MedicalLeave,
+  VacationRecord,
+  AbsenteeismRecord,
 } from './types';
 import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from './data/erpMasterConfig';
+import {
+  INITIAL_MEDICAL_LEAVES,
+  INITIAL_VACATION_RECORDS,
+  INITIAL_ABSENTEEISM,
+} from './data/seedHrData';
+import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -119,10 +128,11 @@ import {
   Building2,
   Factory,
   PieChart,
+  LayoutDashboard,
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>('agents');
+  const [activeTab, setActiveTab] = useState<string>('executive_dashboard');
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
@@ -201,6 +211,17 @@ export default function App() {
     return loadClientState<ProvisionEgreso[]>(activeClientId, 'provisionesEgresos', seedProvisionesEgresos);
   });
 
+  // HR & People States (Licencias Médicas, Vacaciones y Ausentismo persistidos por cliente)
+  const [medicalLeaves, setMedicalLeaves] = useState<MedicalLeave[]>(() => {
+    return loadClientState<MedicalLeave[]>(activeClientId, 'medicalLeaves', INITIAL_MEDICAL_LEAVES);
+  });
+  const [vacations, setVacations] = useState<VacationRecord[]>(() => {
+    return loadClientState<VacationRecord[]>(activeClientId, 'vacations', INITIAL_VACATION_RECORDS);
+  });
+  const [absenteeismList, setAbsenteeismList] = useState<AbsenteeismRecord[]>(() => {
+    return loadClientState<AbsenteeismRecord[]>(activeClientId, 'absenteeismList', INITIAL_ABSENTEEISM);
+  });
+
   // Efectos de Sincronización Automática en LocalStorage por Cliente
   useEffect(() => {
     if (activeClientId) {
@@ -261,6 +282,24 @@ export default function App() {
       saveClientState(activeClientId, 'provisionesEgresos', provisionesEgresos);
     }
   }, [activeClientId, provisionesEgresos]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'medicalLeaves', medicalLeaves);
+    }
+  }, [activeClientId, medicalLeaves]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'vacations', vacations);
+    }
+  }, [activeClientId, vacations]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'absenteeismList', absenteeismList);
+    }
+  }, [activeClientId, absenteeismList]);
 
   // Parámetros Generales de Sistema ERP (Art. 16 Código Tributario, Moneda, Cuentas de Cierre y Redondeo)
   const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(() => {
@@ -335,6 +374,9 @@ export default function App() {
     const loadedChequesEmit = loadClientState<ChequeEmitido[]>(clientId, 'chequesEmitidos', seedChequesEmitidos);
     const loadedDeudas = loadClientState<DeudaFinanciera[]>(clientId, 'deudasFinancieras', seedDeudasFinancieras);
     const loadedProvisiones = loadClientState<ProvisionEgreso[]>(clientId, 'provisionesEgresos', seedProvisionesEgresos);
+    const loadedMedicalLeaves = loadClientState<MedicalLeave[]>(clientId, 'medicalLeaves', INITIAL_MEDICAL_LEAVES);
+    const loadedVacations = loadClientState<VacationRecord[]>(clientId, 'vacations', INITIAL_VACATION_RECORDS);
+    const loadedAbsenteeism = loadClientState<AbsenteeismRecord[]>(clientId, 'absenteeismList', INITIAL_ABSENTEEISM);
 
     setDtes(loadedDtes);
     setPayrolls(loadedPayrolls);
@@ -345,6 +387,9 @@ export default function App() {
     setChequesEmitidos(loadedChequesEmit);
     setDeudasFinancieras(loadedDeudas);
     setProvisionesEgresos(loadedProvisiones);
+    setMedicalLeaves(loadedMedicalLeaves);
+    setVacations(loadedVacations);
+    setAbsenteeismList(loadedAbsenteeism);
 
     if (isExento) {
       setF29({
@@ -916,6 +961,7 @@ export default function App() {
   if (Math.abs(f29.creditoFiscalIva - rcvCredito) > 10) discrepanciesCount++;
 
   const navLinks = [
+    { id: 'executive_dashboard', label: 'Dashboard Ejecutivo', subtitle: 'Evolución de Agentes & KPIs 360°', icon: LayoutDashboard },
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
     { id: 'billing_agent', label: 'Facturación & Cobranza', subtitle: 'DTE, Playwright SII & Boletas', icon: Bot },
     { id: 'rcv', label: 'Registro Compras, Ventas / Honorarios', subtitle: 'DTEs 33, 34, 61, BHE & Boletas', icon: Receipt },
@@ -1028,6 +1074,30 @@ export default function App() {
 
         {/* Content Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto bg-[#f8fafc]">
+          {activeTab === 'executive_dashboard' && (
+            <ExecutiveDashboard
+              company={company}
+              dtes={dtes}
+              movements={movements}
+              bankAccounts={bankAccounts}
+              cashAccounts={cashAccounts}
+              payrolls={payrolls}
+              f29={f29}
+              productionOrders={productionOrders}
+              productionBudgets={productionBudgets}
+              costCenters={costCenters}
+              medicalLeaves={medicalLeaves}
+              vacations={vacations}
+              absenteeismList={absenteeismList}
+              inventoryItems={inventoryItems}
+              deudasFinancieras={deudasFinancieras}
+              provisionesEgresos={provisionesEgresos}
+              chequesCartera={chequesCartera}
+              chequesEmitidos={chequesEmitidos}
+              onNavigateToTab={(tabId) => setActiveTab(tabId)}
+            />
+          )}
+
           {activeTab === 'agents' && (
             <AgentClientConfig
               firm={firm}
@@ -1121,6 +1191,12 @@ export default function App() {
               onAddEmployee={handleAddEmployee}
               indicators={indicators}
               onAddAccountingEntry={handleAddEntry}
+              medicalLeaves={medicalLeaves}
+              onAddMedicalLeave={(leave) => setMedicalLeaves(prev => [leave, ...prev])}
+              onUpdateMedicalLeave={(leave) => setMedicalLeaves(prev => prev.map(l => l.id === leave.id ? leave : l))}
+              vacations={vacations}
+              absenteeismList={absenteeismList}
+              onAddAbsenteeismRecord={(rec) => setAbsenteeismList(prev => [rec, ...prev])}
             />
           )}
 

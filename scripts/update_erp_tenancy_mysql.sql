@@ -517,6 +517,116 @@ CREATE TABLE IF NOT EXISTS `treasury_expense_provisions` (
   KEY `idx_provisions_naturaleza` (`naturaleza`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ============================================================================
+-- TABLAS DEL AGENTE RRHH & GESTIÓN DE PERSONAS (LICENCIAS, VACACIONES Y AUSENTISMO)
+-- ============================================================================
+
+-- TABLA: medical_leaves (Licencias Médicas Electrónicas LME - COMPIN / ISAPRE)
+CREATE TABLE IF NOT EXISTS `medical_leaves` (
+  `id` VARCHAR(36) NOT NULL,
+  `folio_licencia` VARCHAR(50) NOT NULL,
+  `employee_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(20) NOT NULL,
+  `rut` VARCHAR(20) NOT NULL,
+  `nombre_completo` VARCHAR(255) NOT NULL,
+  `tipo_licencia` VARCHAR(50) NOT NULL,
+  `entidad_tramitadora` VARCHAR(50) NOT NULL,
+  `fecha_inicio` DATE NOT NULL,
+  `fecha_termino` DATE NOT NULL,
+  `dias_reposo` INT NOT NULL,
+  `dias_descuento_remuneracion` INT NOT NULL DEFAULT 0,
+  `dias_subsidio_sil` INT NOT NULL DEFAULT 0,
+  `descuento_nomina_estimado` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `medico_nombre` VARCHAR(200) NOT NULL,
+  `medico_rut` VARCHAR(20) NOT NULL,
+  `diagnostico_cie10` VARCHAR(50) NULL,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'RECIBIDA',
+  `fecha_tramitacion_empleador` DATE NULL,
+  `observaciones` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_leave_empresa` (`empresa_id`),
+  KEY `idx_leave_employee` (`employee_id`),
+  KEY `idx_leave_fecha` (`fecha_inicio`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: vacation_records (Control de Feriado Legal Art. 67-70 Código del Trabajo)
+CREATE TABLE IF NOT EXISTS `vacation_records` (
+  `id` VARCHAR(36) NOT NULL,
+  `employee_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(20) NOT NULL,
+  `fecha_solicitud` DATE NOT NULL,
+  `fecha_inicio` DATE NOT NULL,
+  `fecha_retorno` DATE NOT NULL,
+  `dias_habiles_tomados` DECIMAL(5, 2) NOT NULL,
+  `dias_progresivos_tomados` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'SOLICITADA',
+  `comprobante_firmado` BOOLEAN NOT NULL DEFAULT FALSE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_vacation_empresa` (`empresa_id`),
+  KEY `idx_vacation_employee` (`employee_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: absenteeism_records (Control de Ausencias e Inasistencias Art. 160 N° 3)
+CREATE TABLE IF NOT EXISTS `absenteeism_records` (
+  `id` VARCHAR(36) NOT NULL,
+  `employee_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(20) NOT NULL,
+  `rut` VARCHAR(20) NOT NULL,
+  `nombre_completo` VARCHAR(255) NOT NULL,
+  `fecha` DATE NOT NULL,
+  `tipo` VARCHAR(50) NOT NULL,
+  `duracion_texto` VARCHAR(150) NOT NULL,
+  `minutos_atraso` INT DEFAULT 0,
+  `dias_inasistencia` INT DEFAULT 0,
+  `justificativo_presentado` TEXT NULL,
+  `impacto_descuento_pesos` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `alerta_causal_art160_n3` BOOLEAN NOT NULL DEFAULT FALSE,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE_REVISION',
+  `observaciones` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_absenteeism_empresa` (`empresa_id`),
+  KEY `idx_absenteeism_employee` (`employee_id`),
+  KEY `idx_absenteeism_fecha` (`fecha`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- TABLAS DEL AGENTE COMERCIAL & COTIZACIONES (PRESUPUESTOS Y VARIACIONES)
+-- ============================================================================
+
+-- TABLA: production_budgets (Presupuestos de Producción y Cotizaciones Clientes)
+CREATE TABLE IF NOT EXISTS `production_budgets` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `folio` VARCHAR(50) NOT NULL,
+  `cliente_nombre` VARCHAR(255) NOT NULL,
+  `cliente_rut` VARCHAR(20) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_validez` DATE NOT NULL,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'BORRADOR',
+  `fecha_envio` DATE NULL,
+  `fecha_aprobacion` DATE NULL,
+  `producto_nombre` VARCHAR(255) NOT NULL,
+  `producto_codigo` VARCHAR(50) NOT NULL,
+  `categoria` VARCHAR(50) NOT NULL,
+  `unidad_medida` VARCHAR(20) NOT NULL DEFAULT 'UNID',
+  `cantidad` DECIMAL(12, 2) NOT NULL DEFAULT 1.00,
+  `costo_total_interno` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `precio_venta_neto_cliente` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `margen_bruto_estimado_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `margen_bruto_estimado_pct` DECIMAL(6, 2) NOT NULL DEFAULT 0.00,
+  `markup_pct` DECIMAL(6, 2) NOT NULL DEFAULT 0.00,
+  `orden_produccion_id_generada` VARCHAR(36) NULL,
+  `folio_op_generada` VARCHAR(50) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_budget_empresa` (`empresa_id`),
+  KEY `idx_budget_estado` (`estado`),
+  KEY `idx_budget_folio` (`folio`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================================================
 -- FIN DEL SCRIPT DE ACTUALIZACIÓN MYSQL ERP

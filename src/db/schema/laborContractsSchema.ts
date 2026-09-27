@@ -182,6 +182,51 @@ export const vacationRecords = mysqlTable(
   })
 );
 
+// ============================================================================
+// 5. TABLA: absenteeism_records (Control de Ausencias e Inasistencias Art. 160 N° 3)
+// ============================================================================
+export const absenteeismRecords = mysqlTable(
+  'absenteeism_records',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    employeeId: varchar('employee_id', { length: 36 })
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    empresaId: varchar('empresa_id', { length: 20 }).notNull(),
+    rut: varchar('rut', { length: 20 }).notNull(),
+    nombreCompleto: varchar('nombre_completo', { length: 255 }).notNull(),
+    fecha: date('fecha', { mode: 'string' }).notNull(),
+    tipo: mysqlEnum('tipo', [
+      'INASISTENCIA_INJUSTIFICADA',
+      'ATRASO_REITERADO',
+      'PERMISO_CON_GOCE_LEGAL',
+      'PERMISO_SIN_GOCE_SUELDO',
+      'PERMISO_FALLECIMIENTO_ART66',
+      'PERMISO_MATRIMONIO_ART207BIS',
+      'PERMISO_PATERNIDAD_ART195',
+    ]).notNull(),
+    duracionTexto: varchar('duracion_texto', { length: 150 }).notNull(),
+    minutosAtraso: int('minutos_atraso').default(0),
+    diasInasistencia: int('dias_inasistencia').default(0),
+    justificativoPresentado: text('justificativo_presentado'),
+    impactoDescuentoPesos: decimal('impacto_descuento_pesos', { precision: 15, scale: 2 }).notNull().default('0.00'),
+    alertaCausalArt160N3: boolean('alerta_causal_art160_n3').notNull().default(false),
+    estado: mysqlEnum('estado', [
+      'PENDIENTE_REVISION',
+      'JUSTIFICADO',
+      'APLICADO_EN_NOMINA',
+      'AMONESTACION_GENERADA',
+    ]).notNull().default('PENDIENTE_REVISION'),
+    observaciones: text('observaciones'),
+    createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  (table) => ({
+    idxAbsenteeismEmployee: index('idx_absenteeism_employee').on(table.employeeId),
+    idxAbsenteeismEmpresa: index('idx_absenteeism_empresa').on(table.empresaId),
+    idxAbsenteeismFecha: index('idx_absenteeism_fecha').on(table.fecha),
+  })
+);
+
 export type LaborContractRecord = typeof laborContracts.$inferSelect;
 export type NewLaborContractRecord = typeof laborContracts.$inferInsert;
 
@@ -193,3 +238,6 @@ export type NewMedicalLeaveRecord = typeof medicalLeaves.$inferInsert;
 
 export type VacationRecord = typeof vacationRecords.$inferSelect;
 export type NewVacationRecord = typeof vacationRecords.$inferInsert;
+
+export type AbsenteeismRecordDb = typeof absenteeismRecords.$inferSelect;
+export type NewAbsenteeismRecordDb = typeof absenteeismRecords.$inferInsert;
