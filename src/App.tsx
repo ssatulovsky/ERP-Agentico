@@ -18,6 +18,7 @@ import { BillingAutonomousAgent } from './components/BillingAutonomousAgent';
 import { UserManualModal } from './components/UserManualModal';
 import { ErpPremiaLogo } from './components/ErpPremiaLogo';
 import { CostCenterModule } from './components/CostCenterModule';
+import { ExpenseReportsModule } from './components/expenses/ExpenseReportsModule';
 import { loadClientState, saveClientState, loadPersistentState, savePersistentState } from './utils/storageService';
 
 import { 
@@ -129,6 +130,7 @@ import {
   Factory,
   PieChart,
   LayoutDashboard,
+  CreditCard,
 } from 'lucide-react';
 
 export default function App() {
@@ -973,6 +975,7 @@ export default function App() {
     { id: 'fixed_assets', label: 'Activo Fijo (NIC 16)', subtitle: 'CM Art. 41, Deprec. & Ficha', icon: Building2 },
     { id: 'production', label: 'Producción & Costeo', subtitle: 'NIC 2, MPD, MOD, CIF & CPT', icon: Factory },
     { id: 'cost_centers', label: 'Centros de Costo & Mini-Empresas', subtitle: 'Departamentalización & P&L Subunidades', icon: PieChart },
+    { id: 'expense_reports', label: 'Rendición de Gastos (RindeGastos)', subtitle: 'Fondos por Rendir, Comprobantes & CC', icon: CreditCard },
     { id: 'cashflow', label: 'Flujo de Caja Proyectado', subtitle: 'Saldo Bancario Real & 30/60/90 días', icon: TrendingUp },
     { id: 'leases', label: 'Contratos & Arriendos', subtitle: 'Modelado NIIF / IFRS 16', icon: Home },
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
@@ -1288,6 +1291,13 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'expense_reports' && (
+            <ExpenseReportsModule
+              costCenters={costCenters}
+              onAddEntry={handleAddEntry}
+            />
+          )}
+
           {activeTab === 'leases' && (
             <LeaseManager
               leases={leases}
@@ -1320,6 +1330,7 @@ export default function App() {
               provisionesEgresos={provisionesEgresos}
               onUpdateProvisionesEgresos={setProvisionesEgresos}
               onAddEntry={handleAddEntry}
+              entries={entries}
             />
           )}
 

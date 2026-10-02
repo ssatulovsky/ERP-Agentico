@@ -175,6 +175,135 @@ function inferDefaultMappings(account: HierarchicalAccountItem): {
 }
 
 /**
+ * Infiere si una cuenta maneja multimoneda (moneda extranjera, NIC 21)
+ */
+export function inferDefaultMultiCurrency(account: { codigo: string; nombre: string }): boolean {
+  const code = account.codigo;
+  const name = account.nombre.toLowerCase();
+  if (
+    code.startsWith('1.1.02.003') ||
+    code.startsWith('1.1.03.002') ||
+    code.startsWith('2.1.01.002') ||
+    name.includes('(usd)') ||
+    name.includes('moneda extranjera') ||
+    name.includes('exportacion') ||
+    name.includes('exportación') ||
+    name.includes('importacion') ||
+    name.includes('importación') ||
+    name.includes('diferencia de cambio') ||
+    name.includes('divisas') ||
+    name.includes('euro')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Infiere si una cuenta exige documento de referencia (Factura, Boleta, NC, ND, etc.)
+ */
+export function inferDefaultDocReferencia(account: { codigo: string; nombre: string }): boolean {
+  const code = account.codigo;
+  const name = account.nombre.toLowerCase();
+  if (
+    code.startsWith('1.1.03') || // Clientes / Documentos por cobrar
+    code.startsWith('1.1.04') || // Impuestos recuperables IVA / PPM
+    code.startsWith('1.1.05') || // Existencias / compras
+    code.startsWith('2.1.01') || // Proveedores
+    code.startsWith('2.1.02') || // Honorarios por pagar
+    code.startsWith('2.1.03') || // IVA débito fiscal
+    code.startsWith('2.1.04') || // Retenciones
+    code.startsWith('4.1.01') || // Ventas afectas
+    code.startsWith('4.1.02') || // Ventas exentas
+    name.includes('factura') ||
+    name.includes('cliente') ||
+    name.includes('proveedor') ||
+    name.includes('honorario') ||
+    name.includes('iva') ||
+    name.includes('por cobrar') ||
+    name.includes('por pagar')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Infiere si una cuenta corresponde a Efectivo y Efectivo Equivalente (NIC 7 / FECU)
+ */
+export function inferDefaultEfectivoEquivalente(account: { codigo: string; nombre: string }): boolean {
+  const code = account.codigo;
+  const name = account.nombre.toLowerCase();
+  if (
+    code.startsWith('1.1.01.001') || // Caja Central
+    code.startsWith('1.1.01.002') || // Fondo Fijo / Caja Chica
+    code.startsWith('1.1.02.001') || // Banco Santander
+    code.startsWith('1.1.02.002') || // Banco de Chile
+    code.startsWith('1.1.02.003') || // Banco USD
+    (code.startsWith('1.1.01') && !name.includes('rendir') && !name.includes('transito') && !name.includes('tránsito') && !name.includes('puente')) ||
+    (code.startsWith('1.1.02') && !name.includes('rendir') && !name.includes('transito') && !name.includes('tránsito')) ||
+    name.includes('caja central') ||
+    name.includes('caja chica') ||
+    name.includes('fondo fijo') ||
+    name.includes('cta cte') ||
+    name.includes('cuenta corriente') ||
+    (name.includes('banco') && !name.includes('credito') && !name.includes('préstamo') && !name.includes('prestamo'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Infiere si una cuenta es Contracuenta de Efectivo y Equivalente (Puente Tesorería / Recaudación / Tránsito)
+ */
+export function inferDefaultContracuentaEfectivo(account: { codigo: string; nombre: string }): boolean {
+  const name = account.nombre.toLowerCase();
+  if (
+    name.includes('transito') ||
+    name.includes('tránsito') ||
+    name.includes('por rendir') ||
+    name.includes('a rendir') ||
+    name.includes('puente') ||
+    name.includes('clearing') ||
+    name.includes('recaudacion') ||
+    name.includes('recaudación') ||
+    name.includes('transbank') ||
+    name.includes('webpay') ||
+    name.includes('deposito pendiente') ||
+    name.includes('depósito pendiente') ||
+    name.includes('cheque en cartera') ||
+    name.includes('fondos a rendir')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Infiere si una cuenta exige Proyecto / Obra / Orden de Trabajo
+ */
+export function inferDefaultProyecto(account: { codigo: string; nombre: string }): boolean {
+  const code = account.codigo;
+  const name = account.nombre.toLowerCase();
+  if (
+    code.startsWith('5.') || // Costos de venta, obras, explotación
+    code.startsWith('1.2.08') || // Obras en construcción
+    name.includes('obra') ||
+    name.includes('proyecto') ||
+    name.includes('faena') ||
+    name.includes('contrato') ||
+    name.includes('subcontrat') ||
+    name.includes('fabricacion') ||
+    name.includes('fabricación') ||
+    name.includes('mano de obra')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Claves de almacenamiento por empresa
  */
 function getStorageKey(empresaRut: string, suffix: string): string {
@@ -192,7 +321,14 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return parsed.map((item: any) => ({
+          ...item,
+          manejaMultimoneda: item.manejaMultimoneda ?? inferDefaultMultiCurrency(item),
+          requiereDocReferencia: item.requiereDocReferencia ?? inferDefaultDocReferencia(item),
+          esEfectivoEquivalente: item.esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(item),
+          esContracuentaEfectivo: item.esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(item),
+          requiereProyecto: item.requiereProyecto ?? inferDefaultProyecto(item),
+        }));
       }
     }
   } catch (e) {
@@ -207,6 +343,11 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
     const mappings = inferDefaultMappings(acc);
     return {
       ...acc,
+      manejaMultimoneda: (acc as any).manejaMultimoneda ?? inferDefaultMultiCurrency(acc),
+      requiereDocReferencia: (acc as any).requiereDocReferencia ?? inferDefaultDocReferencia(acc),
+      esEfectivoEquivalente: (acc as any).esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(acc),
+      esContracuentaEfectivo: (acc as any).esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(acc),
+      requiereProyecto: (acc as any).requiereProyecto ?? inferDefaultProyecto(acc),
       nombreGrupo: groupMap.get(acc.grupo) || `Grupo ${acc.grupo}`,
       nombreSubgrupo: groupMap.get(acc.subgrupo) || `Subgrupo ${acc.subgrupo}`,
       agrupacionFiscal: mappings.agrupacionFiscal,
@@ -611,6 +752,11 @@ export function exportChartToCSV(chart: HierarchicalAccountItem[]): string {
     'Requiere_Auxiliar_RUT',
     'Requiere_Centro_Costo',
     'Es_Conciliable_Bancaria',
+    'Maneja_Multimoneda',
+    'Documento_Referencia',
+    'Efectivo_Equivalente',
+    'Contracuenta_Efectivo',
+    'Proyecto',
     'Activa',
   ];
 
@@ -630,6 +776,11 @@ export function exportChartToCSV(chart: HierarchicalAccountItem[]): string {
     c.requiereAuxiliarRut ? 'SI' : 'NO',
     c.requiereCentroCosto ? 'SI' : 'NO',
     c.esConciliableBancaria ? 'SI' : 'NO',
+    c.manejaMultimoneda ? 'SI' : 'NO',
+    c.requiereDocReferencia ? 'SI' : 'NO',
+    c.esEfectivoEquivalente ? 'SI' : 'NO',
+    c.esContracuentaEfectivo ? 'SI' : 'NO',
+    c.requiereProyecto ? 'SI' : 'NO',
     c.activa ? 'SI' : 'NO',
   ]);
 

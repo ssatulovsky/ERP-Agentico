@@ -77,12 +77,32 @@ export async function updateMysqlDatabase(): Promise<{
 
     console.log(`[3/3] Aplicando cambios DDL (Centros de Costo, DTEs, RRHH, Órdenes de Trabajo, etc.)...`);
 
-    // Paso defensivo: si cost_centers ya existía con el ENUM restrictivo previo, ampliarlo a VARCHAR(50)
+    // Paso defensivo: si cost_centers ya existía con el ENUM restrictivo previo, ampliarlo a VARCHAR(100)
     try {
-      await connection.query('ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(50) NOT NULL;');
-      console.log(`[✓] Columna cost_centers.categoria verificada/ampliada a VARCHAR(50).`);
+      await connection.query("ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRACION';");
+      console.log(`[✓] Columna cost_centers.categoria verificada/ampliada preventivamente a VARCHAR(100).`);
     } catch {
       // Si la tabla no existe aún, se creará correctamente en el script
+    }
+
+    // Paso defensivo: asegurar las columnas de los 5 conceptos contables avanzados
+    const defensiveColumns = [
+      { table: 'chart_of_accounts', col: 'maneja_multimoneda', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts', col: 'requiere_doc_ref', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts', col: 'es_efectivo_equivalente', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts', col: 'es_contracuenta_efectivo', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts', col: 'requiere_proyecto', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts_master', col: 'es_efectivo_equivalente', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts_master', col: 'es_contracuenta_efectivo', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+    ];
+
+    for (const def of defensiveColumns) {
+      try {
+        await connection.query(`ALTER TABLE \`${def.table}\` ADD COLUMN \`${def.col}\` ${def.type};`);
+        console.log(`[✓] Columna agregada: ${def.table}.${def.col}`);
+      } catch (colErr: any) {
+        // Ignorar si la columna ya existe (1060 / ER_DUP_FIELDNAME) o si la tabla no existe aún (1146)
+      }
     }
     
     // Función auxiliar para dividir el script SQL respetando strings entre comillas
@@ -97,6 +117,19 @@ export async function updateMysqlDatabase(): Promise<{
         await connection.query(stmt);
         appliedCount++;
       } catch (stmtErr: any) {
+        // Auto-reparación pericial si la columna categoria en cost_centers era un ENUM anterior
+        if (stmtErr.message && stmtErr.message.includes("Data truncated for column 'categoria'")) {
+          console.warn(`[!] Auto-reparando columna cost_centers.categoria a VARCHAR(100)...`);
+          try {
+            await connection.query("ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRACION';");
+            await connection.query(stmt);
+            appliedCount++;
+            continue;
+          } catch (retryErr: any) {
+            console.error(`[!] Falló reintento tras auto-reparar: ${retryErr.message}`);
+          }
+        }
+
         // Tolerancia a idempotencia: columna ya existe (1060), índice ya existe (1061), tabla ya existe (1050)
         if (
           stmtErr.errno === 1060 ||

@@ -47,11 +47,18 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
   const [customHq, setCustomHq] = useState<string>('');
   const [agrupacionPersonalizada, setAgrupacionPersonalizada] = useState<string>('');
 
-  // Atributos
+  // Atributos y Validaciones Contables Avanzadas
   const [requiereAuxiliarRut, setRequiereAuxiliarRut] = useState(false);
   const [requiereCentroCosto, setRequiereCentroCosto] = useState(false);
   const [esConciliableBancaria, setEsConciliableBancaria] = useState(false);
   const [activa, setActiva] = useState(true);
+
+  // 5 Conceptos Contables Avanzados ERP
+  const [manejaMultimoneda, setManejaMultimoneda] = useState(false);
+  const [requiereDocReferencia, setRequiereDocReferencia] = useState(false);
+  const [esEfectivoEquivalente, setEsEfectivoEquivalente] = useState(false);
+  const [esContracuentaEfectivo, setEsContracuentaEfectivo] = useState(false);
+  const [requiereProyecto, setRequiereProyecto] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -74,10 +81,17 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setAgrupacionMatrizExtranjera(accountToEdit.agrupacionMatrizExtranjera || HEADQUARTERS_GROUPING_OPTIONS[0]);
       setAgrupacionPersonalizada(accountToEdit.agrupacionPersonalizada || '');
 
-      setRequiereAuxiliarRut(accountToEdit.requiereAuxiliarRut);
-      setRequiereCentroCosto(accountToEdit.requiereCentroCosto);
-      setEsConciliableBancaria(accountToEdit.esConciliableBancaria);
-      setActiva(accountToEdit.activa);
+      setRequiereAuxiliarRut(Boolean(accountToEdit.requiereAuxiliarRut));
+      setRequiereCentroCosto(Boolean(accountToEdit.requiereCentroCosto));
+      setEsConciliableBancaria(Boolean(accountToEdit.esConciliableBancaria));
+      setActiva(accountToEdit.activa !== false);
+
+      // 5 Conceptos
+      setManejaMultimoneda(Boolean(accountToEdit.manejaMultimoneda));
+      setRequiereDocReferencia(Boolean(accountToEdit.requiereDocReferencia));
+      setEsEfectivoEquivalente(Boolean(accountToEdit.esEfectivoEquivalente));
+      setEsContracuentaEfectivo(Boolean(accountToEdit.esContracuentaEfectivo));
+      setRequiereProyecto(Boolean(accountToEdit.requiereProyecto));
     } else {
       // Modo nueva cuenta o subcuenta
       if (initialParentCode) {
@@ -112,6 +126,13 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setRequiereCentroCosto(false);
       setEsConciliableBancaria(false);
       setActiva(true);
+
+      // 5 Conceptos iniciales
+      setManejaMultimoneda(false);
+      setRequiereDocReferencia(false);
+      setEsEfectivoEquivalente(false);
+      setEsContracuentaEfectivo(false);
+      setRequiereProyecto(false);
     }
   }, [isOpen, accountToEdit, initialParentCode, existingAccounts]);
 
@@ -234,6 +255,12 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       requiereCentroCosto,
       esConciliableBancaria,
       activa,
+      // 5 Conceptos Contables Avanzados
+      manejaMultimoneda,
+      requiereDocReferencia,
+      esEfectivoEquivalente,
+      esContracuentaEfectivo,
+      requiereProyecto,
       agrupacionFiscal: resolvedFiscal,
       agrupacionMatrizExtranjera: resolvedHq,
       agrupacionPersonalizada: agrupacionPersonalizada.trim() || undefined,
@@ -491,47 +518,191 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
             </div>
           </div>
 
-          {/* Fila 5: Atributos y Validaciones */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-            <label className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-              <input
-                type="checkbox"
-                checked={requiereAuxiliarRut}
-                onChange={(e) => setRequiereAuxiliarRut(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-slate-700 font-medium">Exigir RUT Auxiliar (Clientes / Proveedores)</span>
-            </label>
+          {/* Fila 5: Atributos y Validaciones Contables Avanzadas (5 Conceptos ERP) */}
+          <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-slate-900 font-bold uppercase tracking-wider text-[11px]">
+                <Sliders className="w-4 h-4 text-blue-600" />
+                <span>3. Atributos y Reglas de Imputación ERP</span>
+              </div>
+              <span className="text-[10px] text-slate-500 font-medium">Validaciones automáticas del Agente Contable</span>
+            </div>
 
-            <label className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-              <input
-                type="checkbox"
-                checked={requiereCentroCosto}
-                onChange={(e) => setRequiereCentroCosto(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-slate-700 font-medium">Exigir Centro de Costo (Obras / Áreas)</span>
-            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              {/* 1. MANEJA MULTIMONEDA */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-blue-50/40 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={manejaMultimoneda}
+                  onChange={(e) => setManejaMultimoneda(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Maneja Multimoneda</span>
+                    <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">USD/EUR/UF</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Habilita registros en divisas extranjeras y revalorización por diferencia de cambio (NIC 21).
+                  </p>
+                </div>
+              </label>
 
-            <label className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-              <input
-                type="checkbox"
-                checked={esConciliableBancaria}
-                onChange={(e) => setEsConciliableBancaria(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-slate-700 font-medium">Conciliable con Cartola Bancaria</span>
-            </label>
+              {/* 2. DOCUMENTO REFERENCIA */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-blue-50/40 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={requiereDocReferencia}
+                  onChange={(e) => setRequiereDocReferencia(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Documento Referencia</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-mono font-bold">DOC</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Exige Tipo y N° de DTE o respaldo mercantil obligatorio (Facturas, Boletas, NC, ND, Guías).
+                  </p>
+                </div>
+              </label>
 
-            <label className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-              <input
-                type="checkbox"
-                checked={activa}
-                onChange={(e) => setActiva(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-slate-700 font-medium">Cuenta Activa para Imputación</span>
-            </label>
+              {/* 3. EFECTIVO Y EFECTIVO EQUIVALENTE */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-emerald-50/40 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={esEfectivoEquivalente}
+                  onChange={(e) => {
+                    setEsEfectivoEquivalente(e.target.checked);
+                    if (e.target.checked) setEsContracuentaEfectivo(false);
+                  }}
+                  className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Efectivo y Equivalente</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">NIC 7 / FECU</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Clasifica la cuenta para el Estado de Flujos de Efectivo (Caja, Bancos, Inversiones líquidas &lt; 90d).
+                  </p>
+                </div>
+              </label>
+
+              {/* 4. CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-amber-50/40 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={esContracuentaEfectivo}
+                  onChange={(e) => {
+                    setEsContracuentaEfectivo(e.target.checked);
+                    if (e.target.checked) setEsEfectivoEquivalente(false);
+                  }}
+                  className="mt-0.5 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Contracuenta Efectivo</span>
+                    <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-mono font-bold">PUENTE</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Cuenta puente de tesorería y clearing (valores en tránsito, fondos a rendir, pasarelas de pago).
+                  </p>
+                </div>
+              </label>
+
+              {/* 5. PROYECTO */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-purple-50/40 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={requiereProyecto}
+                  onChange={(e) => setRequiereProyecto(e.target.checked)}
+                  className="mt-0.5 rounded text-purple-600 focus:ring-purple-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Proyecto / Obra</span>
+                    <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-mono font-bold">PROY</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Exige imputar el Centro de Proyecto, Contrato de Obra u Orden de Trabajo para costeo directo.
+                  </p>
+                </div>
+              </label>
+
+              {/* EXIGIR AUXILIAR RUT */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={requiereAuxiliarRut}
+                  onChange={(e) => setRequiereAuxiliarRut(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Exigir RUT Auxiliar</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono font-bold">RUT</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Obligatorio para cuentas corrientes de clientes, proveedores y retenciones impositivas.
+                  </p>
+                </div>
+              </label>
+
+              {/* EXIGIR CENTRO DE COSTO */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={requiereCentroCosto}
+                  onChange={(e) => setRequiereCentroCosto(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Exigir Centro de Costo</span>
+                    <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">CC</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Obligatorio para distribución analítica en áreas de administración, ventas u operaciones.
+                  </p>
+                </div>
+              </label>
+
+              {/* CONCILIABLE BANCARIA */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={esConciliableBancaria}
+                  onChange={(e) => setEsConciliableBancaria(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 font-semibold">Conciliable Bancaria</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">BCO</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Habilita la cuenta en el bot supervisor de cuadratura de cartolas bancarias.
+                  </p>
+                </div>
+              </label>
+
+              {/* CUENTA ACTIVA */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={activa}
+                  onChange={(e) => setActiva(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <span className="text-slate-800 font-semibold">Cuenta Activa para Imputación</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Si se desmarca, la cuenta quedará bloqueada para nuevos asientos y comprobantes manuales o automáticos.
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Footer Actions */}

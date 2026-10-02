@@ -38,8 +38,10 @@ export * from './schema/fixedAssetsSchema';
 export * from './schema/productionCostingSchema';
 export * from './schema/laborContractsSchema';
 export * from './schema/treasurySchema';
+export * from './schema/cashFlowIndirectSchema';
 export * from './schema/inventoryWmsSchema';
 export * from './schema/employeesSchema';
+export * from './schema/expenseReportsSchema';
 
 // ============================================================================
 // 6. TABLA: economic_indicators (Sincronización Histórica de Indicadores Chilenos)

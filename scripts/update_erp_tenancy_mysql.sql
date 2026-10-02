@@ -151,6 +151,8 @@ CREATE TABLE IF NOT EXISTS `chart_of_accounts_master` (
   `moneda_base` VARCHAR(10) NOT NULL DEFAULT 'CLP',
   `exige_doc_ref` BOOLEAN NOT NULL DEFAULT FALSE,
   `exige_conciliacion` BOOLEAN NOT NULL DEFAULT FALSE,
+  `es_efectivo_equivalente` BOOLEAN NOT NULL DEFAULT FALSE,
+  `es_contracuenta_efectivo` BOOLEAN NOT NULL DEFAULT FALSE,
   `aplica_ifrs` BOOLEAN NOT NULL DEFAULT TRUE,
   `exige_centro_costo` BOOLEAN NOT NULL DEFAULT FALSE,
   `dimension_2` BOOLEAN NOT NULL DEFAULT FALSE,
@@ -167,16 +169,16 @@ INSERT INTO `chart_of_accounts_master` (
   `id`, `empresa_id`, `codigo`, `nombre`, `clasificacion`, `agrupacion_codigo`,
   `codigo_e`, `codigo_s`, `codigo_flujo_efectivo`, `notas`, `es_activo`,
   `exige_auxiliar`, `es_multimoneda`, `moneda_base`, `exige_doc_ref`,
-  `exige_conciliacion`, `aplica_ifrs`, `exige_centro_costo`, `dimension_2`,
-  `det_habita`, `proyecto`, `created_at`
+  `exige_conciliacion`, `es_efectivo_equivalente`, `es_contracuenta_efectivo`,
+  `aplica_ifrs`, `exige_centro_costo`, `dimension_2`, `det_habita`, `proyecto`, `created_at`
 )
 VALUES
-('cma-001', 'client-retail-01', '1.1.01.001', 'Caja Central Moneda Nacional', 'ACTIVO', '1.1.01', 'E01', 'S01', 'OPE_CAJA', 'Efectivo en caja chica y recaudación', TRUE, FALSE, FALSE, 'CLP', FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, NOW()),
-('cma-002', 'client-retail-01', '1.1.01.002', 'Banco Santander Cuenta Corriente CLP', 'ACTIVO', '1.1.01', 'E02', 'S02', 'OPE_BANCO', 'Cuenta corriente operativa principal', TRUE, FALSE, FALSE, 'CLP', TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, NOW()),
-('cma-003', 'client-retail-01', '1.1.03.001', 'Clientes Nacionales por Cobrar', 'ACTIVO', '1.1.03', 'E03', 'S03', 'OPE_COBRO', 'Facturas de venta a crédito pendientes', TRUE, TRUE, FALSE, 'CLP', TRUE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
-('cma-004', 'client-retail-01', '2.1.01.001', 'Proveedores Nacionales por Pagar', 'PASIVO', '2.1.01', 'E04', 'S04', 'OPE_PAGO', 'Facturas recibidas de proveedores', TRUE, TRUE, FALSE, 'CLP', TRUE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
-('cma-005', 'client-retail-01', '4.1.01.001', 'Ingresos por Ventas Afectas a IVA', 'RESULTADO_GANANCIA', '4', 'E05', 'S05', 'OPE_VENTAS', 'Ingresos del giro comercial habitual', TRUE, FALSE, FALSE, 'CLP', TRUE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
-('cma-006', 'client-retail-01', '5.1.01.001', 'Costo de Ventas Existencias', 'RESULTADO_PERDIDA', '5', 'E06', 'S06', 'OPE_COSTO', 'Costo de mercaderías enajenadas', TRUE, FALSE, FALSE, 'CLP', FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW())
+('cma-001', 'client-retail-01', '1.1.01.001', 'Caja Central Moneda Nacional', 'ACTIVO', '1.1.01', 'E01', 'S01', 'OPE_CAJA', 'Efectivo en caja chica y recaudación', TRUE, FALSE, FALSE, 'CLP', FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, NOW()),
+('cma-002', 'client-retail-01', '1.1.01.002', 'Banco Santander Cuenta Corriente CLP', 'ACTIVO', '1.1.01', 'E02', 'S02', 'OPE_BANCO', 'Cuenta corriente operativa principal', TRUE, FALSE, FALSE, 'CLP', TRUE, TRUE, TRUE, FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, NOW()),
+('cma-003', 'client-retail-01', '1.1.03.001', 'Clientes Nacionales por Cobrar', 'ACTIVO', '1.1.03', 'E03', 'S03', 'OPE_COBRO', 'Facturas de venta a crédito pendientes', TRUE, TRUE, FALSE, 'CLP', TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
+('cma-004', 'client-retail-01', '2.1.01.001', 'Proveedores Nacionales por Pagar', 'PASIVO', '2.1.01', 'E04', 'S04', 'OPE_PAGO', 'Facturas recibidas de proveedores', TRUE, TRUE, FALSE, 'CLP', TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
+('cma-005', 'client-retail-01', '4.1.01.001', 'Ingresos por Ventas Afectas a IVA', 'RESULTADO_GANANCIA', '4', 'E05', 'S05', 'OPE_VENTAS', 'Ingresos del giro comercial habitual', TRUE, FALSE, FALSE, 'CLP', TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, NOW()),
+('cma-006', 'client-retail-01', '5.1.01.001', 'Costo de Ventas Existencias', 'RESULTADO_PERDIDA', '5', 'E06', 'S06', 'OPE_COSTO', 'Costo de mercaderías enajenadas', TRUE, FALSE, FALSE, 'CLP', FALSE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, TRUE, NOW())
 ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`);
 
 -- ----------------------------------------------------------------------------
@@ -281,7 +283,7 @@ CREATE TABLE IF NOT EXISTS `cost_centers` (
   `empresa_id` VARCHAR(36) NOT NULL,
   `codigo` VARCHAR(50) NOT NULL,
   `nombre` VARCHAR(200) NOT NULL,
-  `categoria` VARCHAR(50) NOT NULL,
+  `categoria` VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRACION',
   `responsable_nombre` VARCHAR(200) NOT NULL,
   `responsable_email` VARCHAR(255) NULL,
   `presupuesto_mensual_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
@@ -299,8 +301,8 @@ CREATE TABLE IF NOT EXISTS `cost_centers` (
   KEY `idx_cost_center_categoria` (`categoria`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Asegurar que la columna categoria sea VARCHAR(50) por si la tabla ya existía con el ENUM anterior
-ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(50) NOT NULL;
+-- Asegurar que la columna categoria sea VARCHAR(100) por si la tabla ya existía con el ENUM anterior
+ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRACION';
 
 -- ----------------------------------------------------------------------------
 -- 9. TABLA: cost_center_imputations (Trazabilidad de Imputaciones Analíticas)
@@ -398,7 +400,7 @@ VALUES
 ON DUPLICATE KEY UPDATE `clave_certificado_encrypted` = VALUES(`clave_certificado_encrypted`), `updated_at` = NOW();
 
 -- Semillas de Centros de Costo (Mini-Empresas)
-ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(50) NOT NULL;
+ALTER TABLE `cost_centers` MODIFY COLUMN `categoria` VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRACION';
 INSERT INTO `cost_centers` (
   `id`, `empresa_id`, `codigo`, `nombre`, `categoria`, `responsable_nombre`, `responsable_email`,
   `presupuesto_mensual_clp`, `activo`, `descripcion`, `ventas_acumuladas_mes`, `costos_directos_mes`,
@@ -672,6 +674,199 @@ CREATE TABLE IF NOT EXISTS `warehouse_withdrawals` (
   KEY `idx_vale_op` (`orden_produccion_id`),
   KEY `idx_vale_folio` (`folio_vale`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------------------------------------------------------
+-- TABLA: cash_flow_indirect_reports (Reportes de Flujo de Efectivo Método Indirecto NIC 7)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `cash_flow_indirect_reports` (
+  `id` VARCHAR(36) NOT NULL,
+  `firm_id` VARCHAR(36) NOT NULL DEFAULT 'firm-default-001',
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `periodo` VARCHAR(7) NOT NULL,
+  `periodo_comparativo` VARCHAR(7) NULL,
+  `fecha_emision` DATE NOT NULL,
+  `resultado_neto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `total_ajustes_no_efectivo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `total_variacion_capital_trabajo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `flujo_neto_operacional` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `flujo_neto_inversion` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `flujo_neto_financiamiento` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `variacion_neta_efectivo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `saldo_inicial_efectivo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `saldo_final_efectivo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `efecto_tipo_cambio` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `diferencia_cuadratura` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `esta_cuadrado` BOOLEAN NOT NULL DEFAULT TRUE,
+  `partidas_operacion` JSON NOT NULL,
+  `partidas_inversion` JSON NOT NULL,
+  `partidas_financiamiento` JSON NOT NULL,
+  `desglose_efectivo` JSON NOT NULL,
+  `diagnostico_agente` JSON NOT NULL,
+  `agente_auditor_nombre` VARCHAR(100) NOT NULL DEFAULT 'Agente Especialista Flujo de Efectivo NIF/NIC 7',
+  `agente_signature` VARCHAR(128) NOT NULL,
+  `hash_integridad_sha256` VARCHAR(64) NOT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cash_flow_empresa_periodo` (`empresa_id`, `periodo`),
+  KEY `idx_cash_flow_periodo` (`empresa_id`, `periodo`),
+  KEY `idx_cash_flow_firm` (`firm_id`, `empresa_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------------------------------------------------------
+-- 15. AGENTE DE ADMINISTRACIÓN DE RENDICIÓN DE GASTOS ("RINDE GASTOS AI")
+-- ----------------------------------------------------------------------------
+
+-- TABLA: expense_projects (Proyectos y Obras para Imputación de Gastos)
+CREATE TABLE IF NOT EXISTS `expense_projects` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `codigo` VARCHAR(50) NOT NULL,
+  `nombre` VARCHAR(200) NOT NULL,
+  `cliente_nombre` VARCHAR(200) NULL,
+  `presupuesto_total_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `activo` BOOLEAN NOT NULL DEFAULT TRUE,
+  `descripcion` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_expense_project_empresa_codigo` (`empresa_id`, `codigo`),
+  KEY `idx_expense_project_empresa` (`empresa_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: expense_reports (Informes y Cabeceras de Rendición)
+CREATE TABLE IF NOT EXISTS `expense_reports` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `folio` VARCHAR(50) NOT NULL,
+  `titulo` VARCHAR(255) NOT NULL,
+  `rendidor_id` VARCHAR(36) NULL,
+  `rendidor_nombre` VARCHAR(200) NOT NULL,
+  `rendidor_rut` VARCHAR(20) NOT NULL,
+  `rendidor_email` VARCHAR(255) NULL,
+  `rendidor_cargo` VARCHAR(150) NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `centro_costo_nombre` VARCHAR(200) NULL,
+  `proyecto_id` VARCHAR(36) NULL,
+  `proyecto_codigo` VARCHAR(50) NULL,
+  `proyecto_nombre` VARCHAR(200) NULL,
+  `fondo_asignado_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_total_rendido_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `saldo_reembolsar_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `saldo_reintegrar_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'BORRADOR',
+  `fecha_inicio` DATE NOT NULL,
+  `fecha_cierre` DATE NOT NULL,
+  `fecha_aprobacion` DATE NULL,
+  `fecha_pago_reembolso` DATE NULL,
+  `aprobador_nombre` VARCHAR(200) NULL,
+  `aprobador_email` VARCHAR(255) NULL,
+  `observaciones_aprobador` TEXT NULL,
+  `asiento_contable_id` VARCHAR(36) NULL,
+  `agente_auditor_score` INT NOT NULL DEFAULT 100,
+  `agente_auditor_diagnostico` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_expense_report_empresa_folio` (`empresa_id`, `folio`),
+  KEY `idx_expense_report_empresa_estado` (`empresa_id`, `estado`),
+  KEY `idx_expense_report_rendidor` (`empresa_id`, `rendidor_rut`),
+  KEY `idx_expense_report_cc` (`centro_costo_id`),
+  KEY `idx_expense_report_proyecto` (`proyecto_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLA: expense_items (Comprobantes y Documentos Digitales)
+CREATE TABLE IF NOT EXISTS `expense_items` (
+  `id` VARCHAR(36) NOT NULL,
+  `expense_report_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `fecha` DATE NOT NULL,
+  `tipo_documento` VARCHAR(50) NOT NULL,
+  `folio_documento` VARCHAR(100) NOT NULL,
+  `proveedor_rut` VARCHAR(20) NOT NULL,
+  `proveedor_razon_social` VARCHAR(255) NOT NULL,
+  `categoria` VARCHAR(50) NOT NULL,
+  `descripcion_glosa` VARCHAR(255) NOT NULL,
+  `monto_neto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_iva` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_exento` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `monto_total_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `moneda_original` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  `monto_original` DECIMAL(15, 2) NULL,
+  `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+  `centro_costo_id` VARCHAR(36) NULL,
+  `centro_costo_codigo` VARCHAR(50) NULL,
+  `proyecto_id` VARCHAR(36) NULL,
+  `proyecto_codigo` VARCHAR(50) NULL,
+  `cuenta_contable_codigo` VARCHAR(50) NOT NULL,
+  `cuenta_contable_nombre` VARCHAR(150) NULL,
+  `comprobante_archivo_nombre` VARCHAR(255) NULL,
+  `comprobante_url` TEXT NULL,
+  `comprobante_preview_base64` MEDIUMTEXT NULL,
+  `es_gasto_rechazado_art21` BOOLEAN NOT NULL DEFAULT FALSE,
+  `validado_por_agente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `observacion_agente` VARCHAR(255) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_expense_item_report` (`expense_report_id`),
+  KEY `idx_expense_item_empresa_fecha` (`empresa_id`, `fecha`),
+  KEY `idx_expense_item_proveedor` (`proveedor_rut`),
+  KEY `idx_expense_item_cuenta` (`cuenta_contable_codigo`),
+  CONSTRAINT `fk_expense_item_report` FOREIGN KEY (`expense_report_id`) REFERENCES `expense_reports` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Semillas de Proyectos Iniciales
+INSERT INTO `expense_projects` (`id`, `empresa_id`, `codigo`, `nombre`, `cliente_nombre`, `presupuesto_total_clp`, `activo`, `descripcion`, `created_at`)
+VALUES
+('pry-01', 'client-retail-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón', 'Salmones Antártica S.A.', 45000000.00, TRUE, 'Servicio integral de instalación de fondeos y redes loberas.', NOW()),
+('pry-02', 'client-retail-01', 'PRY-STGO-EXP', 'Expansión Comercial & Distribución Retail Santiago', 'Cencosud / Walmart Chile', 25000000.00, TRUE, 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.', NOW()),
+('pry-03', 'client-retail-01', 'PRY-LOG-FLOTA', 'Habilitación Barcazas y Motores Fuera de Borda', 'Interno Flota Austral', 18000000.00, TRUE, 'Overhaul mecánico preventivo de barcazas Don Víctor y Mar Austral II.', NOW())
+ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`), `presupuesto_total_clp` = VALUES(`presupuesto_total_clp`);
+
+-- Semillas de Rendiciones de Gastos ("RindeGastos")
+INSERT INTO `expense_reports` (
+  `id`, `empresa_id`, `folio`, `titulo`, `rendidor_id`, `rendidor_nombre`, `rendidor_rut`, `rendidor_email`, `rendidor_cargo`,
+  `centro_costo_id`, `centro_costo_codigo`, `centro_costo_nombre`, `proyecto_id`, `proyecto_codigo`, `proyecto_nombre`,
+  `fondo_asignado_clp`, `monto_total_rendido_clp`, `saldo_reembolsar_clp`, `saldo_reintegrar_clp`, `moneda`, `estado`,
+  `fecha_inicio`, `fecha_cierre`, `fecha_aprobacion`, `aprobador_nombre`, `agente_auditor_score`, `agente_auditor_diagnostico`, `created_at`
+)
+VALUES
+(
+  'rdg-001', 'client-retail-01', 'RDG-2026-001', 'Visita Técnica Clientes Salmoaustral y Supervisión Centro Dalcahue',
+  'emp-001', 'Gonzalo Silva Valenzuela', '14.238.192-8', 'gonzalo.silva@maraustral.cl', 'Supervisor Comercial & Operaciones',
+  'cc-02', 'CC-VTA-STGO', 'Ventas & Distribución Zona Central', 'pry-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+  150000.00, 184500.00, 34500.00, 0.00, 'CLP', 'PENDIENTE_APROBACION',
+  '2026-09-24', '2026-09-28', NULL, 'Carla Morales Troncoso', 95,
+  '{"calificacion": "APROBADO_LIMPIO", "scoreGlobal": 95, "totalComprobantesValidos": 4, "totalComprobantesObjetados": 0, "montoIvaCreditoRecuperable": 16150, "montoGastoRechazadoArt21": 0, "alertas": [], "recomendaciones": ["Gasto de combustible rendido con boleta. Se sugiere solicitar Factura para recuperar IVA Crédito."], "verificacionRutDuplicados": true, "resumenTributario": "Comprobantes íntegros con respaldo fidedigno Art. 31 LIR. Saldo a reembolsar: $34.500 CLP."}',
+  NOW()
+),
+(
+  'rdg-002', 'client-retail-01', 'RDG-2026-002', 'Adquisición de Insumos y Repuestos Urgentes Maestranza Quellón',
+  'emp-002', 'Ing. Rodrigo Cárdenas Soto', '13.914.882-K', 'rodrigo.cardenas@maraustral.cl', 'Jefe de Planta Quellón',
+  'cc-03', 'CC-PRD-QUELLON', 'Planta Fabril & Maestranza Quellón', 'pry-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+  200000.00, 165000.00, 0.00, 35000.00, 'CLP', 'APROBADA',
+  '2026-09-15', '2026-09-18', '2026-09-20', 'Carla Morales Troncoso', 100,
+  '{"calificacion": "APROBADO_LIMPIO", "scoreGlobal": 100, "totalComprobantesValidos": 2, "totalComprobantesObjetados": 0, "montoIvaCreditoRecuperable": 26345, "montoGastoRechazadoArt21": 0, "alertas": [], "recomendaciones": [], "verificacionRutDuplicados": true, "resumenTributario": "Aprobado por jefatura. El colaborador debe reintegrar $35.000 a la cuenta corriente de la empresa."}',
+  NOW()
+)
+ON DUPLICATE KEY UPDATE `titulo` = VALUES(`titulo`), `monto_total_rendido_clp` = VALUES(`monto_total_rendido_clp`);
+
+-- Semillas de Comprobantes
+INSERT INTO `expense_items` (
+  `id`, `expense_report_id`, `empresa_id`, `fecha`, `tipo_documento`, `folio_documento`,
+  `proveedor_rut`, `proveedor_razon_social`, `categoria`, `descripcion_glosa`,
+  `monto_neto`, `monto_iva`, `monto_exento`, `monto_total_clp`,
+  `centro_costo_id`, `centro_costo_codigo`, `proyecto_id`, `proyecto_codigo`,
+  `cuenta_contable_codigo`, `cuenta_contable_nombre`, `es_gasto_rechazado_art21`, `validado_por_agente`, `created_at`
+)
+VALUES
+('item-01', 'rdg-001', 'client-retail-01', '2026-09-25', 'BOLETA_ELECTRONICA', 'B-481920', '99.520.000-7', 'Compañía de Petróleos de Chile COPEC S.A.', 'COMBUSTIBLE', 'Carga de Diesel camioneta terreno traslado Chiloé', 37815.00, 7185.00, 0.00, 45000.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.009', 'Combustibles & Lubricantes', FALSE, TRUE, NOW()),
+('item-02', 'rdg-001', 'client-retail-01', '2026-09-26', 'FACTURA_ELECTRONICA_33', '91283', '76.128.490-2', 'Hotelera & Turismo del Sur SpA (Hotel Castro)', 'ALOJAMIENTO', 'Hospedaje 2 noches personal técnico en terreno', 85000.00, 16150.00, 0.00, 101150.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.007', 'Alojamiento & Estadía Terreno', FALSE, TRUE, NOW()),
+('item-03', 'rdg-001', 'client-retail-01', '2026-09-26', 'BOLETA_ELECTRONICA', 'B-12839', '77.819.200-5', 'Restaurante Rincón Chilote Castro', 'ALIMENTACION', 'Cena y almuerzo en terreno durante supervisión', 23824.00, 4526.00, 0.00, 28350.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.006', 'Gastos de Alimentación & Viáticos', FALSE, TRUE, NOW()),
+('item-04', 'rdg-001', 'client-retail-01', '2026-09-27', 'TICKET_PEAJE', 'TAG-98124', '96.812.390-1', 'Sociedad Concesionaria Ruta del Canal S.A.', 'PEAJES_ESTACIONAMIENTOS', 'Peajes y transbordo canal de Chacao ida y vuelta', 0.00, 0.00, 10000.00, 10000.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.010', 'Peajes & Tag Autopistas', FALSE, TRUE, NOW()),
+('item-05', 'rdg-002', 'client-retail-01', '2026-09-16', 'FACTURA_ELECTRONICA_33', 'F-78192', '76.992.110-3', 'Ferretería Industrial Austral Ltda.', 'MATERIALES_INSUMOS', 'Pernos de acero inox 316 y electrodos para balsas', 138655.00, 26345.00, 0.00, 165000.00, 'cc-03', 'CC-PRD-QUELLON', 'pry-01', 'PRY-QUELLON-26', '4.1.02.001', 'Materiales Menores & Consumibles', FALSE, TRUE, NOW())
+ON DUPLICATE KEY UPDATE `descripcion_glosa` = VALUES(`descripcion_glosa`), `monto_total_clp` = VALUES(`monto_total_clp`);
 
 SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================================================

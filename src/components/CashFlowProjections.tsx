@@ -91,6 +91,10 @@ import { CashFlowParamsModal } from './CashFlowParamsModal';
 import { CashAccountsManagerModal } from './CashAccountsManagerModal';
 import { CashFlowSpreadsheetMatrix } from './cashflow/CashFlowSpreadsheetMatrix';
 import { ProvisionesEgresosManagerModal } from './cashflow/ProvisionesEgresosManagerModal';
+import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
+import { buildOfficial8ColumnBalance } from '../utils/accountingOrchestratorEngine';
+import { loadCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
+import { HierarchicalAccountItem, Balance8ColumnasReport } from '../types';
 
 interface CashFlowProjectionsProps {
   movements: CashFlowMovement[];
@@ -114,6 +118,8 @@ interface CashFlowProjectionsProps {
   provisionesEgresos?: ProvisionEgreso[];
   onUpdateProvisionesEgresos?: (provisiones: ProvisionEgreso[]) => void;
   onAddEntry?: (entry: AccountingEntry) => void;
+  entries?: AccountingEntry[];
+  chartOfAccounts?: HierarchicalAccountItem[];
 }
 
 export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
@@ -138,14 +144,28 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
   provisionesEgresos = [],
   onUpdateProvisionesEgresos,
   onAddEntry,
+  entries = [],
+  chartOfAccounts: propChartOfAccounts,
 }) => {
   const safeMovements = Array.isArray(movements) ? movements : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
 
+  // Plan de cuentas y Balance de 8 Columnas para el Agente de Flujo Indirecto NIC 7
+  const effectiveChartOfAccounts = useMemo(() => {
+    if (propChartOfAccounts && propChartOfAccounts.length > 0) {
+      return propChartOfAccounts;
+    }
+    return loadCompanyChartOfAccounts(company.rut);
+  }, [propChartOfAccounts, company.rut]);
+
+  const balance8Col: Balance8ColumnasReport = useMemo(() => {
+    return buildOfficial8ColumnBalance(entries, company, '2026-12-31', effectiveChartOfAccounts);
+  }, [entries, company, effectiveChartOfAccounts]);
+
   // State
   const [scenario, setScenario] = useState<'BASE' | 'OPTIMISTA' | 'ESTRESADO'>('BASE');
   const [horizon, setHorizon] = useState<CashFlowHorizonType>('60_DIAS');
-  const [activeViewTab, setActiveViewTab] = useState<'MATRIZ_EXCEL' | 'INFORME_CONTADOR' | 'CHART' | 'TIMELINE' | 'TABLE' | 'ANNUAL_MATRIX'>('MATRIZ_EXCEL');
+  const [activeViewTab, setActiveViewTab] = useState<'MATRIZ_EXCEL' | 'INFORME_CONTADOR' | 'ESTADO_INDIRECTO_NIC7' | 'CHART' | 'TIMELINE' | 'TABLE' | 'ANNUAL_MATRIX'>('MATRIZ_EXCEL');
   const [expandedPillar, setExpandedPillar] = useState<'ALL' | 'BANCOS' | 'VENTAS' | 'CHEQUES_CARTERA' | 'CHEQUES_EMITIDOS' | 'DEUDA' | 'PROVISIONES'>('ALL');
   const [parameters, setParameters] = useState<CashFlowInclusionParameters>(DEFAULT_CASH_FLOW_INCLUSION_PARAMS);
   const [searchTerm, setSearchTerm] = useState('');
@@ -949,6 +969,23 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
                 activeViewTab === 'INFORME_CONTADOR' ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-700'
               }`}>
                 Auditor
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveViewTab('ESTADO_INDIRECTO_NIC7')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeViewTab === 'ESTADO_INDIRECTO_NIC7'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>Flujo Indirecto (NIF / NIC 7)</span>
+              <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                activeViewTab === 'ESTADO_INDIRECTO_NIC7' ? 'bg-white text-emerald-800' : 'bg-emerald-100 text-emerald-800'
+              }`}>
+                Agente NIF
               </span>
             </button>
 
@@ -2620,6 +2657,20 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* View: Estado de Flujos de Efectivo Método Indirecto (NIF / NIC 7) */}
+        {activeViewTab === 'ESTADO_INDIRECTO_NIC7' && (
+          <div className="p-4 sm:p-6 bg-slate-50/50">
+            <CashFlowIndirectView
+              empresaRut={company.rut}
+              empresaNombre={company.razonSocial}
+              chartOfAccounts={effectiveChartOfAccounts}
+              entries={entries}
+              balance8Col={balance8Col}
+              periodoSeleccionado={company?.periodoActual || '2026-10'}
+            />
           </div>
         )}
 

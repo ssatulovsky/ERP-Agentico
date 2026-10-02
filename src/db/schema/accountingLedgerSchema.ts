@@ -50,6 +50,11 @@ export const chartOfAccounts = mysqlTable(
       'GASTOS',
     ]).notNull(),
     aceptaAuxiliar: boolean('acepta_auxiliar').notNull().default(false),
+    manejaMultimoneda: boolean('maneja_multimoneda').notNull().default(false),
+    requiereDocReferencia: boolean('requiere_doc_ref').notNull().default(false),
+    esEfectivoEquivalente: boolean('es_efectivo_equivalente').notNull().default(false),
+    esContracuentaEfectivo: boolean('es_contracuenta_efectivo').notNull().default(false),
+    requiereProyecto: boolean('requiere_proyecto').notNull().default(false),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({

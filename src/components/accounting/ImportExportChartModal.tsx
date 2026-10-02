@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
 import { Download, Upload, FileText, Check, AlertCircle, X, RefreshCw } from 'lucide-react';
 import { HierarchicalAccountItem } from '../../types';
-import { exportChartToCSV } from '../../utils/companyChartOfAccountsService';
+import {
+  exportChartToCSV,
+  inferDefaultMultiCurrency,
+  inferDefaultDocReferencia,
+  inferDefaultEfectivoEquivalente,
+  inferDefaultContracuentaEfectivo,
+  inferDefaultProyecto,
+} from '../../utils/companyChartOfAccountsService';
 
 interface ImportExportChartModalProps {
   isOpen: boolean;
@@ -76,25 +83,45 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
         return;
       }
 
-      const formatted: HierarchicalAccountItem[] = parsed.map((item) => ({
-        codigo: String(item.codigo).trim(),
-        nombre: String(item.nombre).trim(),
-        clase: Number(item.clase) >= 1 && Number(item.clase) <= 7 ? (Number(item.clase) as any) : 1,
-        grupo: item.grupo || String(item.codigo).split('.').slice(0, 2).join('.'),
-        subgrupo: item.subgrupo || String(item.codigo).split('.').slice(0, 3).join('.'),
-        nivel: item.nivel || 5,
-        tipo: item.tipo || 'ACTIVO',
-        clasificacion: item.clasificacion || 'CIRCULANTE',
-        naturaleza: item.naturaleza || 'DEUDORA',
-        requiereAuxiliarRut: Boolean(item.requiereAuxiliarRut),
-        requiereCentroCosto: Boolean(item.requiereCentroCosto),
-        esConciliableBancaria: Boolean(item.esConciliableBancaria),
-        activa: item.activa !== false,
-        agrupacionFiscal: item.agrupacionFiscal,
-        agrupacionMatrizExtranjera: item.agrupacionMatrizExtranjera,
-        agrupacionPersonalizada: item.agrupacionPersonalizada,
-        empresaRut,
-      }));
+      const formatted: HierarchicalAccountItem[] = parsed.map((item) => {
+        const cod = String(item.codigo).trim();
+        const nom = String(item.nombre).trim();
+        return {
+          codigo: cod,
+          nombre: nom,
+          clase: Number(item.clase) >= 1 && Number(item.clase) <= 7 ? (Number(item.clase) as any) : 1,
+          grupo: item.grupo || cod.split('.').slice(0, 2).join('.'),
+          subgrupo: item.subgrupo || cod.split('.').slice(0, 3).join('.'),
+          nivel: item.nivel || 5,
+          tipo: item.tipo || 'ACTIVO',
+          clasificacion: item.clasificacion || 'CIRCULANTE',
+          naturaleza: item.naturaleza || 'DEUDORA',
+          requiereAuxiliarRut: Boolean(item.requiereAuxiliarRut),
+          requiereCentroCosto: Boolean(item.requiereCentroCosto),
+          esConciliableBancaria: Boolean(item.esConciliableBancaria),
+          activa: item.activa !== false,
+          // 5 Conceptos ERP con fallback inteligente
+          manejaMultimoneda: item.manejaMultimoneda !== undefined
+            ? Boolean(item.manejaMultimoneda)
+            : inferDefaultMultiCurrency({ codigo: cod, nombre: nom }),
+          requiereDocReferencia: item.requiereDocReferencia !== undefined
+            ? Boolean(item.requiereDocReferencia)
+            : inferDefaultDocReferencia({ codigo: cod, nombre: nom }),
+          esEfectivoEquivalente: item.esEfectivoEquivalente !== undefined
+            ? Boolean(item.esEfectivoEquivalente)
+            : inferDefaultEfectivoEquivalente({ codigo: cod, nombre: nom }),
+          esContracuentaEfectivo: item.esContracuentaEfectivo !== undefined
+            ? Boolean(item.esContracuentaEfectivo)
+            : inferDefaultContracuentaEfectivo({ codigo: cod, nombre: nom }),
+          requiereProyecto: item.requiereProyecto !== undefined
+            ? Boolean(item.requiereProyecto)
+            : inferDefaultProyecto({ codigo: cod, nombre: nom }),
+          agrupacionFiscal: item.agrupacionFiscal,
+          agrupacionMatrizExtranjera: item.agrupacionMatrizExtranjera,
+          agrupacionPersonalizada: item.agrupacionPersonalizada,
+          empresaRut,
+        };
+      });
 
       onImport(formatted);
       setImportStatus({ success: true, message: `Se han importado exitosamente ${formatted.length} cuentas al plan de la empresa.` });

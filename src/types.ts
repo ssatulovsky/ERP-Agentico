@@ -1100,6 +1100,12 @@ export interface AccountPlanItem {
   requiereAuxiliarRut?: boolean;
   requiereCentroCosto?: boolean;
   esConciliableBancaria?: boolean;
+  // Nuevos atributos ERP contables avanzados
+  manejaMultimoneda?: boolean; // MANEJA MULTIMONEDA (USD, EUR, UF / NIC 21)
+  requiereDocReferencia?: boolean; // DOCUMENTO REFERENCIA (Factura, Boleta, NC, etc.)
+  esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE (NIC 7 / FECU)
+  esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE (Puente Tesorería)
+  requiereProyecto?: boolean; // PROYECTO (Centro de Proyecto / Obra / Contrato)
 }
 
 export type AccountNature = 'DEUDORA' | 'ACREEDORA';
@@ -1118,6 +1124,12 @@ export interface HierarchicalAccountItem {
   requiereCentroCosto: boolean;
   esConciliableBancaria: boolean;
   activa: boolean;
+  // Atributos y Validaciones Contables Avanzadas (5 Conceptos ERP)
+  manejaMultimoneda?: boolean; // MANEJA MULTIMONEDA
+  requiereDocReferencia?: boolean; // DOCUMENTO REFERENCIA
+  esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE
+  esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE
+  requiereProyecto?: boolean; // PROYECTO
   // Campos de personalización por empresa y presentación
   nombreGrupo?: string;
   nombreSubgrupo?: string;
@@ -1212,6 +1224,102 @@ export interface Balance8ColumnasReport {
   cuentas: TrialBalance8ColAccount[];
   totales: TrialBalance8ColTotals;
   resultado_del_ejercicio: ResultadoEjercicio8Col;
+}
+
+// ============================================================================
+// ESTADO DE FLUJOS DE EFECTIVO - MÉTODO INDIRECTO (NIF / NIC 7 / CMF)
+// ============================================================================
+export interface CashFlowIndirectAccountDetail {
+  codigo: string;
+  nombre: string;
+  saldoInicial: number;
+  saldoFinal: number;
+  variacion: number;
+  impactoFlujo: number; // Positivo si genera efectivo, negativo si absorbe
+}
+
+export interface CashFlowIndirectLineItem {
+  id: string;
+  codigoAgrupador: string;
+  concepto: string;
+  categoria: 'OPERACION' | 'INVERSION' | 'FINANCIAMIENTO' | 'EFECTIVO_CONCILIACION';
+  subcategoria:
+    | 'RESULTADO_NETO'
+    | 'AJUSTE_PARTIDA_NO_EFECTIVO'
+    | 'VARIACION_CAPITAL_TRABAJO'
+    | 'ACTIVIDAD_INVERSION'
+    | 'ACTIVIDAD_FINANCIAMIENTO'
+    | 'CONCILIACION_EFECTIVO';
+  monto: number;
+  montoAnterior?: number;
+  cuentasAsociadas: CashFlowIndirectAccountDetail[];
+  nivel: 1 | 2 | 3;
+  esSubtotal?: boolean;
+  esTotal?: boolean;
+  notaNormativa?: string;
+  signoFlujo?: '+' | '-' | '=';
+}
+
+export interface CashBalanceAccountDetail {
+  codigo: string;
+  nombre: string;
+  tipo: 'CAJA' | 'BANCO' | 'EQUIVALENTE' | 'CONTRACUENTA';
+  esMultimoneda?: boolean;
+  saldoInicial: number;
+  cargosPeriodo: number;
+  abonosPeriodo: number;
+  saldoFinal: number;
+  variacionNeta: number;
+}
+
+export interface CashFlowIndirectAuditDiagnosis {
+  resumenEjecutivo: string;
+  saludFinanciera: 'OPTIMA' | 'ADVERTENCIA' | 'CRITICA';
+  calidadUtilidadScorePct: number; // Flujo Operacional / Resultado Neto * 100
+  coberturaDeuda: number;
+  fugaEfectivoDetectada: boolean;
+  alertasOperativas: string[];
+  recomendacionesController: string[];
+  agenteAuditorNombre: string;
+  agenteSignature: string;
+  hashIntegridadSha256: string;
+  fechaAuditoria: string;
+}
+
+export interface CashFlowIndirectReport {
+  id: string;
+  empresaId: string;
+  empresaNombre: string;
+  empresaRut: string;
+  periodo: string; // ej: '2026-10'
+  periodoComparativo?: string;
+  fechaEmision: string;
+  marcoNormativo: 'NIF / NIC 7 (IAS 7) / CMF CHILE';
+  
+  // Totales de Actividades
+  resultadoNeto: number;
+  totalAjustesNoEfectivo: number;
+  totalVariacionCapitalTrabajo: number;
+  flujoNetoOperacional: number;
+  flujoNetoInversion: number;
+  flujoNetoFinanciamiento: number;
+  variacionNetaEfectivo: number;
+  
+  // Conciliación de Saldos de Efectivo
+  saldoInicialEfectivo: number;
+  saldoFinalEfectivo: number;
+  efectoTipoCambio: number;
+  diferenciaCuadratura: number;
+  estaCuadrado: boolean;
+  
+  // Listados Detallados
+  partidasOperacion: CashFlowIndirectLineItem[];
+  partidasInversion: CashFlowIndirectLineItem[];
+  partidasFinanciamiento: CashFlowIndirectLineItem[];
+  desgloseEfectivo: CashBalanceAccountDetail[];
+  
+  // Inteligencia y Auditoría Agéntica
+  diagnosticoAgente: CashFlowIndirectAuditDiagnosis;
 }
 
 // Orchestrator Audit & Peripheral Coordination
@@ -2806,6 +2914,133 @@ export interface DteDocumentLayoutConfig {
   paperSize: 'LETTER' | 'A4';
   pageOrientation: 'PORTRAIT';
   marginSize: 'compact' | 'normal' | 'wide';
+}
+
+// ============================================================================
+// AGENTE ADMINISTRADOR DE RENDICIÓN DE GASTOS ("RINDE GASTOS" CHILENO NIF / SII)
+// ============================================================================
+export type ExpenseReportStatus =
+  | 'BORRADOR'
+  | 'PENDIENTE_APROBACION'
+  | 'EN_REVISION_CONTABLE'
+  | 'APROBADA'
+  | 'OBJETADA_RECHAZADA'
+  | 'CONTABILIZADA_PAGADA';
+
+export type ExpenseDocumentType =
+  | 'BOLETA_ELECTRONICA'
+  | 'FACTURA_ELECTRONICA_33'
+  | 'FACTURA_EXENTA_34'
+  | 'BOLETA_HONORARIOS'
+  | 'INVOICE_EXTERIOR'
+  | 'TICKET_PEAJE'
+  | 'RECIBO_MOVILIZACION'
+  | 'OTRO';
+
+export type ExpenseCategory =
+  | 'ALIMENTACION'
+  | 'ALOJAMIENTO'
+  | 'TRANSPORTE_MOVILIZACION'
+  | 'COMBUSTIBLE'
+  | 'PEAJES_ESTACIONAMIENTOS'
+  | 'MATERIALES_INSUMOS'
+  | 'REPRESENTACION_CLIENTES'
+  | 'TELECOMUNICACIONES'
+  | 'SERVICIOS_TECNICOS'
+  | 'OTROS';
+
+export interface ExpenseItem {
+  id: string;
+  expenseReportId: string;
+  empresaId?: string;
+  fecha: string; // YYYY-MM-DD
+  tipoDocumento: ExpenseDocumentType;
+  folioDocumento: string;
+  proveedorRut: string;
+  proveedorRazonSocial: string;
+  categoria: ExpenseCategory;
+  descripcionGlosa: string;
+  montoNeto: number;
+  montoIva: number; // 19% si aplica
+  montoExento: number;
+  montoTotalClp: number;
+  monedaOriginal?: 'CLP' | 'USD' | 'EUR' | 'UF';
+  montoOriginal?: number;
+  tipoCambio?: number;
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  proyectoId?: string;
+  proyectoCodigo?: string;
+  cuentaContableCodigo: string; // ej: "4.2.01.005"
+  cuentaContableNombre?: string;
+  comprobanteArchivoNombre?: string;
+  comprobanteUrl?: string;
+  comprobantePreviewBase64?: string;
+  esGastoRechazadoArt21?: boolean;
+  validadoPorAgente?: boolean;
+  observacionAgente?: string;
+  createdAt?: string;
+}
+
+export interface ExpenseProject {
+  id: string;
+  empresaId?: string;
+  codigo: string; // ej: "PRY-QUELLON-01"
+  nombre: string;
+  clienteNombre?: string;
+  presupuestoTotalClp?: number;
+  activo: boolean;
+  descripcion?: string;
+}
+
+export interface ExpenseAuditDiagnosis {
+  calificacion: 'APROBADO_LIMPIO' | 'OBSERVACIONES_LEVES' | 'REQUIERE_REVISION_MANUAL' | 'ALTO_RIESGO_TRIBUTARIO';
+  scoreGlobal: number; // 0 a 100
+  totalComprobantesValidos: number;
+  totalComprobantesObjetados: number;
+  montoIvaCreditoRecuperable: number;
+  montoGastoRechazadoArt21: number;
+  alertas: string[];
+  recomendaciones: string[];
+  verificacionRutDuplicados: boolean;
+  resumenTributario: string;
+}
+
+export interface ExpenseReport {
+  id: string;
+  empresaId: string;
+  folio: string; // ej: "RDG-2026-001"
+  titulo: string;
+  rendidorId?: string;
+  rendidorNombre: string;
+  rendidorRut: string;
+  rendidorEmail?: string;
+  rendidorCargo?: string;
+  centroCostoId?: string;
+  centroCostoCodigo?: string;
+  centroCostoNombre?: string;
+  proyectoId?: string;
+  proyectoCodigo?: string;
+  proyectoNombre?: string;
+  fondoAsignadoClp: number; // Anticipo previo / Fondo por rendir entregado
+  montoTotalRendidoClp: number; // Suma comprobantes
+  saldoReembolsarClp: number; // Max(0, Rendido - Anticipo)
+  saldoReintegrarClp: number; // Max(0, Anticipo - Rendido)
+  moneda: 'CLP' | 'USD' | 'EUR' | 'UF';
+  estado: ExpenseReportStatus;
+  fechaInicio: string;
+  fechaCierre: string;
+  fechaAprobacion?: string;
+  fechaPagoReembolso?: string;
+  aprobadorNombre?: string;
+  aprobadorEmail?: string;
+  observacionesAprobador?: string;
+  asientoContableId?: string;
+  agenteAuditorScore: number;
+  agenteAuditorDiagnostico?: ExpenseAuditDiagnosis;
+  comprobantes?: ExpenseItem[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 

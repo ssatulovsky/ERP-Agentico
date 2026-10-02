@@ -46,6 +46,8 @@ import {
   ChevronUp,
   Lock,
   Unlock,
+  Activity,
+  Wallet,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -116,6 +118,7 @@ import { GroupedBalanceView } from './accounting/GroupedBalanceView';
 import { seedF29 } from '../data/seedData';
 import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
 import { EditClosingAdjustmentModal } from './accounting/EditClosingAdjustmentModal';
+import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -186,7 +189,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
   const safeBenefits = Array.isArray(benefits) ? benefits : [];
   // Navigation tabs of the orchestrator
-  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
+  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
@@ -201,6 +204,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Plan de cuentas filter & search
   const [planClassFilter, setPlanClassFilter] = useState<number | 'TODOS'>('TODOS');
+  const [planAttributeFilter, setPlanAttributeFilter] = useState<string>('TODOS');
   const [planSearchTerm, setPlanSearchTerm] = useState<string>('');
   
   // Plan de Cuentas Jerárquico Custom por Empresa y Gestión de Grupos
@@ -964,9 +968,20 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       const matchSearch =
         acc.nombre.toLowerCase().includes(planSearchTerm.toLowerCase()) ||
         acc.codigo.toLowerCase().includes(planSearchTerm.toLowerCase());
-      return matchClass && matchSearch;
+
+      let matchAttr = true;
+      if (planAttributeFilter === 'MULTIMONEDA') matchAttr = Boolean(acc.manejaMultimoneda);
+      else if (planAttributeFilter === 'DOC_REF') matchAttr = Boolean(acc.requiereDocReferencia);
+      else if (planAttributeFilter === 'EFECTIVO') matchAttr = Boolean(acc.esEfectivoEquivalente);
+      else if (planAttributeFilter === 'CONTRACUENTA') matchAttr = Boolean(acc.esContracuentaEfectivo);
+      else if (planAttributeFilter === 'PROYECTO') matchAttr = Boolean(acc.requiereProyecto);
+      else if (planAttributeFilter === 'AUXILIAR') matchAttr = Boolean(acc.requiereAuxiliarRut);
+      else if (planAttributeFilter === 'CENTRO_COSTO') matchAttr = Boolean(acc.requiereCentroCosto);
+      else if (planAttributeFilter === 'CONCILIABLE') matchAttr = Boolean(acc.esConciliableBancaria);
+
+      return matchClass && matchSearch && matchAttr;
     });
-  }, [chartOfAccounts, planClassFilter, planSearchTerm]);
+  }, [chartOfAccounts, planClassFilter, planSearchTerm, planAttributeFilter]);
 
   // Filtered Entries for Diario
   const filteredEntries = useMemo(() => {
@@ -1342,6 +1357,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         >
           <Table className="w-4 h-4 text-blue-500" />
           <span>Balance Oficial 8 Columnas (SII)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('FLUJO_EFECTIVO')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+            activeTab === 'FLUJO_EFECTIVO'
+              ? 'bg-[#0f172a] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Activity className="w-4 h-4 text-emerald-400" />
+          <span>Flujo Efectivo (NIC 7)</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
         </button>
 
         <button
@@ -2088,6 +2116,22 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 <option value="6">Clase 6: GASTOS DE ADMINISTRACIÓN Y VENTAS</option>
                 <option value="7">Clase 7: OTROS INGRESOS / GASTOS NO OPERACIONALES</option>
               </select>
+
+              <select
+                value={planAttributeFilter}
+                onChange={(e) => setPlanAttributeFilter(e.target.value)}
+                className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 font-medium text-slate-700"
+              >
+                <option value="TODOS">Todos los Atributos ERP</option>
+                <option value="MULTIMONEDA">🪙 Maneja Multimoneda (USD/EUR/UF)</option>
+                <option value="DOC_REF">📄 Exige Documento Referencia</option>
+                <option value="EFECTIVO">💵 Efectivo y Equivalente (NIC 7)</option>
+                <option value="CONTRACUENTA">🔄 Contracuenta Efectivo (Puente)</option>
+                <option value="PROYECTO">🏗️ Exige Proyecto / Obra</option>
+                <option value="AUXILIAR">👤 Exige Auxiliar RUT</option>
+                <option value="CENTRO_COSTO">🏢 Exige Centro de Costo</option>
+                <option value="CONCILIABLE">🏦 Conciliable Cartola Banco</option>
+              </select>
             </div>
 
             <span className="text-xs text-slate-500 font-mono">
@@ -2106,7 +2150,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <th className="py-2.5 px-2 text-center">Naturaleza</th>
                   <th className="py-2.5 px-3">Mapeo Fiscal SII</th>
                   <th className="py-2.5 px-3">Casa Matriz HQ</th>
-                  <th className="py-2.5 px-2 text-center">Exigencias</th>
+                  <th className="py-2.5 px-2 text-center">Atributos ERP</th>
                   <th className="py-2.5 px-3 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -2165,25 +2209,57 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                         )}
                       </td>
                       <td className="py-2 px-2 text-center font-sans">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex flex-wrap items-center justify-center gap-1 max-w-[170px] mx-auto">
+                          {acc.manejaMultimoneda && (
+                            <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold" title="Maneja Multimoneda (USD/EUR/UF / NIC 21)">
+                              USD
+                            </span>
+                          )}
+                          {acc.requiereDocReferencia && (
+                            <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-bold" title="Exige Documento Referencia (Factura, Boleta, NC, ND)">
+                              DOC
+                            </span>
+                          )}
+                          {acc.esEfectivoEquivalente && (
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold" title="Efectivo y Efectivo Equivalente (NIC 7 / FECU)">
+                              EFE
+                            </span>
+                          )}
+                          {acc.esContracuentaEfectivo && (
+                            <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold" title="Contracuenta Efectivo y Equivalente (Puente Tesorería)">
+                              PTE
+                            </span>
+                          )}
+                          {acc.requiereProyecto && (
+                            <span className="text-[9px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-bold" title="Exige Proyecto / Obra / Contrato">
+                              PRY
+                            </span>
+                          )}
                           {acc.requiereAuxiliarRut && (
-                            <span className="text-[9px] bg-slate-100 text-slate-700 px-1 rounded font-bold" title="Exige RUT Auxiliar">
+                            <span className="text-[9px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold" title="Exige RUT Auxiliar">
                               RUT
                             </span>
                           )}
                           {acc.requiereCentroCosto && (
-                            <span className="text-[9px] bg-blue-100 text-blue-800 px-1 rounded font-bold" title="Exige Centro de Costo">
+                            <span className="text-[9px] bg-cyan-100 text-cyan-800 px-1.5 py-0.5 rounded font-bold" title="Exige Centro de Costo">
                               CC
                             </span>
                           )}
                           {acc.esConciliableBancaria && (
-                            <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 rounded font-bold" title="Conciliable Banco">
+                            <span className="text-[9px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded font-bold" title="Conciliable Banco">
                               BCO
                             </span>
                           )}
-                          {!acc.requiereAuxiliarRut && !acc.requiereCentroCosto && !acc.esConciliableBancaria && (
-                            <span className="text-slate-300">-</span>
-                          )}
+                          {!acc.manejaMultimoneda &&
+                            !acc.requiereDocReferencia &&
+                            !acc.esEfectivoEquivalente &&
+                            !acc.esContracuentaEfectivo &&
+                            !acc.requiereProyecto &&
+                            !acc.requiereAuxiliarRut &&
+                            !acc.requiereCentroCosto &&
+                            !acc.esConciliableBancaria && (
+                              <span className="text-slate-300">-</span>
+                            )}
                         </div>
                       </td>
                       {/* Botones de Acción para Editar, Crear Subcuenta o Eliminar */}
@@ -2485,6 +2561,18 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             </div>
           )}
         </div>
+      )}
+
+      {/* VIEW 5.5: ESTADO DE FLUJOS DE EFECTIVO MÉTODO INDIRECTO (NIF / NIC 7) */}
+      {activeTab === 'FLUJO_EFECTIVO' && (
+        <CashFlowIndirectView
+          empresaRut={company.rut}
+          empresaNombre={company.razonSocial}
+          chartOfAccounts={chartOfAccounts}
+          entries={entries}
+          balance8Col={balance8Col}
+          periodoSeleccionado={company?.periodoActual || '2026-10'}
+        />
       )}
 
       {/* VIEW 6: ESTADOS FINANCIEROS IFRS / CMF */}
