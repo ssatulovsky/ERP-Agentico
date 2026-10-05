@@ -213,14 +213,14 @@ export function validateRequestBody(schema: z.ZodSchema<any>) {
 export async function commitEntryHandler(req: Request, res: Response): Promise<void> {
   const startTime = Date.now();
   const payload = req.body as CommitEntryInput;
-  const { header, lineas, auditContext } = payload;
-  const traceId = auditContext.traceId || (req.headers['x-trace-id'] as string) || crypto.randomUUID();
+  const { header, lineas, auditContext } = payload || {};
+  const traceId = auditContext?.traceId || (req.headers['x-trace-id'] as string) || crypto.randomUUID();
 
   console.log(`[AUDIT-OBSERVABILITY][${traceId}] Iniciando validación transaccional de asiento contable:`, {
-    empresaId: header.empresaId,
-    periodo: header.periodo,
-    agente: auditContext.agenteNombre,
-    lineasCount: lineas.length,
+    empresaId: header?.empresaId,
+    periodo: header?.periodo,
+    agente: auditContext?.agenteNombre || 'AGENTE_ORQUESTADOR_SENIOR',
+    lineasCount: lineas?.length || 0,
   });
 
   try {

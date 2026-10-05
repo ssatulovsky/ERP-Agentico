@@ -319,14 +319,15 @@ const mockTx: any = {
         }
 
         if (table === schema.accountingEntryLines) {
-          for (const line of rows) {
-            const fullLine = { ...line, id: line.id || `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}` };
-            inMemoryLines.push(fullLine);
-            const entryLines = diskPersistence.getLinesForEntry(fullLine.entryId);
-            entryLines.push(fullLine);
+          const fullRows = rows.map((line: any) => ({
+            ...line,
+            id: line.id || `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          }));
+          for (const line of fullRows) {
+            inMemoryLines.push(line);
           }
-          diskPersistence.scheduleFlush();
-          return rows;
+          diskPersistence.addAccountingLines(fullRows);
+          return fullRows;
         }
 
         if (table === schema.agentAuditLogs) {

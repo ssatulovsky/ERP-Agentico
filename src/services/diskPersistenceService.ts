@@ -594,6 +594,41 @@ class DiskPersistenceService {
     }
   }
 
+  public addAccountingLines(lines: any[]) {
+    if (!Array.isArray(lines) || lines.length === 0) return;
+    for (const line of lines) {
+      const existingIdx = this.store.lines.findIndex((l) => l.id === line.id);
+      if (existingIdx >= 0) {
+        this.store.lines[existingIdx] = line;
+      } else {
+        this.store.lines.push(line);
+      }
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          for (const line of lines) {
+            await mysqlDb.insert(accountingEntryLines).values({
+              id: line.id || crypto.randomUUID(),
+              entryId: line.entryId,
+              lineaNumero: line.lineaNumero || 1,
+              codigoCuenta: line.codigoCuenta,
+              nombreCuenta: line.nombreCuenta,
+              debe: String(line.debe),
+              haber: String(line.haber),
+              rutAuxiliar: line.rutAuxiliar || null,
+              centroCosto: line.centroCosto || null,
+            });
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al escribir líneas en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+  }
+
   public getAccountingEntries(empresaId?: string, periodo?: string): any[] {
     let result = this.store.entries;
     if (empresaId) {

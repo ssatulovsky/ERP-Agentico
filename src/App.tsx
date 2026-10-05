@@ -697,7 +697,7 @@ export default function App() {
     setDtes([]);
   };
 
-  // Libro Diario Contable Persistente (PostgreSQL / Drizzle ORM API)
+  // Libro Diario Contable Persistente (MySQL / Drizzle ORM API)
   const {
     entries,
     isLoading: isLedgerLoading,
@@ -706,7 +706,7 @@ export default function App() {
     commitEntry,
     addEntry,
     refetch: refetchLedger,
-  } = useAccountingLedger(company.rut, '2026-09');
+  } = useAccountingLedger(company.rut);
 
   // Modals
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -1360,6 +1360,7 @@ export default function App() {
               isLedgerCommitting={isLedgerCommitting}
               refetchLedger={refetchLedger}
               dtes={dtes}
+              onUpdateDte={handleUpdateDte}
               payrolls={payrolls}
               f29={f29}
               leases={leases}

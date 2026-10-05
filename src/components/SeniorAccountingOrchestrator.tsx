@@ -119,6 +119,9 @@ import { seedF29 } from '../data/seedData';
 import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
 import { EditClosingAdjustmentModal } from './accounting/EditClosingAdjustmentModal';
 import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
+import { SearchableAccountSelect } from './accounting/SearchableAccountSelect';
+import { SEED_COST_CENTERS } from '../data/seedCostCenters';
+import { INITIAL_CLIENT_AUXILIARIES } from '../data/erpMasterConfig';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -135,6 +138,7 @@ interface SeniorAccountingOrchestratorProps {
   isLedgerCommitting?: boolean;
   refetchLedger?: () => Promise<void>;
   dtes?: DteDocument[];
+  onUpdateDte?: (dte: DteDocument) => void;
   payrolls?: EmployeePayroll[];
   f29?: F29Declaration;
   leases?: LeaseContract[];
@@ -162,6 +166,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   isLedgerCommitting = false,
   refetchLedger,
   dtes = [],
+  onUpdateDte,
   payrolls = [],
   f29 = seedF29,
   leases = [],
@@ -189,7 +194,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
   const safeBenefits = Array.isArray(benefits) ? benefits : [];
   // Navigation tabs of the orchestrator
-  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
+  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
@@ -201,6 +206,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Mayor account selector
   const [selectedMayorAccountCode, setSelectedMayorAccountCode] = useState<string>('1.1.02.001');
+
+  // Libros Auxiliares state
+  const [auxiliarSubTab, setAuxiliarSubTab] = useState<'PROVEEDORES' | 'CLIENTES'>('PROVEEDORES');
+  const [auxiliarSearchTerm, setAuxiliarSearchTerm] = useState<string>('');
+  const [auxiliarFilterStatus, setAuxiliarFilterStatus] = useState<'TODOS' | 'CON_SALDO' | 'SALDADO'>('TODOS');
+  const [selectedAuxiliarRut, setSelectedAuxiliarRut] = useState<string | null>(null);
 
   // Plan de cuentas filter & search
   const [planClassFilter, setPlanClassFilter] = useState<number | 'TODOS'>('TODOS');
@@ -232,24 +243,41 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [balanceGroupingMode, setBalanceGroupingMode] = useState<BalanceGroupingMode>('TRADICIONAL_CMF');
   const [isGroupedView, setIsGroupedView] = useState<boolean>(true);
 
-  // Modal for Manual Entry
-  const [showManualModal, setShowManualModal] = useState<boolean>(false);
-  const [manualEntry, setManualEntry] = useState<{
-    fecha: string;
-    concepto: string;
-    documentoReferencia: string;
-    origen: AccountingEntry['origen'];
-    lineas: AccountingEntryLine[];
-  }>({
-    fecha: new Date().toISOString().split('T')[0],
+  // Helper para inicializar un asiento manual limpio
+  const getInitialManualEntry = () => ({
+    fecha: '2026-09-15',
     concepto: '',
     documentoReferencia: '',
-    origen: 'MANUAL',
+    origen: 'MANUAL' as AccountingEntry['origen'],
     lineas: [
-      { cuentaCodigo: '1.1.02.001', cuentaNombre: 'Banco Santander Chile Cta Cte M/N', debe: 0, haber: 0 },
-      { cuentaCodigo: '2.1.01.001', cuentaNombre: 'Proveedores Nacionales (Cuentas por Pagar)', debe: 0, haber: 0 },
+      {
+        cuentaCodigo: '1.1.02.001',
+        cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
+        debe: 0,
+        haber: 0,
+        rutAuxiliar: '',
+        centroCosto: '',
+        documentoRef: '',
+        dteIdAsociado: '',
+      },
+      {
+        cuentaCodigo: '2.1.01.001',
+        cuentaNombre: 'Proveedores Nacionales (Cuentas por Pagar)',
+        debe: 0,
+        haber: 0,
+        rutAuxiliar: '',
+        centroCosto: '',
+        documentoRef: '',
+        dteIdAsociado: '',
+      },
     ],
   });
+
+  // Modal for Manual Entry
+  const [showManualModal, setShowManualModal] = useState<boolean>(false);
+  const [manualEntry, setManualEntry] = useState(getInitialManualEntry());
+  const [manualEntryError, setManualEntryError] = useState<string | null>(null);
+  const [isSavingManual, setIsSavingManual] = useState<boolean>(false);
 
   // AI Routing state
   const [rawGlosaInput, setRawGlosaInput] = useState<string>('Compra de servidores cloud en AWS para infraestructura web según factura afecta con IVA');
@@ -385,8 +413,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     // Validación estricta de ejercicio fiscal y períodos bloqueados (Art. 16 Código Tributario)
     const periodCheck = validateEntryFiscalPeriod(entry.fecha, company);
     if (!periodCheck.permitido) {
-      showToast(`BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`, 'error');
-      throw new Error(`BLOQUEO FISCAL: ${periodCheck.motivo}`);
+      const msg = `BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`;
+      showToast(msg, 'error');
+      throw new Error(msg);
     }
 
     if (commitEntry) {
@@ -401,10 +430,15 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       } catch (err: any) {
         console.error('[SeniorOrchestrator] Error al autorizar comprobante contable:', err);
         // Fallback local por seguridad si el endpoint rechaza
-        onAddEntry(entry);
+        try {
+          await onAddEntry(entry);
+        } catch {
+          // Fallback no crítico
+        }
+        throw err;
       }
     } else {
-      onAddEntry(entry);
+      await onAddEntry(entry);
     }
   };
 
@@ -1005,13 +1039,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       debe: number;
       haber: number;
       saldoAcumulado: number;
+      rutAuxiliar?: string;
+      centroCosto?: string;
+      documentoRef?: string;
     }> = [];
 
     let runningBalance = 0;
     const selectedAcc = findAccountInChart(selectedMayorAccountCode);
     const isDeudora = selectedAcc?.naturaleza === 'DEUDORA';
 
-    entries.forEach(entry => {
+    safeEntries.forEach(entry => {
       entry.lineas.forEach(line => {
         if (line.cuentaCodigo === selectedMayorAccountCode) {
           if (isDeudora) {
@@ -1024,17 +1061,222 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             fecha: entry.fecha,
             asientoId: entry.id,
             concepto: entry.concepto,
-            documento: entry.documento,
+            documento: line.documentoRef || entry.documento,
             debe: line.debe,
             haber: line.haber,
             saldoAcumulado: runningBalance,
+            rutAuxiliar: line.rutAuxiliar,
+            centroCosto: line.centroCosto,
+            documentoRef: line.documentoRef,
           });
         }
       });
     });
 
     return list;
-  }, [entries, selectedMayorAccountCode]);
+  }, [safeEntries, selectedMayorAccountCode]);
+
+  // Auxiliar & Cost Center Detection Helpers
+  const isAccountAuxiliarRequired = (code: string, name: string): boolean => {
+    const acc = findAccountInChart(code) || findAccountInChart(name);
+    if (acc?.requiereAuxiliarRut) return true;
+    if (
+      code.startsWith('1.1.03') ||
+      code.startsWith('2.1.01') ||
+      code.startsWith('2.1.02') ||
+      code.startsWith('1.1.09') ||
+      code.startsWith('2.1.05')
+    ) {
+      return true;
+    }
+    return /auxiliar|proveedor|cliente|honorarios por pagar|cuentas por cobrar|cuentas por pagar/i.test(name);
+  };
+
+  const isAccountCostCenterRequired = (code: string, name: string): boolean => {
+    if (code.startsWith('4.') || code.startsWith('5.')) return true;
+    return /costo|gasto|remuneraci|servicios|arriendo|honorario|operaci|fabricaci|mantenimiento/i.test(name);
+  };
+
+  // Memoized directory of all auxiliaries (from Master Padron and DTEs)
+  const availableAuxiliaries = useMemo(() => {
+    const map = new Map<string, { rut: string; razonSocial: string; tipo: 'PROVEEDOR' | 'CLIENTE' | 'AMBOS' }>();
+
+    INITIAL_CLIENT_AUXILIARIES.forEach(aux => {
+      map.set(aux.rutCompleto.trim().toUpperCase(), {
+        rut: aux.rutCompleto.trim(),
+        razonSocial: aux.razonSocial,
+        tipo: (aux.tipoAuxiliar === 'PROVEEDOR' ? 'PROVEEDOR' : aux.tipoAuxiliar === 'CLIENTE' ? 'CLIENTE' : 'AMBOS') as any,
+      });
+    });
+
+    safeDtes.forEach(d => {
+      if (d.rutContraparte) {
+        const norm = d.rutContraparte.trim().toUpperCase();
+        const existing = map.get(norm);
+        const tipo = d.tipoOperacion === 'COMPRA' ? 'PROVEEDOR' : 'CLIENTE';
+        if (existing) {
+          if (existing.tipo !== tipo) existing.tipo = 'AMBOS';
+        } else {
+          map.set(norm, {
+            rut: d.rutContraparte.trim(),
+            razonSocial: d.razonSocialContraparte || d.rutContraparte,
+            tipo,
+          });
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }, [safeDtes]);
+
+  // Helper de normalización de RUT para cruces seguros
+  const normRut = (r?: string | null) => (r || '').replace(/[\.\-\s]/g, '').toUpperCase();
+
+  // Libro Mayor Auxiliar de Proveedores (Pasivos / Cuentas por Pagar 2.1.01)
+  const auxiliarSuppliersSummary = useMemo(() => {
+    const supplierRuts = new Set<string>();
+    safeDtes.filter(d => d.tipoOperacion === 'COMPRA').forEach(d => {
+      if (d.rutContraparte) supplierRuts.add(normRut(d.rutContraparte));
+    });
+    availableAuxiliaries.filter(a => a.tipo === 'PROVEEDOR' || a.tipo === 'AMBOS').forEach(a => {
+      supplierRuts.add(normRut(a.rut));
+    });
+    safeEntries.forEach(e => {
+      e.lineas.forEach(l => {
+        if ((l.cuentaCodigo.startsWith('2.1.01') || l.cuentaCodigo.startsWith('2.1.02')) && l.rutAuxiliar) {
+          supplierRuts.add(normRut(l.rutAuxiliar));
+        }
+      });
+    });
+
+    const result = Array.from(supplierRuts).map(rutKey => {
+      const matchedAux = availableAuxiliaries.find(a => normRut(a.rut) === rutKey);
+      const supplierDtes = safeDtes.filter(d => d.tipoOperacion === 'COMPRA' && normRut(d.rutContraparte) === rutKey);
+      const sampleDte = supplierDtes[0];
+      const rutDisplay = matchedAux?.rut || sampleDte?.rutContraparte || rutKey;
+      const razonSocial = matchedAux?.razonSocial || sampleDte?.razonSocialContraparte || `Proveedor RUT ${rutDisplay}`;
+
+      const totalDtesMonto = supplierDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
+      const totalDtesPagados = supplierDtes.filter(d => d.estadoPago === 'PAGADO').reduce((s, d) => s + (d.montoTotal || 0), 0);
+
+      let journalCreditos = 0;
+      let journalDebitos = 0;
+      const journalMovements: Array<{
+        fecha: string;
+        asientoId: string;
+        concepto: string;
+        documento: string;
+        debe: number;
+        haber: number;
+      }> = [];
+
+      safeEntries.forEach(entry => {
+        entry.lineas.forEach(line => {
+          if ((line.cuentaCodigo.startsWith('2.1.01') || line.cuentaCodigo.startsWith('2.1.02')) && normRut(line.rutAuxiliar) === rutKey) {
+            journalDebitos += line.debe || 0;
+            journalCreditos += line.haber || 0;
+            journalMovements.push({
+              fecha: entry.fecha,
+              asientoId: entry.id,
+              concepto: entry.concepto,
+              documento: line.documentoRef || entry.documento,
+              debe: line.debe,
+              haber: line.haber,
+            });
+          }
+        });
+      });
+
+      const facturacionTotal = Math.max(totalDtesMonto, journalCreditos);
+      const pagosTotales = journalDebitos > 0 ? journalDebitos : totalDtesPagados;
+      const saldoPendiente = Math.max(0, facturacionTotal - pagosTotales);
+
+      return {
+        rut: rutDisplay,
+        razonSocial,
+        totalFacturado: facturacionTotal,
+        totalPagado: pagosTotales,
+        saldoPendiente,
+        dtes: supplierDtes,
+        journalMovements,
+      };
+    });
+
+    return result.sort((a, b) => b.saldoPendiente - a.saldoPendiente);
+  }, [safeDtes, availableAuxiliaries, safeEntries]);
+
+  // Libro Mayor Auxiliar de Clientes (Activos / Cuentas por Cobrar 1.1.03)
+  const auxiliarClientsSummary = useMemo(() => {
+    const clientRuts = new Set<string>();
+    safeDtes.filter(d => d.tipoOperacion === 'VENTA').forEach(d => {
+      if (d.rutContraparte) clientRuts.add(normRut(d.rutContraparte));
+    });
+    availableAuxiliaries.filter(a => a.tipo === 'CLIENTE' || a.tipo === 'AMBOS').forEach(a => {
+      clientRuts.add(normRut(a.rut));
+    });
+    safeEntries.forEach(e => {
+      e.lineas.forEach(l => {
+        if (l.cuentaCodigo.startsWith('1.1.03') && l.rutAuxiliar) {
+          clientRuts.add(normRut(l.rutAuxiliar));
+        }
+      });
+    });
+
+    const result = Array.from(clientRuts).map(rutKey => {
+      const matchedAux = availableAuxiliaries.find(a => normRut(a.rut) === rutKey);
+      const clientDtes = safeDtes.filter(d => d.tipoOperacion === 'VENTA' && normRut(d.rutContraparte) === rutKey);
+      const sampleDte = clientDtes[0];
+      const rutDisplay = matchedAux?.rut || sampleDte?.rutContraparte || rutKey;
+      const razonSocial = matchedAux?.razonSocial || sampleDte?.razonSocialContraparte || `Cliente RUT ${rutDisplay}`;
+
+      const totalDtesMonto = clientDtes.reduce((s, d) => s + (d.montoTotal || 0), 0);
+      const totalDtesCobrados = clientDtes.filter(d => d.estadoPago === 'COBRADO' || d.estadoPago === 'PAGADO').reduce((s, d) => s + (d.montoTotal || 0), 0);
+
+      let journalDebitos = 0;
+      let journalCreditos = 0;
+      const journalMovements: Array<{
+        fecha: string;
+        asientoId: string;
+        concepto: string;
+        documento: string;
+        debe: number;
+        haber: number;
+      }> = [];
+
+      safeEntries.forEach(entry => {
+        entry.lineas.forEach(line => {
+          if (line.cuentaCodigo.startsWith('1.1.03') && normRut(line.rutAuxiliar) === rutKey) {
+            journalDebitos += line.debe || 0;
+            journalCreditos += line.haber || 0;
+            journalMovements.push({
+              fecha: entry.fecha,
+              asientoId: entry.id,
+              concepto: entry.concepto,
+              documento: line.documentoRef || entry.documento,
+              debe: line.debe,
+              haber: line.haber,
+            });
+          }
+        });
+      });
+
+      const facturacionTotal = Math.max(totalDtesMonto, journalDebitos);
+      const cobrosTotales = journalCreditos > 0 ? journalCreditos : totalDtesCobrados;
+      const saldoPorCobrar = Math.max(0, facturacionTotal - cobrosTotales);
+
+      return {
+        rut: rutDisplay,
+        razonSocial,
+        totalFacturado: facturacionTotal,
+        totalCobrado: cobrosTotales,
+        saldoPorCobrar,
+        dtes: clientDtes,
+        journalMovements,
+      };
+    });
+
+    return result.sort((a, b) => b.saldoPorCobrar - a.saldoPorCobrar);
+  }, [safeDtes, availableAuxiliaries, safeEntries]);
 
   // Manual Entry Form Line Handlers
   const handleAddManualLine = () => {
@@ -1042,9 +1284,32 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       ...prev,
       lineas: [
         ...prev.lineas,
-        { cuentaCodigo: '1.1.01.001', cuentaNombre: 'Caja Central Moneda Nacional', debe: 0, haber: 0 },
+        {
+          cuentaCodigo: '1.1.01.001',
+          cuentaNombre: 'Caja Central Moneda Nacional',
+          debe: 0,
+          haber: 0,
+          rutAuxiliar: '',
+          centroCosto: '',
+          documentoRef: '',
+          dteIdAsociado: '',
+        },
       ],
     }));
+    setManualEntryError(null);
+  };
+
+  const handleUpdateManualAccount = (index: number, account: HierarchicalAccountItem) => {
+    const updated = [...manualEntry.lineas];
+    const isCc = isAccountCostCenterRequired(account.codigo, account.nombre);
+    updated[index] = {
+      ...updated[index],
+      cuentaNombre: account.nombre,
+      cuentaCodigo: account.codigo,
+      centroCosto: isCc && !updated[index].centroCosto ? 'CC-ADM-01' : updated[index].centroCosto,
+    };
+    setManualEntry(prev => ({ ...prev, lineas: updated }));
+    setManualEntryError(null);
   };
 
   const handleUpdateManualLine = (index: number, field: keyof AccountingEntryLine, value: any) => {
@@ -1054,12 +1319,15 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       updated[index] = {
         ...updated[index],
         cuentaNombre: value,
-        cuentaCodigo: found?.codigo || '9.9.99.999',
+        cuentaCodigo: found?.codigo || updated[index].cuentaCodigo || '9.9.99.999',
       };
+    } else if (field === 'debe' || field === 'haber') {
+      updated[index] = { ...updated[index], [field]: Number(value) || 0 };
     } else {
-      updated[index] = { ...updated[index], [field]: Number(value) };
+      updated[index] = { ...updated[index], [field]: value };
     }
     setManualEntry(prev => ({ ...prev, lineas: updated }));
+    setManualEntryError(null);
   };
 
   const handleRemoveManualLine = (index: number) => {
@@ -1068,19 +1336,69 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       ...prev,
       lineas: prev.lineas.filter((_, i) => i !== index),
     }));
+    setManualEntryError(null);
   };
 
   const handleAutoBalanceCentavos = () => {
     const res = validateAndBalanceEntry(manualEntry.lineas);
     if (res.lineasCorregidas) {
       setManualEntry(prev => ({ ...prev, lineas: res.lineasCorregidas }));
+      setManualEntryError(null);
     }
   };
 
-  const handleSaveManualEntry = (e: React.FormEvent) => {
+  const handleSaveManualEntry = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualEntry.concepto.trim()) return;
+    setManualEntryError(null);
 
+    if (!manualEntry.concepto.trim()) {
+      setManualEntryError('La glosa o concepto descriptivo del asiento es obligatoria.');
+      return;
+    }
+
+    if (manualEntry.lineas.length < 2) {
+      setManualEntryError('Un asiento contable requiere al menos 2 cuentas para cumplir con la partida doble.');
+      return;
+    }
+
+    const manualDebe = manualEntry.lineas.reduce((s, l) => s + (Number(l.debe) || 0), 0);
+    const manualHaber = manualEntry.lineas.reduce((s, l) => s + (Number(l.haber) || 0), 0);
+
+    if (manualDebe <= 0 && manualHaber <= 0) {
+      setManualEntryError('Debe ingresar montos mayores a cero en las partidas del asiento (Debe o Haber).');
+      return;
+    }
+
+    const diff = Math.abs(manualDebe - manualHaber);
+    if (diff >= 1) {
+      setManualEntryError(
+        `El asiento no cumple con la partida doble: Debe ($${formatCLP(manualDebe)}) vs Haber ($${formatCLP(manualHaber)}). Descuadre de $${formatCLP(diff)}. Ajuste los montos antes de guardar.`
+      );
+      return;
+    }
+
+    // Validación rigurosa de Auxiliares y Centros de Costos según normativa SII / IFRS
+    for (let i = 0; i < manualEntry.lineas.length; i++) {
+      const l = manualEntry.lineas[i];
+      if (isAccountAuxiliarRequired(l.cuentaCodigo, l.cuentaNombre)) {
+        if (!l.rutAuxiliar || !l.rutAuxiliar.trim()) {
+          setManualEntryError(
+            `La cuenta "${l.cuentaCodigo} - ${l.cuentaNombre}" (Línea #${i + 1}) exige especificar el Auxiliar (RUT y Comprobante de respaldo a cancelar). Por favor seleccione el auxiliar correspondiente.`
+          );
+          return;
+        }
+      }
+      if (isAccountCostCenterRequired(l.cuentaCodigo, l.cuentaNombre)) {
+        if (!l.centroCosto || !l.centroCosto.trim()) {
+          setManualEntryError(
+            `La cuenta de resultado "${l.cuentaCodigo} - ${l.cuentaNombre}" (Línea #${i + 1}) exige asignación de Centro de Costos. Por favor seleccione el Centro de Costos antes de guardar.`
+          );
+          return;
+        }
+      }
+    }
+
+    setIsSavingManual(true);
     try {
       const normalized = normalizeAndValidateJournalEntry({
         fecha: manualEntry.fecha,
@@ -1092,7 +1410,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           codigoCuenta: l.cuentaCodigo,
           nombreCuenta: l.cuentaNombre,
           debe: l.debe,
-          haber: l.haber
+          haber: l.haber,
+          rutAuxiliar: l.rutAuxiliar,
+          centroCosto: l.centroCosto,
+          glosaDetalle: l.documentoRef,
         }))
       });
 
@@ -1102,26 +1423,62 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         concepto: normalized.glosaGeneral,
         documento: normalized.documentoRef || 'Comprobante Diario Interno',
         origen: manualEntry.origen,
-        lineas: normalized.lineas.map(l => ({
-          cuentaCodigo: l.codigoCuenta,
-          cuentaNombre: l.nombreCuenta,
-          debe: l.debe,
-          haber: l.haber
-        })),
+        lineas: normalized.lineas.map(l => {
+          const originalLine = manualEntry.lineas.find(orig => orig.cuentaCodigo === l.codigoCuenta);
+          return {
+            cuentaCodigo: l.codigoCuenta,
+            cuentaNombre: l.nombreCuenta,
+            debe: l.debe,
+            haber: l.haber,
+            rutAuxiliar: l.rutAuxiliar || originalLine?.rutAuxiliar,
+            centroCosto: l.centroCosto || originalLine?.centroCosto,
+            documentoRef: l.glosaDetalle || originalLine?.documentoRef || manualEntry.documentoReferencia,
+            dteIdAsociado: originalLine?.dteIdAsociado,
+          };
+        }),
         totalDebe: normalized.totalDebe,
         totalHaber: normalized.totalHaber,
         balanceado: true,
         creadoEn: new Date().toISOString(),
       };
 
-      dispatchEntry(created, {
+      await dispatchEntry(created, {
         agenteNombre: 'OPERADOR_MANUAL',
         accion: 'ASIENTO_MANUAL_DIARIO',
       });
+
+      // Si se imputó cancelación de comprobantes DTE, actualizar su estado a PAGADO/COBRADO
+      if (onUpdateDte) {
+        manualEntry.lineas.forEach(l => {
+          if (l.dteIdAsociado) {
+            const foundDte = safeDtes.find(d => d.id === l.dteIdAsociado);
+            if (foundDte) {
+              onUpdateDte({
+                ...foundDte,
+                estadoPago: foundDte.tipoOperacion === 'COMPRA' ? 'PAGADO' : 'COBRADO',
+              });
+            }
+          }
+        });
+      }
+
+      // Sincronizar desde backend para actualizar Libro Diario y Mayor
+      if (refetchLedger) {
+        await refetchLedger();
+      }
+
+      // Restablecer formulario limpio
+      setManualEntry(getInitialManualEntry());
+      setManualEntryError(null);
       setShowManualModal(false);
-      showToast('Asiento manual registrado y validado con éxito.', 'success');
+      setActiveTab('DIARIO'); // Llevar de inmediato al Libro Diario para ver el asiento
+      showToast('Asiento manual registrado con éxito, firmado por el Agente Supervisor y reflejado en el Libro Diario y Mayor.', 'success');
     } catch (err: any) {
-      showToast(`Rechazo formal de auditoría: ${err.message}`, 'error');
+      const errorMsg = err?.message || 'Error al validar y registrar el comprobante contable.';
+      setManualEntryError(errorMsg);
+      showToast(`Error al guardar asiento: ${errorMsg}`, 'error');
+    } finally {
+      setIsSavingManual(false);
     }
   };
 
@@ -1333,6 +1690,18 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         >
           <Layers className="w-4 h-4 text-indigo-400" />
           <span>Libro Mayor Analítico (T)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('AUXILIARES')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+            activeTab === 'AUXILIARES'
+              ? 'bg-[#0f172a] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Users className="w-4 h-4 text-violet-400" />
+          <span>Libros Auxiliares (Proveedores & Clientes)</span>
         </button>
 
         <button
@@ -1872,11 +2241,26 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                               <tr key={lIdx} className={`hover:bg-slate-50/50 ${isHaber ? 'bg-amber-50/20' : ''}`}>
                                 <td className="py-1.5 text-slate-500">{line.cuentaCodigo}</td>
                                 <td className="py-1.5 text-slate-800 font-sans">
-                                  <span className={`flex items-center gap-1.5 ${isHaber ? 'pl-4 sm:pl-6' : ''}`}>
+                                  <span className={`flex items-center gap-1.5 flex-wrap ${isHaber ? 'pl-4 sm:pl-6' : ''}`}>
                                     {isHaber && <span className="text-slate-400 italic text-[11px]">a</span>}
                                     <span className={isHaber ? 'font-normal text-slate-700' : 'font-semibold text-slate-900'}>
                                       {line.cuentaNombre}
                                     </span>
+                                    {line.rutAuxiliar && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono border border-indigo-200">
+                                        Aux: {line.rutAuxiliar}
+                                      </span>
+                                    )}
+                                    {line.documentoRef && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-sans border border-blue-200">
+                                        Doc: {line.documentoRef}
+                                      </span>
+                                    )}
+                                    {line.centroCosto && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
+                                        CC: {line.centroCosto}
+                                      </span>
+                                    )}
                                   </span>
                                 </td>
                                 <td className="py-1.5 text-right text-emerald-700 font-semibold">
@@ -1987,34 +2371,54 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <table className="w-full text-xs text-left">
                     <thead>
                       <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase text-[11px]">
-                        <th className="py-2.5 px-4 font-mono">Fecha</th>
-                        <th className="py-2.5 px-4">Concepto / Glosa</th>
-                        <th className="py-2.5 px-4">Documento</th>
-                        <th className="py-2.5 px-4 text-right font-mono">Debe ($)</th>
-                        <th className="py-2.5 px-4 text-right font-mono">Haber ($)</th>
-                        <th className="py-2.5 px-4 text-right font-mono">Saldo Acumulado ($)</th>
+                        <th className="py-2.5 px-3 font-mono">Fecha</th>
+                        <th className="py-2.5 px-3">Concepto / Glosa</th>
+                        <th className="py-2.5 px-3">Documento</th>
+                        <th className="py-2.5 px-3">Auxiliar (RUT)</th>
+                        <th className="py-2.5 px-3">Centro Costo</th>
+                        <th className="py-2.5 px-3 text-right font-mono">Debe ($)</th>
+                        <th className="py-2.5 px-3 text-right font-mono">Haber ($)</th>
+                        <th className="py-2.5 px-3 text-right font-mono">Saldo Acumulado ($)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-mono">
                       {mayorAccountMovements.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-6 text-center text-slate-400 font-sans">
+                          <td colSpan={8} className="py-6 text-center text-slate-400 font-sans">
                             No se registran movimientos en el período para esta cuenta.
                           </td>
                         </tr>
                       ) : (
                         mayorAccountMovements.map((mov, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/60">
-                            <td className="py-2 px-4 text-slate-600">{mov.fecha}</td>
-                            <td className="py-2 px-4 text-slate-900 font-sans">{mov.concepto}</td>
-                            <td className="py-2 px-4 text-slate-500 font-sans">{mov.documento}</td>
-                            <td className="py-2 px-4 text-right text-emerald-700 font-semibold">
+                            <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{mov.fecha}</td>
+                            <td className="py-2 px-3 text-slate-900 font-sans">{mov.concepto}</td>
+                            <td className="py-2 px-3 text-slate-500 font-sans">{mov.documento || '-'}</td>
+                            <td className="py-2 px-3">
+                              {mov.rutAuxiliar ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono border border-indigo-200">
+                                  {mov.rutAuxiliar}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 text-[11px]">-</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3">
+                              {mov.centroCosto ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
+                                  {mov.centroCosto}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 text-[11px]">-</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3 text-right text-emerald-700 font-semibold whitespace-nowrap">
                               {mov.debe > 0 ? convertAmount(mov.debe) : '-'}
                             </td>
-                            <td className="py-2 px-4 text-right text-blue-700 font-semibold">
+                            <td className="py-2 px-3 text-right text-blue-700 font-semibold whitespace-nowrap">
                               {mov.haber > 0 ? convertAmount(mov.haber) : '-'}
                             </td>
-                            <td className="py-2 px-4 text-right font-bold text-slate-900">
+                            <td className="py-2 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
                               {convertAmount(mov.saldoAcumulado)}
                             </td>
                           </tr>
@@ -2029,7 +2433,478 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         </div>
       )}
 
-      {/* VIEW 4: PLAN DE CUENTAS JERÁRQUICO CUSTOM POR EMPRESA */}
+      {/* VIEW: LIBROS AUXILIARES (PROVEEDORES & CLIENTES) */}
+      {activeTab === 'AUXILIARES' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
+          {/* Header */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="bg-violet-100 text-violet-900 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
+                  LIBROS AUXILIARES OFICIALES
+                </span>
+                <span className="text-xs text-slate-500 font-medium">
+                  {company.razonSocial} (RUT: {company.rut})
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-violet-600" />
+                Control de Auxiliares: Cuentas por Pagar (2.1.01) y Cuentas por Cobrar (1.1.03)
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Seguimiento analítico individual por RUT y contraparte, vinculando Facturas de Compra/Venta SII (RCV) con cancelaciones en el Libro Diario.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setManualEntry(getInitialManualEntry());
+                  setManualEntryError(null);
+                  setShowManualModal(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Nuevo Asiento / Pago con Auxiliar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-tab Switcher & Filter Controls */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxiliarSubTab('PROVEEDORES');
+                  setSelectedAuxiliarRut(null);
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                  auxiliarSubTab === 'PROVEEDORES'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5 text-amber-600" />
+                <span>Auxiliar de Proveedores (CxP)</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-mono">
+                  {auxiliarSuppliersSummary.filter(s => s.saldoPendiente > 0).length} pendientes
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxiliarSubTab('CLIENTES');
+                  setSelectedAuxiliarRut(null);
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                  auxiliarSubTab === 'CLIENTES'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 text-blue-600" />
+                <span>Auxiliar de Clientes (CxC)</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 font-mono">
+                  {auxiliarClientsSummary.filter(c => c.saldoPorCobrar > 0).length} por cobrar
+                </span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Buscar por RUT o razón social..."
+                  value={auxiliarSearchTerm}
+                  onChange={(e) => setAuxiliarSearchTerm(e.target.value)}
+                  className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
+
+              <select
+                value={auxiliarFilterStatus}
+                onChange={(e) => setAuxiliarFilterStatus(e.target.value as any)}
+                className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+              >
+                <option value="TODOS">Todos los saldos</option>
+                <option value="CON_SALDO">Solo con Saldo Exigible</option>
+                <option value="SALDADO">Solo Saldados (Al Día)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          {(() => {
+            const isSuppliers = auxiliarSubTab === 'PROVEEDORES';
+            const dataList = isSuppliers ? auxiliarSuppliersSummary : auxiliarClientsSummary;
+            const totalFact = dataList.reduce((s, d) => s + d.totalFacturado, 0);
+            const totalCancelado = dataList.reduce(
+              (s, d) => s + (isSuppliers ? (d as any).totalPagado : (d as any).totalCobrado),
+              0
+            );
+            const totalSaldo = dataList.reduce(
+              (s, d) => s + (isSuppliers ? (d as any).saldoPendiente : (d as any).saldoPorCobrar),
+              0
+            );
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                    {isSuppliers ? 'Total Compras Facturadas (SII)' : 'Total Ventas Facturadas (SII)'}
+                  </span>
+                  <div className="font-mono font-bold text-slate-900 text-lg mt-1">
+                    {convertAmount(totalFact)}
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    {dataList.length} {isSuppliers ? 'proveedores registrados' : 'clientes registrados'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                    {isSuppliers ? 'Total Pagos Imputados' : 'Total Cobros Imputados'}
+                  </span>
+                  <div className="font-mono font-bold text-emerald-700 text-lg mt-1">
+                    {convertAmount(totalCancelado)}
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Comprobantes bancarios y de caja
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                    {isSuppliers ? 'Saldo Total por Pagar (Pasivo)' : 'Saldo Total por Cobrar (Activo)'}
+                  </span>
+                  <div className={`font-mono font-bold text-lg mt-1 ${totalSaldo > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
+                    {convertAmount(totalSaldo)}
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    {isSuppliers ? 'Exigible ante proveedores' : 'Cartera vigente a cobrar'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                    Estado de Cuadre Auxiliar
+                  </span>
+                  <div className="font-bold text-sm mt-1 text-slate-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Sincronizado con Mayor</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Partida doble &amp; DTE correlacionados
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Tabla de Auxiliares */}
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase text-[11px]">
+                  <th className="py-2.5 px-3 font-mono">RUT Auxiliar</th>
+                  <th className="py-2.5 px-3">Razón Social / Contraparte</th>
+                  <th className="py-2.5 px-3 text-center">DTEs SII</th>
+                  <th className="py-2.5 px-3 text-right font-mono">
+                    {auxiliarSubTab === 'PROVEEDORES' ? 'Facturado ($)' : 'Facturado ($)'}
+                  </th>
+                  <th className="py-2.5 px-3 text-right font-mono">
+                    {auxiliarSubTab === 'PROVEEDORES' ? 'Pagado ($)' : 'Cobrado ($)'}
+                  </th>
+                  <th className="py-2.5 px-3 text-right font-mono">Saldo Pendiente ($)</th>
+                  <th className="py-2.5 px-3 text-center">Estado</th>
+                  <th className="py-2.5 px-3 text-right">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                {(() => {
+                  const isSuppliers = auxiliarSubTab === 'PROVEEDORES';
+                  let list = isSuppliers ? auxiliarSuppliersSummary : auxiliarClientsSummary;
+
+                  if (auxiliarSearchTerm.trim()) {
+                    const q = auxiliarSearchTerm.toLowerCase().trim();
+                    list = list.filter(
+                      (item) =>
+                        item.rut.toLowerCase().includes(q) ||
+                        item.razonSocial.toLowerCase().includes(q)
+                    );
+                  }
+
+                  if (auxiliarFilterStatus === 'CON_SALDO') {
+                    list = list.filter((item) =>
+                      isSuppliers ? (item as any).saldoPendiente > 0 : (item as any).saldoPorCobrar > 0
+                    );
+                  } else if (auxiliarFilterStatus === 'SALDADO') {
+                    list = list.filter((item) =>
+                      isSuppliers ? (item as any).saldoPendiente === 0 : (item as any).saldoPorCobrar === 0
+                    );
+                  }
+
+                  if (list.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-slate-400 font-sans">
+                          No se encontraron auxiliares que coincidan con los filtros seleccionados.
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return list.map((item) => {
+                    const saldo = isSuppliers ? (item as any).saldoPendiente : (item as any).saldoPorCobrar;
+                    const pagado = isSuppliers ? (item as any).totalPagado : (item as any).totalCobrado;
+                    const isExpanded = selectedAuxiliarRut === item.rut;
+
+                    return (
+                      <React.Fragment key={item.rut}>
+                        <tr className={`hover:bg-slate-50/80 transition-colors ${isExpanded ? 'bg-blue-50/30' : ''}`}>
+                          <td className="py-2 px-3 font-bold text-slate-800 whitespace-nowrap">
+                            {item.rut}
+                          </td>
+                          <td className="py-2 px-3 font-sans font-medium text-slate-900 max-w-xs truncate">
+                            {item.razonSocial}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono text-[10px] font-bold">
+                              {item.dtes.length} DTE
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right font-semibold text-slate-900 whitespace-nowrap">
+                            {convertAmount(item.totalFacturado)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                            {convertAmount(pagado)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-bold whitespace-nowrap">
+                            <span className={saldo > 0 ? 'text-amber-600' : 'text-emerald-700'}>
+                              {convertAmount(saldo)}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-center whitespace-nowrap">
+                            {saldo === 0 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                AL DÍA
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900">
+                                PENDIENTE
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right whitespace-nowrap font-sans">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAuxiliarRut(isExpanded ? null : item.rut)}
+                                className="px-2 py-1 rounded text-xs font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 cursor-pointer transition-colors"
+                              >
+                                {isExpanded ? 'Ocultar' : 'Ver Detalle'}
+                              </button>
+
+                              {saldo > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    // Abrir modal de nuevo asiento con este auxiliar pre-seleccionado
+                                    const isProv = auxiliarSubTab === 'PROVEEDORES';
+                                    const pendingDte = item.dtes.find(d => d.estadoPago === 'PENDIENTE') || item.dtes[0];
+                                    setManualEntry({
+                                      fecha: '2026-09-15',
+                                      concepto: isProv
+                                        ? `Pago a Proveedor ${item.razonSocial} - ${pendingDte ? `F. ${pendingDte.folio}` : 'Factura pendiente'}`
+                                        : `Cobranza de Cliente ${item.razonSocial} - ${pendingDte ? `F. ${pendingDte.folio}` : 'Factura'}`,
+                                      documentoReferencia: pendingDte ? `Factura Electrónica F.${pendingDte.folio}` : '',
+                                      origen: 'CAJA_BANCO',
+                                      lineas: isProv
+                                        ? [
+                                            {
+                                              cuentaCodigo: '2.1.01.001',
+                                              cuentaNombre: 'Proveedores Nacionales (Cuentas por Pagar)',
+                                              debe: pendingDte ? pendingDte.montoTotal : saldo,
+                                              haber: 0,
+                                              rutAuxiliar: item.rut,
+                                              centroCosto: '',
+                                              documentoRef: pendingDte ? `Factura F.${pendingDte.folio}` : '',
+                                              dteIdAsociado: pendingDte?.id || '',
+                                            },
+                                            {
+                                              cuentaCodigo: '1.1.02.001',
+                                              cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
+                                              debe: 0,
+                                              haber: pendingDte ? pendingDte.montoTotal : saldo,
+                                              rutAuxiliar: '',
+                                              centroCosto: '',
+                                              documentoRef: '',
+                                              dteIdAsociado: '',
+                                            },
+                                          ]
+                                        : [
+                                            {
+                                              cuentaCodigo: '1.1.02.001',
+                                              cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
+                                              debe: pendingDte ? pendingDte.montoTotal : saldo,
+                                              haber: 0,
+                                              rutAuxiliar: '',
+                                              centroCosto: '',
+                                              documentoRef: '',
+                                              dteIdAsociado: '',
+                                            },
+                                            {
+                                              cuentaCodigo: '1.1.03.001',
+                                              cuentaNombre: 'Clientes Nacionales (Cuentas por Cobrar)',
+                                              debe: 0,
+                                              haber: pendingDte ? pendingDte.montoTotal : saldo,
+                                              rutAuxiliar: item.rut,
+                                              centroCosto: '',
+                                              documentoRef: pendingDte ? `Factura F.${pendingDte.folio}` : '',
+                                              dteIdAsociado: pendingDte?.id || '',
+                                            },
+                                          ],
+                                    });
+                                    setManualEntryError(null);
+                                    setShowManualModal(true);
+                                  }}
+                                  className="px-2 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer border border-emerald-300 transition-colors"
+                                >
+                                  {isSuppliers ? 'Pagar' : 'Cobrar'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Detalle Desplegable del Auxiliar (Comprobantes SII y Movimientos Diario) */}
+                        {isExpanded && (
+                          <tr className="bg-slate-50/90 font-sans">
+                            <td colSpan={8} className="p-4 border-b border-slate-200">
+                              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                  <div className="flex items-center gap-2">
+                                    <FileText className="w-4 h-4 text-violet-600" />
+                                    <span className="font-bold text-xs text-slate-800">
+                                      Detalle de Documentos Tributarios (SII RCV) y Comprobantes de Diario para {item.razonSocial} ({item.rut})
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] font-mono font-bold text-slate-700">
+                                    Saldo Exigible: {convertAmount(saldo)}
+                                  </span>
+                                </div>
+
+                                {/* Listado de DTEs de la contraparte */}
+                                <div>
+                                  <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+                                    1. Documentos Tributarios Electrónicos Registrados ({item.dtes.length} DTEs)
+                                  </span>
+                                  {item.dtes.length === 0 ? (
+                                    <p className="text-xs text-slate-400 italic">No hay DTEs directos asociados.</p>
+                                  ) : (
+                                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                                      <table className="w-full text-xs">
+                                        <thead className="bg-slate-50 text-slate-500 font-mono text-[10px]">
+                                          <tr>
+                                            <th className="py-1.5 px-3 text-left">Folio</th>
+                                            <th className="py-1.5 px-3 text-left">Tipo DTE</th>
+                                            <th className="py-1.5 px-3 text-left">Emisión</th>
+                                            <th className="py-1.5 px-3 text-left">Vencimiento</th>
+                                            <th className="py-1.5 px-3 text-right">Neto ($)</th>
+                                            <th className="py-1.5 px-3 text-right">IVA ($)</th>
+                                            <th className="py-1.5 px-3 text-right">Total ($)</th>
+                                            <th className="py-1.5 px-3 text-center">Estado Pago</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 font-mono">
+                                          {item.dtes.map((d) => (
+                                            <tr key={d.id} className="hover:bg-slate-50">
+                                              <td className="py-1.5 px-3 font-bold text-slate-900">
+                                                F. {d.folio}
+                                              </td>
+                                              <td className="py-1.5 px-3 text-slate-600 font-sans">
+                                                {d.tipoDte === '33' ? 'Factura Electrónica' : d.tipoDte === '34' ? 'Factura Exenta' : `DTE ${d.tipoDte}`}
+                                              </td>
+                                              <td className="py-1.5 px-3 text-slate-600">{d.fechaEmision}</td>
+                                              <td className="py-1.5 px-3 text-slate-600">{d.fechaVencimiento || '-'}</td>
+                                              <td className="py-1.5 px-3 text-right">{formatCLP(d.montoNeto)}</td>
+                                              <td className="py-1.5 px-3 text-right">{formatCLP(d.montoIva)}</td>
+                                              <td className="py-1.5 px-3 text-right font-bold text-slate-900">{formatCLP(d.montoTotal)}</td>
+                                              <td className="py-1.5 px-3 text-center">
+                                                <span
+                                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                    d.estadoPago === 'PAGADO' || d.estadoPago === 'COBRADO'
+                                                      ? 'bg-emerald-100 text-emerald-800'
+                                                      : 'bg-amber-100 text-amber-900'
+                                                  }`}
+                                                >
+                                                  {d.estadoPago}
+                                                </span>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Listado de Movimientos del Libro Diario */}
+                                <div>
+                                  <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+                                    2. Comprobantes Imputados en Libro Diario ({item.journalMovements.length} asientos)
+                                  </span>
+                                  {item.journalMovements.length === 0 ? (
+                                    <p className="text-xs text-slate-400 italic">No hay asientos de cancelación o ajuste registrados aún.</p>
+                                  ) : (
+                                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                                      <table className="w-full text-xs">
+                                        <thead className="bg-slate-50 text-slate-500 font-mono text-[10px]">
+                                          <tr>
+                                            <th className="py-1.5 px-3 text-left">Fecha</th>
+                                            <th className="py-1.5 px-3 text-left">Concepto / Glosa</th>
+                                            <th className="py-1.5 px-3 text-left">Documento Ref</th>
+                                            <th className="py-1.5 px-3 text-right">Debe ($)</th>
+                                            <th className="py-1.5 px-3 text-right">Haber ($)</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 font-mono">
+                                          {item.journalMovements.map((jm, jIdx) => (
+                                            <tr key={jIdx} className="hover:bg-slate-50">
+                                              <td className="py-1.5 px-3 text-slate-600">{jm.fecha}</td>
+                                              <td className="py-1.5 px-3 font-sans text-slate-900">{jm.concepto}</td>
+                                              <td className="py-1.5 px-3 font-sans text-slate-600">{jm.documento || '-'}</td>
+                                              <td className="py-1.5 px-3 text-right text-emerald-700 font-semibold">
+                                                {jm.debe > 0 ? convertAmount(jm.debe) : '-'}
+                                              </td>
+                                              <td className="py-1.5 px-3 text-right text-blue-700 font-semibold">
+                                                {jm.haber > 0 ? convertAmount(jm.haber) : '-'}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {activeTab === 'PLAN_CUENTAS' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -3025,20 +3900,52 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
       {/* MODAL: NUEVO ASIENTO MANUAL */}
       {showManualModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 space-y-5">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4 animate-in fade-in duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Plus className="w-5 h-5 text-blue-600" />
-                Registrar Nuevo Asiento Contable Manual
-              </h3>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
+                    Registrar Nuevo Asiento Contable Manual
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Validación formal de Partida Doble, Firma Agéntica y Persistencia en MySQL
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setShowManualModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setShowManualModal(false);
+                  setManualEntryError(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Cerrar ventana"
               >
                 ✕
               </button>
             </div>
+
+            {/* Banner de error visible y explícito para el usuario */}
+            {manualEntryError && (
+              <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs flex items-start gap-2.5 animate-in fade-in">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-bold">Observación de Auditoría / Validación:</span>
+                  <div className="mt-0.5 text-rose-800">{manualEntryError}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setManualEntryError(null)}
+                  className="text-rose-400 hover:text-rose-700 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleSaveManualEntry} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -3047,8 +3954,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <input
                     type="date"
                     value={manualEntry.fecha}
-                    onChange={(e) => setManualEntry({ ...manualEntry, fecha: e.target.value })}
-                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded p-2"
+                    onChange={(e) => {
+                      setManualEntry({ ...manualEntry, fecha: e.target.value });
+                      setManualEntryError(null);
+                    }}
+                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                     required
                   />
                 </div>
@@ -3056,8 +3966,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Tipo de Origen</label>
                   <select
                     value={manualEntry.origen}
-                    onChange={(e) => setManualEntry({ ...manualEntry, origen: e.target.value as any })}
-                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded p-2"
+                    onChange={(e) => {
+                      setManualEntry({ ...manualEntry, origen: e.target.value as any });
+                      setManualEntryError(null);
+                    }}
+                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                   >
                     <option value="MANUAL">Manual / Ajuste Interno</option>
                     <option value="RCV_VENTA">RCV Ventas</option>
@@ -3072,117 +3985,359 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <input
                     type="text"
                     value={manualEntry.documentoReferencia}
-                    onChange={(e) => setManualEntry({ ...manualEntry, documentoReferencia: e.target.value })}
+                    onChange={(e) => {
+                      setManualEntry({ ...manualEntry, documentoReferencia: e.target.value });
+                      setManualEntryError(null);
+                    }}
                     placeholder="Ej: Factura #1420 / Comprobante #10"
-                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded p-2"
+                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Concepto / Glosa General</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Concepto / Glosa General *</label>
                 <input
                   type="text"
                   value={manualEntry.concepto}
-                  onChange={(e) => setManualEntry({ ...manualEntry, concepto: e.target.value })}
-                  placeholder="Descripción clara de la operación económica..."
-                  className="w-full text-xs bg-slate-50 border border-slate-300 rounded p-2"
+                  onChange={(e) => {
+                    setManualEntry({ ...manualEntry, concepto: e.target.value });
+                    setManualEntryError(null);
+                  }}
+                  placeholder="Descripción clara y normativa de la operación económica..."
+                  className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                   required
                 />
               </div>
 
-              {/* Lines table */}
+              {/* Lines table with SearchableAccountSelect and Delete Line */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700 uppercase">Partidas del Asiento (Debe y Haber)</span>
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Partidas del Asiento ({manualEntry.lineas.length} cuentas)
+                    </span>
+                    <p className="text-[10px] text-slate-400">
+                      Escriba en el buscador para filtrar cuentas por código o nombre instantáneamente
+                    </p>
+                  </div>
                   <button
                     type="button"
                     onClick={handleAddManualLine}
-                    className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                    className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer border border-blue-200"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Agregar Línea
+                    <Plus className="w-3.5 h-3.5" /> Agregar Cuenta
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {manualEntry.lineas.map((line, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <select
-                        value={line.cuentaNombre}
-                        onChange={(e) => handleUpdateManualLine(idx, 'cuentaNombre', e.target.value)}
-                        className="flex-1 text-xs bg-slate-50 border border-slate-300 rounded p-2 font-mono"
+                <div className="space-y-2.5">
+                  {manualEntry.lineas.map((line, idx) => {
+                    const reqAux = isAccountAuxiliarRequired(line.cuentaCodigo, line.cuentaNombre);
+                    const reqCc = isAccountCostCenterRequired(line.cuentaCodigo, line.cuentaNombre);
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-2.5 rounded-xl border transition-all ${
+                          reqAux || reqCc
+                            ? 'bg-slate-50/90 border-slate-300 shadow-2xs'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
                       >
-                        {chartOfAccounts.map((acc) => (
-                          <option key={acc.codigo} value={acc.nombre}>
-                            {acc.codigo} - {acc.nombre}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        placeholder="Debe"
-                        value={line.debe || ''}
-                        onChange={(e) => handleUpdateManualLine(idx, 'debe', e.target.value)}
-                        className="w-28 text-xs bg-slate-50 border border-slate-300 rounded p-2 text-right font-mono"
-                      />
-                      <input
-                        type="number"
-                        placeholder="Haber"
-                        value={line.haber || ''}
-                        onChange={(e) => handleUpdateManualLine(idx, 'haber', e.target.value)}
-                        className="w-28 text-xs bg-slate-50 border border-slate-300 rounded p-2 text-right font-mono"
-                      />
-                      {manualEntry.lineas.length > 2 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveManualLine(idx)}
-                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                        {/* Fila Principal: Cuenta, Debe, Haber, Eliminar */}
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 text-[11px] font-mono text-slate-400 text-center font-bold shrink-0">
+                            {idx + 1}
+                          </span>
+
+                          {/* Selector de Cuentas Buscable con Filtro Dinámico */}
+                          <div className="flex-1 min-w-[220px]">
+                            <SearchableAccountSelect
+                              value={line.cuentaNombre}
+                              selectedCode={line.cuentaCodigo}
+                              accounts={chartOfAccounts}
+                              onChange={(acc) => handleUpdateManualAccount(idx, acc)}
+                              placeholder="Buscar por código (ej: 1.1.02) o nombre..."
+                            />
+                            {/* Badges de exigencia normativa */}
+                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                              {reqAux && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                                  <Users className="w-3 h-3 text-amber-600" />
+                                  Exige Auxiliar (RUT / DTE)
+                                </span>
+                              )}
+                              {reqCc && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-300">
+                                  <PieChart className="w-3 h-3 text-purple-600" />
+                                  Exige Centro de Costos
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Monto Debe (Ingreso manual sin spinup/spindown) */}
+                          <div className="relative w-28 sm:w-32 shrink-0">
+                            <span className="absolute left-2.5 top-2 text-[10px] text-slate-400 font-bold">$</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Debe $0"
+                              value={line.debe ? Number(line.debe).toLocaleString('es-CL') : ''}
+                              onChange={(e) => {
+                                const clean = e.target.value.replace(/\D/g, '');
+                                handleUpdateManualLine(idx, 'debe', clean ? parseInt(clean, 10) : 0);
+                              }}
+                              className="w-full pl-6 pr-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-right font-mono font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+
+                          {/* Monto Haber (Ingreso manual sin spinup/spindown) */}
+                          <div className="relative w-28 sm:w-32 shrink-0">
+                            <span className="absolute left-2.5 top-2 text-[10px] text-slate-400 font-bold">$</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Haber $0"
+                              value={line.haber ? Number(line.haber).toLocaleString('es-CL') : ''}
+                              onChange={(e) => {
+                                const clean = e.target.value.replace(/\D/g, '');
+                                handleUpdateManualLine(idx, 'haber', clean ? parseInt(clean, 10) : 0);
+                              }}
+                              className="w-full pl-6 pr-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-right font-mono font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+
+                          {/* Botón para Eliminar Cuenta / Partida */}
+                          <button
+                            type="button"
+                            disabled={manualEntry.lineas.length <= 2}
+                            onClick={() => handleRemoveManualLine(idx)}
+                            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
+                              manualEntry.lineas.length > 2
+                                ? 'border-rose-200 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer shadow-2xs'
+                                : 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-100'
+                            }`}
+                            title={
+                              manualEntry.lineas.length > 2
+                                ? `Eliminar cuenta "${line.cuentaNombre || line.cuentaCodigo}" (Línea ${idx + 1})`
+                                : 'No se puede eliminar: el asiento contable requiere mínimo 2 cuentas para partida doble (Debe y Haber)'
+                            }
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Sub-panel Analítico de Imputación (Auxiliares y Centros de Costos) */}
+                        {(reqAux || reqCc) && (
+                          <div className="mt-2.5 pt-2.5 border-t border-slate-200/80 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                            {/* Panel Auxiliar: RUT y Comprobante a Cancelar */}
+                            {reqAux && (
+                              <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                                    <Users className="w-3.5 h-3.5 text-amber-700" />
+                                    Detalle Auxiliar (Obligatorio) *
+                                  </span>
+                                  <span className="text-[9px] uppercase tracking-wider font-semibold text-amber-800 bg-amber-200/60 px-1.5 py-0.5 rounded">
+                                    Mayor Auxiliar SII
+                                  </span>
+                                </div>
+
+                                {/* Selección o digitación de Auxiliar */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                  <select
+                                    value={line.rutAuxiliar || ''}
+                                    onChange={(e) => {
+                                      handleUpdateManualLine(idx, 'rutAuxiliar', e.target.value);
+                                    }}
+                                    className="w-full text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
+                                  >
+                                    <option value="">-- Padrón de Auxiliares --</option>
+                                    {availableAuxiliaries.map((aux) => (
+                                      <option key={aux.rut} value={aux.rut}>
+                                        {aux.rut} - {aux.razonSocial}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  <input
+                                    type="text"
+                                    placeholder="O ingresar RUT (ej: 76.123.456-7)..."
+                                    value={line.rutAuxiliar || ''}
+                                    onChange={(e) => handleUpdateManualLine(idx, 'rutAuxiliar', e.target.value)}
+                                    className="w-full text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden font-mono"
+                                  />
+                                </div>
+
+                                {/* Selección de Comprobante / DTE a Cancelar */}
+                                <div>
+                                  <label className="text-[10px] font-bold text-amber-900 block mb-1">
+                                    Comprobante(s) a Cancelar / Documento de Respaldo:
+                                  </label>
+                                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                                    <select
+                                      value={line.dteIdAsociado || ''}
+                                      onChange={(e) => {
+                                        const dteId = e.target.value;
+                                        if (!dteId) {
+                                          handleUpdateManualLine(idx, 'dteIdAsociado', '');
+                                          return;
+                                        }
+                                        const doc = safeDtes.find((d) => d.id === dteId);
+                                        if (doc) {
+                                          const updated = [...manualEntry.lineas];
+                                          const isSupplier = updated[idx].cuentaCodigo.startsWith('2.1');
+                                          updated[idx] = {
+                                            ...updated[idx],
+                                            dteIdAsociado: doc.id,
+                                            rutAuxiliar: doc.rutContraparte,
+                                            documentoRef: `Factura ${doc.tipoDte === '33' ? 'Electrónica' : ''} F.${doc.folio}`,
+                                            debe: isSupplier ? (updated[idx].debe || doc.montoTotal) : updated[idx].debe,
+                                            haber: !isSupplier ? (updated[idx].haber || doc.montoTotal) : updated[idx].haber,
+                                          };
+                                          setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                        }
+                                      }}
+                                      className="flex-1 text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
+                                    >
+                                      <option value="">-- Seleccionar Factura SII a Cancelar --</option>
+                                      {safeDtes
+                                        .filter((d) =>
+                                          line.cuentaCodigo.startsWith('2.1')
+                                            ? d.tipoOperacion === 'COMPRA'
+                                            : d.tipoOperacion === 'VENTA'
+                                        )
+                                        .map((d) => (
+                                          <option key={d.id} value={d.id}>
+                                            Folio {d.folio} | {d.razonSocialContraparte} | {formatCLP(d.montoTotal)} ({d.estadoPago})
+                                          </option>
+                                        ))}
+                                    </select>
+
+                                    <input
+                                      type="text"
+                                      placeholder="Ref. documento manual..."
+                                      value={line.documentoRef || ''}
+                                      onChange={(e) => handleUpdateManualLine(idx, 'documentoRef', e.target.value)}
+                                      className="w-full sm:w-44 text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
+                                    />
+                                  </div>
+
+                                  {line.dteIdAsociado && (
+                                    <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-800 font-medium bg-emerald-50 border border-emerald-200 p-1.5 rounded">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                      <span>
+                                        Cancelando: <strong>{line.documentoRef}</strong>. El DTE quedará marcado como pagado y el auxiliar saldado.
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Panel Centro de Costos */}
+                            {reqCc && (
+                              <div className="bg-purple-50/70 border border-purple-200 rounded-lg p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-purple-900 flex items-center gap-1.5">
+                                    <PieChart className="w-3.5 h-3.5 text-purple-700" />
+                                    Centro de Costos Requerido *
+                                  </span>
+                                  <span className="text-[9px] uppercase tracking-wider font-semibold text-purple-800 bg-purple-200/60 px-1.5 py-0.5 rounded">
+                                    Contabilidad de Gestión
+                                  </span>
+                                </div>
+
+                                <select
+                                  value={line.centroCosto || ''}
+                                  onChange={(e) => handleUpdateManualLine(idx, 'centroCosto', e.target.value)}
+                                  className="w-full text-xs bg-white border border-purple-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-purple-500 focus:outline-hidden font-medium"
+                                >
+                                  <option value="">-- Seleccionar Centro de Costos --</option>
+                                  {SEED_COST_CENTERS.map((cc) => (
+                                    <option key={cc.id} value={cc.codigo}>
+                                      {cc.codigo} - {cc.nombre} ({cc.categoria})
+                                    </option>
+                                  ))}
+                                </select>
+                                <p className="text-[10px] text-purple-700">
+                                  Asigna la pérdida o ganancia a la unidad operativa correspondiente para el Estado de Resultados analítico.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Balancing Checker */}
-              <div className="bg-slate-50 p-3 rounded-lg flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
-                <div className="font-mono">
-                  <span>Debe: <strong>{formatCLP(manualDebe)}</strong></span> |{' '}
-                  <span>Haber: <strong>{formatCLP(manualHaber)}</strong></span> |{' '}
-                  <span className={isManualBalanced ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
-                    {isManualBalanced ? 'CUADRADO (0)' : `DESCUADRE (${formatCLP(Math.abs(manualDiff))})`}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+                <div className="font-mono flex items-center gap-3 flex-wrap">
+                  <span>Debe: <strong className="text-slate-900">{formatCLP(manualDebe)}</strong></span>
+                  <span className="text-slate-300">|</span>
+                  <span>Haber: <strong className="text-slate-900">{formatCLP(manualHaber)}</strong></span>
+                  <span className="text-slate-300">|</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full font-bold text-[11px] border ${
+                      isManualBalanced
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                        : 'bg-rose-50 text-rose-700 border-rose-300'
+                    }`}
+                  >
+                    {isManualBalanced ? 'CUADRADO EXACTO ($0)' : `DESCUADRE (${formatCLP(Math.abs(manualDiff))})`}
                   </span>
                 </div>
 
-                {/* If discrepancy is <= $2, allow auto-balance centavos button */}
+                {/* Si la discrepancia es <= $2, botón de balance automático de centavos */}
                 {!isManualBalanced && Math.abs(manualDiff) <= 2 && (
                   <button
                     type="button"
                     onClick={handleAutoBalanceCentavos}
-                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer"
+                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-3 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors"
                   >
                     Ajustar Centavos / Redondeo ($1)
                   </button>
                 )}
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+              {/* Botonera de acciones */}
+              <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowManualModal(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded text-xs font-semibold cursor-pointer"
+                  onClick={() => {
+                    setManualEntry(getInitialManualEntry());
+                    setManualEntryError(null);
+                    showToast('Formulario restablecido a valores iniciales.', 'info');
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-800 underline cursor-pointer"
                 >
-                  Cancelar
+                  Limpiar / Restablecer
                 </button>
-                <button
-                  type="submit"
-                  disabled={!isManualBalanced}
-                  className="px-4 py-2 bg-[#2563eb] hover:bg-blue-600 disabled:bg-slate-300 text-white rounded text-xs font-bold cursor-pointer shadow-xs"
-                >
-                  Guardar Asiento Contable
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowManualModal(false);
+                      setManualEntryError(null);
+                    }}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!isManualBalanced || isSavingManual}
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold cursor-pointer shadow-sm transition-colors flex items-center gap-2"
+                  >
+                    {isSavingManual && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                    <span>{isSavingManual ? 'Validando y Registrando...' : 'Guardar Asiento Contable'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>

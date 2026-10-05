@@ -106,6 +106,10 @@ export function transformApiResponseToDomainEntry(raw: any): AccountingEntry {
     cuentaNombre: l.nombreCuenta || l.cuentaNombre || 'Sin nombre',
     debe: typeof l.debe === 'number' ? l.debe : parseFloat(String(l.debe).replace(',', '.')) || 0,
     haber: typeof l.haber === 'number' ? l.haber : parseFloat(String(l.haber).replace(',', '.')) || 0,
+    rutAuxiliar: l.rutAuxiliar || undefined,
+    centroCosto: l.centroCosto || undefined,
+    documentoRef: l.documentoRef || undefined,
+    dteIdAsociado: l.dteIdAsociado || undefined,
   }));
 
   const totalDebe = typeof raw.totalDebe === 'number' 
@@ -141,7 +145,7 @@ export function transformDomainEntryToCommitPayload(
 ): CommitEntryPayload {
   // Deducir periodo contable YYYY-MM desde la fecha
   const fecha = entry.fecha || new Date().toISOString().split('T')[0];
-  const derivedPeriodo = periodo || (fecha.length >= 7 ? fecha.substring(0, 7) : '2026-09');
+  const derivedPeriodo = (fecha && /^\d{4}-\d{2}/.test(fecha) ? fecha.substring(0, 7) : periodo) || '2026-09';
 
   // Mapear líneas al esquema Zod esperado por el backend
   const lineas: ApiAccountingLine[] = entry.lineas.map((line) => ({
@@ -149,8 +153,8 @@ export function transformDomainEntryToCommitPayload(
     nombreCuenta: line.cuentaNombre || 'Cuenta Contable',
     debe: Number(line.debe) || 0,
     haber: Number(line.haber) || 0,
-    rutAuxiliar: null,
-    centroCosto: null,
+    rutAuxiliar: line.rutAuxiliar?.trim() || null,
+    centroCosto: line.centroCosto?.trim() || null,
   }));
 
   const traceId = `trace-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;

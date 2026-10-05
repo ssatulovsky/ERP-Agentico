@@ -77,6 +77,8 @@ export async function queryEntriesWithLines(empresaId?: string, periodo?: string
         haber: parseFloat(String(l.haber)) || 0,
         rutAuxiliar: l.rutAuxiliar || null,
         centroCosto: l.centroCosto || null,
+        documentoRef: l.documentoRef || null,
+        dteIdAsociado: l.dteIdAsociado || null,
       })),
     };
   });

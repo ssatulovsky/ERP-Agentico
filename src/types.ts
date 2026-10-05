@@ -1068,12 +1068,15 @@ export interface CashFlowExcelThemeConfig {
 }
 
 export interface AccountingEntryLine {
+  id?: string;
   cuentaCodigo: string;
   cuentaNombre: string;
   debe: number;
   haber: number;
   rutAuxiliar?: string;
   centroCosto?: string;
+  documentoRef?: string;
+  dteIdAsociado?: string;
 }
 
 export interface AccountingEntry {

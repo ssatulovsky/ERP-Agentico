@@ -1,7 +1,77 @@
 {
   "version": "1.0.0",
-  "lastPersistedAt": "2026-10-05T13:39:43.295Z",
+  "lastPersistedAt": "2026-10-05T15:43:56.391Z",
   "entries": [
+    {
+      "id": "2ac7c6ae-a652-4b75-9bac-434acd3212ad",
+      "empresaId": "76.892.410-K",
+      "periodo": "2026-09",
+      "fecha": "2026-09-20",
+      "concepto": "Pago Factura Proveedor Redes Quellón",
+      "documentoRef": "Factura Electrónica F. 1420",
+      "totalDebe": "2500000.00",
+      "totalHaber": "2500000.00",
+      "origenModulo": "CAJA_BANCO",
+      "creadoPorAgente": "OPERADOR_MANUAL",
+      "autorizadoPorSupervisor": true,
+      "supervisorSignature": "6f53a94bfc6e005076bf73ef4633762f35b553e0038cad1bd2f41ffb57e4287b"
+    },
+    {
+      "id": "ce278cc8-31d9-4163-9dad-f14f40f7dcdc",
+      "empresaId": "76.892.410-K",
+      "periodo": "2026-09",
+      "fecha": "2026-09-15",
+      "concepto": "Test Asiento Directo",
+      "documentoRef": null,
+      "totalDebe": "5000.00",
+      "totalHaber": "5000.00",
+      "origenModulo": "MANUAL",
+      "creadoPorAgente": "TEST_AGENT",
+      "autorizadoPorSupervisor": true,
+      "supervisorSignature": "87b62274e4d0668e72e47fc96d520b639c038f3513aa8666e167c131585f6a4f"
+    },
+    {
+      "id": "83763e02-dccf-4874-9c35-449533461ba4",
+      "empresaId": "76.892.410-K",
+      "periodo": "2026-09",
+      "fecha": "2026-09-15",
+      "concepto": "Pago suscripción ERP con Banco Santander",
+      "documentoRef": "Comprobante #994",
+      "totalDebe": "180000.00",
+      "totalHaber": "180000.00",
+      "origenModulo": "MANUAL",
+      "creadoPorAgente": "OPERADOR_MANUAL",
+      "autorizadoPorSupervisor": true,
+      "supervisorSignature": "8182f78838e52c9ef041e59e53d033dc0e027e4c65ce78e3645a6a5e36614219"
+    },
+    {
+      "id": "a6c3c23d-a4b3-4d83-92be-e0205a06cd98",
+      "empresaId": "76.892.410-K",
+      "periodo": "2026-09",
+      "fecha": "2026-09-18",
+      "concepto": "Asiento verificado con lineas",
+      "documentoRef": "Doc-999",
+      "totalDebe": "25000.00",
+      "totalHaber": "25000.00",
+      "origenModulo": "MANUAL",
+      "creadoPorAgente": "OPERADOR_MANUAL",
+      "autorizadoPorSupervisor": true,
+      "supervisorSignature": "2e287c06bcd22d9992bd4985f9d151b54de2e1ab836934135aa7ab6e7f62003c"
+    },
+    {
+      "id": "6681e8ca-4f3d-417b-93c3-ce056275a026",
+      "empresaId": "76.892.410-K",
+      "periodo": "2026-09",
+      "fecha": "2026-09-04",
+      "concepto": "Prueba asiento manual",
+      "documentoRef": "Doc-123",
+      "totalDebe": "10000.00",
+      "totalHaber": "10000.00",
+      "origenModulo": "MANUAL",
+      "creadoPorAgente": "OPERADOR_MANUAL",
+      "autorizadoPorSupervisor": true,
+      "supervisorSignature": "9dfa396691f51633d99b7ac67892daa51c314fa6f92c344838322392f393a61c"
+    },
     {
       "id": "entry-seed-v1-1",
       "firmId": "firm-001-audicon",
@@ -199,9 +269,317 @@
       "haber": "5712000.00",
       "rutAuxiliar": "76.999.888-2",
       "centroCosto": null
+    },
+    {
+      "id": "57be8b13-bca4-47ae-a58e-c6b2e6bf6ac0",
+      "entryId": "a6c3c23d-a4b3-4d83-92be-e0205a06cd98",
+      "lineaNumero": 1,
+      "codigoCuenta": "1.1.01.001",
+      "nombreCuenta": "Caja Central",
+      "debe": "25000.00",
+      "haber": "0.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "6b680944-e24c-4c70-a771-65c175c074ce",
+      "entryId": "a6c3c23d-a4b3-4d83-92be-e0205a06cd98",
+      "lineaNumero": 2,
+      "codigoCuenta": "1.1.02.001",
+      "nombreCuenta": "Banco Santander",
+      "debe": "0.00",
+      "haber": "25000.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "a115540b-967b-4781-a7c8-9ae557ec8f0a",
+      "entryId": "83763e02-dccf-4874-9c35-449533461ba4",
+      "lineaNumero": 1,
+      "codigoCuenta": "4.2.01.002",
+      "nombreCuenta": "Software y Licencias Cloud",
+      "debe": "180000.00",
+      "haber": "0.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "0a381afd-79ab-47ef-a614-201b54948c7a",
+      "entryId": "83763e02-dccf-4874-9c35-449533461ba4",
+      "lineaNumero": 2,
+      "codigoCuenta": "1.1.02.001",
+      "nombreCuenta": "Banco Santander Chile Cta Cte M/N",
+      "debe": "0.00",
+      "haber": "180000.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "45167ff6-85c4-41e3-b173-4b3dd857023e",
+      "entryId": "ce278cc8-31d9-4163-9dad-f14f40f7dcdc",
+      "lineaNumero": 1,
+      "codigoCuenta": "1.1.01.001",
+      "nombreCuenta": "Caja Central Moneda Nacional",
+      "debe": "5000.00",
+      "haber": "0.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "c9fcc936-22ee-483e-bff5-a3a55f503d2e",
+      "entryId": "ce278cc8-31d9-4163-9dad-f14f40f7dcdc",
+      "lineaNumero": 2,
+      "codigoCuenta": "1.1.02.001",
+      "nombreCuenta": "Banco Santander Moneda Nacional",
+      "debe": "0.00",
+      "haber": "5000.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
+    },
+    {
+      "id": "4271767b-d237-4c16-91e5-7d15b20cabec",
+      "entryId": "2ac7c6ae-a652-4b75-9bac-434acd3212ad",
+      "lineaNumero": 1,
+      "codigoCuenta": "2.1.01.001",
+      "nombreCuenta": "Proveedores Nacionales (Cuentas por Pagar)",
+      "debe": "2500000.00",
+      "haber": "0.00",
+      "rutAuxiliar": "77.210.980-5",
+      "centroCosto": "CC-PRD-QUELLON"
+    },
+    {
+      "id": "c488a965-8bed-40ff-a018-416e735224da",
+      "entryId": "2ac7c6ae-a652-4b75-9bac-434acd3212ad",
+      "lineaNumero": 2,
+      "codigoCuenta": "1.1.02.001",
+      "nombreCuenta": "Banco Santander Chile Cta Cte M/N",
+      "debe": "0.00",
+      "haber": "2500000.00",
+      "rutAuxiliar": null,
+      "centroCosto": null
     }
   ],
   "auditLogs": [
+    {
+      "id": "d6058f0f-81a0-4287-97c7-09ee6a8d23ba",
+      "traceId": "trace-test-full-1",
+      "empresaId": "76.892.410-K",
+      "agenteNombre": "OPERADOR_MANUAL",
+      "accion": "ASIENTO_MANUAL_DIARIO",
+      "estadoTransicion": "APROBADO",
+      "promptTokens": null,
+      "completionTokens": null,
+      "modelName": null,
+      "promptHash": null,
+      "diffContable": {
+        "tipoOperacion": "INSERT_ASIENTO_VERIFICADO",
+        "entryId": "2ac7c6ae-a652-4b75-9bac-434acd3212ad",
+        "periodo": "2026-09",
+        "totales": {
+          "totalDebe": 2500000,
+          "totalHaber": 2500000,
+          "cuadreExacto": true
+        },
+        "lineasAfectadas": [
+          {
+            "codigoCuenta": "2.1.01.001",
+            "nombreCuenta": "Proveedores Nacionales (Cuentas por Pagar)",
+            "debe": 2500000,
+            "haber": 0,
+            "rutAuxiliar": "77.210.980-5",
+            "centroCosto": "CC-PRD-QUELLON"
+          },
+          {
+            "codigoCuenta": "1.1.02.001",
+            "nombreCuenta": "Banco Santander Chile Cta Cte M/N",
+            "debe": 0,
+            "haber": 2500000,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          }
+        ]
+      },
+      "supervisorVeredicto": "VALIDADO_CORRECTO",
+      "supervisorSignature": "6f53a94bfc6e005076bf73ef4633762f35b553e0038cad1bd2f41ffb57e4287b",
+      "tiempoEjecucionMs": 4,
+      "createdAt": "2026-10-05T15:43:56.090Z"
+    },
+    {
+      "id": "d9dd8d2d-49cd-4bbd-ba1e-12a90c141501",
+      "traceId": "trace-test-123",
+      "empresaId": "76.892.410-K",
+      "agenteNombre": "TEST_AGENT",
+      "accion": "TEST",
+      "estadoTransicion": "APROBADO",
+      "promptTokens": null,
+      "completionTokens": null,
+      "modelName": null,
+      "promptHash": null,
+      "diffContable": {
+        "tipoOperacion": "INSERT_ASIENTO_VERIFICADO",
+        "entryId": "ce278cc8-31d9-4163-9dad-f14f40f7dcdc",
+        "periodo": "2026-09",
+        "totales": {
+          "totalDebe": 5000,
+          "totalHaber": 5000,
+          "cuadreExacto": true
+        },
+        "lineasAfectadas": [
+          {
+            "codigoCuenta": "1.1.01.001",
+            "nombreCuenta": "Caja Central Moneda Nacional",
+            "debe": 5000,
+            "haber": 0,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          },
+          {
+            "codigoCuenta": "1.1.02.001",
+            "nombreCuenta": "Banco Santander Moneda Nacional",
+            "debe": 0,
+            "haber": 5000,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          }
+        ]
+      },
+      "supervisorVeredicto": "VALIDADO_CORRECTO",
+      "supervisorSignature": "87b62274e4d0668e72e47fc96d520b639c038f3513aa8666e167c131585f6a4f",
+      "tiempoEjecucionMs": 4,
+      "createdAt": "2026-10-05T15:36:00.439Z"
+    },
+    {
+      "id": "7d0907f9-7b6d-4ca6-80a4-033d579708fa",
+      "traceId": "trace-manual-verify-1",
+      "empresaId": "76.892.410-K",
+      "agenteNombre": "OPERADOR_MANUAL",
+      "accion": "ASIENTO_MANUAL_DIARIO",
+      "estadoTransicion": "APROBADO",
+      "promptTokens": null,
+      "completionTokens": null,
+      "modelName": null,
+      "promptHash": null,
+      "diffContable": {
+        "tipoOperacion": "INSERT_ASIENTO_VERIFICADO",
+        "entryId": "83763e02-dccf-4874-9c35-449533461ba4",
+        "periodo": "2026-09",
+        "totales": {
+          "totalDebe": 180000,
+          "totalHaber": 180000,
+          "cuadreExacto": true
+        },
+        "lineasAfectadas": [
+          {
+            "codigoCuenta": "4.2.01.002",
+            "nombreCuenta": "Software y Licencias Cloud",
+            "debe": 180000,
+            "haber": 0,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          },
+          {
+            "codigoCuenta": "1.1.02.001",
+            "nombreCuenta": "Banco Santander Chile Cta Cte M/N",
+            "debe": 0,
+            "haber": 180000,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          }
+        ]
+      },
+      "supervisorVeredicto": "VALIDADO_CORRECTO",
+      "supervisorSignature": "8182f78838e52c9ef041e59e53d033dc0e027e4c65ce78e3645a6a5e36614219",
+      "tiempoEjecucionMs": 3,
+      "createdAt": "2026-10-05T15:21:04.736Z"
+    },
+    {
+      "id": "08af78c2-05dc-4153-b737-15899ee2c0ed",
+      "traceId": "trace-test-lines",
+      "empresaId": "76.892.410-K",
+      "agenteNombre": "OPERADOR_MANUAL",
+      "accion": "ASIENTO_MANUAL_DIARIO",
+      "estadoTransicion": "APROBADO",
+      "promptTokens": null,
+      "completionTokens": null,
+      "modelName": null,
+      "promptHash": null,
+      "diffContable": {
+        "tipoOperacion": "INSERT_ASIENTO_VERIFICADO",
+        "entryId": "a6c3c23d-a4b3-4d83-92be-e0205a06cd98",
+        "periodo": "2026-09",
+        "totales": {
+          "totalDebe": 25000,
+          "totalHaber": 25000,
+          "cuadreExacto": true
+        },
+        "lineasAfectadas": [
+          {
+            "codigoCuenta": "1.1.01.001",
+            "nombreCuenta": "Caja Central",
+            "debe": 25000,
+            "haber": 0,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          },
+          {
+            "codigoCuenta": "1.1.02.001",
+            "nombreCuenta": "Banco Santander",
+            "debe": 0,
+            "haber": 25000,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          }
+        ]
+      },
+      "supervisorVeredicto": "VALIDADO_CORRECTO",
+      "supervisorSignature": "2e287c06bcd22d9992bd4985f9d151b54de2e1ab836934135aa7ab6e7f62003c",
+      "tiempoEjecucionMs": 3,
+      "createdAt": "2026-10-05T15:17:53.994Z"
+    },
+    {
+      "id": "fb89f72f-260b-405f-9025-dd3f59015fb8",
+      "traceId": "trace-test-1",
+      "empresaId": "76.892.410-K",
+      "agenteNombre": "OPERADOR_MANUAL",
+      "accion": "ASIENTO_MANUAL_DIARIO",
+      "estadoTransicion": "APROBADO",
+      "promptTokens": null,
+      "completionTokens": null,
+      "modelName": null,
+      "promptHash": null,
+      "diffContable": {
+        "tipoOperacion": "INSERT_ASIENTO_VERIFICADO",
+        "entryId": "6681e8ca-4f3d-417b-93c3-ce056275a026",
+        "periodo": "2026-09",
+        "totales": {
+          "totalDebe": 10000,
+          "totalHaber": 10000,
+          "cuadreExacto": true
+        },
+        "lineasAfectadas": [
+          {
+            "codigoCuenta": "1.1.01.001",
+            "nombreCuenta": "Caja Central",
+            "debe": 10000,
+            "haber": 0,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          },
+          {
+            "codigoCuenta": "1.1.02.001",
+            "nombreCuenta": "Banco",
+            "debe": 0,
+            "haber": 10000,
+            "rutAuxiliar": null,
+            "centroCosto": null
+          }
+        ]
+      },
+      "supervisorVeredicto": "VALIDADO_CORRECTO",
+      "supervisorSignature": "9dfa396691f51633d99b7ac67892daa51c314fa6f92c344838322392f393a61c",
+      "tiempoEjecucionMs": 3,
+      "createdAt": "2026-10-05T15:16:22.272Z"
+    },
     {
       "id": "c62c0e9c-484e-42e5-a5bf-fc25f41fb500",
       "traceId": "trace-test-verify",
