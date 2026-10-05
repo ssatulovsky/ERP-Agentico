@@ -1408,11 +1408,11 @@ export function buildIFRSFinancialStatements(balance8Col: Balance8ColumnasReport
   // 1. Estado de Situación Financiera Clasificado
   const activoCorrienteItems = cuentas
     .filter(c => c.clase === 1 && c.codigo.startsWith('1.1') && c.activo > 0)
-    .map(c => ({ nombre: c.nombre, saldo: c.activo }));
+    .map(c => ({ codigo: c.codigo, nombre: c.nombre, saldo: c.activo }));
 
   const activoNoCorrienteItems = cuentas
     .filter(c => c.clase === 1 && c.codigo.startsWith('1.2'))
-    .map(c => ({ nombre: c.nombre, saldo: c.activo - c.pasivo }));
+    .map(c => ({ codigo: c.codigo, nombre: c.nombre, saldo: c.activo - c.pasivo }));
 
   const totalActivoCorriente = activoCorrienteItems.reduce((s, i) => s + i.saldo, 0);
   const totalActivoNoCorriente = activoNoCorrienteItems.reduce((s, i) => s + i.saldo, 0);
@@ -1420,20 +1420,20 @@ export function buildIFRSFinancialStatements(balance8Col: Balance8ColumnasReport
 
   const pasivoCorrienteItems = cuentas
     .filter(c => c.clase === 2 && c.codigo.startsWith('2.1') && c.pasivo > 0)
-    .map(c => ({ nombre: c.nombre, saldo: c.pasivo }));
+    .map(c => ({ codigo: c.codigo, nombre: c.nombre, saldo: c.pasivo }));
 
   const pasivoNoCorrienteItems = cuentas
     .filter(c => c.clase === 2 && c.codigo.startsWith('2.2') && c.pasivo > 0)
-    .map(c => ({ nombre: c.nombre, saldo: c.pasivo }));
+    .map(c => ({ codigo: c.codigo, nombre: c.nombre, saldo: c.pasivo }));
 
   const totalPasivoCorriente = pasivoCorrienteItems.reduce((s, i) => s + i.saldo, 0);
   const totalPasivoNoCorriente = pasivoNoCorrienteItems.reduce((s, i) => s + i.saldo, 0);
   const totalPasivos = totalPasivoCorriente + totalPasivoNoCorriente;
 
   // Patrimonio
-  const patrimonioItems = cuentas
+  const patrimonioItems: { codigo?: string; nombre: string; saldo: number }[] = cuentas
     .filter(c => c.clase === 3)
-    .map(c => ({ nombre: c.nombre, saldo: c.pasivo - c.activo }));
+    .map(c => ({ codigo: c.codigo, nombre: c.nombre, saldo: c.pasivo - c.activo }));
 
   // Sumar el resultado del ejercicio en patrimonio
   if (resultado_del_ejercicio.tipo === 'UTILIDAD') {

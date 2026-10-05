@@ -10,6 +10,7 @@ import {
   ResultadoEjercicio8Col,
 } from '../types';
 import { CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS } from './accountingOrchestratorEngine';
+import { inferDefaultNoteNumbers } from './financialNotesService';
 
 /**
  * Grupos y Subgrupos Estándar de la Estructura Jerárquica Chilena (CMF / SII)
@@ -328,6 +329,7 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
           esEfectivoEquivalente: item.esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(item),
           esContracuentaEfectivo: item.esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(item),
           requiereProyecto: item.requiereProyecto ?? inferDefaultProyecto(item),
+          notasExplicativas: item.notasExplicativas ?? inferDefaultNoteNumbers(item),
         }));
       }
     }
@@ -348,6 +350,7 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
       esEfectivoEquivalente: (acc as any).esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(acc),
       esContracuentaEfectivo: (acc as any).esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(acc),
       requiereProyecto: (acc as any).requiereProyecto ?? inferDefaultProyecto(acc),
+      notasExplicativas: (acc as any).notasExplicativas ?? inferDefaultNoteNumbers(acc),
       nombreGrupo: groupMap.get(acc.grupo) || `Grupo ${acc.grupo}`,
       nombreSubgrupo: groupMap.get(acc.subgrupo) || `Subgrupo ${acc.subgrupo}`,
       agrupacionFiscal: mappings.agrupacionFiscal,

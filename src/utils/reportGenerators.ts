@@ -15,8 +15,11 @@ import {
   ClientCompany,
   ChileIndicators,
   Balance8ColumnasReport,
-  WarehouseWithdrawal 
+  WarehouseWithdrawal,
+  FinancialStatementNote,
+  HierarchicalAccountItem,
 } from '../types';
+import { computeNoteBreakdown } from './financialNotesService';
 
 // Helper to format Chilean Peso
 export function fmtClp(num: number | undefined | null): string {
@@ -1765,4 +1768,135 @@ export function downloadLeasesExcel(leases: LeaseContract[] = [], company?: Clie
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Arriendos IFRS 16');
   XLSX.writeFile(wb, `Arriendos_IFRS16_${safeCompany.rut}.xlsx`);
 }
+
+/**
+ * Generar Informe Completo de Notas a los Estados Financieros (Cuadernillo PDF NIIF/CMF)
+ */
+export function downloadFinancialNotesBookletPdf(
+  notes: FinancialStatementNote[],
+  balance8Col: Balance8ColumnasReport,
+  chart: HierarchicalAccountItem[],
+  company: ClientCompany,
+  periodo = '2026-12'
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const safeCompany = company || ({ rut: '76.123.456-7', razonSocial: 'Empresa Contribuyente SpA' } as ClientCompany);
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  addPdfHeader(
+    doc,
+    safeCompany,
+    'Notas a los Estados Financieros (NIIF / IFRS)',
+    `Ejercicio al 31 de Diciembre de ${periodo.split('-')[0]} - Circular N° 1.501 CMF Chile y NIC 1`,
+    false
+  );
+
+  let currentY = 48;
+
+  // Introducción oficial
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(71, 85, 105);
+  const introText = 'Las notas adjuntas forman parte integrante de los Estados Financieros correspondientes al ejercicio contable cerrado. Todas las cifras se encuentran expresadas en Pesos Chilenos (CLP) salvo indicación expresa.';
+  const splitIntro = doc.splitTextToSize(introText, pageWidth - 28);
+  doc.text(splitIntro, 14, currentY);
+  currentY += splitIntro.length * 4.5 + 4;
+
+  const sortedNotes = [...notes].sort((a, b) => a.numero - b.numero);
+
+  sortedNotes.forEach((note, index) => {
+    // Verificar si necesitamos nueva página para el título de la nota
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 25;
+    }
+
+    // Título de la Nota
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, currentY, pageWidth - 28, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`NOTA N° ${note.numero}: ${note.titulo.toUpperCase()}`, 16, currentY + 5.5);
+
+    // Etiqueta de Norma
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(37, 99, 235);
+    const normaLabel = `[${note.normaReferencia.replace('_', ' ')}]`;
+    doc.text(normaLabel, pageWidth - 16, currentY + 5.5, { align: 'right' });
+
+    currentY += 12;
+
+    // Texto de la redacción técnica
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(51, 65, 85);
+    const splitContent = doc.splitTextToSize(note.contenido || 'Sin redacción registrada.', pageWidth - 28);
+    
+    // Si el texto excede la página, dividir o pasar de página
+    if (currentY + splitContent.length * 4 > 270) {
+      doc.addPage();
+      currentY = 25;
+    }
+    doc.text(splitContent, 14, currentY);
+    currentY += splitContent.length * 4 + 4;
+
+    // Si tiene partidas contables vinculadas, generar tabla de desglose auditado
+    if (note.cuentasAsociadas && note.cuentasAsociadas.length > 0) {
+      const breakdown = computeNoteBreakdown(note, balance8Col, chart);
+      if (breakdown.items.length > 0) {
+        if (currentY > 230) {
+          doc.addPage();
+          currentY = 25;
+        }
+
+        const tableBody: any[] = breakdown.items.map((i) => [
+          i.codigoCuenta,
+          i.nombreCuenta,
+          fmtClp(i.debe),
+          fmtClp(i.haber),
+          fmtClp(i.saldoFinal),
+          `${i.porcentajeDelTotal.toFixed(1)}%`,
+        ]);
+
+        // Fila de totales
+        tableBody.push([
+          { content: 'TOTAL NOTA CONCILIADO', colSpan: 2, styles: { fontStyle: 'bold', fillColor: [248, 250, 252] } },
+          { content: fmtClp(breakdown.totalDebe), styles: { fontStyle: 'bold', fillColor: [248, 250, 252] } },
+          { content: fmtClp(breakdown.totalHaber), styles: { fontStyle: 'bold', fillColor: [248, 250, 252] } },
+          { content: fmtClp(breakdown.totalSaldoFinal), styles: { fontStyle: 'bold', fillColor: [224, 231, 255], textColor: [30, 58, 138] } },
+          { content: '100.0%', styles: { fontStyle: 'bold', fillColor: [248, 250, 252] } },
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [['Código', 'Partida Contable (Cuenta)', 'Debe (Cargos)', 'Haber (Abonos)', 'Saldo Cierre', '% Part.']],
+          body: tableBody,
+          theme: 'grid',
+          styles: { fontSize: 7.5, cellPadding: 1.5 },
+          headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+          columnStyles: {
+            0: { cellWidth: 22 },
+            1: { cellWidth: 70 },
+            2: { cellWidth: 26, halign: 'right' },
+            3: { cellWidth: 26, halign: 'right' },
+            4: { cellWidth: 26, halign: 'right' },
+            5: { cellWidth: 12, halign: 'center' },
+          },
+          margin: { left: 14, right: 14 },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 8;
+      }
+    } else {
+      currentY += 4;
+    }
+  });
+
+  // Pie de firmas oficiales
+  addPdfFooterAndSignatures(doc, false);
+  doc.save(`Notas_EEFF_${safeCompany.rut || 'Empresa'}_${periodo}.pdf`);
+}
+
 

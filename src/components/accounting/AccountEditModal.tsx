@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sliders, X, Check, Globe, Shield, Tag } from 'lucide-react';
+import { Sliders, X, Check, Globe, Shield, Tag, BookOpen } from 'lucide-react';
 import {
   HierarchicalAccountItem,
   AccountGroupDefinition,
@@ -9,6 +9,7 @@ import {
   FISCAL_GROUPING_OPTIONS,
   HEADQUARTERS_GROUPING_OPTIONS,
 } from '../../utils/companyChartOfAccountsService';
+import { inferDefaultNoteNumbers } from '../../utils/financialNotesService';
 
 interface AccountEditModalProps {
   isOpen: boolean;
@@ -60,6 +61,9 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
   const [esContracuentaEfectivo, setEsContracuentaEfectivo] = useState(false);
   const [requiereProyecto, setRequiereProyecto] = useState(false);
 
+  // Notas a los Estados Financieros (NIIF / CMF)
+  const [notasExplicativasStr, setNotasExplicativasStr] = useState<string>('');
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Cargar datos al abrir o cambiar cuenta a editar
@@ -92,8 +96,17 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setEsEfectivoEquivalente(Boolean(accountToEdit.esEfectivoEquivalente));
       setEsContracuentaEfectivo(Boolean(accountToEdit.esContracuentaEfectivo));
       setRequiereProyecto(Boolean(accountToEdit.requiereProyecto));
+
+      // Notas EEFF
+      if (accountToEdit.notasExplicativas && accountToEdit.notasExplicativas.length > 0) {
+        setNotasExplicativasStr(accountToEdit.notasExplicativas.join(', '));
+      } else {
+        const inferred = inferDefaultNoteNumbers(accountToEdit);
+        setNotasExplicativasStr(inferred.length > 0 ? inferred.join(', ') : '');
+      }
     } else {
       // Modo nueva cuenta o subcuenta
+      setNotasExplicativasStr('');
       if (initialParentCode) {
         // Sugerir código hijo
         const parentParts = initialParentCode.split('.');
@@ -239,6 +252,12 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
     const resolvedFiscal = customFiscal.trim() ? customFiscal.trim() : agrupacionFiscal;
     const resolvedHq = customHq.trim() ? customHq.trim() : agrupacionMatrizExtranjera;
 
+    const parsedNotes: number[] = notasExplicativasStr
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n): n is number => !isNaN(n) && n > 0);
+    const uniqueNotes: number[] = Array.from(new Set<number>(parsedNotes)).sort((a: number, b: number) => a - b);
+
     const accountResult: HierarchicalAccountItem = {
       codigo: cleanCodigo,
       nombre: cleanNombre,
@@ -261,6 +280,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       esEfectivoEquivalente,
       esContracuentaEfectivo,
       requiereProyecto,
+      // Notas EEFF
+      notasExplicativas: uniqueNotes.length > 0 ? uniqueNotes : undefined,
       agrupacionFiscal: resolvedFiscal,
       agrupacionMatrizExtranjera: resolvedHq,
       agrupacionPersonalizada: agrupacionPersonalizada.trim() || undefined,
@@ -702,6 +723,88 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
                   </p>
                 </div>
               </label>
+            </div>
+          </div>
+
+          {/* Fila 6: Notas a los Estados Financieros (NIIF / IFRS - CMF Chile) */}
+          <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-slate-900 font-bold uppercase tracking-wider text-[11px]">
+                <BookOpen className="w-4 h-4 text-indigo-600" />
+                <span>4. Notas a los Estados Financieros (NIIF / CMF)</span>
+              </div>
+              <span className="text-[10px] text-slate-500 font-medium">Vinculación NIC 1 / Circular 1.501 CMF</span>
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1 text-xs">
+                Números de Notas Asignadas (separados por coma si son varios, ej: 3, 17)
+              </label>
+              <input
+                type="text"
+                placeholder="Ej: 3 o 3, 17"
+                value={notasExplicativasStr}
+                onChange={(e) => setNotasExplicativasStr(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono font-bold text-blue-900 focus:ring-1 focus:ring-blue-500"
+              />
+              <p className="text-[11px] text-slate-500 mt-1">
+                La cuenta se mostrará enlazada a estas notas explicativas en el Balance Clasificado, Estado de Situación Financiera, Estado de Resultados y Cuadernillo de Auditoría.
+              </p>
+            </div>
+
+            {/* Accesos Rápidos a Notas Estándar */}
+            <div className="pt-1">
+              <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">
+                Sugerencias Rápidas por Rubro (Click para agregar/quitar):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { num: 3, label: 'Nota 3: Efectivo' },
+                  { num: 4, label: 'Nota 4: Clientes' },
+                  { num: 5, label: 'Nota 5: Inventarios' },
+                  { num: 6, label: 'Nota 6: Impuestos CF' },
+                  { num: 7, label: 'Nota 7: Activo Fijo' },
+                  { num: 8, label: 'Nota 8: IFRS 16' },
+                  { num: 9, label: 'Nota 9: Proveedores' },
+                  { num: 10, label: 'Nota 10: Sueldos' },
+                  { num: 11, label: 'Nota 11: Retenciones F29' },
+                  { num: 12, label: 'Nota 12: Bancos CP/LP' },
+                  { num: 13, label: 'Nota 13: Patrimonio' },
+                  { num: 14, label: 'Nota 14: Ingresos' },
+                  { num: 15, label: 'Nota 15: Costos' },
+                  { num: 16, label: 'Nota 16: Gastos Admin' },
+                  { num: 17, label: 'Nota 17: Financieros/USD' },
+                ].map((sug) => {
+                  const currentList = notasExplicativasStr
+                    .split(',')
+                    .map((s) => parseInt(s.trim(), 10))
+                    .filter((n) => !isNaN(n));
+                  const isIncluded = currentList.includes(sug.num);
+
+                  return (
+                    <button
+                      key={sug.num}
+                      type="button"
+                      onClick={() => {
+                        let nextList: number[];
+                        if (isIncluded) {
+                          nextList = currentList.filter((n) => n !== sug.num);
+                        } else {
+                          nextList = [...currentList, sug.num].sort((a, b) => a - b);
+                        }
+                        setNotasExplicativasStr(nextList.join(', '));
+                      }}
+                      className={`text-[10px] px-2 py-0.5 rounded font-mono font-medium transition-colors cursor-pointer border ${
+                        isIncluded
+                          ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {sug.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

@@ -1109,6 +1109,7 @@ export interface AccountPlanItem {
   esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE (NIC 7 / FECU)
   esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE (Puente Tesorería)
   requiereProyecto?: boolean; // PROYECTO (Centro de Proyecto / Obra / Contrato)
+  notasExplicativas?: number[]; // Números de Notas a los Estados Financieros (NIIF / CMF)
 }
 
 export type AccountNature = 'DEUDORA' | 'ACREEDORA';
@@ -1133,6 +1134,8 @@ export interface HierarchicalAccountItem {
   esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE
   esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE
   requiereProyecto?: boolean; // PROYECTO
+  // Notas a los Estados Financieros (NIIF / CMF)
+  notasExplicativas?: number[]; // Uno o varios números de notas asociadas (ej: [3, 17])
   // Campos de personalización por empresa y presentación
   nombreGrupo?: string;
   nombreSubgrupo?: string;
@@ -1143,6 +1146,67 @@ export interface HierarchicalAccountItem {
   agrupacionPersonalizada?: string;
   subagrupacionPersonalizada?: string;
   empresaRut?: string;
+}
+
+// =========================================================================
+// NOTAS A LOS ESTADOS FINANCIEROS (NIIF / IFRS / CMF CHILE NIC 1)
+// =========================================================================
+export type FinancialNoteNorm =
+  | 'NIC_1' // Presentación de Estados Financieros
+  | 'NIC_2' // Inventarios
+  | 'NIC_7' // Flujos de Efectivo
+  | 'NIC_16' // Propiedades, Planta y Equipo
+  | 'NIC_21' // Efectos de las variaciones en las tasas de cambio de la moneda extranjera
+  | 'NIC_12' // Impuesto a las Ganancias
+  | 'NIC_19' // Beneficios a los Empleados
+  | 'NIC_37' // Provisiones, Pasivos Contingentes y Activos Contingentes
+  | 'NIC_10' // Hechos Ocurridos Después del Periodo sobre el que se Informa
+  | 'NIIF_9' // Instrumentos Financieros
+  | 'NIIF_15' // Ingresos de Actividades Ordinarias procedentes de Contratos con Clientes
+  | 'NIIF_16' // Arrendamientos
+  | 'CMF_CIRCULAR_1501' // Circular CMF Chile para Notas a los EE.FF.
+  | 'POLITICA_GENERAL';
+
+export type FinancialNoteCategory =
+  | 'IDENTIFICACION_EMPRESA'
+  | 'POLITICAS_CONTABLES'
+  | 'ACTIVO_CORRIENTE'
+  | 'ACTIVO_NO_CORRIENTE'
+  | 'PASIVO_CORRIENTE'
+  | 'PASIVO_NO_CORRIENTE'
+  | 'PATRIMONIO_NETO'
+  | 'INGRESOS_OPERACIONALES'
+  | 'COSTOS_Y_GASTOS'
+  | 'RESULTADO_FINANCIERO'
+  | 'CONTINGENCIAS_Y_HECHOS_POSTERIORES';
+
+export interface FinancialStatementNoteItem {
+  codigoCuenta: string;
+  nombreCuenta: string;
+  clase: number;
+  naturaleza: AccountNature;
+  debe: number;
+  haber: number;
+  saldoDeudor: number;
+  saldoAcreedor: number;
+  saldoFinal: number;
+  porcentajeDelTotal: number;
+}
+
+export interface FinancialStatementNote {
+  id: string;
+  numero: number;
+  titulo: string;
+  categoria: FinancialNoteCategory;
+  normaReferencia: FinancialNoteNorm | string;
+  contenido: string; // Redacción técnica formal explicativa
+  cuentasAsociadas: string[]; // Códigos de cuentas vinculadas a la nota
+  empresaRut: string;
+  periodo?: string;
+  estado: 'BORRADOR' | 'EN_REVISION' | 'DICTAMINADA';
+  ultimaModificacion?: string;
+  modificadoPor?: string;
+  comentariosAuditoria?: string;
 }
 
 export interface AccountGroupDefinition {

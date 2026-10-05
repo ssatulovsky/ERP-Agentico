@@ -78,6 +78,7 @@ import {
   AbsenteeismRecord,
   HrBenefit,
   SystemGeneralParameters,
+  FinancialStatementNote,
 } from '../types';
 import { formatCLP, formatNumberCL, formatNormalizedAccountingEntry } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
@@ -90,6 +91,7 @@ import {
   downloadLibroDiarioPdf,
   downloadLibroDiarioExcel,
   downloadLibroMayorPdf,
+  downloadFinancialNotesBookletPdf,
 } from '../utils/reportGenerators';
 import {
   CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS,
@@ -122,6 +124,12 @@ import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
 import { SearchableAccountSelect } from './accounting/SearchableAccountSelect';
 import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import { INITIAL_CLIENT_AUXILIARIES } from '../data/erpMasterConfig';
+import { FinancialStatementNotesView } from './accounting/FinancialStatementNotesView';
+import {
+  loadCompanyFinancialNotes,
+  saveCompanyFinancialNotes,
+  syncChartWithNotes,
+} from '../utils/financialNotesService';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -194,7 +202,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
   const safeBenefits = Array.isArray(benefits) ? benefits : [];
   // Navigation tabs of the orchestrator
-  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
+  const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'NOTAS_EEFF' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
@@ -226,11 +234,75 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     loadCompanyGroups(company.rut)
   );
 
-  // Sincronizar plan de cuentas y grupos al cambiar de empresa
+  // Notas a los Estados Financieros (NIIF / IFRS - CMF Chile)
+  const [financialNotes, setFinancialNotes] = useState<FinancialStatementNote[]>(() =>
+    loadCompanyFinancialNotes(company.rut, chartOfAccounts)
+  );
+  const [selectedNoteNumber, setSelectedNoteNumber] = useState<number | null>(null);
+
+  // Sincronizar plan de cuentas, grupos y notas al cambiar de empresa
   React.useEffect(() => {
-    setChartOfAccounts(loadCompanyChartOfAccounts(company.rut));
+    const loadedChart = loadCompanyChartOfAccounts(company.rut);
+    setChartOfAccounts(loadedChart);
     setChartGroups(loadCompanyGroups(company.rut));
+    setFinancialNotes(loadCompanyFinancialNotes(company.rut, loadedChart));
   }, [company.rut]);
+
+  // Actualizar notas y sincronizar con plan de cuentas
+  const handleUpdateFinancialNotes = (updatedNotes: FinancialStatementNote[]) => {
+    setFinancialNotes(updatedNotes);
+    saveCompanyFinancialNotes(company.rut, updatedNotes);
+    const { syncedChart } = syncChartWithNotes(chartOfAccounts, updatedNotes);
+    setChartOfAccounts(syncedChart);
+    saveCompanyChartOfAccounts(company.rut, syncedChart);
+  };
+
+  // Actualizar plan de cuentas y sincronizar con notas
+  const handleUpdateChartAndSyncNotes = (updatedChart: HierarchicalAccountItem[]) => {
+    setChartOfAccounts(updatedChart);
+    saveCompanyChartOfAccounts(company.rut, updatedChart);
+    const { syncedNotes } = syncChartWithNotes(updatedChart, financialNotes);
+    setFinancialNotes(syncedNotes);
+    saveCompanyFinancialNotes(company.rut, syncedNotes);
+  };
+
+  // Navegar directamente a una nota específica desde cualquier módulo
+  const navigateToNote = (noteNum: number) => {
+    setSelectedNoteNumber(noteNum);
+    setActiveTab('NOTAS_EEFF');
+  };
+
+  // Helper para obtener los botones / badges de notas de una cuenta
+  const getAccountNoteBadges = (accountCode?: string) => {
+    if (!accountCode) return null;
+    const acc = chartOfAccounts.find((a) => a.codigo === accountCode);
+    const explicitNotes = acc?.notasExplicativas || [];
+    const notesFromList = financialNotes
+      .filter((n) => n.cuentasAsociadas.includes(accountCode))
+      .map((n) => n.numero);
+    const merged = Array.from(new Set([...explicitNotes, ...notesFromList])).sort((a, b) => a - b);
+
+    if (merged.length === 0) return null;
+
+    return (
+      <div className="inline-flex items-center gap-1 shrink-0 ml-1">
+        {merged.map((num) => (
+          <button
+            key={num}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigateToNote(num);
+            }}
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+            title={`Ver Nota ${num} en detalle`}
+          >
+            Nota {num}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   // Modales de Plan de Cuentas
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -1001,7 +1073,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       const matchClass = planClassFilter === 'TODOS' || acc.clase === planClassFilter;
       const matchSearch =
         acc.nombre.toLowerCase().includes(planSearchTerm.toLowerCase()) ||
-        acc.codigo.toLowerCase().includes(planSearchTerm.toLowerCase());
+        acc.codigo.toLowerCase().includes(planSearchTerm.toLowerCase()) ||
+        (acc.notasExplicativas || []).some((n) => `nota ${n}`.includes(planSearchTerm.toLowerCase()) || String(n) === planSearchTerm.trim());
 
       let matchAttr = true;
       if (planAttributeFilter === 'MULTIMONEDA') matchAttr = Boolean(acc.manejaMultimoneda);
@@ -1012,6 +1085,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       else if (planAttributeFilter === 'AUXILIAR') matchAttr = Boolean(acc.requiereAuxiliarRut);
       else if (planAttributeFilter === 'CENTRO_COSTO') matchAttr = Boolean(acc.requiereCentroCosto);
       else if (planAttributeFilter === 'CONCILIABLE') matchAttr = Boolean(acc.esConciliableBancaria);
+      else if (planAttributeFilter === 'NOTAS') matchAttr = Boolean(acc.notasExplicativas && acc.notasExplicativas.length > 0);
 
       return matchClass && matchSearch && matchAttr;
     });
@@ -1751,6 +1825,21 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         >
           <PieChart className="w-4 h-4 text-rose-400" />
           <span>Estados Financieros IFRS</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('NOTAS_EEFF')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+            activeTab === 'NOTAS_EEFF'
+              ? 'bg-[#0f172a] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <BookOpen className="w-4 h-4 text-indigo-400" />
+          <span>Notas EE.FF. (NIIF / CMF)</span>
+          <span className="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold font-mono">
+            {financialNotes.length}
+          </span>
         </button>
 
         <button
@@ -3006,6 +3095,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 <option value="AUXILIAR">👤 Exige Auxiliar RUT</option>
                 <option value="CENTRO_COSTO">🏢 Exige Centro de Costo</option>
                 <option value="CONCILIABLE">🏦 Conciliable Cartola Banco</option>
+                <option value="NOTAS">📑 Con Notas EE.FF. Asignadas</option>
               </select>
             </div>
 
@@ -3020,7 +3110,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               <thead>
                 <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase text-[11px]">
                   <th className="py-2.5 px-3 font-mono w-32">Código</th>
-                  <th className="py-2.5 px-3">Nombre de la Cuenta</th>
+                  <th className="py-2.5 px-3">Nombre de la Cuenta & Notas EE.FF.</th>
                   <th className="py-2.5 px-3">Jerarquía (Grupo / Subgrupo)</th>
                   <th className="py-2.5 px-2 text-center">Naturaleza</th>
                   <th className="py-2.5 px-3">Mapeo Fiscal SII</th>
@@ -3041,12 +3131,15 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     <tr key={acc.codigo} className="hover:bg-slate-50/80 transition-colors group">
                       <td className="py-2 px-3 font-bold text-slate-900">{acc.codigo}</td>
                       <td className="py-2 px-3 font-sans font-semibold text-slate-900">
-                        {acc.nombre}
-                        {acc.agrupacionPersonalizada && (
-                          <span className="ml-1.5 text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-normal">
-                            {acc.agrupacionPersonalizada}
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span>{acc.nombre}</span>
+                          {acc.agrupacionPersonalizada && (
+                            <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-normal">
+                              {acc.agrupacionPersonalizada}
+                            </span>
+                          )}
+                          {getAccountNoteBadges(acc.codigo)}
+                        </div>
                       </td>
                       <td className="py-2 px-3 font-sans text-slate-500 text-[11px]">
                         <span className="font-mono text-slate-700">{acc.grupo}</span> {acc.nombreGrupo || ''}
@@ -3474,6 +3567,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 <span>Descargar PDF (IFRS)</span>
               </button>
               <button
+                onClick={() => downloadFinancialNotesBookletPdf(financialNotes, balance8Col, chartOfAccounts, company as ClientCompany)}
+                className="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Descargar Cuadernillo Completo de Notas a los Estados Financieros en formato PDF"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Cuadernillo Notas (PDF)</span>
+              </button>
+              <button
                 onClick={() => downloadFinancialStatementsExcel(ifrsStatements, company as ClientCompany)}
                 className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
                 title="Descargar Estados Financieros en formato Excel (.xlsx)"
@@ -3558,9 +3659,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     </span>
                   </div>
                   {ifrsStatements.estadoSituacion.activoCorriente.items.map((i, idx) => (
-                    <div key={idx} className="flex justify-between text-slate-500 text-[11px] pl-2">
-                      <span>{i.nombre}</span>
-                      <span className="font-mono">{convertAmount(i.saldo)}</span>
+                    <div key={idx} className="flex justify-between items-center text-slate-500 text-[11px] pl-2 hover:bg-slate-50 rounded py-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">{i.nombre}</span>
+                        {getAccountNoteBadges(i.codigo)}
+                      </div>
+                      <span className="font-mono font-medium text-slate-700 shrink-0">{convertAmount(i.saldo)}</span>
                     </div>
                   ))}
 
@@ -3571,9 +3675,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     </span>
                   </div>
                   {ifrsStatements.estadoSituacion.activoNoCorriente.items.map((i, idx) => (
-                    <div key={idx} className="flex justify-between text-slate-500 text-[11px] pl-2">
-                      <span>{i.nombre}</span>
-                      <span className="font-mono">{convertAmount(i.saldo)}</span>
+                    <div key={idx} className="flex justify-between items-center text-slate-500 text-[11px] pl-2 hover:bg-slate-50 rounded py-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">{i.nombre}</span>
+                        {getAccountNoteBadges(i.codigo)}
+                      </div>
+                      <span className="font-mono font-medium text-slate-700 shrink-0">{convertAmount(i.saldo)}</span>
                     </div>
                   ))}
 
@@ -3598,6 +3705,15 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                       {convertAmount(ifrsStatements.estadoSituacion.pasivoCorriente.total)}
                     </span>
                   </div>
+                  {ifrsStatements.estadoSituacion.pasivoCorriente.items.map((i, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-slate-500 text-[11px] pl-2 hover:bg-slate-50 rounded py-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">{i.nombre}</span>
+                        {getAccountNoteBadges(i.codigo)}
+                      </div>
+                      <span className="font-mono font-medium text-slate-700 shrink-0">{convertAmount(i.saldo)}</span>
+                    </div>
+                  ))}
 
                   <div className="flex justify-between text-slate-700 font-medium pt-1">
                     <span>Pasivo No Corriente:</span>
@@ -3605,6 +3721,15 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                       {convertAmount(ifrsStatements.estadoSituacion.pasivoNoCorriente.total)}
                     </span>
                   </div>
+                  {ifrsStatements.estadoSituacion.pasivoNoCorriente.items.map((i, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-slate-500 text-[11px] pl-2 hover:bg-slate-50 rounded py-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">{i.nombre}</span>
+                        {getAccountNoteBadges(i.codigo)}
+                      </div>
+                      <span className="font-mono font-medium text-slate-700 shrink-0">{convertAmount(i.saldo)}</span>
+                    </div>
+                  ))}
 
                   <div className="flex justify-between text-slate-700 font-medium pt-1">
                     <span>Patrimonio Neto:</span>
@@ -3613,9 +3738,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     </span>
                   </div>
                   {ifrsStatements.estadoSituacion.patrimonioNeto.items.map((i, idx) => (
-                    <div key={idx} className="flex justify-between text-slate-500 text-[11px] pl-2">
-                      <span>{i.nombre}</span>
-                      <span className="font-mono">{convertAmount(i.saldo)}</span>
+                    <div key={idx} className="flex justify-between items-center text-slate-500 text-[11px] pl-2 hover:bg-slate-50 rounded py-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">{i.nombre}</span>
+                        {getAccountNoteBadges(i.codigo)}
+                      </div>
+                      <span className="font-mono font-medium text-slate-700 shrink-0">{convertAmount(i.saldo)}</span>
                     </div>
                   ))}
 
@@ -3636,19 +3764,37 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   <TrendingUp className="w-4 h-4 text-emerald-600" />
                   Estado de Resultados por Función (NIC 1)
                 </h4>
-                <p className="text-[11px] text-slate-500">Estructura oficial de margen, EBITDA y resultado del ejercicio</p>
+                <p className="text-[11px] text-slate-500">Estructura oficial de margen, EBITDA y resultado del ejercicio vinculada a Notas</p>
               </div>
 
               <div className="space-y-2 text-xs">
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-700 font-medium">Ingresos de Actividades Ordinarias:</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-700 font-medium">Ingresos de Actividades Ordinarias:</span>
+                    <button
+                      onClick={() => navigateToNote(14)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 14: Ingresos de Actividades Ordinarias"
+                    >
+                      Nota 14
+                    </button>
+                  </div>
                   <span className="font-mono font-bold text-emerald-700">
                     {convertAmount(ifrsStatements.estadoResultados.ingresosOperacionales)}
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(-) Costo de Ventas:</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(-) Costo de Ventas:</span>
+                    <button
+                      onClick={() => navigateToNote(15)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 15: Costo de Ventas"
+                    >
+                      Nota 15
+                    </button>
+                  </div>
                   <span className="font-mono text-rose-700">
                     -{convertAmount(ifrsStatements.estadoResultados.costoVentas)}
                   </span>
@@ -3661,8 +3807,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(-) Gastos de Administración y Ventas:</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(-) Gastos de Administración y Ventas:</span>
+                    <button
+                      onClick={() => navigateToNote(16)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 16: Gastos de Administración y Ventas"
+                    >
+                      Nota 16
+                    </button>
+                  </div>
                   <span className="font-mono text-rose-700">
                     -{convertAmount(ifrsStatements.estadoResultados.gastosAdministracionVentas)}
                   </span>
@@ -3675,8 +3830,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(-) Depreciación y Amortización (NIC 16 / IFRS 16):</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(-) Depreciación y Amortización (NIC 16 / IFRS 16):</span>
+                    <button
+                      onClick={() => navigateToNote(7)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 7 y 8: Activos Fijos y Arrendamientos"
+                    >
+                      Nota 7, 8
+                    </button>
+                  </div>
                   <span className="font-mono text-rose-700">
                     -{convertAmount(ifrsStatements.estadoResultados.depreciacionAmortizacion)}
                   </span>
@@ -3689,22 +3853,49 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(+) Otros Ingresos Fuera de Explotación:</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(+) Otros Ingresos Fuera de Explotación:</span>
+                    <button
+                      onClick={() => navigateToNote(17)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 17: Resultados Financieros"
+                    >
+                      Nota 17
+                    </button>
+                  </div>
                   <span className="font-mono text-emerald-700">
                     {convertAmount(ifrsStatements.estadoResultados.otrosIngresos)}
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(-) Gastos Financieros y Reajustes:</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(-) Gastos Financieros y Reajustes:</span>
+                    <button
+                      onClick={() => navigateToNote(17)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 17: Resultados Financieros"
+                    >
+                      Nota 17
+                    </button>
+                  </div>
                   <span className="font-mono text-rose-700">
                     -{convertAmount(ifrsStatements.estadoResultados.otrosGastosFinancieros)}
                   </span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-600">(-) Provisión Impuesto a la Renta (IDPC):</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600">(-) Provisión Impuesto a la Renta (IDPC):</span>
+                    <button
+                      onClick={() => navigateToNote(6)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded transition-colors cursor-pointer"
+                      title="Ver Nota 6 y 11: Impuestos Corrientes y Fiscales"
+                    >
+                      Nota 6, 11
+                    </button>
+                  </div>
                   <span className="font-mono text-rose-700">
                     -{convertAmount(ifrsStatements.estadoResultados.impuestoRenta)}
                   </span>
@@ -3720,6 +3911,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             </div>
           </div>
         </div>
+      )}
+
+      {/* VIEW: NOTAS EXPLICATIVAS A LOS ESTADOS FINANCIEROS (NIIF / IFRS - CMF CHILE) */}
+      {activeTab === 'NOTAS_EEFF' && (
+        <FinancialStatementNotesView
+          notes={financialNotes}
+          chartOfAccounts={chartOfAccounts}
+          balance8Col={balance8Col}
+          company={company as ClientCompany}
+          onUpdateNotes={handleUpdateFinancialNotes}
+          onUpdateChartOfAccounts={handleUpdateChartAndSyncNotes}
+          selectedNoteNumber={selectedNoteNumber}
+          onSelectNoteNumber={(num) => setSelectedNoteNumber(num)}
+          onNavigateToMayor={(accountCode) => {
+            setSelectedMayorAccountCode(accountCode);
+            setActiveTab('MAYOR');
+          }}
+        />
       )}
 
       {/* VIEW 7: CONSOLA ASESORA IA & ROUTING DE ASIENTOS (DOS CAPAS) */}
