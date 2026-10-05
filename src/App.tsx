@@ -19,6 +19,7 @@ import { UserManualModal } from './components/UserManualModal';
 import { ErpPremiaLogo } from './components/ErpPremiaLogo';
 import { CostCenterModule } from './components/CostCenterModule';
 import { ExpenseReportsModule } from './components/expenses/ExpenseReportsModule';
+import { CollaboratorExpenseMobileApp } from './components/expenses/mobile/CollaboratorExpenseMobileApp';
 import { loadClientState, saveClientState, loadPersistentState, savePersistentState } from './utils/storageService';
 
 import { 
@@ -131,6 +132,7 @@ import {
   PieChart,
   LayoutDashboard,
   CreditCard,
+  Smartphone,
 } from 'lucide-react';
 
 export default function App() {
@@ -976,6 +978,7 @@ export default function App() {
     { id: 'production', label: 'Producción & Costeo', subtitle: 'NIC 2, MPD, MOD, CIF & CPT', icon: Factory },
     { id: 'cost_centers', label: 'Centros de Costo & Mini-Empresas', subtitle: 'Departamentalización & P&L Subunidades', icon: PieChart },
     { id: 'expense_reports', label: 'Rendición de Gastos (RindeGastos)', subtitle: 'Fondos por Rendir, Comprobantes & CC', icon: CreditCard },
+    { id: 'expense_mobile', label: '📱 Rinde Móvil (Colaboradores)', subtitle: 'Captura con Cámara & Lectura IA', icon: Smartphone },
     { id: 'cashflow', label: 'Flujo de Caja Proyectado', subtitle: 'Saldo Bancario Real & 30/60/90 días', icon: TrendingUp },
     { id: 'leases', label: 'Contratos & Arriendos', subtitle: 'Modelado NIIF / IFRS 16', icon: Home },
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
@@ -1293,8 +1296,18 @@ export default function App() {
 
           {activeTab === 'expense_reports' && (
             <ExpenseReportsModule
+              company={company}
               costCenters={costCenters}
               onAddEntry={handleAddEntry}
+            />
+          )}
+
+          {activeTab === 'expense_mobile' && (
+            <CollaboratorExpenseMobileApp
+              empresaRut={company?.rut || 'client-retail-01'}
+              empresaNombre={company?.razonSocial || 'Mar Austral Alimentos SpA'}
+              costCenters={costCenters}
+              onExitMobileView={() => setActiveTab('expense_reports')}
             />
           )}
 

@@ -348,24 +348,30 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
                   Monto Total ($ CLP) <span className="text-rose-500">*</span>
                 </label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   required
-                  min="1"
-                  step="1"
-                  value={montoTotalClp || ''}
-                  onChange={(e) => handleTotalChange(Number(e.target.value))}
+                  value={montoTotalClp ? montoTotalClp.toLocaleString('es-CL') : ''}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '');
+                    handleTotalChange(clean ? parseInt(clean, 10) : 0);
+                  }}
                   placeholder="0"
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Monto Neto ($)</label>
                 <input
-                  type="number"
-                  value={montoNeto}
-                  onChange={(e) => setMontoNeto(Number(e.target.value))}
-                  className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-200 rounded-lg font-mono text-slate-700"
+                  type="text"
+                  inputMode="numeric"
+                  value={montoNeto ? montoNeto.toLocaleString('es-CL') : '0'}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '');
+                    setMontoNeto(clean ? parseInt(clean, 10) : 0);
+                  }}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-200 rounded-lg font-mono text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
 
@@ -374,10 +380,14 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
                   IVA Crédito Fiscal (19%)
                 </label>
                 <input
-                  type="number"
-                  value={montoIva}
-                  onChange={(e) => setMontoIva(Number(e.target.value))}
-                  className={`w-full px-3 py-1.5 text-xs border rounded-lg font-mono ${
+                  type="text"
+                  inputMode="numeric"
+                  value={montoIva ? montoIva.toLocaleString('es-CL') : '0'}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '');
+                    setMontoIva(clean ? parseInt(clean, 10) : 0);
+                  }}
+                  className={`w-full px-3 py-1.5 text-xs border rounded-lg font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                     montoIva > 0 ? 'bg-emerald-50 border-emerald-300 text-emerald-800 font-bold' : 'bg-slate-100 border-slate-200 text-slate-700'
                   }`}
                 />
@@ -386,10 +396,14 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Exento ($)</label>
                 <input
-                  type="number"
-                  value={montoExento}
-                  onChange={(e) => setMontoExento(Number(e.target.value))}
-                  className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-200 rounded-lg font-mono text-slate-700"
+                  type="text"
+                  inputMode="numeric"
+                  value={montoExento ? montoExento.toLocaleString('es-CL') : '0'}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '');
+                    setMontoExento(clean ? parseInt(clean, 10) : 0);
+                  }}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-200 rounded-lg font-mono text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>

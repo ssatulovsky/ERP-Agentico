@@ -12,6 +12,9 @@ import {
   payrollSettlements,
   costCenters,
   fixedAssets,
+  expenseReports,
+  expenseItems,
+  expenseProjects,
 } from '../db/mysqlSchema';
 
 export interface DiskDataStore {
@@ -31,6 +34,9 @@ export interface DiskDataStore {
   clients: any[];
   costCenters: any[];
   fixedAssets: any[];
+  expenseReports?: any[];
+  expenseItems?: any[];
+  expenseProjects?: any[];
   credentialsVault?: any[];
 }
 
@@ -55,6 +61,9 @@ class DiskPersistenceService {
     clients: [],
     costCenters: [],
     fixedAssets: [],
+    expenseReports: [],
+    expenseItems: [],
+    expenseProjects: [],
     credentialsVault: [],
   };
 
@@ -93,8 +102,14 @@ class DiskPersistenceService {
           ...this.store,
           costCenters: parsed.costCenters || [],
           fixedAssets: parsed.fixedAssets || [],
+          expenseReports: parsed.expenseReports || [],
+          expenseItems: parsed.expenseItems || [],
+          expenseProjects: parsed.expenseProjects || [],
           ...parsed,
         };
+        if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
+          this.initExpenseSeeds();
+        }
         // Purgar asientos ficticios de ventas con IVA para InnovAgile (empresa no afecta a IVA)
         this.store.entries = this.store.entries.filter(e => {
           const isInnovagile = e.empresaId.includes('76.892.410') || e.empresaId.includes('77.798.901');
@@ -118,6 +133,18 @@ class DiskPersistenceService {
     }
 
     this.isInitialized = true;
+    try {
+      const { inMemoryEntries, inMemoryLines, inMemoryDtesRcv } = require('../db/mysqlClient');
+      if (inMemoryEntries && inMemoryEntries.length === 0 && this.store.entries) {
+        inMemoryEntries.push(...this.store.entries);
+      }
+      if (inMemoryLines && inMemoryLines.length === 0 && this.store.lines) {
+        inMemoryLines.push(...this.store.lines);
+      }
+      if (inMemoryDtesRcv && inMemoryDtesRcv.length === 0 && this.store.dtes) {
+        inMemoryDtesRcv.push(...this.store.dtes);
+      }
+    } catch {}
     return this.store;
   }
 
@@ -368,6 +395,139 @@ class DiskPersistenceService {
         }
       }
 
+      // 6. Proyectos de Rendición de Gastos
+      if (this.store.expenseProjects && this.store.expenseProjects.length > 0) {
+        for (const pry of this.store.expenseProjects) {
+          try {
+            await mysqlDb
+              .insert(expenseProjects)
+              .values({
+                id: pry.id,
+                empresaId: pry.empresaId,
+                codigo: pry.codigo,
+                nombre: pry.nombre,
+                clienteNombre: pry.clienteNombre || null,
+                presupuestoTotalClp: String(pry.presupuestoTotalClp || '0.00'),
+                activo: pry.activo !== false,
+                descripcion: pry.descripcion || null,
+                createdAt: new Date(pry.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: pry.nombre,
+                  presupuestoTotalClp: String(pry.presupuestoTotalClp || '0.00'),
+                  activo: pry.activo !== false,
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
+      // 7. Cabeceras de Rendición de Gastos
+      if (this.store.expenseReports && this.store.expenseReports.length > 0) {
+        for (const rep of this.store.expenseReports) {
+          try {
+            await mysqlDb
+              .insert(expenseReports)
+              .values({
+                id: rep.id,
+                empresaId: rep.empresaId,
+                folio: rep.folio,
+                titulo: rep.titulo,
+                rendidorId: rep.rendidorId || null,
+                rendidorNombre: rep.rendidorNombre,
+                rendidorRut: rep.rendidorRut,
+                rendidorEmail: rep.rendidorEmail || null,
+                rendidorCargo: rep.rendidorCargo || null,
+                centroCostoId: rep.centroCostoId || null,
+                centroCostoCodigo: rep.centroCostoCodigo || null,
+                centroCostoNombre: rep.centroCostoNombre || null,
+                proyectoId: rep.proyectoId || null,
+                proyectoCodigo: rep.proyectoCodigo || null,
+                proyectoNombre: rep.proyectoNombre || null,
+                fondoAsignadoClp: String(rep.fondoAsignadoClp || '0.00'),
+                montoTotalRendidoClp: String(rep.montoTotalRendidoClp || '0.00'),
+                saldoReembolsarClp: String(rep.saldoReembolsarClp || '0.00'),
+                saldoReintegrarClp: String(rep.saldoReintegrarClp || '0.00'),
+                moneda: rep.moneda || 'CLP',
+                estado: rep.estado || 'BORRADOR',
+                fechaInicio: rep.fechaInicio,
+                fechaCierre: rep.fechaCierre,
+                fechaAprobacion: rep.fechaAprobacion || null,
+                fechaPagoReembolso: rep.fechaPagoReembolso || null,
+                aprobadorNombre: rep.aprobadorNombre || null,
+                aprobadorEmail: rep.aprobadorEmail || null,
+                observacionesAprobador: rep.observacionesAprobador || null,
+                asientoContableId: rep.asientoContableId || null,
+                agenteAuditorScore: rep.agenteAuditorScore || 100,
+                agenteAuditorDiagnostico: rep.agenteAuditorDiagnostico || null,
+                createdAt: new Date(rep.createdAt || Date.now()),
+                updatedAt: new Date(rep.updatedAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  estado: rep.estado,
+                  montoTotalRendidoClp: String(rep.montoTotalRendidoClp || '0.00'),
+                  saldoReembolsarClp: String(rep.saldoReembolsarClp || '0.00'),
+                  saldoReintegrarClp: String(rep.saldoReintegrarClp || '0.00'),
+                  observacionesAprobador: rep.observacionesAprobador || null,
+                  asientoContableId: rep.asientoContableId || null,
+                  updatedAt: new Date(),
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
+      // 8. Comprobantes / Ítems de Rendición
+      if (this.store.expenseItems && this.store.expenseItems.length > 0) {
+        for (const item of this.store.expenseItems) {
+          try {
+            await mysqlDb
+              .insert(expenseItems)
+              .values({
+                id: item.id,
+                expenseReportId: item.expenseReportId,
+                empresaId: item.empresaId,
+                fecha: item.fecha,
+                tipoDocumento: item.tipoDocumento,
+                folioDocumento: item.folioDocumento,
+                proveedorRut: item.proveedorRut,
+                proveedorRazonSocial: item.proveedorRazonSocial,
+                categoria: item.categoria,
+                descripcionGlosa: item.descripcionGlosa,
+                montoNeto: String(item.montoNeto || '0.00'),
+                montoIva: String(item.montoIva || '0.00'),
+                montoExento: String(item.montoExento || '0.00'),
+                montoTotalClp: String(item.montoTotalClp || '0.00'),
+                monedaOriginal: item.monedaOriginal || 'CLP',
+                montoOriginal: item.montoOriginal ? String(item.montoOriginal) : null,
+                tipoCambio: String(item.tipoCambio || '1.0000'),
+                centroCostoId: item.centroCostoId || null,
+                centroCostoCodigo: item.centroCostoCodigo || null,
+                proyectoId: item.proyectoId || null,
+                proyectoCodigo: item.proyectoCodigo || null,
+                cuentaContableCodigo: item.cuentaContableCodigo,
+                cuentaContableNombre: item.cuentaContableNombre || null,
+                comprobanteArchivoNombre: item.comprobanteArchivoNombre || null,
+                comprobanteUrl: item.comprobanteUrl || null,
+                comprobantePreviewBase64: item.comprobantePreviewBase64 || null,
+                esGastoRechazadoArt21: Boolean(item.esGastoRechazadoArt21),
+                validadoPorAgente: Boolean(item.validadoPorAgente),
+                observacionAgente: item.observacionAgente || null,
+                createdAt: new Date(item.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  descripcionGlosa: item.descripcionGlosa,
+                  montoTotalClp: String(item.montoTotalClp || '0.00'),
+                  cuentaContableCodigo: item.cuentaContableCodigo,
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
       console.log(`[DiskPersistence] Sincronización a MySQL 8.0 completada: ${syncedEntries} asientos, ${syncedDtes} DTEs.`);
     } catch (syncErr: any) {
       console.warn(`[DiskPersistence] Aviso en sync a MySQL: ${syncErr.message}`);
@@ -451,6 +611,10 @@ class DiskPersistenceService {
 
   public getLinesForEntry(entryId: string): any[] {
     return this.store.lines.filter((l) => l.entryId === entryId);
+  }
+
+  public getAllLines(): any[] {
+    return this.store.lines || [];
   }
 
   public addDte(dte: any) {
@@ -585,6 +749,9 @@ class DiskPersistenceService {
     employeesCount: number;
     costCentersCount: number;
     fixedAssetsCount: number;
+    expenseReportsCount: number;
+    expenseItemsCount: number;
+    expenseProjectsCount: number;
     mysqlActive: boolean;
   } {
     let size = 0;
@@ -604,8 +771,461 @@ class DiskPersistenceService {
       employeesCount: this.store.employees.length,
       costCentersCount: (this.store.costCenters || []).length,
       fixedAssetsCount: (this.store.fixedAssets || []).length,
+      expenseReportsCount: (this.store.expenseReports || []).length,
+      expenseItemsCount: (this.store.expenseItems || []).length,
+      expenseProjectsCount: (this.store.expenseProjects || []).length,
       mysqlActive: isRealMysqlConnected,
     };
+  }
+
+  // ==========================================================================
+  // MÓDULO RENDICIÓN DE GASTOS ("RINDE GASTOS AI"): CRUD EN DISCO CON CERO MOCKS
+  // ==========================================================================
+
+  public getExpenseReports(empresaId?: string): any[] {
+    let result = this.store.expenseReports || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      const filtered = result.filter((r) => {
+        const rNorm = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !r.empresaId ||
+          r.empresaId === empresaId ||
+          rNorm === norm ||
+          r.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+      return filtered.length > 0 ? filtered : result;
+    }
+    return result;
+  }
+
+  public updateExpenseReport(id: string, partial: any): boolean {
+    if (!this.store.expenseReports) return false;
+    const report = this.store.expenseReports.find((r) => r.id === id);
+    if (!report) return false;
+    Object.assign(report, partial, {
+      updatedAt: new Date().toISOString(),
+    });
+    this.scheduleFlush();
+    return true;
+  }
+
+  public saveExpenseReport(report: any) {
+    if (!this.store.expenseReports) this.store.expenseReports = [];
+    const idx = this.store.expenseReports.findIndex((r) => r.id === report.id);
+    if (idx >= 0) {
+      this.store.expenseReports[idx] = {
+        ...this.store.expenseReports[idx],
+        ...report,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      this.store.expenseReports.unshift({
+        ...report,
+        createdAt: report.createdAt || new Date().toISOString(),
+        updatedAt: report.updatedAt || new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public updateExpenseReportStatus(
+    id: string,
+    estado: string,
+    observacionesAprobador?: string,
+    aprobadorNombre?: string,
+    asientoContableId?: string
+  ): boolean {
+    if (!this.store.expenseReports) return false;
+    const report = this.store.expenseReports.find((r) => r.id === id);
+    if (!report) return false;
+
+    report.estado = estado;
+    report.updatedAt = new Date().toISOString();
+    if (observacionesAprobador !== undefined) report.observacionesAprobador = observacionesAprobador;
+    if (aprobadorNombre !== undefined) report.aprobadorNombre = aprobadorNombre;
+    if (asientoContableId !== undefined) report.asientoContableId = asientoContableId;
+
+    if (estado === 'APROBADA') {
+      report.fechaAprobacion = new Date().toISOString().substring(0, 10);
+    } else if (estado === 'CONTABILIZADA_PAGADA') {
+      report.fechaPagoReembolso = new Date().toISOString().substring(0, 10);
+    }
+
+    this.scheduleFlush();
+    return true;
+  }
+
+  public getExpenseItems(reportId?: string, empresaId?: string): any[] {
+    let result = this.store.expenseItems || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((i) => {
+        const iNorm = (i.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !i.empresaId ||
+          i.empresaId === empresaId ||
+          iNorm === norm ||
+          i.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+    }
+    if (reportId) {
+      result = result.filter((i) => i.expenseReportId === reportId);
+    }
+    return result;
+  }
+
+  public addExpenseItem(item: any) {
+    if (!this.store.expenseItems) this.store.expenseItems = [];
+    const idx = this.store.expenseItems.findIndex((i) => i.id === item.id);
+    if (idx >= 0) {
+      this.store.expenseItems[idx] = { ...this.store.expenseItems[idx], ...item };
+    } else {
+      this.store.expenseItems.unshift({
+        ...item,
+        createdAt: item.createdAt || new Date().toISOString(),
+      });
+    }
+
+    // Recalcular montos consolidados de la rendición
+    const reportId = item.expenseReportId;
+    const report = (this.store.expenseReports || []).find((r) => r.id === reportId);
+    if (report) {
+      const itemsOfReport = this.store.expenseItems.filter((i) => i.expenseReportId === reportId);
+      const totalRendido = itemsOfReport.reduce((acc, it) => acc + Number(it.montoTotalClp || 0), 0);
+      const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+      report.montoTotalRendidoClp = totalRendido;
+      report.saldoReembolsarClp = Math.max(0, totalRendido - fondoAnticipo);
+      report.saldoReintegrarClp = Math.max(0, fondoAnticipo - totalRendido);
+      report.updatedAt = new Date().toISOString();
+    }
+
+    this.scheduleFlush();
+  }
+
+  public deleteExpenseItem(itemId: string): boolean {
+    if (!this.store.expenseItems) return false;
+    const idx = this.store.expenseItems.findIndex((i) => i.id === itemId);
+    if (idx === -1) return false;
+
+    const item = this.store.expenseItems[idx];
+    const reportId = item.expenseReportId;
+    this.store.expenseItems.splice(idx, 1);
+
+    const report = (this.store.expenseReports || []).find((r) => r.id === reportId);
+    if (report) {
+      const itemsOfReport = this.store.expenseItems.filter((i) => i.expenseReportId === reportId);
+      const totalRendido = itemsOfReport.reduce((acc, it) => acc + Number(it.montoTotalClp || 0), 0);
+      const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+      report.montoTotalRendidoClp = totalRendido;
+      report.saldoReembolsarClp = Math.max(0, totalRendido - fondoAnticipo);
+      report.saldoReintegrarClp = Math.max(0, fondoAnticipo - totalRendido);
+      report.updatedAt = new Date().toISOString();
+    }
+
+    this.scheduleFlush();
+    return true;
+  }
+
+  public getExpenseProjects(empresaId?: string): any[] {
+    let result = this.store.expenseProjects || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((p) => {
+        const pNorm = (p.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !p.empresaId ||
+          p.empresaId === empresaId ||
+          pNorm === norm ||
+          p.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+    }
+    return result;
+  }
+
+  public createExpenseProject(project: any) {
+    if (!this.store.expenseProjects) this.store.expenseProjects = [];
+    const idx = this.store.expenseProjects.findIndex(
+      (p) => p.id === project.id || (p.codigo === project.codigo && p.empresaId === project.empresaId)
+    );
+    if (idx >= 0) {
+      this.store.expenseProjects[idx] = { ...this.store.expenseProjects[idx], ...project };
+    } else {
+      this.store.expenseProjects.push({
+        ...project,
+        createdAt: project.createdAt || new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public initExpenseSeeds() {
+    this.store.expenseProjects = [
+      {
+        id: 'pry-01',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-QUELLON-26',
+        nombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        clienteNombre: 'Salmones Antártica S.A.',
+        presupuestoTotalClp: 45000000,
+        activo: true,
+        descripcion: 'Servicio integral de instalación de fondeos y redes loberas.',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'pry-02',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-STGO-EXP',
+        nombre: 'Expansión Comercial & Distribución Retail Santiago',
+        clienteNombre: 'Cencosud / Walmart Chile',
+        presupuestoTotalClp: 25000000,
+        activo: true,
+        descripcion: 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'pry-03',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-LOG-FLOTA',
+        nombre: 'Habilitación Barcazas y Motores Fuera de Borda',
+        clienteNombre: 'Interno Flota Austral',
+        presupuestoTotalClp: 18000000,
+        activo: true,
+        descripcion: 'Overhaul mecánico preventivo de barcazas Don Víctor y Mar Austral II.',
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    this.store.expenseReports = [
+      {
+        id: 'rdg-001',
+        empresaId: 'client-retail-01',
+        folio: 'RDG-2026-001',
+        titulo: 'Visita Técnica Clientes Salmoaustral y Supervisión Centro Dalcahue',
+        rendidorId: 'emp-001',
+        rendidorNombre: 'Gonzalo Silva Valenzuela',
+        rendidorRut: '14.238.192-8',
+        rendidorEmail: 'gonzalo.silva@maraustral.cl',
+        rendidorCargo: 'Supervisor Comercial & Operaciones',
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        centroCostoNombre: 'Ventas & Distribución Zona Central',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        fondoAsignadoClp: 150000,
+        montoTotalRendidoClp: 184500,
+        saldoReembolsarClp: 34500,
+        saldoReintegrarClp: 0,
+        moneda: 'CLP',
+        estado: 'PENDIENTE_APROBACION',
+        fechaInicio: '2026-09-24',
+        fechaCierre: '2026-09-28',
+        fechaAprobacion: null,
+        aprobadorNombre: 'Carla Morales Troncoso',
+        agenteAuditorScore: 95,
+        agenteAuditorDiagnostico: {
+          calificacion: 'APROBADO_LIMPIO',
+          scoreGlobal: 95,
+          totalComprobantesValidos: 4,
+          totalComprobantesObjetados: 0,
+          montoIvaCreditoRecuperable: 16150,
+          montoGastoRechazadoArt21: 0,
+          alertas: [],
+          recomendaciones: ['Gasto de combustible rendido con boleta. Se sugiere solicitar Factura para recuperar IVA Crédito.'],
+          verificacionRutDuplicados: true,
+          resumenTributario: 'Comprobantes íntegros con respaldo fidedigno Art. 31 LIR. Saldo a reembolsar: $34.500 CLP.',
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'rdg-002',
+        empresaId: 'client-retail-01',
+        folio: 'RDG-2026-002',
+        titulo: 'Adquisición de Insumos y Repuestos Urgentes Maestranza Quellón',
+        rendidorId: 'emp-002',
+        rendidorNombre: 'Ing. Rodrigo Cárdenas Soto',
+        rendidorRut: '13.914.882-K',
+        rendidorEmail: 'rodrigo.cardenas@maraustral.cl',
+        rendidorCargo: 'Jefe de Planta Quellón',
+        centroCostoId: 'cc-03',
+        centroCostoCodigo: 'CC-PRD-QUELLON',
+        centroCostoNombre: 'Planta Fabril & Maestranza Quellón',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        fondoAsignadoClp: 200000,
+        montoTotalRendidoClp: 165000,
+        saldoReembolsarClp: 0,
+        saldoReintegrarClp: 35000,
+        moneda: 'CLP',
+        estado: 'APROBADA',
+        fechaInicio: '2026-09-15',
+        fechaCierre: '2026-09-18',
+        fechaAprobacion: '2026-09-20',
+        aprobadorNombre: 'Carla Morales Troncoso',
+        agenteAuditorScore: 100,
+        agenteAuditorDiagnostico: {
+          calificacion: 'APROBADO_LIMPIO',
+          scoreGlobal: 100,
+          totalComprobantesValidos: 2,
+          totalComprobantesObjetados: 0,
+          montoIvaCreditoRecuperable: 26345,
+          montoGastoRechazadoArt21: 0,
+          alertas: [],
+          recomendaciones: [],
+          verificacionRutDuplicados: true,
+          resumenTributario: 'Aprobado por jefatura. El colaborador debe reintegrar $35.000 a la cuenta corriente de la empresa.',
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    this.store.expenseItems = [
+      {
+        id: 'item-01',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-25',
+        tipoDocumento: 'BOLETA_ELECTRONICA',
+        folioDocumento: 'B-481920',
+        proveedorRut: '99.520.000-7',
+        proveedorRazonSocial: 'Compañía de Petróleos de Chile COPEC S.A.',
+        categoria: 'COMBUSTIBLE',
+        descripcionGlosa: 'Carga de Diesel camioneta terreno traslado Chiloé',
+        montoNeto: 37815,
+        montoIva: 7185,
+        montoExento: 0,
+        montoTotalClp: 45000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.009',
+        cuentaContableNombre: 'Combustibles & Lubricantes',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-02',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-26',
+        tipoDocumento: 'FACTURA_ELECTRONICA_33',
+        folioDocumento: '91283',
+        proveedorRut: '76.128.490-2',
+        proveedorRazonSocial: 'Hotelera & Turismo del Sur SpA (Hotel Castro)',
+        categoria: 'ALOJAMIENTO',
+        descripcionGlosa: 'Hospedaje 2 noches personal técnico en terreno',
+        montoNeto: 85000,
+        montoIva: 16150,
+        montoExento: 0,
+        montoTotalClp: 101150,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.007',
+        cuentaContableNombre: 'Alojamiento & Estadía Terreno',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-03',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-26',
+        tipoDocumento: 'BOLETA_ELECTRONICA',
+        folioDocumento: 'B-12839',
+        proveedorRut: '77.819.200-5',
+        proveedorRazonSocial: 'Restaurante Rincón Chilote Castro',
+        categoria: 'ALIMENTACION',
+        descripcionGlosa: 'Cena y almuerzo en terreno durante supervisión',
+        montoNeto: 23824,
+        montoIva: 4526,
+        montoExento: 0,
+        montoTotalClp: 28350,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.006',
+        cuentaContableNombre: 'Gastos de Alimentación & Viáticos',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-04',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-27',
+        tipoDocumento: 'TICKET_PEAJE',
+        folioDocumento: 'TAG-98124',
+        proveedorRut: '96.812.390-1',
+        proveedorRazonSocial: 'Sociedad Concesionaria Ruta del Canal S.A.',
+        categoria: 'PEAJES_ESTACIONAMIENTOS',
+        descripcionGlosa: 'Peajes y transbordo canal de Chacao ida y vuelta',
+        montoNeto: 0,
+        montoIva: 0,
+        montoExento: 10000,
+        montoTotalClp: 10000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.010',
+        cuentaContableNombre: 'Peajes & Tag Autopistas',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-05',
+        expenseReportId: 'rdg-002',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-16',
+        tipoDocumento: 'FACTURA_ELECTRONICA_33',
+        folioDocumento: 'F-78192',
+        proveedorRut: '76.992.110-3',
+        proveedorRazonSocial: 'Ferretería Industrial Austral Ltda.',
+        categoria: 'MATERIALES_INSUMOS',
+        descripcionGlosa: 'Pernos de acero inox 316 y electrodos para balsas',
+        montoNeto: 138655,
+        montoIva: 26345,
+        montoExento: 0,
+        montoTotalClp: 165000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-03',
+        centroCostoCodigo: 'CC-PRD-QUELLON',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.1.02.001',
+        cuentaContableNombre: 'Materiales Menores & Consumibles',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+    ];
   }
 
   /**

@@ -12,6 +12,7 @@ import { asyncJobsRouter } from "./src/controllers/asyncJobsController";
 import { sseJobRouter } from "./src/routes/sseJobRoutes";
 import { siiRcvRouter } from "./src/controllers/siiRcvController";
 import { payrollRouter } from "./src/controllers/payrollController";
+import { expenseReportsRouter } from "./src/controllers/expenseReportsController";
 import { billingDteRouter } from "./src/controllers/billingDteController";
 import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
 import { SiiPlaywrightRunner } from "./src/services/siiPlaywrightRunner";
@@ -1339,6 +1340,9 @@ app.use("/api/rcv", siiRcvRouter);
 
 // RUTAS DE NÓMINA Y REMUNERACIONES (CÓDIGO DEL TRABAJO / PREVIRED)
 app.use("/api/payroll", payrollRouter);
+
+// RUTAS DE RENDICIÓN DE GASTOS (RINDE GASTOS AI - MYSQL 8.0)
+app.use("/api/expenses", expenseReportsRouter);
 
 // RUTAS DE FACTURACIÓN ELECTRÓNICA HTTP-DTE / LIBREDTE (SII CHILE)
 app.use("/api/billing", billingDteRouter);

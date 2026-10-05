@@ -279,43 +279,99 @@ export const inMemoryAgentLearnings: any[] = [
 
 export let isRealMysqlConnected = false;
 
-// Adaptador de contingencia con soporte transaccional y compatibilidad de tipos
+// ============================================================================
+// ADAPTADOR DE CONTINGENCIA COMPATIBLE CON DRIZZLE ORM Y PERSISTENCIA EN DISCO
+// ============================================================================
+function extractIdFromCondition(condition: any): string | null {
+  if (!condition) return null;
+  if (condition.value !== undefined) return String(condition.value);
+  if (condition.right !== undefined) {
+    if (condition.right.value !== undefined) return String(condition.right.value);
+    return String(condition.right);
+  }
+  return null;
+}
+
 const mockTx: any = {
   insert: (table: any) => ({
     values: (val: any) => {
+      const rows = Array.isArray(val) ? val : [val];
       const exec = async () => {
         if (table === schema.economicIndicators) {
-          const nextId = inMemoryIndicators.length + 1;
-          inMemoryIndicators.push({ ...val, id: nextId, createdAt: new Date() });
-          return [{ insertId: nextId }];
+          for (const item of rows) {
+            const nextId = inMemoryIndicators.length + 1;
+            inMemoryIndicators.push({ ...item, id: nextId, createdAt: new Date() });
+          }
+          return rows.map((r) => ({ insertId: r.id || 1, ...r }));
         }
+
         if (table === schema.accountingEntries) {
-          inMemoryEntries.push({ ...val, createdAt: new Date() });
-          diskPersistence.addAccountingEntry({ ...val }, []);
-          return [{ insertId: val.id }];
+          for (const item of rows) {
+            const existingIdx = inMemoryEntries.findIndex((e) => e.id === item.id);
+            if (existingIdx >= 0) {
+              inMemoryEntries[existingIdx] = { ...inMemoryEntries[existingIdx], ...item };
+            } else {
+              inMemoryEntries.unshift({ ...item, createdAt: item.createdAt || new Date() });
+            }
+            diskPersistence.addAccountingEntry({ ...item }, []);
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
         }
+
         if (table === schema.accountingEntryLines) {
-          if (Array.isArray(val)) {
-            val.forEach((item, idx) => {
-              const line = { ...item, id: item.id || `line-${Date.now()}-${idx}` };
-              inMemoryLines.push(line);
-              diskPersistence.getLinesForEntry(line.entryId).push(line);
-            });
-          } else {
-            const line = { ...val, id: val.id || `line-${Date.now()}` };
-            inMemoryLines.push(line);
-            diskPersistence.getLinesForEntry(line.entryId).push(line);
+          for (const line of rows) {
+            const fullLine = { ...line, id: line.id || `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}` };
+            inMemoryLines.push(fullLine);
+            const entryLines = diskPersistence.getLinesForEntry(fullLine.entryId);
+            entryLines.push(fullLine);
           }
           diskPersistence.scheduleFlush();
-          return [{ insertId: 1 }];
+          return rows;
         }
+
         if (table === schema.agentAuditLogs) {
-          inMemoryAuditLogs.push({ ...val, createdAt: new Date() });
-          diskPersistence.addAuditLog({ ...val });
-          return [{ insertId: val.id }];
+          for (const log of rows) {
+            const fullLog = { ...log, id: log.id || `log-${Date.now()}`, createdAt: new Date() };
+            inMemoryAuditLogs.push(fullLog);
+            diskPersistence.addAuditLog(fullLog);
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
         }
+
+        if (table === schema.expenseReports) {
+          for (const rep of rows) {
+            diskPersistence.saveExpenseReport({
+              ...rep,
+              fondoAsignadoClp: Number(rep.fondoAsignadoClp || 0),
+              montoTotalRendidoClp: Number(rep.montoTotalRendidoClp || 0),
+              saldoReembolsarClp: Number(rep.saldoReembolsarClp || 0),
+              saldoReintegrarClp: Number(rep.saldoReintegrarClp || 0),
+            });
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
+        }
+
+        if (table === schema.expenseItems) {
+          for (const item of rows) {
+            diskPersistence.addExpenseItem({
+              ...item,
+              montoNeto: Number(item.montoNeto || 0),
+              montoIva: Number(item.montoIva || 0),
+              montoExento: Number(item.montoExento || 0),
+              montoTotalClp: Number(item.montoTotalClp || 0),
+            });
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
+        }
+
+        if (table === schema.expenseProjects) {
+          for (const pry of rows) {
+            diskPersistence.createExpenseProject({ ...pry });
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
+        }
+
         if (table === schema.dtesRcv) {
-          const rows = Array.isArray(val) ? val : [val];
           for (const row of rows) {
             const existingIdx = inMemoryDtesRcv.findIndex(
               (d) =>
@@ -332,82 +388,217 @@ const mockTx: any = {
             }
             diskPersistence.addDte(row);
           }
-          return [{ insertId: 1 }];
+          return rows.map((r) => ({ insertId: r.id, ...r }));
         }
+
         if (table === schema.companyAgentConfigs) {
-          const existingIdx = inMemoryAgentConfigs.findIndex(
-            (c) => c.empresaId === val.empresaId && c.moduloCodigo === val.moduloCodigo
-          );
-          if (existingIdx >= 0) {
-            inMemoryAgentConfigs[existingIdx] = { ...inMemoryAgentConfigs[existingIdx], ...val, updatedAt: new Date() };
-          } else {
-            inMemoryAgentConfigs.push({ ...val, updatedAt: new Date() });
+          for (const item of rows) {
+            const existingIdx = inMemoryAgentConfigs.findIndex(
+              (c) => c.empresaId === item.empresaId && c.moduloCodigo === item.moduloCodigo
+            );
+            if (existingIdx >= 0) {
+              inMemoryAgentConfigs[existingIdx] = { ...inMemoryAgentConfigs[existingIdx], ...item, updatedAt: new Date() };
+            } else {
+              inMemoryAgentConfigs.push({ ...item, updatedAt: new Date() });
+            }
           }
-          return [{ insertId: val.id }];
+          return rows.map((r) => ({ insertId: r.id, ...r }));
         }
+
         if (table === schema.agentLearnings) {
-          inMemoryAgentLearnings.push({ ...val, createdAt: new Date() });
-          return [{ insertId: val.id }];
+          for (const item of rows) {
+            inMemoryAgentLearnings.push({ ...item, createdAt: new Date() });
+          }
+          return rows.map((r) => ({ insertId: r.id, ...r }));
         }
-        return [{ insertId: 1 }];
+
+        return rows.map((r) => ({ insertId: r.id || 1, ...r }));
       };
-      return {
-        $returningId: () => ({ id: val.id || 1 }),
-        onDuplicateKeyUpdate: () => ({ execute: exec }),
+
+      const queryObj: any = {
+        $returningId: () => ({ id: val?.id || 1 }),
+        onDuplicateKeyUpdate: () => queryObj,
+        returning: async () => {
+          await exec();
+          return rows;
+        },
         execute: exec,
+        then: (onfulfilled?: any, onrejected?: any) => exec().then(onfulfilled, onrejected),
+      };
+
+      return queryObj;
+    },
+  }),
+
+  update: (table: any) => ({
+    set: (updateValues: any) => {
+      let whereCondition: any = null;
+
+      const exec = async () => {
+        const targetId = extractIdFromCondition(whereCondition);
+
+        if (table === schema.expenseReports) {
+          const reports = diskPersistence.getExpenseReports();
+          for (const r of reports) {
+            if (!targetId || r.id === targetId) {
+              Object.assign(r, updateValues, {
+                updatedAt: updateValues.updatedAt instanceof Date ? updateValues.updatedAt.toISOString() : (updateValues.updatedAt || new Date().toISOString()),
+              });
+              if (updateValues.estado === 'APROBADA' && !r.fechaAprobacion) {
+                r.fechaAprobacion = new Date().toISOString().substring(0, 10);
+              } else if (updateValues.estado === 'CONTABILIZADA_PAGADA' && !r.fechaPagoReembolso) {
+                r.fechaPagoReembolso = new Date().toISOString().substring(0, 10);
+              }
+            }
+          }
+          diskPersistence.scheduleFlush();
+          return [{ affectedRows: 1 }];
+        }
+
+        if (table === schema.accountingEntries) {
+          const entries = diskPersistence.getAccountingEntries();
+          for (const e of entries) {
+            if (!targetId || e.id === targetId) {
+              Object.assign(e, updateValues);
+            }
+          }
+          for (const e of inMemoryEntries) {
+            if (!targetId || e.id === targetId) {
+              Object.assign(e, updateValues);
+            }
+          }
+          diskPersistence.scheduleFlush();
+          return [{ affectedRows: 1 }];
+        }
+
+        if (table === schema.dtesRcv) {
+          const dtes = diskPersistence.getDtes();
+          for (const d of dtes) {
+            if (!targetId || d.id === targetId) {
+              Object.assign(d, updateValues);
+            }
+          }
+          for (const d of inMemoryDtesRcv) {
+            if (!targetId || d.id === targetId) {
+              Object.assign(d, updateValues);
+            }
+          }
+          diskPersistence.scheduleFlush();
+          return [{ affectedRows: 1 }];
+        }
+
+        return [{ affectedRows: 1 }];
+      };
+
+      const updateBuilder: any = {
+        where: (cond: any) => {
+          whereCondition = cond;
+          return updateBuilder;
+        },
+        returning: async () => {
+          await exec();
+          return [updateValues];
+        },
+        execute: exec,
+        then: (onfulfilled?: any, onrejected?: any) => exec().then(onfulfilled, onrejected),
+      };
+
+      return updateBuilder;
+    },
+  }),
+
+  delete: (table: any) => ({
+    where: (condition: any) => {
+      const exec = async () => {
+        const targetId = extractIdFromCondition(condition);
+
+        if (table === schema.expenseItems && targetId) {
+          diskPersistence.deleteExpenseItem(targetId);
+        }
+        if (table === schema.expenseReports && targetId) {
+          const reports = diskPersistence.getExpenseReports();
+          const idx = reports.findIndex((r: any) => r.id === targetId);
+          if (idx >= 0) {
+            reports.splice(idx, 1);
+            diskPersistence.scheduleFlush();
+          }
+        }
+        return [{ affectedRows: 1 }];
+      };
+
+      return {
+        execute: exec,
+        then: (onfulfilled?: any, onrejected?: any) => exec().then(onfulfilled, onrejected),
       };
     },
   }),
+
   select: () => ({
-    from: (table: any) => ({
-      where: (_condition: any) => ({
-        orderBy: () => ({
-          limit: async (num: number) => {
-            if (table === schema.economicIndicators) {
-              return inMemoryIndicators.slice(-num);
-            }
-            if (table === schema.dtesRcv) {
-              return inMemoryDtesRcv.slice(-num);
-            }
-            if (table === schema.agentLearnings) {
-              return inMemoryAgentLearnings.slice(-num);
-            }
-            return [];
-          },
-        }),
-        limit: async (_limit: number) => {
-          if (table === schema.economicIndicators) {
-            return inMemoryIndicators;
-          }
-          if (table === schema.dtesRcv) {
-            return inMemoryDtesRcv;
-          }
-          if (table === schema.companyAgentConfigs) {
-            return inMemoryAgentConfigs;
-          }
-          if (table === schema.agentLearnings) {
-            return inMemoryAgentLearnings;
-          }
-          return [];
+    from: (table: any) => {
+      let whereCondition: any = null;
+      let limitNum: number | null = null;
+
+      const getSourceData = () => {
+        if (table === schema.economicIndicators) return inMemoryIndicators;
+        if (table === schema.accountingEntries) {
+          const diskList = diskPersistence.getAccountingEntries();
+          return diskList.length > 0 ? diskList : inMemoryEntries;
+        }
+        if (table === schema.accountingEntryLines) {
+          return diskPersistence.getAllLines ? diskPersistence.getAllLines() : inMemoryLines;
+        }
+        if (table === schema.expenseReports) return diskPersistence.getExpenseReports();
+        if (table === schema.expenseItems) return diskPersistence.getExpenseItems();
+        if (table === schema.expenseProjects) return diskPersistence.getExpenseProjects();
+        if (table === schema.dtesRcv) {
+          const diskDtes = diskPersistence.getDtes();
+          return diskDtes.length > 0 ? diskDtes : inMemoryDtesRcv;
+        }
+        if (table === schema.companyAgentConfigs) return inMemoryAgentConfigs;
+        if (table === schema.agentLearnings) return inMemoryAgentLearnings;
+        return [];
+      };
+
+      const exec = async () => {
+        let result = [...getSourceData()];
+        const targetId = extractIdFromCondition(whereCondition);
+
+        if (targetId) {
+          result = result.filter((item: any) => {
+            return (
+              item.id === targetId ||
+              item.empresaId === targetId ||
+              item.expenseReportId === targetId ||
+              item.entryId === targetId ||
+              item.codigo === targetId
+            );
+          });
+        }
+
+        if (limitNum !== null && limitNum > 0) {
+          result = result.slice(0, limitNum);
+        }
+
+        return result;
+      };
+
+      const selectBuilder: any = {
+        where: (cond: any) => {
+          whereCondition = cond;
+          return selectBuilder;
         },
-        groupBy: () => ({
-          execute: async () => {
-            if (table === schema.dtesRcv) {
-              return inMemoryDtesRcv;
-            }
-            return [];
-          },
-        }),
-        execute: async () => {
-          if (table === schema.economicIndicators) return inMemoryIndicators;
-          if (table === schema.accountingEntries) return inMemoryEntries;
-          if (table === schema.dtesRcv) return inMemoryDtesRcv;
-          if (table === schema.companyAgentConfigs) return inMemoryAgentConfigs;
-          if (table === schema.agentLearnings) return inMemoryAgentLearnings;
-          return [];
+        orderBy: () => selectBuilder,
+        limit: (n: number) => {
+          limitNum = n;
+          return selectBuilder;
         },
-      }),
-    }),
+        groupBy: () => selectBuilder,
+        execute: exec,
+        then: (onfulfilled?: any, onrejected?: any) => exec().then(onfulfilled, onrejected),
+      };
+
+      return selectBuilder;
+    },
   }),
 };
 
@@ -508,6 +699,176 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
       const { initializeMysqlDatabase } = await import('../scripts/initMysqlDb');
       await initializeMysqlDatabase();
     }
+
+    // Auto-verificación de tablas de Rendición de Gastos (RindeGastos)
+    try {
+      const [expenseRows]: [any[], any] = await connection.query("SHOW TABLES LIKE 'expense_reports';");
+      if (!expenseRows || expenseRows.length === 0) {
+        console.log('[MySQL 8.0] Tablas de Rendición de Gastos (RindeGastos) no encontradas. Creando automáticamente DDL...');
+        await connection.query(`
+          CREATE TABLE IF NOT EXISTS \`expense_projects\` (
+            \`id\` VARCHAR(36) NOT NULL,
+            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`codigo\` VARCHAR(50) NOT NULL,
+            \`nombre\` VARCHAR(200) NOT NULL,
+            \`cliente_nombre\` VARCHAR(200) NULL,
+            \`presupuesto_total_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`activo\` BOOLEAN NOT NULL DEFAULT TRUE,
+            \`descripcion\` TEXT NULL,
+            \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+            PRIMARY KEY (\`id\`),
+            UNIQUE KEY \`uq_expense_project_empresa_codigo\` (\`empresa_id\`, \`codigo\`),
+            KEY \`idx_expense_project_empresa\` (\`empresa_id\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        await connection.query(`
+          CREATE TABLE IF NOT EXISTS \`expense_reports\` (
+            \`id\` VARCHAR(36) NOT NULL,
+            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`folio\` VARCHAR(50) NOT NULL,
+            \`titulo\` VARCHAR(255) NOT NULL,
+            \`rendidor_id\` VARCHAR(36) NULL,
+            \`rendidor_nombre\` VARCHAR(200) NOT NULL,
+            \`rendidor_rut\` VARCHAR(20) NOT NULL,
+            \`rendidor_email\` VARCHAR(255) NULL,
+            \`rendidor_cargo\` VARCHAR(150) NULL,
+            \`centro_costo_id\` VARCHAR(36) NULL,
+            \`centro_costo_codigo\` VARCHAR(50) NULL,
+            \`centro_costo_nombre\` VARCHAR(200) NULL,
+            \`proyecto_id\` VARCHAR(36) NULL,
+            \`proyecto_codigo\` VARCHAR(50) NULL,
+            \`proyecto_nombre\` VARCHAR(200) NULL,
+            \`fondo_asignado_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`monto_total_rendido_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`saldo_reembolsar_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`saldo_reintegrar_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`moneda\` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+            \`estado\` VARCHAR(40) NOT NULL DEFAULT 'BORRADOR',
+            \`fecha_inicio\` DATE NOT NULL,
+            \`fecha_cierre\` DATE NOT NULL,
+            \`fecha_aprobacion\` DATE NULL,
+            \`fecha_pago_reembolso\` DATE NULL,
+            \`aprobador_nombre\` VARCHAR(200) NULL,
+            \`aprobador_email\` VARCHAR(255) NULL,
+            \`observaciones_aprobador\` TEXT NULL,
+            \`asiento_contable_id\` VARCHAR(36) NULL,
+            \`agente_auditor_score\` INT NOT NULL DEFAULT 100,
+            \`agente_auditor_diagnostico\` JSON NULL,
+            \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+            \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+            PRIMARY KEY (\`id\`),
+            UNIQUE KEY \`uq_expense_report_empresa_folio\` (\`empresa_id\`, \`folio\`),
+            KEY \`idx_expense_report_empresa_estado\` (\`empresa_id\`, \`estado\`),
+            KEY \`idx_expense_report_rendidor\` (\`empresa_id\`, \`rendidor_rut\`),
+            KEY \`idx_expense_report_cc\` (\`centro_costo_id\`),
+            KEY \`idx_expense_report_proyecto\` (\`proyecto_id\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        await connection.query(`
+          CREATE TABLE IF NOT EXISTS \`expense_items\` (
+            \`id\` VARCHAR(36) NOT NULL,
+            \`expense_report_id\` VARCHAR(36) NOT NULL,
+            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`fecha\` DATE NOT NULL,
+            \`tipo_documento\` VARCHAR(50) NOT NULL,
+            \`folio_documento\` VARCHAR(100) NOT NULL,
+            \`proveedor_rut\` VARCHAR(20) NOT NULL,
+            \`proveedor_razon_social\` VARCHAR(255) NOT NULL,
+            \`categoria\` VARCHAR(50) NOT NULL,
+            \`descripcion_glosa\` VARCHAR(255) NOT NULL,
+            \`monto_neto\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`monto_iva\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`monto_exento\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`monto_total_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            \`moneda_original\` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+            \`monto_original\` DECIMAL(15, 2) NULL,
+            \`tipo_cambio\` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
+            \`centro_costo_id\` VARCHAR(36) NULL,
+            \`centro_costo_codigo\` VARCHAR(50) NULL,
+            \`proyecto_id\` VARCHAR(36) NULL,
+            \`proyecto_codigo\` VARCHAR(50) NULL,
+            \`cuenta_contable_codigo\` VARCHAR(50) NOT NULL,
+            \`cuenta_contable_nombre\` VARCHAR(150) NULL,
+            \`comprobante_archivo_nombre\` VARCHAR(255) NULL,
+            \`comprobante_url\` TEXT NULL,
+            \`comprobante_preview_base64\` MEDIUMTEXT NULL,
+            \`es_gasto_rechazado_art21\` BOOLEAN NOT NULL DEFAULT FALSE,
+            \`validado_por_agente\` BOOLEAN NOT NULL DEFAULT TRUE,
+            \`observacion_agente\` VARCHAR(255) NULL,
+            \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+            PRIMARY KEY (\`id\`),
+            KEY \`idx_expense_item_report\` (\`expense_report_id\`),
+            KEY \`idx_expense_item_empresa_fecha\` (\`empresa_id\`, \`fecha\`),
+            KEY \`idx_expense_item_proveedor\` (\`proveedor_rut\`),
+            KEY \`idx_expense_item_cuenta\` (\`cuenta_contable_codigo\`),
+            CONSTRAINT \`fk_expense_item_report\` FOREIGN KEY (\`expense_report_id\`) REFERENCES \`expense_reports\` (\`id\`) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        console.log('[MySQL 8.0] Tablas expense_projects, expense_reports y expense_items inicializadas con éxito.');
+      }
+
+      // Comprobar e insertar semillas si la tabla expense_reports está vacía
+      try {
+        const [repCount]: [any[], any] = await connection.query("SELECT COUNT(*) as cnt FROM `expense_reports`;");
+        if (!repCount || repCount[0]?.cnt === 0) {
+          console.log('[MySQL 8.0] Insertando datos reales de Rendición de Gastos (proyectos, rendiciones y comprobantes)...');
+          await connection.query(`
+            INSERT IGNORE INTO \`expense_projects\` (\`id\`, \`empresa_id\`, \`codigo\`, \`nombre\`, \`cliente_nombre\`, \`presupuesto_total_clp\`, \`activo\`, \`descripcion\`, \`created_at\`)
+            VALUES
+            ('pry-01', 'client-retail-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón', 'Salmones Antártica S.A.', 45000000.00, TRUE, 'Servicio integral de instalación de fondeos y redes loberas.', NOW()),
+            ('pry-02', 'client-retail-01', 'PRY-STGO-EXP', 'Expansión Comercial & Distribución Retail Santiago', 'Cencosud / Walmart Chile', 25000000.00, TRUE, 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.', NOW()),
+            ('pry-03', 'client-retail-01', 'PRY-LOG-FLOTA', 'Habilitación Barcazas y Motores Fuera de Borda', 'Interno Flota Austral', 18000000.00, TRUE, 'Overhaul mecánico preventivo de barcazas Don Víctor y Mar Austral II.', NOW());
+          `);
+          await connection.query(`
+            INSERT IGNORE INTO \`expense_reports\` (
+              \`id\`, \`empresa_id\`, \`folio\`, \`titulo\`, \`rendidor_id\`, \`rendidor_nombre\`, \`rendidor_rut\`, \`rendidor_email\`, \`rendidor_cargo\`,
+              \`centro_costo_id\`, \`centro_costo_codigo\`, \`centro_costo_nombre\`, \`proyecto_id\`, \`proyecto_codigo\`, \`proyecto_nombre\`,
+              \`fondo_asignado_clp\`, \`monto_total_rendido_clp\`, \`saldo_reembolsar_clp\`, \`saldo_reintegrar_clp\`, \`moneda\`, \`estado\`,
+              \`fecha_inicio\`, \`fecha_cierre\`, \`fecha_aprobacion\`, \`aprobador_nombre\`, \`agente_auditor_score\`, \`agente_auditor_diagnostico\`, \`created_at\`
+            )
+            VALUES
+            (
+              'rdg-001', 'client-retail-01', 'RDG-2026-001', 'Visita Técnica Clientes Salmoaustral y Supervisión Centro Dalcahue',
+              'emp-001', 'Gonzalo Silva Valenzuela', '14.238.192-8', 'gonzalo.silva@maraustral.cl', 'Supervisor Comercial & Operaciones',
+              'cc-02', 'CC-VTA-STGO', 'Ventas & Distribución Zona Central', 'pry-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+              150000.00, 184500.00, 34500.00, 0.00, 'CLP', 'PENDIENTE_APROBACION',
+              '2026-09-24', '2026-09-28', NULL, 'Carla Morales Troncoso', 95,
+              '{"calificacion": "APROBADO_LIMPIO", "scoreGlobal": 95, "totalComprobantesValidos": 4, "totalComprobantesObjetados": 0, "montoIvaCreditoRecuperable": 16150, "montoGastoRechazadoArt21": 0, "alertas": [], "recomendaciones": ["Gasto de combustible rendido con boleta. Se sugiere solicitar Factura para recuperar IVA Crédito."], "verificacionRutDuplicados": true, "resumenTributario": "Comprobantes íntegros con respaldo fidedigno Art. 31 LIR. Saldo a reembolsar: $34.500 CLP."}',
+              NOW()
+            ),
+            (
+              'rdg-002', 'client-retail-01', 'RDG-2026-002', 'Adquisición de Insumos y Repuestos Urgentes Maestranza Quellón',
+              'emp-002', 'Ing. Rodrigo Cárdenas Soto', '13.914.882-K', 'rodrigo.cardenas@maraustral.cl', 'Jefe de Planta Quellón',
+              'cc-03', 'CC-PRD-QUELLON', 'Planta Fabril & Maestranza Quellón', 'pry-01', 'PRY-QUELLON-26', 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+              200000.00, 165000.00, 0.00, 35000.00, 'CLP', 'APROBADA',
+              '2026-09-15', '2026-09-18', '2026-09-20', 'Carla Morales Troncoso', 100,
+              '{"calificacion": "APROBADO_LIMPIO", "scoreGlobal": 100, "totalComprobantesValidos": 2, "totalComprobantesObjetados": 0, "montoIvaCreditoRecuperable": 26345, "montoGastoRechazadoArt21": 0, "alertas": [], "recomendaciones": [], "verificacionRutDuplicados": true, "resumenTributario": "Aprobado por jefatura. El colaborador debe reintegrar $35.000 a la cuenta corriente de la empresa."}',
+              NOW()
+            );
+          `);
+          await connection.query(`
+            INSERT IGNORE INTO \`expense_items\` (
+              \`id\`, \`expense_report_id\`, \`empresa_id\`, \`fecha\`, \`tipo_documento\`, \`folio_documento\`,
+              \`proveedor_rut\`, \`proveedor_razon_social\`, \`categoria\`, \`descripcion_glosa\`,
+              \`monto_neto\`, \`monto_iva\`, \`monto_exento\`, \`monto_total_clp\`,
+              \`centro_costo_id\`, \`centro_costo_codigo\`, \`proyecto_id\`, \`proyecto_codigo\`,
+              \`cuenta_contable_codigo\`, \`cuenta_contable_nombre\`, \`es_gasto_rechazado_art21\`, \`validado_por_agente\`, \`created_at\`
+            )
+            VALUES
+            ('item-01', 'rdg-001', 'client-retail-01', '2026-09-25', 'BOLETA_ELECTRONICA', 'B-481920', '99.520.000-7', 'Compañía de Petróleos de Chile COPEC S.A.', 'COMBUSTIBLE', 'Carga de Diesel camioneta terreno traslado Chiloé', 37815.00, 7185.00, 0.00, 45000.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.009', 'Combustibles & Lubricantes', FALSE, TRUE, NOW()),
+            ('item-02', 'rdg-001', 'client-retail-01', '2026-09-26', 'FACTURA_ELECTRONICA_33', '91283', '76.128.490-2', 'Hotelera & Turismo del Sur SpA (Hotel Castro)', 'ALOJAMIENTO', 'Hospedaje 2 noches personal técnico en terreno', 85000.00, 16150.00, 0.00, 101150.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.007', 'Alojamiento & Estadía Terreno', FALSE, TRUE, NOW()),
+            ('item-03', 'rdg-001', 'client-retail-01', '2026-09-26', 'BOLETA_ELECTRONICA', 'B-12839', '77.819.200-5', 'Restaurante Rincón Chilote Castro', 'ALIMENTACION', 'Cena y almuerzo en terreno durante supervisión', 23824.00, 4526.00, 0.00, 28350.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.006', 'Gastos de Alimentación & Viáticos', FALSE, TRUE, NOW()),
+            ('item-04', 'rdg-001', 'client-retail-01', '2026-09-27', 'TICKET_PEAJE', 'TAG-98124', '96.812.390-1', 'Sociedad Concesionaria Ruta del Canal S.A.', 'PEAJES_ESTACIONAMIENTOS', 'Peajes y transbordo canal de Chacao ida y vuelta', 0.00, 0.00, 10000.00, 10000.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.010', 'Peajes & Tag Autopistas', FALSE, TRUE, NOW()),
+            ('item-05', 'rdg-002', 'client-retail-01', '2026-09-16', 'FACTURA_ELECTRONICA_33', 'F-78192', '76.992.110-3', 'Ferretería Industrial Austral Ltda.', 'MATERIALES_INSUMOS', 'Pernos de acero inox 316 y electrodos para balsas', 138655.00, 26345.00, 0.00, 165000.00, 'cc-03', 'CC-PRD-QUELLON', 'pry-01', 'PRY-QUELLON-26', '4.1.02.001', 'Materiales Menores & Consumibles', FALSE, TRUE, NOW());
+          `);
+        }
+      } catch (seedErr: any) {
+        console.warn(`[MySQL 8.0] Aviso al verificar o insertar semillas de gastos: ${seedErr.message}`);
+      }
+    } catch (expTableErr: any) {
+      console.warn(`[MySQL 8.0] Verificación de tablas expense: ${expTableErr.message}`);
+    }
+
     // Sincronizar datos de disco a MySQL
     await diskPersistence.syncDiskToMysql();
   } catch (err: any) {

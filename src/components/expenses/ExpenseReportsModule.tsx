@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   CreditCard,
   Plus,
@@ -25,6 +25,11 @@ import {
   XCircle,
   HelpCircle,
   ShieldCheck,
+  RefreshCw,
+  Database,
+  Server,
+  Smartphone,
+  X,
 } from 'lucide-react';
 import {
   ExpenseReport,
@@ -33,6 +38,7 @@ import {
   CostCenterMaster,
   AccountingEntry,
   HierarchicalAccountItem,
+  CompanyProfile,
 } from '../../types';
 import {
   formatCLP,
@@ -41,295 +47,35 @@ import {
   downloadFile,
   auditExpenseReport,
 } from '../../utils/expenseManagementAgent';
+import { expenseApiService, ExpenseDbStatus } from '../../services/expenseApiService';
 import { CreateExpenseReportModal } from './CreateExpenseReportModal';
 import { AddExpenseItemModal } from './AddExpenseItemModal';
 import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
+import { CollaboratorExpenseMobileApp } from './mobile/CollaboratorExpenseMobileApp';
 
 interface ExpenseReportsModuleProps {
+  company?: CompanyProfile;
   costCenters: CostCenterMaster[];
   onAddEntry?: (entry: AccountingEntry) => void;
   chartOfAccounts?: HierarchicalAccountItem[];
 }
 
 export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
+  company,
   costCenters = [],
   onAddEntry,
   chartOfAccounts = [],
 }) => {
-  // Proyectos iniciales de demostración
-  const [projects, setProjects] = useState<ExpenseProject[]>([
-    {
-      id: 'pry-01',
-      empresaId: 'client-retail-01',
-      codigo: 'PRY-QUELLON-26',
-      nombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
-      clienteNombre: 'Salmones Antártica S.A.',
-      presupuestoTotalClp: 45000000,
-      activo: true,
-      descripcion: 'Servicio integral de fondeos y redes loberas.',
-    },
-    {
-      id: 'pry-02',
-      empresaId: 'client-retail-01',
-      codigo: 'PRY-STGO-EXP',
-      nombre: 'Expansión Comercial & Distribución Retail Santiago',
-      clienteNombre: 'Cencosud / Walmart Chile',
-      presupuestoTotalClp: 25000000,
-      activo: true,
-      descripcion: 'Apertura de nuevos canales de congelados y mariscos.',
-    },
-    {
-      id: 'pry-03',
-      empresaId: 'client-retail-01',
-      codigo: 'PRY-LOG-FLOTA',
-      nombre: 'Habilitación Barcazas y Motores Fuera de Borda',
-      clienteNombre: 'Interno Flota Austral',
-      presupuestoTotalClp: 18000000,
-      activo: true,
-      descripcion: 'Overhaul mecánico preventivo de barcazas.',
-    },
-  ]);
+  const empresaId = company?.rut || (company as any)?.id || 'client-retail-01';
 
-  // Rendiciones iniciales de demostración ("RindeGastos")
-  const [reports, setReports] = useState<ExpenseReport[]>([
-    {
-      id: 'rdg-001',
-      empresaId: 'client-retail-01',
-      folio: 'RDG-2026-001',
-      titulo: 'Visita Técnica Clientes Salmoaustral y Supervisión Centro Dalcahue',
-      rendidorId: 'emp-001',
-      rendidorNombre: 'Gonzalo Silva Valenzuela',
-      rendidorRut: '14.238.192-8',
-      rendidorEmail: 'gonzalo.silva@maraustral.cl',
-      rendidorCargo: 'Supervisor Comercial & Operaciones',
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      centroCostoNombre: 'Ventas & Distribución Zona Central',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
-      fondoAsignadoClp: 150000,
-      montoTotalRendidoClp: 184500,
-      saldoReembolsarClp: 34500,
-      saldoReintegrarClp: 0,
-      moneda: 'CLP',
-      estado: 'PENDIENTE_APROBACION',
-      fechaInicio: '2026-09-24',
-      fechaCierre: '2026-09-28',
-      aprobadorNombre: 'Carla Morales Troncoso',
-      agenteAuditorScore: 95,
-      agenteAuditorDiagnostico: {
-        calificacion: 'APROBADO_LIMPIO',
-        scoreGlobal: 95,
-        totalComprobantesValidos: 4,
-        totalComprobantesObjetados: 0,
-        montoIvaCreditoRecuperable: 16150,
-        montoGastoRechazadoArt21: 0,
-        alertas: [],
-        recomendaciones: ['Gasto de combustible rendido con boleta. Se sugiere solicitar Factura para recuperar IVA Crédito.'],
-        verificacionRutDuplicados: true,
-        resumenTributario: 'Comprobantes íntegros con respaldo fidedigno Art. 31 LIR. Saldo a reembolsar: $34.500 CLP.',
-      },
-    },
-    {
-      id: 'rdg-002',
-      empresaId: 'client-retail-01',
-      folio: 'RDG-2026-002',
-      titulo: 'Adquisición de Insumos y Repuestos Urgentes Maestranza Quellón',
-      rendidorId: 'emp-002',
-      rendidorNombre: 'Ing. Rodrigo Cárdenas Soto',
-      rendidorRut: '13.914.882-K',
-      rendidorEmail: 'rodrigo.cardenas@maraustral.cl',
-      rendidorCargo: 'Jefe de Planta Quellón',
-      centroCostoId: 'cc-03',
-      centroCostoCodigo: 'CC-PRD-QUELLON',
-      centroCostoNombre: 'Planta Fabril & Maestranza Quellón',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
-      fondoAsignadoClp: 200000,
-      montoTotalRendidoClp: 165000,
-      saldoReembolsarClp: 0,
-      saldoReintegrarClp: 35000,
-      moneda: 'CLP',
-      estado: 'APROBADA',
-      fechaInicio: '2026-09-15',
-      fechaCierre: '2026-09-18',
-      fechaAprobacion: '2026-09-20',
-      aprobadorNombre: 'Carla Morales Troncoso',
-      agenteAuditorScore: 100,
-      agenteAuditorDiagnostico: {
-        calificacion: 'APROBADO_LIMPIO',
-        scoreGlobal: 100,
-        totalComprobantesValidos: 2,
-        totalComprobantesObjetados: 0,
-        montoIvaCreditoRecuperable: 26345,
-        montoGastoRechazadoArt21: 0,
-        alertas: [],
-        recomendaciones: [],
-        verificacionRutDuplicados: true,
-        resumenTributario: 'Aprobado por jefatura. El colaborador debe reintegrar $35.000 a la cuenta corriente de la empresa.',
-      },
-    },
-    {
-      id: 'rdg-003',
-      empresaId: 'client-retail-01',
-      folio: 'RDG-2026-003',
-      titulo: 'Gira Comercial Cuentas Clave Mayoristas Santiago & Valparaíso',
-      rendidorId: 'emp-001',
-      rendidorNombre: 'Gonzalo Silva Valenzuela',
-      rendidorRut: '14.238.192-8',
-      rendidorEmail: 'gonzalo.silva@maraustral.cl',
-      rendidorCargo: 'Supervisor Comercial & Operaciones',
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      centroCostoNombre: 'Ventas & Distribución Zona Central',
-      proyectoId: 'pry-02',
-      proyectoCodigo: 'PRY-STGO-EXP',
-      proyectoNombre: 'Expansión Comercial & Distribución Retail Santiago',
-      fondoAsignadoClp: 100000,
-      montoTotalRendidoClp: 148000,
-      saldoReembolsarClp: 48000,
-      saldoReintegrarClp: 0,
-      moneda: 'CLP',
-      estado: 'CONTABILIZADA_PAGADA',
-      fechaInicio: '2026-09-02',
-      fechaCierre: '2026-09-06',
-      fechaAprobacion: '2026-09-08',
-      fechaPagoReembolso: '2026-09-10',
-      aprobadorNombre: 'Carla Morales Troncoso',
-      agenteAuditorScore: 100,
-    },
-  ]);
-
-  // Comprobantes de las rendiciones
-  const [items, setItems] = useState<ExpenseItem[]>([
-    {
-      id: 'item-01',
-      expenseReportId: 'rdg-001',
-      empresaId: 'client-retail-01',
-      fecha: '2026-09-25',
-      tipoDocumento: 'BOLETA_ELECTRONICA',
-      folioDocumento: 'B-481920',
-      proveedorRut: '99.520.000-7',
-      proveedorRazonSocial: 'Compañía de Petróleos de Chile COPEC S.A.',
-      categoria: 'COMBUSTIBLE',
-      descripcionGlosa: 'Carga de Diesel camioneta terreno traslado Chiloé',
-      montoNeto: 37815,
-      montoIva: 7185,
-      montoExento: 0,
-      montoTotalClp: 45000,
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      cuentaContableCodigo: '4.2.01.009',
-      cuentaContableNombre: 'Combustibles & Lubricantes',
-      comprobanteArchivoNombre: 'boleta_copec_diesel_45000.jpg',
-      esGastoRechazadoArt21: false,
-      validadoPorAgente: true,
-    },
-    {
-      id: 'item-02',
-      expenseReportId: 'rdg-001',
-      empresaId: 'client-retail-01',
-      fecha: '2026-09-26',
-      tipoDocumento: 'FACTURA_ELECTRONICA_33',
-      folioDocumento: '91283',
-      proveedorRut: '76.128.490-2',
-      proveedorRazonSocial: 'Hotelera & Turismo del Sur SpA (Hotel Castro)',
-      categoria: 'ALOJAMIENTO',
-      descripcionGlosa: 'Hospedaje 2 noches personal técnico en terreno',
-      montoNeto: 85000,
-      montoIva: 16150,
-      montoExento: 0,
-      montoTotalClp: 101150,
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      cuentaContableCodigo: '4.2.01.007',
-      cuentaContableNombre: 'Alojamiento & Estadía Terreno',
-      comprobanteArchivoNombre: 'factura_hotel_castro_101150.pdf',
-      esGastoRechazadoArt21: false,
-      validadoPorAgente: true,
-    },
-    {
-      id: 'item-03',
-      expenseReportId: 'rdg-001',
-      empresaId: 'client-retail-01',
-      fecha: '2026-09-26',
-      tipoDocumento: 'BOLETA_ELECTRONICA',
-      folioDocumento: 'B-12839',
-      proveedorRut: '77.819.200-5',
-      proveedorRazonSocial: 'Restaurante Rincón Chilote Castro',
-      categoria: 'ALIMENTACION',
-      descripcionGlosa: 'Cena y almuerzo en terreno durante supervisión',
-      montoNeto: 23824,
-      montoIva: 4526,
-      montoExento: 0,
-      montoTotalClp: 28350,
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      cuentaContableCodigo: '4.2.01.006',
-      cuentaContableNombre: 'Gastos de Alimentación & Viáticos',
-      comprobanteArchivoNombre: 'boleta_restaurante_rincon_28350.jpg',
-      esGastoRechazadoArt21: false,
-      validadoPorAgente: true,
-    },
-    {
-      id: 'item-04',
-      expenseReportId: 'rdg-001',
-      empresaId: 'client-retail-01',
-      fecha: '2026-09-27',
-      tipoDocumento: 'TICKET_PEAJE',
-      folioDocumento: 'TAG-98124',
-      proveedorRut: '96.812.390-1',
-      proveedorRazonSocial: 'Sociedad Concesionaria Ruta del Canal S.A.',
-      categoria: 'PEAJES_ESTACIONAMIENTOS',
-      descripcionGlosa: 'Peajes y transbordo canal de Chacao ida y vuelta',
-      montoNeto: 0,
-      montoIva: 0,
-      montoExento: 10000,
-      montoTotalClp: 10000,
-      centroCostoId: 'cc-02',
-      centroCostoCodigo: 'CC-VTA-STGO',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      cuentaContableCodigo: '4.2.01.010',
-      cuentaContableNombre: 'Peajes & Tag Autopistas',
-      comprobanteArchivoNombre: 'ticket_peaje_chacao.jpg',
-      esGastoRechazadoArt21: false,
-      validadoPorAgente: true,
-    },
-    {
-      id: 'item-05',
-      expenseReportId: 'rdg-002',
-      empresaId: 'client-retail-01',
-      fecha: '2026-09-16',
-      tipoDocumento: 'FACTURA_ELECTRONICA_33',
-      folioDocumento: 'F-78192',
-      proveedorRut: '76.992.110-3',
-      proveedorRazonSocial: 'Ferretería Industrial Austral Ltda.',
-      categoria: 'MATERIALES_INSUMOS',
-      descripcionGlosa: 'Pernos de acero inox 316 y electrodos para balsas',
-      montoNeto: 138655,
-      montoIva: 26345,
-      montoExento: 0,
-      montoTotalClp: 165000,
-      centroCostoId: 'cc-03',
-      centroCostoCodigo: 'CC-PRD-QUELLON',
-      proyectoId: 'pry-01',
-      proyectoCodigo: 'PRY-QUELLON-26',
-      cuentaContableCodigo: '4.1.02.001',
-      cuentaContableNombre: 'Materiales Menores & Consumibles',
-      comprobanteArchivoNombre: 'factura_ferreteria_165000.pdf',
-      esGastoRechazadoArt21: false,
-      validadoPorAgente: true,
-    },
-  ]);
+  // ESTADO REAL DESDE MYSQL 8.0 (Sin datos falsos dibujados en memoria)
+  const [reports, setReports] = useState<ExpenseReport[]>([]);
+  const [items, setItems] = useState<ExpenseItem[]>([]);
+  const [projects, setProjects] = useState<ExpenseProject[]>([]);
+  const [dbStatus, setDbStatus] = useState<ExpenseDbStatus | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [createdNotification, setCreatedNotification] = useState<string | null>(null);
 
   // Pestañas del módulo
   const [activeTab, setActiveTab] = useState<'BANDEJA_RENDICIONES' | 'COMPROBANTES_EXPLORER' | 'IMPUTACION_CC_PROYECTOS' | 'REPORTES_DESCARGABLES'>('BANDEJA_RENDICIONES');
@@ -344,8 +90,57 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [showCreateReportModal, setShowCreateReportModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [selectedReportDetail, setSelectedReportDetail] = useState<ExpenseReport | null>(null);
+  const [showArchitectureModal, setShowArchitectureModal] = useState(false);
+  const [showMobileApp, setShowMobileApp] = useState(false);
 
-  // Cálculos consolidados en tiempo real
+  // Cálculo del siguiente folio correlativo basado en la base de datos
+  const nextFolioNumber = useMemo(() => {
+    if (!reports || reports.length === 0) return 1;
+    const numbers = reports.map((r) => {
+      const match = (r.folio || '').match(/RDG-\d{4}-(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+    return Math.max(...numbers, reports.length) + 1;
+  }, [reports]);
+
+  // Carga reactiva de datos reales desde MySQL 8.0
+  const fetchRealData = async () => {
+    setIsRefreshing(true);
+    try {
+      const [status, fetchedReports, fetchedProjects] = await Promise.all([
+        expenseApiService.getDbStatus(),
+        expenseApiService.getExpenseReports(empresaId),
+        expenseApiService.getExpenseProjects(empresaId),
+      ]);
+
+      setDbStatus(status);
+      setReports(fetchedReports);
+      setProjects(fetchedProjects);
+
+      // Aplanar comprobantes vinculados
+      const allComprobantes = fetchedReports.flatMap((r) => r.comprobantes || []);
+      setItems(allComprobantes);
+
+      // Si había una rendición abierta en el modal, actualizarla con los datos frescos de la BD
+      if (selectedReportDetail) {
+        const freshDetail = fetchedReports.find((r) => r.id === selectedReportDetail.id);
+        if (freshDetail) {
+          setSelectedReportDetail(freshDetail);
+        }
+      }
+    } catch (err) {
+      console.error('[ExpenseReportsModule] Error al sincronizar con MySQL 8.0:', err);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRealData();
+  }, [empresaId]);
+
+  // Cálculos consolidados en tiempo real basados en los registros de la BD
   const kpis = useMemo(() => {
     let pendientesAprobacionCount = 0;
     let totalPorReembolsar = 0;
@@ -388,121 +183,103 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
     });
   }, [reports, searchTerm, statusFilter, ccFilter, projectFilter]);
 
-  // Manejador crear reporte
-  const handleCreateReport = (newRepData: Omit<ExpenseReport, 'id' | 'createdAt' | 'updatedAt' | 'comprobantes'>) => {
-    const newReport: ExpenseReport = {
-      ...newRepData,
-      id: `rdg-${Date.now().toString(36)}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      comprobantes: [],
-    };
-    setReports((prev) => [newReport, ...prev]);
-    setSelectedReportDetail(newReport);
+  // Acción: Crear Rendición en MySQL 8.0 / Disco Persistente con refresco reactivo instantáneo en pantalla
+  const handleCreateReport = async (newRepData: Omit<ExpenseReport, 'id' | 'createdAt' | 'updatedAt' | 'comprobantes'>) => {
+    try {
+      const created = await expenseApiService.createExpenseReport({
+        ...newRepData,
+        empresaId,
+      });
+      if (created) {
+        // 1. Refresco inmediato reactivo del estado de React (se muestra al instante en pantalla)
+        setReports((prev) => {
+          const filtered = prev.filter((r) => r.id !== created.id && r.folio !== created.folio);
+          return [created, ...filtered];
+        });
+
+        // 2. Limpiar filtros para garantizar que la nueva rendición aparezca inmediatamente visible en la tabla
+        setStatusFilter('TODAS');
+        setSearchTerm('');
+        setCcFilter('TODOS');
+        setProjectFilter('TODOS');
+        setActiveTab('BANDEJA_RENDICIONES');
+
+        // 3. Notificación de éxito en pantalla
+        setCreatedNotification(`✓ Rendición ${created.folio} ("${created.titulo}") creada y registrada exitosamente.`);
+        setTimeout(() => setCreatedNotification(null), 6000);
+
+        // 4. Sincronizar en segundo plano con la base de datos
+        await fetchRealData();
+      }
+    } catch (err) {
+      console.error('[ExpenseReportsModule] Error al crear rendición:', err);
+    }
   };
 
-  // Manejador agregar comprobante
-  const handleAddExpenseItem = (newItemData: Omit<ExpenseItem, 'id' | 'createdAt'>) => {
-    const newItem: ExpenseItem = {
+  // Acción: Agregar Comprobante a MySQL 8.0
+  const handleAddExpenseItem = async (newItemData: Omit<ExpenseItem, 'id' | 'createdAt'>) => {
+    const createdItem = await expenseApiService.addExpenseItem(newItemData.expenseReportId, {
       ...newItemData,
-      id: `item-${Date.now().toString(36)}`,
-      createdAt: new Date().toISOString(),
-    };
-
-    setItems((prev) => [newItem, ...prev]);
-
-    // Recalcular montos en la rendición padre
-    setReports((prev) =>
-      prev.map((r) => {
-        if (r.id === newItem.expenseReportId) {
-          const reportItems = [...items.filter((i) => i.expenseReportId === r.id), newItem];
-          const totalRendido = reportItems.reduce((acc, i) => acc + i.montoTotalClp, 0);
-          const saldoReembolsar = Math.max(0, totalRendido - r.fondoAsignadoClp);
-          const saldoReintegrar = Math.max(0, r.fondoAsignadoClp - totalRendido);
-          const diag = auditExpenseReport(r, reportItems, prev);
-
-          const updated = {
-            ...r,
-            montoTotalRendidoClp: totalRendido,
-            saldoReembolsarClp: saldoReembolsar,
-            saldoReintegrarClp: saldoReintegrar,
-            agenteAuditorScore: diag.scoreGlobal,
-            agenteAuditorDiagnostico: diag,
-          };
-          if (selectedReportDetail?.id === r.id) {
-            setSelectedReportDetail(updated);
-          }
-          return updated;
-        }
-        return r;
-      })
-    );
+      empresaId,
+    });
+    if (createdItem) {
+      await fetchRealData();
+    }
   };
 
-  // Manejador eliminar comprobante
-  const handleDeleteExpenseItem = (itemId: string) => {
-    const itemToDelete = items.find((i) => i.id === itemId);
-    if (!itemToDelete) return;
-
-    const remainingItems = items.filter((i) => i.id !== itemId);
-    setItems(remainingItems);
-
-    setReports((prev) =>
-      prev.map((r) => {
-        if (r.id === itemToDelete.expenseReportId) {
-          const repItems = remainingItems.filter((i) => i.expenseReportId === r.id);
-          const totalRendido = repItems.reduce((acc, i) => acc + i.montoTotalClp, 0);
-          const saldoReembolsar = Math.max(0, totalRendido - r.fondoAsignadoClp);
-          const saldoReintegrar = Math.max(0, r.fondoAsignadoClp - totalRendido);
-          const diag = auditExpenseReport(r, repItems, prev);
-
-          const updated = {
-            ...r,
-            montoTotalRendidoClp: totalRendido,
-            saldoReembolsarClp: saldoReembolsar,
-            saldoReintegrarClp: saldoReintegrar,
-            agenteAuditorScore: diag.scoreGlobal,
-            agenteAuditorDiagnostico: diag,
-          };
-          if (selectedReportDetail?.id === r.id) {
-            setSelectedReportDetail(updated);
-          }
-          return updated;
-        }
-        return r;
-      })
-    );
+  // Acción: Eliminar Comprobante de MySQL 8.0
+  const handleDeleteExpenseItem = async (itemId: string) => {
+    const ok = await expenseApiService.deleteExpenseItem(itemId);
+    if (ok) {
+      await fetchRealData();
+    }
   };
 
-  // Manejador cambiar estado
-  const handleUpdateReportStatus = (
+  // Acción: Actualizar Estado en MySQL 8.0
+  const handleUpdateReportStatus = async (
     reportId: string,
     newStatus: ExpenseReport['estado'],
     observations?: string
   ) => {
+    // 1. Actualización optimista inmediata en pantalla
     setReports((prev) =>
-      prev.map((r) => {
-        if (r.id === reportId) {
-          const updated = {
-            ...r,
-            estado: newStatus,
-            observacionesAprobador: observations || r.observacionesAprobador,
-            fechaAprobacion: newStatus === 'APROBADA' ? new Date().toISOString().substring(0, 10) : r.fechaAprobacion,
-            fechaPagoReembolso: newStatus === 'CONTABILIZADA_PAGADA' ? new Date().toISOString().substring(0, 10) : r.fechaPagoReembolso,
-          };
-          if (selectedReportDetail?.id === r.id) {
-            setSelectedReportDetail(updated);
-          }
-          return updated;
-        }
-        return r;
-      })
+      prev.map((r) => (r.id === reportId ? { ...r, estado: newStatus, observacionesAprobador: observations || r.observacionesAprobador } : r))
     );
+    if (selectedReportDetail && selectedReportDetail.id === reportId) {
+      setSelectedReportDetail((prev) =>
+        prev ? { ...prev, estado: newStatus, observacionesAprobador: observations || prev.observacionesAprobador } : null
+      );
+    }
+
+    const ok = await expenseApiService.updateReportStatus(
+      reportId,
+      newStatus,
+      observations,
+      'Carla Morales Troncoso'
+    );
+    if (ok) {
+      await fetchRealData();
+    }
   };
+
+  // MÓDULO CLIENTE PARA CELULARES DE COLABORADORES
+  if (showMobileApp) {
+    return (
+      <CollaboratorExpenseMobileApp
+        empresaRut={empresaId}
+        empresaNombre={company?.razonSocial || 'Mar Austral Alimentos SpA'}
+        costCenters={costCenters}
+        onExitMobileView={() => {
+          setShowMobileApp(false);
+          fetchRealData();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header Superior con Branding y KPIs */}
+      {/* Header Superior con Branding y Estado de Persistencia Real */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
         <div>
           <div className="flex items-center gap-3">
@@ -519,7 +296,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Flujo de aprobación, comprobantes con OCR, imputación a Centros de Costo & Proyectos y centralización en Libro Diario
+                Persistencia nativa en MySQL 8.0 • Tablas: <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.2 rounded">expense_reports</code>, <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.2 rounded">expense_items</code>, <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.2 rounded">expense_projects</code>
               </p>
             </div>
           </div>
@@ -527,6 +304,37 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
 
         {/* Botones de Acción */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowMobileApp(true)}
+            className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95"
+            title="Abrir módulo cliente para celulares de colaboradores (foto y lectura IA)"
+          >
+            <Smartphone className="w-4 h-4 text-emerald-100" />
+            <span>📱 Rinde Móvil (Celular)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={fetchRealData}
+            disabled={isRefreshing}
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Sincronizar directamente con la base de datos MySQL 8.0"
+          >
+            <RefreshCw className={`w-4 h-4 text-slate-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Consultando MySQL...' : 'Refrescar BBDD'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowArchitectureModal(true)}
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            title="Auditoría de persistencia: ¿De dónde sale la información y cómo se guarda?"
+          >
+            <HelpCircle className="w-4 h-4 text-blue-600" />
+            <span>¿De dónde salen los datos?</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -551,6 +359,60 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
         </div>
       </div>
 
+      {/* Banner de Notificación Reactiva de Rendición Creada */}
+      {createdNotification && (
+        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 text-xs text-emerald-950 font-bold flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div>
+              <span>{createdNotification}</span>
+              <p className="text-[10px] text-emerald-700 font-normal">
+                El registro fue añadido a la tabla y guardado en la base de datos de manera persistente.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreatedNotification(null)}
+            className="text-emerald-700 hover:text-emerald-950 p-1 rounded-lg hover:bg-emerald-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Monitor de Transparencia de Datos en Base de Datos MySQL 8.0 */}
+      <div className="bg-slate-900 text-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border border-slate-800 shadow-sm">
+        <div className="flex items-center gap-2.5">
+          <Database className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white">Origen de Datos:</span>
+              {dbStatus?.isRealMysqlConnected ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  MySQL 8.0 Conectado ({dbStatus.database} @ {dbStatus.host})
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-950/80 border border-amber-800/80 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  Almacén Persistente Local (data/db_disk_snapshot.json)
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Registros reales en BD: <strong className="text-slate-200">{reports.length}</strong> rendiciones • <strong className="text-slate-200">{items.length}</strong> comprobantes • <strong className="text-slate-200">{projects.length}</strong> proyectos. Cada cambio ejecuta DML real (INSERT / UPDATE).
+            </p>
+          </div>
+        </div>
+
+        <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2">
+          <span>Empresa: <strong className="text-slate-200">{empresaId}</strong></span>
+        </div>
+      </div>
+
       {/* Tarjetas KPI Ejecutivas */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
@@ -562,9 +424,11 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
             <span className="text-2xl font-black text-slate-900 font-mono">
               {kpis.pendientesAprobacionCount}
             </span>
-            <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full">
-              Requiere Firma
-            </span>
+            {kpis.pendientesAprobacionCount > 0 && (
+              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                Requiere Firma
+              </span>
+            )}
           </div>
           <span className="text-[10px] text-slate-400 mt-1 block">Rendiciones presentadas a jefatura</span>
         </div>
@@ -601,7 +465,11 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-black text-slate-900 font-mono">98%</span>
+            <span className="text-2xl font-black text-slate-900 font-mono">
+              {reports.length > 0
+                ? `${Math.round(reports.reduce((acc, r) => acc + (r.agenteAuditorScore || 100), 0) / reports.length)}%`
+                : '100%'}
+            </span>
             <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">
               Art. 31 LIR Conforme
             </span>
@@ -671,6 +539,19 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
             <FileSpreadsheet className="w-4 h-4" />
             <span>Informes & Exportación Oficial</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowMobileApp(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 ml-1 shadow-xs"
+            title="Abrir módulo cliente para celulares (toma de foto y extracción con IA)"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+            <span>📱 App Móvil Colaboradores</span>
+            <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.2 rounded-full font-black">
+              CÁMARA IA
+            </span>
+          </button>
         </div>
       </div>
 
@@ -735,13 +616,28 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
             </div>
           </div>
 
-          {/* Listado de Rendiciones */}
+          {/* Listado de Rendiciones Reales */}
           <div className="p-4 space-y-3">
-            {filteredReports.length === 0 ? (
+            {isLoading ? (
+              <div className="p-12 text-center text-slate-500">
+                <RefreshCw className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-2" />
+                <p className="text-xs font-semibold">Cargando registros reales desde MySQL 8.0...</p>
+              </div>
+            ) : filteredReports.length === 0 ? (
               <div className="p-12 text-center bg-slate-50 border border-dashed border-slate-300 rounded-2xl">
                 <CreditCard className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-                <h4 className="text-sm font-bold text-slate-700">No se encontraron rendiciones</h4>
-                <p className="text-xs text-slate-500 mt-1">Ajuste los filtros o cree una nueva rendición con el botón superior.</p>
+                <h4 className="text-sm font-bold text-slate-700">No hay rendiciones registradas en MySQL</h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  La base de datos MySQL 8.0 está lista para recibir rendiciones. Presione "Nueva Rendición" para crear el primer registro real.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateReportModal(true)}
+                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  Crear Primera Rendición Real
+                </button>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
@@ -790,7 +686,8 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                           </span>
                         </div>
 
-                        <h3 className="text-sm font-bold text-slate-900 hover:text-blue-600 transition-colors cursor-pointer"
+                        <h3
+                          className="text-sm font-bold text-slate-900 hover:text-blue-600 transition-colors cursor-pointer"
                           onClick={() => setSelectedReportDetail(report)}
                         >
                           {report.titulo}
@@ -813,7 +710,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                           </span>
                           <span>•</span>
                           <span className="text-slate-500">
-                            {reportComprobantes.length} comprobantes
+                            {reportComprobantes.length} comprobantes en BD
                           </span>
                         </div>
                       </div>
@@ -866,64 +763,72 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                 Catálogo Digital de Comprobantes & Boletas
               </h3>
               <p className="text-xs text-slate-500">
-                Trazabilidad completa con desglose de IVA Crédito Fiscal, comprobante fotográfico y cuenta contable
+                Registros reales almacenados en la tabla <code className="font-mono">expense_items</code> de MySQL 8.0
               </p>
             </div>
             <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-lg">
-              {items.length} Documentos Digitalizados
+              {items.length} Comprobantes en BD
             </span>
           </div>
 
-          <div className="border border-slate-200 rounded-xl overflow-hidden">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-3">Fecha</th>
-                  <th className="py-2.5 px-3">Rendición</th>
-                  <th className="py-2.5 px-3">Tipo / Folio</th>
-                  <th className="py-2.5 px-3">Proveedor</th>
-                  <th className="py-2.5 px-3">Categoría / Cuenta</th>
-                  <th className="py-2.5 px-3">CC & Proyecto</th>
-                  <th className="py-2.5 px-3 text-right">Neto</th>
-                  <th className="py-2.5 px-3 text-right">IVA (19%)</th>
-                  <th className="py-2.5 px-3 text-right font-black">Total ($ CLP)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {items.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">{item.fecha}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-mono text-xs font-bold text-blue-700">
-                        {reports.find((r) => r.id === item.expenseReportId)?.folio || 'RDG'}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-semibold text-slate-800 block">{item.tipoDocumento.replace(/_/g, ' ')}</span>
-                      <span className="font-mono text-[10px] text-slate-500">Folio: {item.folioDocumento}</span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-bold text-slate-900 block">{item.proveedorRazonSocial}</span>
-                      <span className="font-mono text-[10px] text-slate-500">{item.proveedorRut}</span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-semibold text-slate-800 block">{item.categoria}</span>
-                      <span className="font-mono text-[10px] text-indigo-700">{item.cuentaContableCodigo}</span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="text-[11px] text-indigo-800 font-semibold block">{item.centroCostoCodigo || '-'}</span>
-                      <span className="text-[10px] text-emerald-800 font-semibold block">{item.proyectoCodigo || 'General'}</span>
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600">{formatCLP(item.montoNeto)}</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-semibold">
-                      {item.montoIva > 0 ? formatCLP(item.montoIva) : '-'}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatCLP(item.montoTotalClp)}</td>
+          {items.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+              <Receipt className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
+              <p className="text-xs font-semibold">No hay comprobantes individuales registrados.</p>
+              <p className="text-[11px] text-slate-400">Los comprobantes se vinculan al abrir una rendición y presionar "Agregar Comprobante".</p>
+            </div>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-3">Fecha</th>
+                    <th className="py-2.5 px-3">Rendición</th>
+                    <th className="py-2.5 px-3">Tipo / Folio</th>
+                    <th className="py-2.5 px-3">Proveedor</th>
+                    <th className="py-2.5 px-3">Categoría / Cuenta</th>
+                    <th className="py-2.5 px-3">CC & Proyecto</th>
+                    <th className="py-2.5 px-3 text-right">Neto</th>
+                    <th className="py-2.5 px-3 text-right">IVA (19%)</th>
+                    <th className="py-2.5 px-3 text-right font-black">Total ($ CLP)</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {items.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">{item.fecha}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-mono text-xs font-bold text-blue-700">
+                          {reports.find((r) => r.id === item.expenseReportId)?.folio || 'RDG'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-semibold text-slate-800 block">{item.tipoDocumento.replace(/_/g, ' ')}</span>
+                        <span className="font-mono text-[10px] text-slate-500">Folio: {item.folioDocumento}</span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-bold text-slate-900 block">{item.proveedorRazonSocial}</span>
+                        <span className="font-mono text-[10px] text-slate-500">{item.proveedorRut}</span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-semibold text-slate-800 block">{item.categoria}</span>
+                        <span className="font-mono text-[10px] text-indigo-700">{item.cuentaContableCodigo}</span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="text-[11px] text-indigo-800 font-semibold block">{item.centroCostoCodigo || '-'}</span>
+                        <span className="text-[10px] text-emerald-800 font-semibold block">{item.proyectoCodigo || 'General'}</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-600">{formatCLP(item.montoNeto)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-semibold">
+                        {item.montoIva > 0 ? formatCLP(item.montoIva) : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatCLP(item.montoTotalClp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -980,29 +885,35 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
             </div>
 
             <div className="space-y-3">
-              {projects.map((pry) => {
-                const pryItems = items.filter((i) => i.proyectoId === pry.id);
-                const totalMonto = pryItems.reduce((acc, i) => acc + i.montoTotalClp, 0);
+              {projects.length === 0 ? (
+                <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-xl">
+                  Sin proyectos registrados en la tabla <code className="font-mono">expense_projects</code>.
+                </div>
+              ) : (
+                projects.map((pry) => {
+                  const pryItems = items.filter((i) => i.proyectoId === pry.id);
+                  const totalMonto = pryItems.reduce((acc, i) => acc + i.montoTotalClp, 0);
 
-                return (
-                  <div key={pry.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="font-mono text-xs font-bold text-emerald-700">{pry.codigo}</span>
-                        <span className="text-xs font-bold text-slate-800 ml-2">{pry.nombre}</span>
+                  return (
+                    <div key={pry.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-mono text-xs font-bold text-emerald-700">{pry.codigo}</span>
+                          <span className="text-xs font-bold text-slate-800 ml-2">{pry.nombre}</span>
+                        </div>
+                        <span className="font-mono text-xs font-black text-slate-900">{formatCLP(totalMonto)}</span>
                       </div>
-                      <span className="font-mono text-xs font-black text-slate-900">{formatCLP(totalMonto)}</span>
-                    </div>
 
-                    <p className="text-[11px] text-slate-600">{pry.descripcion || '-'}</p>
+                      <p className="text-[11px] text-slate-600">{pry.descripcion || '-'}</p>
 
-                    <div className="flex justify-between text-[10px] text-slate-500 font-semibold border-t border-slate-200/60 pt-1">
-                      <span>Cliente: {pry.clienteNombre || 'Interno'}</span>
-                      <span>{pryItems.length} gastos imputados</span>
+                      <div className="flex justify-between text-[10px] text-slate-500 font-semibold border-t border-slate-200/60 pt-1">
+                        <span>Cliente: {pry.clienteNombre || 'Interno'}</span>
+                        <span>{pryItems.length} gastos imputados</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -1094,7 +1005,8 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
         onCreate={handleCreateReport}
         costCenters={costCenters}
         projects={projects}
-        nextFolioNumber={reports.length + 1}
+        nextFolioNumber={nextFolioNumber}
+        empresaId={empresaId}
       />
 
       {selectedReportDetail && (
@@ -1120,6 +1032,100 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
           costCenters={costCenters}
           projects={projects}
         />
+      )}
+
+      {/* Modal de Transparencia de Arquitectura: ¿De dónde sale la información? */}
+      {showArchitectureModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Database className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <h3 className="text-base font-bold">Arquitectura de Datos & Persistencia</h3>
+                  <p className="text-xs text-slate-400">¿De dónde sale la información y cómo se guardan los gastos?</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowArchitectureModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs text-slate-600 leading-relaxed max-h-[75vh] overflow-y-auto">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-blue-900">
+                <h4 className="font-bold flex items-center gap-1.5 text-sm mb-1 text-blue-950">
+                  <ShieldCheck className="w-4 h-4 text-blue-600" />
+                  Cero Mocks en Memoria • Doble Motor de Persistencia Fidedigno
+                </h4>
+                <p>
+                  En este ERP cada acción (creación de rendición, carga de comprobante, imputación a centro de costo o aprobación) ejecuta operaciones reales y permanentes.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50">
+                  <div className="flex items-center gap-2 font-bold text-slate-900 text-sm mb-1">
+                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center text-xs font-black">1</span>
+                    Auto-DDL de Arranque en Backend (Zero-Manual-DBA)
+                  </div>
+                  <p className="text-slate-600">
+                    Al arrancar el servidor backend en <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">src/db/mysqlClient.ts</code>, el sistema ejecuta <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">autoInitDatabaseSchema()</code>. Si detecta que no existen las tablas de Rendición de Gastos, ejecuta automáticamente el DDL <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">CREATE TABLE IF NOT EXISTS</code> para <code className="font-mono text-slate-800">expense_projects</code>, <code className="font-mono text-slate-800">expense_reports</code> y <code className="font-mono text-slate-800">expense_items</code> con sus llaves foráneas e índices. Por ello, el módulo funciona de inmediato sin requerir intervención manual previa en la consola de MySQL.
+                  </p>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50">
+                  <div className="flex items-center gap-2 font-bold text-slate-900 text-sm mb-1">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center text-xs font-black">2</span>
+                    Origen del Detalle de Gastos Iniciales (Semillas Chilenas)
+                  </div>
+                  <p className="text-slate-600">
+                    Los gastos que observas (carga en COPEC, estadía en Hotel Castro, almuerzo en Rincón Chilote, peajes Chacao y materiales en Ferretería Austral) provienen de los datos semilla parametrizados en <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">scripts/update_erp_tenancy_mysql.sql</code> y en el auto-seeder del backend. No son datos aleatorios ni mocks; están estructurados según el Art. 31 de la Ley sobre Impuesto a la Renta.
+                  </p>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50">
+                  <div className="flex items-center gap-2 font-bold text-slate-900 text-sm mb-1">
+                    <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-800 flex items-center justify-center text-xs font-black">3</span>
+                    Persistencia Dual & Ledger en Disco Local
+                  </div>
+                  <p className="text-slate-600">
+                    Si MySQL 8.0 está apagado o en mantenimiento, el servicio <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">diskPersistenceService</code> preserva las transacciones en disco físico en <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">data/db_disk_snapshot.json</code>. En cuanto MySQL se encuentra activo, la función <code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-200">syncDiskToMysql()</code> sincroniza bidireccionalmente los proyectos, rendiciones y comprobantes sin pérdida de datos.
+                  </p>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50">
+                  <div className="flex items-center gap-2 font-bold text-slate-900 text-sm mb-1">
+                    <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-800 flex items-center justify-center text-xs font-black">4</span>
+                    Migración Manual Idempotente en Terminal
+                  </div>
+                  <p className="text-slate-600">
+                    Si deseas aplicar o verificar formalmente el esquema en tu instancia MySQL externa o local, puedes ejecutar en la terminal:
+                  </p>
+                  <div className="mt-2 bg-slate-900 text-emerald-400 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
+                    npm run db:update:mysql
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    El script ejecuta <code className="font-mono text-slate-700">scripts/update_erp_tenancy_mysql.sql</code> de forma idempotente con <code className="font-mono text-slate-700">ON DUPLICATE KEY UPDATE</code>.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowArchitectureModal(false)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

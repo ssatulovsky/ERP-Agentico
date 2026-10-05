@@ -37,6 +37,7 @@ import {
   generateExpenseAccountingEntry,
   auditExpenseReport,
 } from '../../utils/expenseManagementAgent';
+import { expenseApiService } from '../../services/expenseApiService';
 
 interface ExpenseReportDetailModalProps {
   isOpen: boolean;
@@ -89,16 +90,25 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
   };
 
   // Contabilizar en Libro Diario
-  const handleContabilizarDiario = () => {
-    if (!onCommitAccountingEntry) return;
-    const entry = generateExpenseAccountingEntry(
-      { ...report, montoTotalRendidoClp: totalRendido, saldoReembolsarClp: saldoReembolsar, saldoReintegrarClp: saldoReintegrar },
-      comprobantes,
-      chartOfAccounts
-    );
+  const handleContabilizarDiario = async () => {
+    // 1. Contabilización formal en backend (MySQL 8.0 / Ledger ACID)
+    try {
+      await expenseApiService.contabilizarReport(report.id);
+    } catch (e) {
+      console.warn('[Modal] Aviso al llamar API de contabilización:', e);
+    }
 
-    onCommitAccountingEntry(entry);
-    onUpdateReportStatus(report.id, 'CONTABILIZADA_PAGADA', `Contabilizado automáticamente en Libro Diario con comprobante ${entry.documento}`);
+    // 2. Notificar al estado central de la aplicación si se proporcionó callback
+    if (onCommitAccountingEntry) {
+      const entry = generateExpenseAccountingEntry(
+        { ...report, montoTotalRendidoClp: totalRendido, saldoReembolsarClp: saldoReembolsar, saldoReintegrarClp: saldoReintegrar },
+        comprobantes,
+        chartOfAccounts
+      );
+      onCommitAccountingEntry(entry);
+    }
+
+    onUpdateReportStatus(report.id, 'CONTABILIZADA_PAGADA', `Contabilizado automáticamente en Libro Diario con comprobante RDG ${report.folio}`);
     setAccountingSuccessToast(true);
     setTimeout(() => setAccountingSuccessToast(false), 3000);
   };

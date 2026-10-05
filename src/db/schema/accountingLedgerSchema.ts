@@ -25,6 +25,7 @@ export const moduleSourceEnumValues = [
   'IFRS16_LEASES',
   'MARKETING',
   'CUSTOMER_SERVICE',
+  'RENDICION_GASTOS',
   'MANUAL',
   'CIERRE',
 ] as const;

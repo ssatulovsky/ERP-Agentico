@@ -1,8 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import { db, queryEntriesWithLines } from '@/db';
-import { agentAuditLogs } from '@/db/schema';
+import { db, getDb, queryEntriesWithLines } from '@/db';
+import { agentAuditLogs, accountingEntries } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import {
   recordVerifiedEntry,
   DoubleEntryImbalanceError,
@@ -426,6 +427,33 @@ supervisorLedgerRouter.get('/entries', async (req: Request, res: Response) => {
       message: 'No se pudieron recuperar los asientos contables desde la base de datos.',
       details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
     });
+  }
+});
+
+/**
+ * PUT /entries/:id/status - Actualiza el estado o autorización de un asiento contable
+ */
+supervisorLedgerRouter.put('/entries/:id/status', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { autorizadoPorSupervisor, supervisorSignature, estado } = req.body;
+    const dbInstance = getDb();
+
+    const updateData: any = {};
+    if (autorizadoPorSupervisor !== undefined) updateData.autorizadoPorSupervisor = Boolean(autorizadoPorSupervisor);
+    if (supervisorSignature !== undefined) updateData.supervisorSignature = supervisorSignature;
+    if (estado !== undefined) updateData.estado = estado;
+
+    await dbInstance.update(accountingEntries).set(updateData).where(eq(accountingEntries.id, id));
+
+    res.json({
+      success: true,
+      message: 'Estado de asiento contable actualizado exitosamente.',
+      data: { id, ...updateData },
+    });
+  } catch (error: any) {
+    console.error('[SUPERVISOR-LEDGER] Error al actualizar estado del asiento:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

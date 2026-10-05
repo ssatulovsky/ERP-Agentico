@@ -3043,5 +3043,25 @@ export interface ExpenseReport {
   updatedAt?: string;
 }
 
+export interface ScannedReceiptResult {
+  tipoDocumento: ExpenseDocumentType;
+  proveedorRut: string;
+  proveedorRazonSocial: string;
+  folioDocumento: string;
+  fecha: string;
+  montoTotalClp: number;
+  montoNeto: number;
+  montoIva: number;
+  montoExento: number;
+  categoria: ExpenseCategory;
+  descripcionGlosa: string;
+  cuentaContableCodigo: string;
+  cuentaContableNombre: string;
+  esGastoRechazadoArt21: boolean;
+  diagnosticoAgente: string;
+  confianzaScore?: number;
+}
+
+
 
 
