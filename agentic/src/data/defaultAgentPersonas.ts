@@ -52,8 +52,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Matías Silva, tu Jefe Tributario. Tengo monitoreado el Formulario 29 y el calendario del SII para evitar multas. ¿Deseas que calculemos el impuesto a pagar o verifiquemos el crédito fiscal?',
     voz: {
       lang: 'es-CL',
-      pitch: 0.92,
-      rate: 0.98,
+      pitch: 0.58, // Tono barítono masculino profundo
+      rate: 0.94,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -90,8 +90,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Sofía Morales de Tesorería. Superviso las cuentas bancarias y el flujo de caja diario. ¿Deseas conciliar las novedades bancarias o proyectar los pagos de la semana?',
     voz: {
       lang: 'es-CL',
-      pitch: 1.12,
-      rate: 1.0,
+      pitch: 1.25, // Tono femenino claro y dinámico
+      rate: 1.04,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -128,8 +128,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Rodrigo Tapia, a cargo de Facturación y DTEs. Mantengo sincronizado el Registro de Compras y Ventas del SII. ¿Centralizamos las facturas del mes o revisamos las cuentas por cobrar?',
     voz: {
       lang: 'es-CL',
-      pitch: 0.90,
-      rate: 1.0,
+      pitch: 0.65, // Tono tenor masculino ágil
+      rate: 1.02,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -166,8 +166,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Valentina Rojas, tu Jefa de RRHH. Administro las relaciones laborales y la nómina de la empresa. ¿Calculamos las remuneraciones del mes o revisamos el estado de los colaboradores?',
     voz: {
       lang: 'es-CL',
-      pitch: 1.14,
-      rate: 1.0,
+      pitch: 1.08, // Tono femenino cálido y natural
+      rate: 0.98,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -204,8 +204,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Ignacio Herrera de Bodega y Logística. Cuido que no haya quiebres de stock ni descalces en la valorización de inventario. ¿Deseas revisar el stock crítico o consultar el inventario valorizado?',
     voz: {
       lang: 'es-CL',
-      pitch: 0.88,
-      rate: 1.0,
+      pitch: 0.50, // Tono bajo masculino rotundo y pausado
+      rate: 0.90,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -242,8 +242,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Francisca Araya de Producción y Costeo. Aseguro que cada producto tenga su costo real determinado con precisión. ¿Deseas costear una orden de producción o analizar las desviaciones?',
     voz: {
       lang: 'es-CL',
-      pitch: 1.10,
-      rate: 1.0,
+      pitch: 1.30, // Tono femenino agudo y enérgico
+      rate: 1.06,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -274,8 +274,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Tomás Baeza, encargado de Activos Fijos. Protejo y valorizo el patrimonio de la empresa. ¿Calculamos la depreciación mensual o revisamos los bienes registrados?',
     voz: {
       lang: 'es-CL',
-      pitch: 0.90,
-      rate: 0.98,
+      pitch: 0.60, // Tono masculino barítono patrimonial
+      rate: 0.96,
       volume: 1.0,
     },
     accionesSugeridas: [
@@ -306,8 +306,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
     saludoPersonal: 'Hola, soy Paula Carvallo de Rendición de Gastos. Fiscalizo que cada peso rendido tenga su respaldo legal y centro de costo. ¿Revisamos las rendiciones pendientes de aprobación?',
     voz: {
       lang: 'es-CL',
-      pitch: 1.15,
-      rate: 1.0,
+      pitch: 1.18, // Tono femenino equilibrado
+      rate: 1.02,
       volume: 1.0,
     },
     accionesSugeridas: [

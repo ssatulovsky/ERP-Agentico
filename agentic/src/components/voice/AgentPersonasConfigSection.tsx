@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { AgentPersona, AgentGender } from '../../types/agentPersona';
 import { agentPersonasStorage } from '../../services/agentPersonasStorage';
-import { voiceAssistantEngine } from '../../services/voiceAssistantEngine';
+import { voiceAssistantEngine, detectVoiceGender } from '../../services/voiceAssistantEngine';
 
 interface AgentPersonasConfigSectionProps {
   activeClientId: string;
@@ -259,7 +259,7 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                     <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between">
                       <span>Voz del Sistema (TTS)</span>
                       <span className="text-[10px] text-slate-400 font-normal">
-                        {voicesToShow.length} voces disponibles
+                        {voicesToShow.length} voces detectadas
                       </span>
                     </label>
                     <select
@@ -267,54 +267,88 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                       onChange={e => handleUpdateVoiceConfig(persona.id, 'voiceURI', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
                     >
-                      <option value="">Voz automática según género ({persona.sexo})</option>
-                      {voicesToShow.map((v, idx) => (
-                        <option key={`${v.voiceURI}-${idx}`} value={v.voiceURI || v.name}>
-                          {v.name} ({v.lang})
-                        </option>
-                      ))}
+                      <option value="">
+                        Asignación automática ({persona.sexo === 'MASCULINO' ? '👨 Masculina' : '👩 Femenina'})
+                      </option>
+                      {voicesToShow.map((v, idx) => {
+                        const gender = detectVoiceGender(v);
+                        const genderTag = gender === 'MALE' ? '👨 [Masc]' : gender === 'FEMALE' ? '👩 [Fem]' : '⚪ [Auto]';
+                        return (
+                          <option key={`${v.voiceURI}-${idx}`} value={v.voiceURI || v.name}>
+                            {genderTag} {v.name} ({v.lang})
+                          </option>
+                        );
+                      })}
                     </select>
+
+                    {/* Indicador de voz activa asignada */}
+                    {(() => {
+                      const activeVoice = voiceAssistantEngine.getBestVoiceForPersona(persona);
+                      const voiceGender = activeVoice ? detectVoiceGender(activeVoice) : 'UNKNOWN';
+                      const isMalePersona = persona.sexo === 'MASCULINO';
+                      return activeVoice ? (
+                        <div className="mt-1.5 px-2 py-1 bg-slate-100 rounded-md border border-slate-200/80 flex items-center justify-between text-[10px]">
+                          <span className="text-slate-600 truncate flex items-center gap-1">
+                            <Radio className="w-3 h-3 text-indigo-500 shrink-0" />
+                            Voz activa: <strong className="text-slate-800">{activeVoice.name}</strong>
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${
+                            voiceGender === 'MALE'
+                              ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                              : isMalePersona
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : 'bg-rose-100 text-rose-700 border border-rose-200'
+                          }`}>
+                            {voiceGender === 'MALE' 
+                              ? '👨 Masculina Nativa' 
+                              : isMalePersona 
+                              ? '👨 Barítono Modulado' 
+                              : '👩 Femenina Nativa'}
+                          </span>
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
 
                   {/* Sliders de Tono (Pitch) y Velocidad (Rate) */}
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
                       <div className="flex items-center justify-between text-[10px] text-slate-600 mb-1">
-                        <span>Tono de Voz</span>
-                        <span className="font-mono font-bold">{persona.voz.pitch.toFixed(2)}</span>
+                        <span>Tono (Pitch)</span>
+                        <span className="font-mono font-bold text-indigo-600">{persona.voz.pitch.toFixed(2)}</span>
                       </div>
                       <input
                         type="range"
-                        min="0.7"
-                        max="1.5"
-                        step="0.05"
+                        min="0.45"
+                        max="1.50"
+                        step="0.02"
                         value={persona.voz.pitch}
                         onChange={e => handleUpdateVoiceConfig(persona.id, 'pitch', parseFloat(e.target.value))}
                         className="w-full accent-indigo-600 cursor-pointer"
                       />
                       <div className="flex justify-between text-[9px] text-slate-400">
-                        <span>Grave</span>
-                        <span>Agudo</span>
+                        <span>Grave / Barítono (0.45)</span>
+                        <span>Agudo (1.50)</span>
                       </div>
                     </div>
 
                     <div>
                       <div className="flex items-center justify-between text-[10px] text-slate-600 mb-1">
-                        <span>Velocidad</span>
-                        <span className="font-mono font-bold">{persona.voz.rate.toFixed(2)}x</span>
+                        <span>Velocidad (Rate)</span>
+                        <span className="font-mono font-bold text-indigo-600">{persona.voz.rate.toFixed(2)}x</span>
                       </div>
                       <input
                         type="range"
                         min="0.75"
-                        max="1.3"
-                        step="0.05"
+                        max="1.30"
+                        step="0.02"
                         value={persona.voz.rate}
                         onChange={e => handleUpdateVoiceConfig(persona.id, 'rate', parseFloat(e.target.value))}
                         className="w-full accent-indigo-600 cursor-pointer"
                       />
                       <div className="flex justify-between text-[9px] text-slate-400">
-                        <span>Lento</span>
-                        <span>Rápido</span>
+                        <span>Lento (0.75x)</span>
+                        <span>Rápido (1.30x)</span>
                       </div>
                     </div>
                   </div>

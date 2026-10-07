@@ -23,6 +23,37 @@ export interface AgentDialogueTurnResult {
   followUpQuestion?: string;    // Pregunta de continuidad para el diálogo
 }
 
+/**
+ * Detecta el género probable de una voz del sistema según su nombre y URI
+ */
+export function detectVoiceGender(voice: SpeechSynthesisVoice): 'MALE' | 'FEMALE' | 'UNKNOWN' {
+  const name = (voice.name || '').toLowerCase();
+  const uri = (voice.voiceURI || '').toLowerCase();
+  const full = `${name} ${uri}`;
+
+  const maleKeywords = [
+    'reed', 'rocko', 'grandpa', 'eddy', 'jorge', 'juan', 'diego', 'pablo',
+    'carlos', 'miguel', 'david', 'raul', 'alvaro', 'enrique', 'manuel',
+    'mateo', 'gonzalo', 'alberto', 'ignacio', 'tomas', 'matias', 'rodrigo',
+    'male', 'hombre', 'masculino', 'guy', 'boy', 'baritone', 'bass',
+    'cristian', 'sebastian', 'andres', 'felipe', 'javier', 'esteban', 'pedro',
+    'antonio', 'fernando', 'alejandro', 'sergio', 'daniel', 'marcos'
+  ];
+
+  const femaleKeywords = [
+    'monica', 'mónica', 'paulina', 'francisca', 'sofia', 'sofía', 'camila', 'flo', 
+    'sandy', 'shelley', 'grandma', 'lucia', 'lucía', 'elena', 'laura', 'carmen', 
+    'rosa', 'conchita', 'penelope', 'esperanza', 'paloma', 'female', 'mujer', 
+    'femenino', 'girl', 'lady', 'sabina', 'esmeralda', 'valentina', 'paula', 
+    'soledad', 'victoria', 'valeria', 'catalina', 'isidora', 'marina', 'clara', 
+    'beatriz', 'maria', 'maría', 'ana', 'alicia', 'pilar', 'google español'
+  ];
+
+  if (maleKeywords.some(m => full.includes(m))) return 'MALE';
+  if (femaleKeywords.some(f => full.includes(f))) return 'FEMALE';
+  return 'UNKNOWN';
+}
+
 class VoiceAssistantEngine {
   private recognition: any = null;
   private isListeningActive: boolean = false;
@@ -63,50 +94,61 @@ class VoiceAssistantEngine {
   }
 
   /**
-   * Selecciona la mejor voz en español según la configuración y el sexo de la persona
+   * Selecciona la mejor voz en español según la configuración y el sexo de la persona,
+   * asignando voces diferenciadas a cada agente para que no suenen todos iguales.
    */
   public getBestVoiceForPersona(persona: AgentPersona): SpeechSynthesisVoice | null {
     const all = this.loadVoices();
     if (!all || all.length === 0) return null;
 
-    // 1. Si tiene una voz explícitamente configurada por URI
+    // 1. Si el usuario configuró una voz específica en el panel
     if (persona.voz.voiceURI) {
       const match = all.find(v => v.voiceURI === persona.voz.voiceURI || v.name === persona.voz.voiceURI);
       if (match) return match;
     }
 
-    // 2. Buscar voces en español
+    // 2. Filtrar voces en español
     const spanishVoices = all.filter(v => v.lang.toLowerCase().startsWith('es'));
-    if (spanishVoices.length === 0) return all[0];
+    const candidateList = spanishVoices.length > 0 ? spanishVoices : all;
 
-    // Preferir es-CL si existe
-    const chileanVoices = spanishVoices.filter(v => v.lang.toLowerCase().includes('cl'));
-    const candidateList = chileanVoices.length > 0 ? chileanVoices : spanishVoices;
+    const maleVoices = candidateList.filter(v => detectVoiceGender(v) === 'MALE');
+    const femaleVoices = candidateList.filter(v => detectVoiceGender(v) === 'FEMALE');
 
-    // Filtrar por pistas de género en el nombre de la voz si es posible
-    if (persona.sexo === 'FEMENINO') {
-      const femaleCandidates = candidateList.filter(v => {
-        const n = v.name.toLowerCase();
-        return n.includes('monica') || n.includes('paulina') || n.includes('francisca') || 
-               n.includes('sofia') || n.includes('camila') || n.includes('female') || 
-               n.includes('mujer') || n.includes('esmeralda') || n.includes('sabina');
-      });
-      if (femaleCandidates.length > 0) return femaleCandidates[0];
-    } else if (persona.sexo === 'MASCULINO') {
-      const maleCandidates = candidateList.filter(v => {
-        const n = v.name.toLowerCase();
-        return n.includes('jorge') || n.includes('juan') || n.includes('diego') || 
-               n.includes('pablo') || n.includes('male') || n.includes('hombre') || 
-               n.includes('carlos') || n.includes('miguel');
-      });
-      if (maleCandidates.length > 0) return maleCandidates[0];
+    if (persona.sexo === 'MASCULINO') {
+      if (maleVoices.length > 0) {
+        // Asignación diferenciada entre los hombres del equipo
+        const maleSlotMap: Record<string, number> = {
+          'TRIBUTARIO_F29': 0,    // Reed / Jorge / etc.
+          'FACTURACION_DTE': 1,   // Rocko / Juan / etc.
+          'BODEGA_INVENTARIO': 2, // Grandpa / Diego / etc.
+          'ACTIVO_FIJO': 3,       // Eddy / Pablo / etc.
+        };
+        const slot = maleSlotMap[persona.id] ?? 0;
+        return maleVoices[slot % maleVoices.length];
+      }
+      // Si el navegador no tiene voces con nombre masculino, usar cualquier voz no explícitamente femenina
+      const nonFemale = candidateList.filter(v => detectVoiceGender(v) !== 'FEMALE');
+      if (nonFemale.length > 0) return nonFemale[0];
+      return candidateList[0];
+    } else {
+      // Persona FEMENINA: Asignación diferenciada entre las mujeres del equipo
+      if (femaleVoices.length > 0) {
+        const femaleSlotMap: Record<string, number> = {
+          'CONTABILIDAD_SENIOR': 0, // Mónica / etc.
+          'TESORERIA_BANCOS': 1,    // Paulina / etc.
+          'RRHH_PERSONAS': 2,       // Shelley / etc.
+          'PRODUCCION_COSTOS': 3,   // Flo / etc.
+          'RENDICION_GASTOS': 4,    // Sandy / etc.
+        };
+        const slot = femaleSlotMap[persona.id] ?? 0;
+        return femaleVoices[slot % femaleVoices.length];
+      }
+      return candidateList[0];
     }
-
-    return candidateList[0] || all[0];
   }
 
   /**
-   * Pronuncia un texto con la voz y personalidad del agente
+   * Pronuncia un texto con la voz y personalidad acústica del agente
    */
   public speak(
     text: string, 
@@ -139,9 +181,37 @@ class VoiceAssistantEngine {
       utterance.voice = chosenVoice;
     }
 
-    utterance.lang = persona.voz.lang || 'es-CL';
-    utterance.pitch = persona.voz.pitch ?? (persona.sexo === 'FEMENINO' ? 1.15 : 0.92);
-    utterance.rate = persona.voz.rate ?? 1.0;
+    utterance.lang = chosenVoice?.lang || persona.voz.lang || 'es-CL';
+
+    // MODULACIÓN ACÚSTICA RIGUROSA DE TIMBRE:
+    // Si la persona es un HOMBRE:
+    // - Si la voz física seleccionada es masculina (Reed, Rocko, Eddy, Grandpa, Jorge, etc.):
+    //   mantenemos pitch natural (0.85 - 1.0).
+    // - Si la voz física del sistema es femenina (o Google español):
+    //   FORZAMOS PITCH A 0.50 - 0.62 para bajar la frecuencia a rango barítono/bajo real (90-120 Hz).
+    //   ¡Así NUNCA sonará como una mujer!
+    const isChosenVoiceActuallyMale = chosenVoice ? detectVoiceGender(chosenVoice) === 'MALE' : false;
+
+    if (persona.sexo === 'MASCULINO') {
+      if (isChosenVoiceActuallyMale) {
+        // Voz masculina nativa
+        utterance.pitch = persona.voz.pitch && persona.voz.pitch > 0.70 ? persona.voz.pitch : 0.95;
+      } else {
+        // Voz femenina modulada a barítono masculino
+        utterance.pitch = Math.min(persona.voz.pitch || 0.58, 0.62);
+      }
+      utterance.rate = persona.voz.rate || 0.94;
+    } else {
+      // Persona femenina
+      if (isChosenVoiceActuallyMale) {
+        // Si una voz masculina fue seleccionada para una mujer, modular hacia arriba
+        utterance.pitch = 1.35;
+      } else {
+        utterance.pitch = Math.max(persona.voz.pitch || 1.15, 1.05);
+      }
+      utterance.rate = persona.voz.rate || 1.0;
+    }
+
     utterance.volume = persona.voz.volume ?? 1.0;
 
     utterance.onstart = () => {

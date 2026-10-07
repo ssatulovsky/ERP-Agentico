@@ -19,15 +19,25 @@ export const agentPersonasStorage = {
       return DEFAULT_AGENT_PERSONAS.map(def => {
         const found = parsed.find(p => p.id === def.id);
         if (!found) return def;
+
+        const effectiveSex = found.sexo || def.sexo;
+        // Si el agente es masculino y su pitch guardado era el antiguo (>= 0.75),
+        // migrarlo automáticamente al nuevo perfil barítono para que no suene como mujer
+        let pitch = found.voz?.pitch ?? def.voz.pitch;
+        if (effectiveSex === 'MASCULINO' && pitch >= 0.75) {
+          pitch = def.voz.pitch;
+        }
+
         return {
           ...def,
           nombre: found.nombre || def.nombre,
-          sexo: found.sexo || def.sexo,
+          sexo: effectiveSex,
           cargo: found.cargo || def.cargo,
           saludoPersonal: found.saludoPersonal || def.saludoPersonal,
           voz: {
             ...def.voz,
             ...(found.voz || {}),
+            pitch,
           },
         };
       });
