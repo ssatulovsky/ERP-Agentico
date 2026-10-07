@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1788792265432,
+      "tag": "0000_init_accounting_mysql",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1788800000000,
+      "tag": "0001_multi_tenancy_and_governance",
+      "breakpoints": true
+    }
+  ]
+}

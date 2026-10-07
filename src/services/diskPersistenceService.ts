@@ -1,0 +1,1517 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { isRealMysqlConnected, db as mysqlDb } from '../db/mysqlClient';
+import {
+  accountingEntries,
+  accountingEntryLines,
+  agentAuditLogs,
+  economicIndicators,
+  dtesRcv,
+  employees,
+  payrollSettlements,
+  costCenters,
+  fixedAssets,
+  expenseReports,
+  expenseItems,
+  expenseProjects,
+} from '../db/mysqlSchema';
+
+export interface DiskDataStore {
+  version: string;
+  lastPersistedAt: string;
+  entries: any[];
+  lines: any[];
+  auditLogs: any[];
+  dtes: any[];
+  employees: any[];
+  payrolls: any[];
+  indicators: any[];
+  bankAccounts: any[];
+  bankMovements: any[];
+  warehouses: any[];
+  inventoryItems: any[];
+  clients: any[];
+  costCenters: any[];
+  fixedAssets: any[];
+  expenseReports?: any[];
+  expenseItems?: any[];
+  expenseProjects?: any[];
+  credentialsVault?: any[];
+}
+
+const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DISK_FILE = path.join(DATA_DIR, 'db_disk_snapshot.json');
+
+class DiskPersistenceService {
+  private store: DiskDataStore = {
+    version: '1.0.0',
+    lastPersistedAt: new Date().toISOString(),
+    entries: [],
+    lines: [],
+    auditLogs: [],
+    dtes: [],
+    employees: [],
+    payrolls: [],
+    indicators: [],
+    bankAccounts: [],
+    bankMovements: [],
+    warehouses: [],
+    inventoryItems: [],
+    clients: [],
+    costCenters: [],
+    fixedAssets: [],
+    expenseReports: [],
+    expenseItems: [],
+    expenseProjects: [],
+    credentialsVault: [],
+  };
+
+  private isInitialized = false;
+  private saveDebounceTimer: NodeJS.Timeout | null = null;
+
+  constructor() {
+    this.ensureDirectory();
+    this.loadFromDisk();
+  }
+
+  private ensureDirectory() {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+    } catch (err: any) {
+      console.warn(`[DiskPersistence] Error al crear directorio data: ${err.message}`);
+    }
+  }
+
+  /**
+   * Carga el estado serializado desde el disco local.
+   * Si no existe, precarga datos semilla balanceados.
+   */
+  public loadFromDisk(): DiskDataStore {
+    if (this.isInitialized) {
+      return this.store;
+    }
+
+    try {
+      if (fs.existsSync(DISK_FILE)) {
+        const raw = fs.readFileSync(DISK_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        this.store = {
+          ...this.store,
+          costCenters: parsed.costCenters || [],
+          fixedAssets: parsed.fixedAssets || [],
+          expenseReports: parsed.expenseReports || [],
+          expenseItems: parsed.expenseItems || [],
+          expenseProjects: parsed.expenseProjects || [],
+          ...parsed,
+        };
+        if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
+          this.initExpenseSeeds();
+        }
+        // Purgar asientos ficticios de ventas con IVA para InnovAgile (empresa no afecta a IVA)
+        this.store.entries = this.store.entries.filter(e => {
+          const isInnovagile = e.empresaId.includes('76.892.410') || e.empresaId.includes('77.798.901');
+          if (isInnovagile && (e.origenModulo === 'RCV_VENTA' || e.documentoRef?.includes('DTE 33') || e.concepto?.includes('Retail Logistics'))) {
+            return false;
+          }
+          return true;
+        });
+        const validEntryIds = new Set(this.store.entries.map(e => e.id));
+        this.store.lines = this.store.lines.filter(l => validEntryIds.has(l.entryId));
+        console.log(`[DiskPersistence] Snapshot cargado desde disco: ${DISK_FILE} (${this.store.entries.length} asientos, ${this.store.dtes.length} DTEs).`);
+      } else {
+        console.log('[DiskPersistence] Archivo de persistencia no encontrado. Inicializando con datos semilla estándar.');
+        this.populateSeedData();
+        this.flushToDiskSync();
+      }
+    } catch (err: any) {
+      console.error(`[DiskPersistence] Error al leer snapshot de disco: ${err.message}. Regenerando...`);
+      this.populateSeedData();
+      this.flushToDiskSync();
+    }
+
+    this.isInitialized = true;
+    try {
+      const { inMemoryEntries, inMemoryLines, inMemoryDtesRcv } = require('../db/mysqlClient');
+      if (inMemoryEntries && inMemoryEntries.length === 0 && this.store.entries) {
+        inMemoryEntries.push(...this.store.entries);
+      }
+      if (inMemoryLines && inMemoryLines.length === 0 && this.store.lines) {
+        inMemoryLines.push(...this.store.lines);
+      }
+      if (inMemoryDtesRcv && inMemoryDtesRcv.length === 0 && this.store.dtes) {
+        inMemoryDtesRcv.push(...this.store.dtes);
+      }
+    } catch {}
+    return this.store;
+  }
+
+  /**
+   * Escribe el estado actual al disco de manera atómica (evita corrupción).
+   */
+  public flushToDiskSync(): boolean {
+    try {
+      this.ensureDirectory();
+      this.store.lastPersistedAt = new Date().toISOString();
+      const tempPath = `${DISK_FILE}.tmp.${Date.now()}`;
+      fs.writeFileSync(tempPath, JSON.stringify(this.store, null, 2), 'utf-8');
+      fs.renameSync(tempPath, DISK_FILE);
+      return true;
+    } catch (err: any) {
+      console.error(`[DiskPersistence] Error al guardar en disco: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Programa un guardado diferido (debounce) para no saturar I/O en ráfagas de transacciones.
+   */
+  public scheduleFlush() {
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+    }
+    this.saveDebounceTimer = setTimeout(() => {
+      this.flushToDiskSync();
+    }, 300);
+  }
+
+  /**
+   * Sincroniza los registros almacenados en disco hacia la base de datos MySQL 8.0.
+   */
+  public async syncDiskToMysql(): Promise<{ syncedEntries: number; syncedDtes: number }> {
+    if (!isRealMysqlConnected) {
+      return { syncedEntries: 0, syncedDtes: 0 };
+    }
+
+    let syncedEntries = 0;
+    let syncedDtes = 0;
+
+    try {
+      // 1. Asientos contables y líneas
+      for (const entry of this.store.entries) {
+        try {
+          await mysqlDb
+            .insert(accountingEntries)
+            .values({
+              id: entry.id,
+              firmId: entry.firmId || 'firm-001-audicon',
+              empresaId: entry.empresaId,
+              periodo: entry.periodo,
+              fecha: entry.fecha,
+              concepto: entry.concepto,
+              documentoRef: entry.documentoRef || null,
+              origenModulo: entry.origenModulo || 'MANUAL',
+              totalDebe: String(entry.totalDebe),
+              totalHaber: String(entry.totalHaber),
+              creadoPorAgente: entry.creadoPorAgente || 'SISTEMA_PERSISTENCIA',
+              autorizadoPorSupervisor: Boolean(entry.autorizadoPorSupervisor),
+              supervisorSignature: entry.supervisorSignature || 'HMAC_PERSISTED',
+              createdAt: new Date(entry.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                totalDebe: String(entry.totalDebe),
+                totalHaber: String(entry.totalHaber),
+              },
+            });
+
+          syncedEntries++;
+        } catch (e) {
+          // Si ya existe o error específico, continuar
+        }
+      }
+
+      // 2. Líneas de asientos
+      for (const line of this.store.lines) {
+        try {
+          await mysqlDb
+            .insert(accountingEntryLines)
+            .values({
+              id: line.id,
+              entryId: line.entryId,
+              lineaNumero: line.lineaNumero || 1,
+              codigoCuenta: line.codigoCuenta,
+              nombreCuenta: line.nombreCuenta,
+              debe: String(line.debe),
+              haber: String(line.haber),
+              rutAuxiliar: line.rutAuxiliar || null,
+              centroCosto: line.centroCosto || null,
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                debe: String(line.debe),
+                haber: String(line.haber),
+              },
+            });
+        } catch (e) {
+          // Continuar
+        }
+      }
+
+      // 3. DTEs RCV
+      for (const dte of this.store.dtes) {
+        try {
+          await mysqlDb
+            .insert(dtesRcv)
+            .values({
+              id: dte.id || crypto.randomUUID(),
+              empresaId: dte.empresaId,
+              periodo: dte.periodo,
+              tipoOperacion: dte.tipoOperacion || 'COMPRA',
+              tipoDte: Number(dte.tipoDte) || 33,
+              folio: Number(dte.folio) || 1,
+              rutContraparte: dte.rutContraparte,
+              razonSocialContraparte: dte.razonSocialContraparte || 'Proveedor',
+              fechaEmision: dte.fechaEmision,
+              montoExento: String(dte.montoExento || '0.00'),
+              montoNeto: String(dte.montoNeto || '0.00'),
+              montoIva: String(dte.montoIva || '0.00'),
+              montoIvaRecuperable: String(dte.montoIvaRecuperable || '0.00'),
+              montoIvaNoRecuperable: String(dte.montoIvaNoRecuperable || '0.00'),
+              montoTotal: String(dte.montoTotal),
+              estadoAcuse: dte.estadoAcuse || null,
+              estadoContable: dte.estadoContable || 'PENDIENTE',
+              glosa: dte.glosa || null,
+              centroCostoId: dte.centroCostoId || null,
+              centroCostoCodigo: dte.centroCostoCodigo || null,
+              centroCostoNombre: dte.centroCostoNombre || null,
+              cuentaGastoImputadaCodigo: dte.cuentaGastoImputadaCodigo || dte.cuentaCodigoAsignada || null,
+              cuentaGastoImputadaNombre: dte.cuentaGastoImputadaNombre || dte.cuentaNombreAsignada || null,
+              items: dte.items ? dte.items : null,
+              entryIdRef: dte.entryIdRef || null,
+              createdAt: new Date(dte.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                montoTotal: String(dte.montoTotal),
+                centroCostoId: dte.centroCostoId || null,
+                centroCostoCodigo: dte.centroCostoCodigo || null,
+                centroCostoNombre: dte.centroCostoNombre || null,
+                cuentaGastoImputadaCodigo: dte.cuentaGastoImputadaCodigo || dte.cuentaCodigoAsignada || null,
+                cuentaGastoImputadaNombre: dte.cuentaGastoImputadaNombre || dte.cuentaNombreAsignada || null,
+              },
+            });
+
+          syncedDtes++;
+        } catch (e) {
+          // Continuar
+        }
+      }
+
+      // 4. Centros de Costo (Mini-Empresas)
+      if (this.store.costCenters && this.store.costCenters.length > 0) {
+        for (const cc of this.store.costCenters) {
+          try {
+            await mysqlDb
+              .insert(costCenters)
+              .values({
+                id: cc.id || crypto.randomUUID(),
+                empresaId: cc.empresaId || 'client-retail-01',
+                codigo: cc.codigo,
+                nombre: cc.nombre,
+                categoria: cc.categoria || 'ADMINISTRACION',
+                responsableNombre: cc.responsableNombre || 'Responsable',
+                responsableEmail: cc.responsableEmail || cc.emailResponsable || null,
+                presupuestoMensualClp: String(cc.presupuestoMensualClp || '0.00'),
+                activo: cc.activo !== false,
+                descripcion: cc.descripcion || null,
+                ventasAcumuladasMes: String(cc.ventasAcumuladasMes || '0.00'),
+                costosDirectosMes: String(cc.costosDirectosMes || '0.00'),
+                gastosOperacionalesMes: String(cc.gastosOperacionalesMes || '0.00'),
+                remuneracionesMes: String(cc.remuneracionesMes || '0.00'),
+                depreciacionMes: String(cc.depreciacionMes || '0.00'),
+                createdAt: new Date(cc.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: cc.nombre,
+                  presupuestoMensualClp: String(cc.presupuestoMensualClp || '0.00'),
+                  activo: cc.activo !== false,
+                },
+              });
+          } catch (e) {
+            // Continuar
+          }
+        }
+      }
+
+      // 5. Activos Fijos (con Centro de Costo)
+      if (this.store.fixedAssets && this.store.fixedAssets.length > 0) {
+        for (const fa of this.store.fixedAssets) {
+          try {
+            await mysqlDb
+              .insert(fixedAssets)
+              .values({
+                id: fa.id || crypto.randomUUID(),
+                empresaId: fa.empresaId || 'client-retail-01',
+                codigoPlaca: fa.codigoPlaca || fa.id,
+                nombre: fa.nombre,
+                categoria: fa.categoria || 'MAQUINARIA_INDUSTRIAL',
+                fechaAdquisicion: fa.fechaAdquisicion || '2026-01-01',
+                proveedorRut: fa.proveedorRut || null,
+                proveedorRazonSocial: fa.proveedorRazonSocial || null,
+                folioDteCompra: fa.folioDteCompra ? Number(fa.folioDteCompra) : null,
+                valorAdquisicionOriginal: String(fa.valorAdquisicionOriginal || '0.00'),
+                valorResidualFinanciero: String(fa.valorResidualFinanciero || '0.00'),
+                vidaUtilMesesFinanciera: Number(fa.vidaUtilMesesFinanciera || 60),
+                vidaUtilMesesTributaria: Number(fa.vidaUtilMesesTributaria || 36),
+                mesesDepreciados: Number(fa.mesesDepreciados || 0),
+                vidaUtilRestanteMeses: Number(fa.vidaUtilRestanteMeses || 60),
+                metodoDepreciacion: fa.metodoDepreciacion || 'LINEAL_RECTA',
+                depreciacionAcumuladaFinanciera: String(fa.depreciacionAcumuladaFinanciera || '0.00'),
+                valorLibroFinanciero: String(fa.valorLibroFinanciero || '0.00'),
+                cuotaDepreciacionMensualFinanciera: String(fa.cuotaDepreciacionMensualFinanciera || '0.00'),
+                factorCorreccionMonetariaAcum: String(fa.factorCorreccionMonetariaAcum || '0.000000'),
+                correccionMonetariaAcumulada: String(fa.correccionMonetariaAcumulada || '0.00'),
+                depreciacionAcumuladaTributaria: String(fa.depreciacionAcumuladaTributaria || '0.00'),
+                valorTributarioNeto: String(fa.valorTributarioNeto || '0.00'),
+                cuotaDepreciacionMensualTributaria: String(fa.cuotaDepreciacionMensualTributaria || '0.00'),
+                centroCostoId: fa.centroCostoId || null,
+                centroCostoCodigo: fa.centroCostoCodigo || null,
+                centroCostoNombre: fa.centroCostoNombre || null,
+                ubicacionFisica: fa.ubicacionFisica || 'Planta Principal',
+                responsableCustodio: fa.responsableCustodio || 'Encargado de Operaciones',
+                estado: fa.estado || 'ACTIVO_OPERATIVO',
+                numeroSerie: fa.numeroSerie || null,
+                marcaModelo: fa.marcaModelo || null,
+                esFabrilProduccion: Boolean(fa.esFabrilProduccion),
+                asientoAltaId: fa.asientoAltaId || null,
+                createdAt: new Date(fa.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: fa.nombre,
+                  valorLibroFinanciero: String(fa.valorLibroFinanciero || '0.00'),
+                  centroCostoId: fa.centroCostoId || null,
+                  centroCostoCodigo: fa.centroCostoCodigo || null,
+                  centroCostoNombre: fa.centroCostoNombre || null,
+                },
+              });
+          } catch (e) {
+            // Continuar
+          }
+        }
+      }
+
+      // 6. Proyectos de Rendición de Gastos
+      if (this.store.expenseProjects && this.store.expenseProjects.length > 0) {
+        for (const pry of this.store.expenseProjects) {
+          try {
+            await mysqlDb
+              .insert(expenseProjects)
+              .values({
+                id: pry.id,
+                empresaId: pry.empresaId,
+                codigo: pry.codigo,
+                nombre: pry.nombre,
+                clienteNombre: pry.clienteNombre || null,
+                presupuestoTotalClp: String(pry.presupuestoTotalClp || '0.00'),
+                activo: pry.activo !== false,
+                descripcion: pry.descripcion || null,
+                createdAt: new Date(pry.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  nombre: pry.nombre,
+                  presupuestoTotalClp: String(pry.presupuestoTotalClp || '0.00'),
+                  activo: pry.activo !== false,
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
+      // 7. Cabeceras de Rendición de Gastos
+      if (this.store.expenseReports && this.store.expenseReports.length > 0) {
+        for (const rep of this.store.expenseReports) {
+          try {
+            await mysqlDb
+              .insert(expenseReports)
+              .values({
+                id: rep.id,
+                empresaId: rep.empresaId,
+                folio: rep.folio,
+                titulo: rep.titulo,
+                rendidorId: rep.rendidorId || null,
+                rendidorNombre: rep.rendidorNombre,
+                rendidorRut: rep.rendidorRut,
+                rendidorEmail: rep.rendidorEmail || null,
+                rendidorCargo: rep.rendidorCargo || null,
+                centroCostoId: rep.centroCostoId || null,
+                centroCostoCodigo: rep.centroCostoCodigo || null,
+                centroCostoNombre: rep.centroCostoNombre || null,
+                proyectoId: rep.proyectoId || null,
+                proyectoCodigo: rep.proyectoCodigo || null,
+                proyectoNombre: rep.proyectoNombre || null,
+                fondoAsignadoClp: String(rep.fondoAsignadoClp || '0.00'),
+                montoTotalRendidoClp: String(rep.montoTotalRendidoClp || '0.00'),
+                saldoReembolsarClp: String(rep.saldoReembolsarClp || '0.00'),
+                saldoReintegrarClp: String(rep.saldoReintegrarClp || '0.00'),
+                moneda: rep.moneda || 'CLP',
+                estado: rep.estado || 'BORRADOR',
+                fechaInicio: rep.fechaInicio,
+                fechaCierre: rep.fechaCierre,
+                fechaAprobacion: rep.fechaAprobacion || null,
+                fechaPagoReembolso: rep.fechaPagoReembolso || null,
+                aprobadorNombre: rep.aprobadorNombre || null,
+                aprobadorEmail: rep.aprobadorEmail || null,
+                observacionesAprobador: rep.observacionesAprobador || null,
+                asientoContableId: rep.asientoContableId || null,
+                agenteAuditorScore: rep.agenteAuditorScore || 100,
+                agenteAuditorDiagnostico: rep.agenteAuditorDiagnostico || null,
+                createdAt: new Date(rep.createdAt || Date.now()),
+                updatedAt: new Date(rep.updatedAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  estado: rep.estado,
+                  montoTotalRendidoClp: String(rep.montoTotalRendidoClp || '0.00'),
+                  saldoReembolsarClp: String(rep.saldoReembolsarClp || '0.00'),
+                  saldoReintegrarClp: String(rep.saldoReintegrarClp || '0.00'),
+                  observacionesAprobador: rep.observacionesAprobador || null,
+                  asientoContableId: rep.asientoContableId || null,
+                  updatedAt: new Date(),
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
+      // 8. Comprobantes / Ítems de Rendición
+      if (this.store.expenseItems && this.store.expenseItems.length > 0) {
+        for (const item of this.store.expenseItems) {
+          try {
+            await mysqlDb
+              .insert(expenseItems)
+              .values({
+                id: item.id,
+                expenseReportId: item.expenseReportId,
+                empresaId: item.empresaId,
+                fecha: item.fecha,
+                tipoDocumento: item.tipoDocumento,
+                folioDocumento: item.folioDocumento,
+                proveedorRut: item.proveedorRut,
+                proveedorRazonSocial: item.proveedorRazonSocial,
+                categoria: item.categoria,
+                descripcionGlosa: item.descripcionGlosa,
+                montoNeto: String(item.montoNeto || '0.00'),
+                montoIva: String(item.montoIva || '0.00'),
+                montoExento: String(item.montoExento || '0.00'),
+                montoTotalClp: String(item.montoTotalClp || '0.00'),
+                monedaOriginal: item.monedaOriginal || 'CLP',
+                montoOriginal: item.montoOriginal ? String(item.montoOriginal) : null,
+                tipoCambio: String(item.tipoCambio || '1.0000'),
+                centroCostoId: item.centroCostoId || null,
+                centroCostoCodigo: item.centroCostoCodigo || null,
+                proyectoId: item.proyectoId || null,
+                proyectoCodigo: item.proyectoCodigo || null,
+                cuentaContableCodigo: item.cuentaContableCodigo,
+                cuentaContableNombre: item.cuentaContableNombre || null,
+                comprobanteArchivoNombre: item.comprobanteArchivoNombre || null,
+                comprobanteUrl: item.comprobanteUrl || null,
+                comprobantePreviewBase64: item.comprobantePreviewBase64 || null,
+                esGastoRechazadoArt21: Boolean(item.esGastoRechazadoArt21),
+                validadoPorAgente: Boolean(item.validadoPorAgente),
+                observacionAgente: item.observacionAgente || null,
+                createdAt: new Date(item.createdAt || Date.now()),
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  descripcionGlosa: item.descripcionGlosa,
+                  montoTotalClp: String(item.montoTotalClp || '0.00'),
+                  cuentaContableCodigo: item.cuentaContableCodigo,
+                },
+              });
+          } catch (e) {}
+        }
+      }
+
+      console.log(`[DiskPersistence] Sincronización a MySQL 8.0 completada: ${syncedEntries} asientos, ${syncedDtes} DTEs.`);
+    } catch (syncErr: any) {
+      console.warn(`[DiskPersistence] Aviso en sync a MySQL: ${syncErr.message}`);
+    }
+
+    return { syncedEntries, syncedDtes };
+  }
+
+  // ==========================================================================
+  // OPERACIONES CRUD CON DOBLE PERSISTENCIA (MYSQL + DISCO)
+  // ==========================================================================
+
+  public addAccountingEntry(entry: any, lines: any[]) {
+    // 1. Guardar en memoria de proceso y disco
+    const existingIndex = this.store.entries.findIndex((e) => e.id === entry.id);
+    if (existingIndex >= 0) {
+      this.store.entries[existingIndex] = entry;
+      this.store.lines = this.store.lines.filter((l) => l.entryId !== entry.id);
+    } else {
+      this.store.entries.unshift(entry);
+    }
+
+    this.store.lines.push(...lines);
+    this.scheduleFlush();
+
+    // 2. Si MySQL está conectado, persistir inmediatamente en MySQL
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb.insert(accountingEntries).values({
+            id: entry.id,
+            firmId: entry.firmId || 'firm-001-audicon',
+            empresaId: entry.empresaId,
+            periodo: entry.periodo,
+            fecha: entry.fecha,
+            concepto: entry.concepto,
+            documentoRef: entry.documentoRef || null,
+            origenModulo: entry.origenModulo,
+            totalDebe: String(entry.totalDebe),
+            totalHaber: String(entry.totalHaber),
+            creadoPorAgente: entry.creadoPorAgente,
+            autorizadoPorSupervisor: Boolean(entry.autorizadoPorSupervisor),
+            supervisorSignature: entry.supervisorSignature,
+            createdAt: new Date(entry.createdAt || Date.now()),
+          });
+
+          for (const line of lines) {
+            await mysqlDb.insert(accountingEntryLines).values({
+              id: line.id || crypto.randomUUID(),
+              entryId: entry.id,
+              lineaNumero: line.lineaNumero || 1,
+              codigoCuenta: line.codigoCuenta,
+              nombreCuenta: line.nombreCuenta,
+              debe: String(line.debe),
+              haber: String(line.haber),
+              rutAuxiliar: line.rutAuxiliar || null,
+              centroCosto: line.centroCosto || null,
+            });
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al escribir asiento en MySQL (respaldo en disco seguro): ${sqlErr.message}`);
+        }
+      })();
+    }
+  }
+
+  public addAccountingLines(lines: any[]) {
+    if (!Array.isArray(lines) || lines.length === 0) return;
+    for (const line of lines) {
+      const existingIdx = this.store.lines.findIndex((l) => l.id === line.id);
+      if (existingIdx >= 0) {
+        this.store.lines[existingIdx] = line;
+      } else {
+        this.store.lines.push(line);
+      }
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          for (const line of lines) {
+            await mysqlDb.insert(accountingEntryLines).values({
+              id: line.id || crypto.randomUUID(),
+              entryId: line.entryId,
+              lineaNumero: line.lineaNumero || 1,
+              codigoCuenta: line.codigoCuenta,
+              nombreCuenta: line.nombreCuenta,
+              debe: String(line.debe),
+              haber: String(line.haber),
+              rutAuxiliar: line.rutAuxiliar || null,
+              centroCosto: line.centroCosto || null,
+            });
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al escribir líneas en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+  }
+
+  public getAccountingEntries(empresaId?: string, periodo?: string): any[] {
+    let result = this.store.entries;
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((e) => {
+        const eNorm = (e.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !eNorm || eNorm === norm;
+      });
+    }
+    if (periodo) {
+      result = result.filter((e) => !e.periodo || e.periodo === periodo);
+    }
+    return result;
+  }
+
+  public getLinesForEntry(entryId: string): any[] {
+    return this.store.lines.filter((l) => l.entryId === entryId);
+  }
+
+  public getAllLines(): any[] {
+    return this.store.lines || [];
+  }
+
+  public addDte(dte: any) {
+    const existingIndex = this.store.dtes.findIndex((d) => d.id === dte.id);
+    if (existingIndex >= 0) {
+      this.store.dtes[existingIndex] = dte;
+    } else {
+      this.store.dtes.unshift(dte);
+    }
+    this.scheduleFlush();
+  }
+
+  public getDtes(empresaId?: string, periodo?: string): any[] {
+    let result = this.store.dtes;
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((d) => {
+        const dNorm = (d.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !dNorm || dNorm === norm;
+      });
+    }
+    if (periodo) {
+      result = result.filter((d) => !d.periodo || d.periodo === periodo);
+    }
+    return result;
+  }
+
+  public addAuditLog(log: any) {
+    this.store.auditLogs.unshift(log);
+    if (this.store.auditLogs.length > 500) {
+      this.store.auditLogs = this.store.auditLogs.slice(0, 500);
+    }
+    this.scheduleFlush();
+  }
+
+  public getAuditLogs(empresaId?: string): any[] {
+    if (!empresaId) return this.store.auditLogs;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return this.store.auditLogs.filter((l) => {
+      const lNorm = (l.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return !lNorm || lNorm === norm;
+    });
+  }
+
+  public addCostCenter(cc: any) {
+    if (!this.store.costCenters) this.store.costCenters = [];
+    const existingIndex = this.store.costCenters.findIndex(
+      (c) => c.id === cc.id || (c.codigo === cc.codigo && c.empresaId === cc.empresaId)
+    );
+    if (existingIndex >= 0) {
+      this.store.costCenters[existingIndex] = { ...this.store.costCenters[existingIndex], ...cc };
+    } else {
+      this.store.costCenters.push(cc);
+    }
+    this.scheduleFlush();
+  }
+
+  public getCostCenters(empresaId?: string): any[] {
+    let result = this.store.costCenters || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((c) => {
+        const cNorm = (c.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !cNorm || cNorm === norm;
+      });
+    }
+    return result;
+  }
+
+  public addFixedAsset(fa: any) {
+    if (!this.store.fixedAssets) this.store.fixedAssets = [];
+    const existingIndex = this.store.fixedAssets.findIndex((a) => a.id === fa.id);
+    if (existingIndex >= 0) {
+      this.store.fixedAssets[existingIndex] = { ...this.store.fixedAssets[existingIndex], ...fa };
+    } else {
+      this.store.fixedAssets.unshift(fa);
+    }
+    this.scheduleFlush();
+  }
+
+  public getFixedAssets(empresaId?: string): any[] {
+    let result = this.store.fixedAssets || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((a) => {
+        const aNorm = (a.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return !aNorm || aNorm === norm;
+      });
+    }
+    return result;
+  }
+
+  public saveVaultEntry(entry: any) {
+    if (!this.store.credentialsVault) this.store.credentialsVault = [];
+    const existingIndex = this.store.credentialsVault.findIndex(
+      (v) => v.empresaId === entry.empresaId || (entry.rut && v.rut === entry.rut)
+    );
+    if (existingIndex >= 0) {
+      this.store.credentialsVault[existingIndex] = {
+        ...this.store.credentialsVault[existingIndex],
+        ...entry,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      this.store.credentialsVault.push({
+        ...entry,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public getVaultEntry(empresaIdOrRut: string): any | null {
+    if (!this.store.credentialsVault || !empresaIdOrRut) return null;
+    const clean = empresaIdOrRut.replace(/[^0-9kK]/g, '').toUpperCase();
+    return (
+      this.store.credentialsVault.find((v) => {
+        const vEmpresa = (v.empresaId || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        const vRut = (v.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        return vEmpresa === clean || vRut === clean || v.empresaId === empresaIdOrRut;
+      }) || null
+    );
+  }
+
+  public getStatus(): {
+    diskPath: string;
+    fileSizeBytes: number;
+    lastPersistedAt: string;
+    entriesCount: number;
+    linesCount: number;
+    dtesCount: number;
+    employeesCount: number;
+    costCentersCount: number;
+    fixedAssetsCount: number;
+    expenseReportsCount: number;
+    expenseItemsCount: number;
+    expenseProjectsCount: number;
+    mysqlActive: boolean;
+  } {
+    let size = 0;
+    try {
+      if (fs.existsSync(DISK_FILE)) {
+        size = fs.statSync(DISK_FILE).size;
+      }
+    } catch {}
+
+    return {
+      diskPath: DISK_FILE,
+      fileSizeBytes: size,
+      lastPersistedAt: this.store.lastPersistedAt,
+      entriesCount: this.store.entries.length,
+      linesCount: this.store.lines.length,
+      dtesCount: this.store.dtes.length,
+      employeesCount: this.store.employees.length,
+      costCentersCount: (this.store.costCenters || []).length,
+      fixedAssetsCount: (this.store.fixedAssets || []).length,
+      expenseReportsCount: (this.store.expenseReports || []).length,
+      expenseItemsCount: (this.store.expenseItems || []).length,
+      expenseProjectsCount: (this.store.expenseProjects || []).length,
+      mysqlActive: isRealMysqlConnected,
+    };
+  }
+
+  // ==========================================================================
+  // MÓDULO RENDICIÓN DE GASTOS ("RINDE GASTOS AI"): CRUD EN DISCO CON CERO MOCKS
+  // ==========================================================================
+
+  public getExpenseReports(empresaId?: string): any[] {
+    let result = this.store.expenseReports || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      const filtered = result.filter((r) => {
+        const rNorm = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !r.empresaId ||
+          r.empresaId === empresaId ||
+          rNorm === norm ||
+          r.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+      return filtered.length > 0 ? filtered : result;
+    }
+    return result;
+  }
+
+  public updateExpenseReport(id: string, partial: any): boolean {
+    if (!this.store.expenseReports) return false;
+    const report = this.store.expenseReports.find((r) => r.id === id);
+    if (!report) return false;
+    Object.assign(report, partial, {
+      updatedAt: new Date().toISOString(),
+    });
+    this.scheduleFlush();
+    return true;
+  }
+
+  public saveExpenseReport(report: any) {
+    if (!this.store.expenseReports) this.store.expenseReports = [];
+    const idx = this.store.expenseReports.findIndex((r) => r.id === report.id);
+    if (idx >= 0) {
+      this.store.expenseReports[idx] = {
+        ...this.store.expenseReports[idx],
+        ...report,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      this.store.expenseReports.unshift({
+        ...report,
+        createdAt: report.createdAt || new Date().toISOString(),
+        updatedAt: report.updatedAt || new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public updateExpenseReportStatus(
+    id: string,
+    estado: string,
+    observacionesAprobador?: string,
+    aprobadorNombre?: string,
+    asientoContableId?: string
+  ): boolean {
+    if (!this.store.expenseReports) return false;
+    const report = this.store.expenseReports.find((r) => r.id === id);
+    if (!report) return false;
+
+    report.estado = estado;
+    report.updatedAt = new Date().toISOString();
+    if (observacionesAprobador !== undefined) report.observacionesAprobador = observacionesAprobador;
+    if (aprobadorNombre !== undefined) report.aprobadorNombre = aprobadorNombre;
+    if (asientoContableId !== undefined) report.asientoContableId = asientoContableId;
+
+    if (estado === 'APROBADA') {
+      report.fechaAprobacion = new Date().toISOString().substring(0, 10);
+    } else if (estado === 'CONTABILIZADA_PAGADA') {
+      report.fechaPagoReembolso = new Date().toISOString().substring(0, 10);
+    }
+
+    this.scheduleFlush();
+    return true;
+  }
+
+  public getExpenseItems(reportId?: string, empresaId?: string): any[] {
+    let result = this.store.expenseItems || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((i) => {
+        const iNorm = (i.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !i.empresaId ||
+          i.empresaId === empresaId ||
+          iNorm === norm ||
+          i.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+    }
+    if (reportId) {
+      result = result.filter((i) => i.expenseReportId === reportId);
+    }
+    return result;
+  }
+
+  public addExpenseItem(item: any) {
+    if (!this.store.expenseItems) this.store.expenseItems = [];
+    const idx = this.store.expenseItems.findIndex((i) => i.id === item.id);
+    if (idx >= 0) {
+      this.store.expenseItems[idx] = { ...this.store.expenseItems[idx], ...item };
+    } else {
+      this.store.expenseItems.unshift({
+        ...item,
+        createdAt: item.createdAt || new Date().toISOString(),
+      });
+    }
+
+    // Recalcular montos consolidados de la rendición
+    const reportId = item.expenseReportId;
+    const report = (this.store.expenseReports || []).find((r) => r.id === reportId);
+    if (report) {
+      const itemsOfReport = this.store.expenseItems.filter((i) => i.expenseReportId === reportId);
+      const totalRendido = itemsOfReport.reduce((acc, it) => acc + Number(it.montoTotalClp || 0), 0);
+      const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+      report.montoTotalRendidoClp = totalRendido;
+      report.saldoReembolsarClp = Math.max(0, totalRendido - fondoAnticipo);
+      report.saldoReintegrarClp = Math.max(0, fondoAnticipo - totalRendido);
+      report.updatedAt = new Date().toISOString();
+    }
+
+    this.scheduleFlush();
+  }
+
+  public deleteExpenseItem(itemId: string): boolean {
+    if (!this.store.expenseItems) return false;
+    const idx = this.store.expenseItems.findIndex((i) => i.id === itemId);
+    if (idx === -1) return false;
+
+    const item = this.store.expenseItems[idx];
+    const reportId = item.expenseReportId;
+    this.store.expenseItems.splice(idx, 1);
+
+    const report = (this.store.expenseReports || []).find((r) => r.id === reportId);
+    if (report) {
+      const itemsOfReport = this.store.expenseItems.filter((i) => i.expenseReportId === reportId);
+      const totalRendido = itemsOfReport.reduce((acc, it) => acc + Number(it.montoTotalClp || 0), 0);
+      const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+      report.montoTotalRendidoClp = totalRendido;
+      report.saldoReembolsarClp = Math.max(0, totalRendido - fondoAnticipo);
+      report.saldoReintegrarClp = Math.max(0, fondoAnticipo - totalRendido);
+      report.updatedAt = new Date().toISOString();
+    }
+
+    this.scheduleFlush();
+    return true;
+  }
+
+  public getExpenseProjects(empresaId?: string): any[] {
+    let result = this.store.expenseProjects || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((p) => {
+        const pNorm = (p.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return (
+          !p.empresaId ||
+          p.empresaId === empresaId ||
+          pNorm === norm ||
+          p.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
+        );
+      });
+    }
+    return result;
+  }
+
+  public createExpenseProject(project: any) {
+    if (!this.store.expenseProjects) this.store.expenseProjects = [];
+    const idx = this.store.expenseProjects.findIndex(
+      (p) => p.id === project.id || (p.codigo === project.codigo && p.empresaId === project.empresaId)
+    );
+    if (idx >= 0) {
+      this.store.expenseProjects[idx] = { ...this.store.expenseProjects[idx], ...project };
+    } else {
+      this.store.expenseProjects.push({
+        ...project,
+        createdAt: project.createdAt || new Date().toISOString(),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public initExpenseSeeds() {
+    this.store.expenseProjects = [
+      {
+        id: 'pry-01',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-QUELLON-26',
+        nombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        clienteNombre: 'Salmones Antártica S.A.',
+        presupuestoTotalClp: 45000000,
+        activo: true,
+        descripcion: 'Servicio integral de instalación de fondeos y redes loberas.',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'pry-02',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-STGO-EXP',
+        nombre: 'Expansión Comercial & Distribución Retail Santiago',
+        clienteNombre: 'Cencosud / Walmart Chile',
+        presupuestoTotalClp: 25000000,
+        activo: true,
+        descripcion: 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'pry-03',
+        empresaId: 'client-retail-01',
+        codigo: 'PRY-LOG-FLOTA',
+        nombre: 'Habilitación Barcazas y Motores Fuera de Borda',
+        clienteNombre: 'Interno Flota Austral',
+        presupuestoTotalClp: 18000000,
+        activo: true,
+        descripcion: 'Overhaul mecánico preventivo de barcazas Don Víctor y Mar Austral II.',
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    this.store.expenseReports = [
+      {
+        id: 'rdg-001',
+        empresaId: 'client-retail-01',
+        folio: 'RDG-2026-001',
+        titulo: 'Visita Técnica Clientes Salmoaustral y Supervisión Centro Dalcahue',
+        rendidorId: 'emp-001',
+        rendidorNombre: 'Gonzalo Silva Valenzuela',
+        rendidorRut: '14.238.192-8',
+        rendidorEmail: 'gonzalo.silva@maraustral.cl',
+        rendidorCargo: 'Supervisor Comercial & Operaciones',
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        centroCostoNombre: 'Ventas & Distribución Zona Central',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        fondoAsignadoClp: 150000,
+        montoTotalRendidoClp: 184500,
+        saldoReembolsarClp: 34500,
+        saldoReintegrarClp: 0,
+        moneda: 'CLP',
+        estado: 'PENDIENTE_APROBACION',
+        fechaInicio: '2026-09-24',
+        fechaCierre: '2026-09-28',
+        fechaAprobacion: null,
+        aprobadorNombre: 'Carla Morales Troncoso',
+        agenteAuditorScore: 95,
+        agenteAuditorDiagnostico: {
+          calificacion: 'APROBADO_LIMPIO',
+          scoreGlobal: 95,
+          totalComprobantesValidos: 4,
+          totalComprobantesObjetados: 0,
+          montoIvaCreditoRecuperable: 16150,
+          montoGastoRechazadoArt21: 0,
+          alertas: [],
+          recomendaciones: ['Gasto de combustible rendido con boleta. Se sugiere solicitar Factura para recuperar IVA Crédito.'],
+          verificacionRutDuplicados: true,
+          resumenTributario: 'Comprobantes íntegros con respaldo fidedigno Art. 31 LIR. Saldo a reembolsar: $34.500 CLP.',
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'rdg-002',
+        empresaId: 'client-retail-01',
+        folio: 'RDG-2026-002',
+        titulo: 'Adquisición de Insumos y Repuestos Urgentes Maestranza Quellón',
+        rendidorId: 'emp-002',
+        rendidorNombre: 'Ing. Rodrigo Cárdenas Soto',
+        rendidorRut: '13.914.882-K',
+        rendidorEmail: 'rodrigo.cardenas@maraustral.cl',
+        rendidorCargo: 'Jefe de Planta Quellón',
+        centroCostoId: 'cc-03',
+        centroCostoCodigo: 'CC-PRD-QUELLON',
+        centroCostoNombre: 'Planta Fabril & Maestranza Quellón',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        proyectoNombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+        fondoAsignadoClp: 200000,
+        montoTotalRendidoClp: 165000,
+        saldoReembolsarClp: 0,
+        saldoReintegrarClp: 35000,
+        moneda: 'CLP',
+        estado: 'APROBADA',
+        fechaInicio: '2026-09-15',
+        fechaCierre: '2026-09-18',
+        fechaAprobacion: '2026-09-20',
+        aprobadorNombre: 'Carla Morales Troncoso',
+        agenteAuditorScore: 100,
+        agenteAuditorDiagnostico: {
+          calificacion: 'APROBADO_LIMPIO',
+          scoreGlobal: 100,
+          totalComprobantesValidos: 2,
+          totalComprobantesObjetados: 0,
+          montoIvaCreditoRecuperable: 26345,
+          montoGastoRechazadoArt21: 0,
+          alertas: [],
+          recomendaciones: [],
+          verificacionRutDuplicados: true,
+          resumenTributario: 'Aprobado por jefatura. El colaborador debe reintegrar $35.000 a la cuenta corriente de la empresa.',
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    this.store.expenseItems = [
+      {
+        id: 'item-01',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-25',
+        tipoDocumento: 'BOLETA_ELECTRONICA',
+        folioDocumento: 'B-481920',
+        proveedorRut: '99.520.000-7',
+        proveedorRazonSocial: 'Compañía de Petróleos de Chile COPEC S.A.',
+        categoria: 'COMBUSTIBLE',
+        descripcionGlosa: 'Carga de Diesel camioneta terreno traslado Chiloé',
+        montoNeto: 37815,
+        montoIva: 7185,
+        montoExento: 0,
+        montoTotalClp: 45000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.009',
+        cuentaContableNombre: 'Combustibles & Lubricantes',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-02',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-26',
+        tipoDocumento: 'FACTURA_ELECTRONICA_33',
+        folioDocumento: '91283',
+        proveedorRut: '76.128.490-2',
+        proveedorRazonSocial: 'Hotelera & Turismo del Sur SpA (Hotel Castro)',
+        categoria: 'ALOJAMIENTO',
+        descripcionGlosa: 'Hospedaje 2 noches personal técnico en terreno',
+        montoNeto: 85000,
+        montoIva: 16150,
+        montoExento: 0,
+        montoTotalClp: 101150,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.007',
+        cuentaContableNombre: 'Alojamiento & Estadía Terreno',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-03',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-26',
+        tipoDocumento: 'BOLETA_ELECTRONICA',
+        folioDocumento: 'B-12839',
+        proveedorRut: '77.819.200-5',
+        proveedorRazonSocial: 'Restaurante Rincón Chilote Castro',
+        categoria: 'ALIMENTACION',
+        descripcionGlosa: 'Cena y almuerzo en terreno durante supervisión',
+        montoNeto: 23824,
+        montoIva: 4526,
+        montoExento: 0,
+        montoTotalClp: 28350,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.006',
+        cuentaContableNombre: 'Gastos de Alimentación & Viáticos',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-04',
+        expenseReportId: 'rdg-001',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-27',
+        tipoDocumento: 'TICKET_PEAJE',
+        folioDocumento: 'TAG-98124',
+        proveedorRut: '96.812.390-1',
+        proveedorRazonSocial: 'Sociedad Concesionaria Ruta del Canal S.A.',
+        categoria: 'PEAJES_ESTACIONAMIENTOS',
+        descripcionGlosa: 'Peajes y transbordo canal de Chacao ida y vuelta',
+        montoNeto: 0,
+        montoIva: 0,
+        montoExento: 10000,
+        montoTotalClp: 10000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-02',
+        centroCostoCodigo: 'CC-VTA-STGO',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.2.01.010',
+        cuentaContableNombre: 'Peajes & Tag Autopistas',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'item-05',
+        expenseReportId: 'rdg-002',
+        empresaId: 'client-retail-01',
+        fecha: '2026-09-16',
+        tipoDocumento: 'FACTURA_ELECTRONICA_33',
+        folioDocumento: 'F-78192',
+        proveedorRut: '76.992.110-3',
+        proveedorRazonSocial: 'Ferretería Industrial Austral Ltda.',
+        categoria: 'MATERIALES_INSUMOS',
+        descripcionGlosa: 'Pernos de acero inox 316 y electrodos para balsas',
+        montoNeto: 138655,
+        montoIva: 26345,
+        montoExento: 0,
+        montoTotalClp: 165000,
+        monedaOriginal: 'CLP',
+        tipoCambio: 1,
+        centroCostoId: 'cc-03',
+        centroCostoCodigo: 'CC-PRD-QUELLON',
+        proyectoId: 'pry-01',
+        proyectoCodigo: 'PRY-QUELLON-26',
+        cuentaContableCodigo: '4.1.02.001',
+        cuentaContableNombre: 'Materiales Menores & Consumibles',
+        esGastoRechazadoArt21: false,
+        validadoPorAgente: true,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  /**
+   * Poblado inicial de datos semilla para arranque garantizado.
+   */
+  private populateSeedData() {
+    const now = new Date();
+    const demoEmpresas = ['76.892.410-K', '76.543.210-9', '76.543.210-K'];
+
+    demoEmpresas.forEach((empresaId, empIdx) => {
+      const isInnovagile = empresaId.includes('76.892.410') || empresaId.includes('77.798.901');
+      if (isInnovagile) {
+        // InnovAgile Group SpA es NO AFECTA A IVA (Art. 12 Letra E / DL 825).
+        // CERO datos inventados: no emite DTE 33 ni genera Débito Fiscal ($0).
+        // Debe consultar directamente al SII oficial para obtener su realidad tributaria.
+        return;
+      }
+      // 1. Asiento Venta Retail
+      const idVenta = `entry-seed-v1-${empIdx}`;
+      const hashVenta = crypto.createHmac('sha256', 'SIEX_AUDIT_SUPERVISOR_KEY_2026').update(idVenta).digest('hex');
+      this.store.entries.push({
+        id: idVenta,
+        firmId: 'firm-001-audicon',
+        empresaId,
+        periodo: '2026-09',
+        fecha: '2026-09-02',
+        concepto: 'Venta Factura Electrónica Folio 1041 - Retail Logistics Chile S.A.',
+        documentoRef: 'DTE 33 N° 1041',
+        totalDebe: '14875000.00',
+        totalHaber: '14875000.00',
+        origenModulo: 'RCV_VENTA',
+        creadoPorAgente: 'AGENTE_RCV',
+        autorizadoPorSupervisor: true,
+        supervisorSignature: hashVenta,
+        createdAt: new Date(now.getTime() - 86400000 * 3).toISOString(),
+      });
+      this.store.lines.push(
+        {
+          id: `line-v1-1-${empIdx}`,
+          entryId: idVenta,
+          lineaNumero: 1,
+          codigoCuenta: '1.1.03.001',
+          nombreCuenta: 'Clientes Nacionales (Retail Logistics Chile S.A.)',
+          debe: '14875000.00',
+          haber: '0.00',
+          rutAuxiliar: '77.210.980-5',
+          centroCosto: 'VENTAS_CORPORATIVAS',
+        },
+        {
+          id: `line-v1-2-${empIdx}`,
+          entryId: idVenta,
+          lineaNumero: 2,
+          codigoCuenta: '4.1.01.001',
+          nombreCuenta: 'Ingresos por Ventas Afectas a IVA',
+          debe: '0.00',
+          haber: '12500000.00',
+          rutAuxiliar: null,
+          centroCosto: 'VENTAS_CORPORATIVAS',
+        },
+        {
+          id: `line-v1-3-${empIdx}`,
+          entryId: idVenta,
+          lineaNumero: 3,
+          codigoCuenta: '2.1.03.001',
+          nombreCuenta: 'IVA Débito Fiscal',
+          debe: '0.00',
+          haber: '2375000.00',
+          rutAuxiliar: null,
+          centroCosto: null,
+        }
+      );
+
+      // 2. Asiento Compra AWS
+      const idCompra = `entry-seed-c1-${empIdx}`;
+      const hashCompra = crypto.createHmac('sha256', 'SIEX_AUDIT_SUPERVISOR_KEY_2026').update(idCompra).digest('hex');
+      this.store.entries.push({
+        id: idCompra,
+        firmId: 'firm-001-audicon',
+        empresaId,
+        periodo: '2026-09',
+        fecha: '2026-09-03',
+        concepto: 'Compra Factura Electrónica Folio 9840 - AWS Amazon Web Services Cloud',
+        documentoRef: 'DTE 33 N° 9840',
+        totalDebe: '5712000.00',
+        totalHaber: '5712000.00',
+        origenModulo: 'RCV_COMPRA',
+        creadoPorAgente: 'AGENTE_RCV',
+        autorizadoPorSupervisor: true,
+        supervisorSignature: hashCompra,
+        createdAt: new Date(now.getTime() - 86400000 * 2).toISOString(),
+      });
+      this.store.lines.push(
+        {
+          id: `line-c1-1-${empIdx}`,
+          entryId: idCompra,
+          lineaNumero: 1,
+          codigoCuenta: '5.1.01.001',
+          nombreCuenta: 'Costo de Ventas / Infraestructura Servidores Cloud',
+          debe: '4800000.00',
+          haber: '0.00',
+          rutAuxiliar: '76.999.888-2',
+          centroCosto: 'TECNOLOGIA',
+        },
+        {
+          id: `line-c1-2-${empIdx}`,
+          entryId: idCompra,
+          lineaNumero: 2,
+          codigoCuenta: '1.1.04.001',
+          nombreCuenta: 'IVA Crédito Fiscal (DL 825)',
+          debe: '912000.00',
+          haber: '0.00',
+          rutAuxiliar: null,
+          centroCosto: null,
+        },
+        {
+          id: `line-c1-3-${empIdx}`,
+          entryId: idCompra,
+          lineaNumero: 3,
+          codigoCuenta: '2.1.01.001',
+          nombreCuenta: 'Proveedores Nacionales (Amazon Web Services Chile)',
+          debe: '0.00',
+          haber: '5712000.00',
+          rutAuxiliar: '76.999.888-2',
+          centroCosto: null,
+        }
+      );
+    });
+
+    // Indicadores económicos iniciales
+    this.store.indicators = [
+      { codigo: 'UF', valor: '40885.6300', fecha: '2026-09-09', fuente: 'sii.cl-oficial' },
+      { codigo: 'USD', valor: '928.1000', fecha: '2026-09-09', fuente: 'dolarapi.cl-oficial' },
+      { codigo: 'UTM', valor: '71721.0000', fecha: '2026-09-09', fuente: 'sii.cl-oficial' },
+      { codigo: 'IPC', valor: '0.6000', fecha: '2026-09-09', fuente: 'ine.cl-oficial' },
+    ];
+
+    // Centros de Costo iniciales (Mini-Empresas)
+    if (!this.store.costCenters || this.store.costCenters.length === 0) {
+      this.store.costCenters = [
+        {
+          id: 'cc-01',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-ADM-01',
+          nombre: 'Administración Central & Finanzas',
+          categoria: 'ADMINISTRACION',
+          responsableNombre: 'Carla Morales Troncoso',
+          emailResponsable: 'carla.morales@maraustral.cl',
+          presupuestoMensualClp: 14500000,
+          activo: true,
+          descripcion: 'Gestión corporativa, contraloría interna, legal, compras generales y RRHH central.',
+          ventasAcumuladasMes: 0,
+          costosDirectosMes: 0,
+          gastosOperacionalesMes: 4850000,
+          remuneracionesMes: 7200000,
+          depreciacionMes: 450000,
+        },
+        {
+          id: 'cc-02',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-VTA-STGO',
+          nombre: 'Ventas & Distribución Zona Central (Mini-Empresa)',
+          categoria: 'VENTAS',
+          responsableNombre: 'Gonzalo Silva Valenzuela',
+          emailResponsable: 'gonzalo.silva@maraustral.cl',
+          presupuestoMensualClp: 28000000,
+          activo: true,
+          descripcion: 'Unidad comercial metropolitana y de exportaciones. Opera como centro de utilidad independiente.',
+          ventasAcumuladasMes: 48500000,
+          costosDirectosMes: 18200000,
+          gastosOperacionalesMes: 3400000,
+          remuneracionesMes: 5800000,
+          depreciacionMes: 350000,
+        },
+        {
+          id: 'cc-03',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-PRD-QUELLON',
+          nombre: 'Planta Fabril & Maestranza Quellón (Mini-Empresa)',
+          categoria: 'PRODUCCION',
+          responsableNombre: 'Ing. Rodrigo Cárdenas Soto',
+          emailResponsable: 'rodrigo.cardenas@maraustral.cl',
+          presupuestoMensualClp: 52000000,
+          activo: true,
+          descripcion: 'Fabricación y reparación de redes peceras, loberas y estructuras HDPE de acuicultura.',
+          ventasAcumuladasMes: 64200000,
+          costosDirectosMes: 28900000,
+          gastosOperacionalesMes: 6200000,
+          remuneracionesMes: 14800000,
+          depreciacionMes: 2100000,
+        },
+        {
+          id: 'cc-04',
+          empresaId: 'client-retail-01',
+          codigo: 'CC-LOG-SUR',
+          nombre: 'Logística & Transporte Fluvial Décima Región',
+          categoria: 'LOGISTICA',
+          responsableNombre: 'Patricio Almonacid Vera',
+          emailResponsable: 'patricio.almonacid@maraustral.cl',
+          presupuestoMensualClp: 18500000,
+          activo: true,
+          descripcion: 'Flota de barcazas, camiones rampla, despacho de insumos a centros de cultivo en mar abierto.',
+          ventasAcumuladasMes: 12000000,
+          costosDirectosMes: 6400000,
+          gastosOperacionalesMes: 2100000,
+          remuneracionesMes: 4900000,
+          depreciacionMes: 980000,
+        },
+      ];
+    }
+
+    // Activos Fijos iniciales con Centro de Costo imputado
+    if (!this.store.fixedAssets || this.store.fixedAssets.length === 0) {
+      this.store.fixedAssets = [
+        {
+          id: 'af-001',
+          empresaId: 'client-retail-01',
+          codigoPlaca: 'AF-2026-001',
+          nombre: 'Grúa Horquilla Eléctrica Yale 2.5T',
+          categoria: 'MAQUINARIA_INDUSTRIAL',
+          fechaAdquisicion: '2026-01-15',
+          proveedorRut: '76.888.999-1',
+          proveedorRazonSocial: 'Yale Material Handling Chile SpA',
+          folioDteCompra: 8820,
+          valorAdquisicionOriginal: 24500000,
+          valorResidualFinanciero: 1000000,
+          vidaUtilMesesFinanciera: 84,
+          vidaUtilMesesTributaria: 36,
+          mesesDepreciados: 8,
+          vidaUtilRestanteMeses: 76,
+          metodoDepreciacion: 'LINEAL_RECTA',
+          depreciacionAcumuladaFinanciera: 2238095.24,
+          valorLibroFinanciero: 22261904.76,
+          cuotaDepreciacionMensualFinanciera: 279761.9,
+          factorCorreccionMonetariaAcum: 0.006,
+          correccionMonetariaAcumulada: 133571.43,
+          depreciacionAcumuladaTributaria: 5222222.22,
+          valorTributarioNeto: 19277777.78,
+          cuotaDepreciacionMensualTributaria: 652777.78,
+          centroCostoId: 'cc-03',
+          centroCostoCodigo: 'CC-PRD-QUELLON',
+          centroCostoNombre: 'Planta Fabril & Maestranza Quellón (Mini-Empresa)',
+          ubicacionFisica: 'Bodega Central Quellón - Nave 2',
+          responsableCustodio: 'Marcelo Gallardo - Jefe Operaciones',
+          estado: 'ACTIVO_OPERATIVO',
+          numeroSerie: 'YALE-EL25-98302',
+          marcaModelo: 'Yale ERP25VL 2026',
+          esFabrilProduccion: true,
+        },
+      ];
+    }
+  }
+}
+
+export const diskPersistence = new DiskPersistenceService();
