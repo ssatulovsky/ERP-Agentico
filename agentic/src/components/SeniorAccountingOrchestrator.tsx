@@ -49,6 +49,7 @@ import {
   Activity,
   Wallet,
   CreditCard,
+  ArrowLeftRight,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -1454,11 +1455,38 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         cuentaNombre: value,
         cuentaCodigo: found?.codigo || updated[index].cuentaCodigo || '9.9.99.999',
       };
-    } else if (field === 'debe' || field === 'haber') {
-      updated[index] = { ...updated[index], [field]: Number(value) || 0 };
+    } else if (field === 'debe') {
+      const valDebe = Number(value) || 0;
+      updated[index] = {
+        ...updated[index],
+        debe: valDebe,
+        // Si ingresa en el Debe (> 0), el Haber se fuerza automáticamente a 0
+        ...(valDebe > 0 ? { haber: 0 } : {}),
+      };
+    } else if (field === 'haber') {
+      const valHaber = Number(value) || 0;
+      updated[index] = {
+        ...updated[index],
+        haber: valHaber,
+        // Si ingresa en el Haber (> 0), el Debe se fuerza automáticamente a 0
+        ...(valHaber > 0 ? { debe: 0 } : {}),
+      };
     } else {
       updated[index] = { ...updated[index], [field]: value };
     }
+    setManualEntry(prev => ({ ...prev, lineas: updated }));
+    setManualEntryError(null);
+  };
+
+  const handleSwapManualLine = (index: number) => {
+    const updated = [...manualEntry.lineas];
+    const curDebe = Number(updated[index].debe) || 0;
+    const curHaber = Number(updated[index].haber) || 0;
+    updated[index] = {
+      ...updated[index],
+      debe: curHaber,
+      haber: curDebe,
+    };
     setManualEntry(prev => ({ ...prev, lineas: updated }));
     setManualEntryError(null);
   };
@@ -1492,6 +1520,26 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     if (manualEntry.lineas.length < 2) {
       setManualEntryError('Un asiento contable requiere al menos 2 cuentas para cumplir con la partida doble.');
       return;
+    }
+
+    // Validación rigurosa de exclusividad Debe/Haber por cada partida
+    for (let i = 0; i < manualEntry.lineas.length; i++) {
+      const l = manualEntry.lineas[i];
+      const d = Number(l.debe) || 0;
+      const h = Number(l.haber) || 0;
+
+      if (d > 0 && h > 0) {
+        setManualEntryError(
+          `Error en Línea #${i + 1} (${l.cuentaNombre || l.cuentaCodigo}): Una misma partida no puede tener movimientos simultáneos en el Debe ($${formatCLP(d)}) y en el Haber ($${formatCLP(h)}). Debe imputar a una sola columna.`
+        );
+        return;
+      }
+      if (d <= 0 && h <= 0) {
+        setManualEntryError(
+          `Error en Línea #${i + 1} (${l.cuentaNombre || l.cuentaCodigo}): Debe ingresar un monto mayor a cero en el Debe o en el Haber.`
+        );
+        return;
+      }
     }
 
     const manualDebe = manualEntry.lineas.reduce((s, l) => s + (Number(l.debe) || 0), 0);
@@ -4280,14 +4328,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </div>
 
               {/* Lines table with SearchableAccountSelect and Delete Line */}
-              <div className="space-y-2">
+                <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                       Partidas del Asiento ({manualEntry.lineas.length} cuentas)
                     </span>
-                    <p className="text-[10px] text-slate-400">
-                      Escriba en el buscador para filtrar cuentas por código o nombre instantáneamente
+                    <p className="text-[10px] text-slate-500">
+                      Exclusividad contable: cada cuenta se imputa al Debe o al Haber. Si ingresa en Debe, Haber se bloquea; si escribe en Haber, Debe no se puede editar.
                     </p>
                   </div>
                   <button
@@ -4299,10 +4347,22 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </button>
                 </div>
 
+                {/* Encabezado descriptivo de columnas */}
+                <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-lg text-[11px] font-bold text-slate-600 border border-slate-200">
+                  <span className="w-5 text-center shrink-0">#</span>
+                  <span className="flex-1">Cuenta Contable / Plan SII</span>
+                  <span className="w-28 sm:w-32 text-right shrink-0 text-blue-700 font-extrabold">Debe ($)</span>
+                  <span className="w-7 text-center shrink-0 text-slate-400" title="Invertir columna Debe/Haber">⇄</span>
+                  <span className="w-28 sm:w-32 text-right shrink-0 text-emerald-700 font-extrabold">Haber ($)</span>
+                  <span className="w-7 text-center shrink-0">Acción</span>
+                </div>
+
                 <div className="space-y-2.5">
                   {manualEntry.lineas.map((line, idx) => {
                     const reqAux = isAccountAuxiliarRequired(line.cuentaCodigo, line.cuentaNombre);
                     const reqCc = isAccountCostCenterRequired(line.cuentaCodigo, line.cuentaNombre);
+                    const isDebeDisabled = Number(line.haber) > 0;
+                    const isHaberDisabled = Number(line.debe) > 0;
 
                     return (
                       <div
@@ -4313,7 +4373,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                             : 'bg-white border-slate-200 hover:border-slate-300'
                         }`}
                       >
-                        {/* Fila Principal: Cuenta, Debe, Haber, Eliminar */}
+                        {/* Fila Principal: Cuenta, Debe, Swap, Haber, Eliminar */}
                         <div className="flex items-center gap-2">
                           <span className="w-5 text-[11px] font-mono text-slate-400 text-center font-bold shrink-0">
                             {idx + 1}
@@ -4345,35 +4405,78 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                             </div>
                           </div>
 
-                          {/* Monto Debe (Ingreso manual sin spinup/spindown) */}
+                          {/* Monto Debe (Ingreso manual con bloqueo exclusivo) */}
                           <div className="relative w-28 sm:w-32 shrink-0">
-                            <span className="absolute left-2.5 top-2 text-[10px] text-slate-400 font-bold">$</span>
+                            <span className={`absolute left-2.5 top-2 text-[10px] font-bold ${isDebeDisabled ? 'text-slate-300' : 'text-slate-400'}`}>$</span>
                             <input
                               type="text"
                               inputMode="numeric"
-                              placeholder="Debe $0"
+                              disabled={isDebeDisabled}
+                              placeholder={isDebeDisabled ? '—' : 'Debe $0'}
                               value={line.debe ? Number(line.debe).toLocaleString('es-CL') : ''}
+                              title={
+                                isDebeDisabled
+                                  ? 'No editable: esta partida ya tiene saldo asignado al Haber. Deje el Haber en $0 para habilitar el Debe.'
+                                  : 'Monto a imputar al Debe'
+                              }
                               onChange={(e) => {
                                 const clean = e.target.value.replace(/\D/g, '');
                                 handleUpdateManualLine(idx, 'debe', clean ? parseInt(clean, 10) : 0);
                               }}
-                              className="w-full pl-6 pr-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-right font-mono font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              className={`w-full pl-6 pr-2.5 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                isDebeDisabled
+                                  ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
+                                  : Number(line.debe) > 0
+                                  ? 'bg-blue-50/80 text-blue-900 border-2 border-blue-500 font-bold shadow-xs'
+                                  : 'bg-white border border-slate-300 text-slate-800 font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden'
+                              }`}
                             />
                           </div>
 
-                          {/* Monto Haber (Ingreso manual sin spinup/spindown) */}
+                          {/* Botón Rápido de Inversión / Transferencia Debe <-> Haber */}
+                          <button
+                            type="button"
+                            disabled={!line.debe && !line.haber}
+                            onClick={() => handleSwapManualLine(idx)}
+                            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
+                              line.debe || line.haber
+                                ? 'border-slate-200 text-slate-500 hover:text-blue-600 hover:bg-blue-50 cursor-pointer shadow-2xs'
+                                : 'border-transparent text-slate-200 cursor-default opacity-30'
+                            }`}
+                            title={
+                              line.debe || line.haber
+                                ? 'Invertir columna: transferir monto entre Debe y Haber'
+                                : 'Ingrese un monto en Debe o Haber para habilitar la inversión'
+                            }
+                          >
+                            <ArrowLeftRight className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Monto Haber (Ingreso manual con bloqueo exclusivo) */}
                           <div className="relative w-28 sm:w-32 shrink-0">
-                            <span className="absolute left-2.5 top-2 text-[10px] text-slate-400 font-bold">$</span>
+                            <span className={`absolute left-2.5 top-2 text-[10px] font-bold ${isHaberDisabled ? 'text-slate-300' : 'text-slate-400'}`}>$</span>
                             <input
                               type="text"
                               inputMode="numeric"
-                              placeholder="Haber $0"
+                              disabled={isHaberDisabled}
+                              placeholder={isHaberDisabled ? '—' : 'Haber $0'}
                               value={line.haber ? Number(line.haber).toLocaleString('es-CL') : ''}
+                              title={
+                                isHaberDisabled
+                                  ? 'No editable: esta partida ya tiene saldo asignado al Debe. Deje el Debe en $0 para habilitar el Haber.'
+                                  : 'Monto a imputar al Haber'
+                              }
                               onChange={(e) => {
                                 const clean = e.target.value.replace(/\D/g, '');
                                 handleUpdateManualLine(idx, 'haber', clean ? parseInt(clean, 10) : 0);
                               }}
-                              className="w-full pl-6 pr-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-right font-mono font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              className={`w-full pl-6 pr-2.5 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                isHaberDisabled
+                                  ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
+                                  : Number(line.haber) > 0
+                                  ? 'bg-emerald-50/80 text-emerald-900 border-2 border-emerald-500 font-bold shadow-xs'
+                                  : 'bg-white border border-slate-300 text-slate-800 font-medium focus:ring-1 focus:ring-emerald-500 focus:outline-hidden'
+                              }`}
                             />
                           </div>
 
