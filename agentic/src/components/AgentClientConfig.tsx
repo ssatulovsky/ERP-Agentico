@@ -32,7 +32,9 @@ import {
   FolderTree,
   Settings2,
   UserPlus,
-  CreditCard
+  CreditCard,
+  Mic,
+  Volume2
 } from 'lucide-react';
 import { 
   AccountingFirmProfile, 
@@ -56,6 +58,7 @@ import { AnchorClientMasterModal } from './tenancy/AnchorClientMasterModal';
 import { SystemGeneralConfigModal } from './tenancy/SystemGeneralConfigModal';
 import { IfrsChartOfAccountsModal } from './tenancy/IfrsChartOfAccountsModal';
 import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterModal';
+import { AgentPersonasConfigSection } from './voice/AgentPersonasConfigSection';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -69,6 +72,7 @@ interface AgentClientConfigProps {
   onDownloadClientDtes: (client: ClientCompany) => void;
   systemParams?: SystemGeneralParameters;
   onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
+  onOpenVoiceDialogue?: (personaId?: string) => void;
 }
 
 export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
@@ -83,8 +87,9 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onDownloadClientDtes,
   systemParams = DEFAULT_SYSTEM_GENERAL_PARAMETERS,
   onUpdateSystemParams,
+  onOpenVoiceDialogue,
 }) => {
-  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE'>('GOVERNANCE');
+  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE'>('PERSONAS_VOICE');
   
   // Modales ERP Multi-Tenant (Conforme a Capturas del Sistema)
   const [isErpOnboardingOpen, setIsErpOnboardingOpen] = useState(false);
@@ -382,6 +387,18 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         {/* Section Navigation Tabs */}
         <div className="flex items-center gap-2 mt-6 pt-4 border-t border-slate-100 overflow-x-auto text-xs font-semibold">
           <button
+            onClick={() => setActiveSection('PERSONAS_VOICE')}
+            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeSection === 'PERSONAS_VOICE'
+                ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Mic className="w-4 h-4 text-indigo-300 animate-pulse" />
+            <span>Personas a Cargo & Voces de Agentes</span>
+          </button>
+
+          <button
             onClick={() => setActiveSection('GOVERNANCE')}
             className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
               activeSection === 'GOVERNANCE'
@@ -430,6 +447,15 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </button>
         </div>
       </div>
+
+      {/* SECTION -1: PERSONAS A CARGO, IDENTIDAD Y VOCES */}
+      {activeSection === 'PERSONAS_VOICE' && (
+        <AgentPersonasConfigSection
+          activeClientId={activeClientId}
+          clientName={clients.find(c => c.id === activeClientId)?.razonSocial || firm.nombreFantasia}
+          onOpenVoiceDialogue={onOpenVoiceDialogue}
+        />
+      )}
 
       {/* SECTION 0: GOBERNANZA AGÉNTICA, CONTEXTO E INSTRUCCIONES ESPECIALES (MEMORIA) */}
       {activeSection === 'GOVERNANCE' && (

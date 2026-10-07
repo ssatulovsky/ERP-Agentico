@@ -111,6 +111,8 @@ import {
   INITIAL_ABSENTEEISM,
 } from './data/seedHrData';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
+import { VoiceAgentDialogueModal } from './components/voice/VoiceAgentDialogueModal';
+import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -140,6 +142,8 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('executive_dashboard');
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
+  const [isVoiceDialogueOpen, setIsVoiceDialogueOpen] = useState<boolean>(false);
+  const [voiceDialoguePersonaId, setVoiceDialoguePersonaId] = useState<string>('CONTABILIDAD_SENIOR');
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
@@ -1085,6 +1089,79 @@ export default function App() {
   if (Math.abs(f29.debitoFiscalIva - rcvDebito) > 10) discrepanciesCount++;
   if (Math.abs(f29.creditoFiscalIva - rcvCredito) > 10) discrepanciesCount++;
 
+  // Voice Agent Action Handlers (Ejecución real y responsable de los agentes por voz)
+  const handleVoiceCentralizePurchases = async () => {
+    try {
+      const periodo = '2026-09';
+      const compras = dtes.filter(d => d.tipoOperacion === 'COMPRA');
+      if (compras.length === 0) return;
+      const { asiento } = generateMonthlyCentralizationEntry(
+        periodo,
+        'COMPRA',
+        dtes,
+        undefined,
+        company
+      );
+      await handleAddEntry(asiento);
+      setDtes(prev => prev.map(d => d.tipoOperacion === 'COMPRA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+    } catch (e) {
+      console.warn('[VoiceAgent] Error al centralizar compras:', e);
+      throw e;
+    }
+  };
+
+  const handleVoiceCentralizeSales = async () => {
+    try {
+      const periodo = '2026-09';
+      const ventas = dtes.filter(d => d.tipoOperacion === 'VENTA');
+      if (ventas.length === 0) return;
+      const { asiento } = generateMonthlyCentralizationEntry(
+        periodo,
+        'VENTA',
+        dtes,
+        undefined,
+        company
+      );
+      await handleAddEntry(asiento);
+      setDtes(prev => prev.map(d => d.tipoOperacion === 'VENTA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+    } catch (e) {
+      console.warn('[VoiceAgent] Error al centralizar ventas:', e);
+      throw e;
+    }
+  };
+
+  const handleVoiceReconcileBank = async () => {
+    const pendientes = bankMovements.filter(m => m.estado !== 'CONCILIADO');
+    if (pendientes.length > 0) {
+      handleRegisterAllBankNovedades(pendientes);
+    }
+  };
+
+  const handleVoiceCalculateF29 = async () => {
+    const rcvDebito = dtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoIva : d.montoIva), 0);
+    const rcvCredito = dtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoIva, 0);
+    setF29(prev => ({
+      ...prev,
+      debitoFiscalIva: rcvDebito,
+      creditoFiscalIva: rcvCredito,
+      impuestoDeterminadoIva: Math.max(0, rcvDebito - rcvCredito),
+      totalAPagar: Math.max(0, rcvDebito - rcvCredito) + prev.montoPpm,
+    }));
+  };
+
+  const handleVoiceCentralizeExpenses = async () => {
+    try {
+      const pending = expenseReports.filter(r => r.estado !== 'PAGADO' && r.estado !== 'RECHAZADO');
+      for (const rep of pending) {
+        await expenseApiService.updateReportStatus(rep.id, 'APROBADO', 'Aprobado y centralizado por Agente Paula Carvallo');
+      }
+      const data = await expenseApiService.getExpenseReports(company.rut);
+      if (Array.isArray(data)) setExpenseReports(data);
+    } catch (e) {
+      console.warn('[VoiceAgent] Error centralizando gastos:', e);
+    }
+  };
+
   const navLinks = [
     { id: 'executive_dashboard', label: 'Dashboard Ejecutivo', subtitle: 'Evolución de Agentes & KPIs 360°', icon: LayoutDashboard },
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
@@ -1121,6 +1198,10 @@ export default function App() {
         openAiChat={() => setIsAiModalOpen(true)}
         openAuditor={() => setIsAiModalOpen(true)}
         openManual={() => setIsManualOpen(true)}
+        openVoiceDialogue={() => {
+          setVoiceDialoguePersonaId('CONTABILIDAD_SENIOR');
+          setIsVoiceDialogueOpen(true);
+        }}
       />
 
       {/* Main Two-Column Layout */}
@@ -1238,6 +1319,10 @@ export default function App() {
               onDownloadClientDtes={handleDownloadClientDtes}
               systemParams={systemParams}
               onUpdateSystemParams={handleUpdateSystemParams}
+              onOpenVoiceDialogue={(personaId) => {
+                if (personaId) setVoiceDialoguePersonaId(personaId);
+                setIsVoiceDialogueOpen(true);
+              }}
             />
           )}
 
@@ -1517,6 +1602,28 @@ export default function App() {
         isOpen={isManualOpen}
         onClose={() => setIsManualOpen(false)}
         onNavigateToTab={(tabId) => setActiveTab(tabId)}
+      />
+
+      {/* Voice Agent Dialogue Modal - Personas a Cargo con Interfaz de Voz */}
+      <VoiceAgentDialogueModal
+        isOpen={isVoiceDialogueOpen}
+        onClose={() => setIsVoiceDialogueOpen(false)}
+        activeClientId={activeClientId}
+        company={company}
+        initialPersonaId={voiceDialoguePersonaId}
+        onOpenConfig={() => setActiveTab('agents')}
+        onCentralizePurchases={handleVoiceCentralizePurchases}
+        onCentralizeSales={handleVoiceCentralizeSales}
+        onReconcileBank={handleVoiceReconcileBank}
+        onCalculateF29={handleVoiceCalculateF29}
+        onCentralizeExpenses={handleVoiceCentralizeExpenses}
+        onNavigateToTab={(tabId) => setActiveTab(tabId)}
+        dtes={dtes}
+        bankMovements={bankMovements}
+        f29={f29}
+        employeesCount={payrolls.length}
+        inventoryCount={inventoryItems.length}
+        expensesCount={expenseReports.length}
       />
     </div>
   );

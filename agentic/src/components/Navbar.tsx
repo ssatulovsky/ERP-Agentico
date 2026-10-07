@@ -13,7 +13,8 @@ import {
   CheckCircle2,
   ChevronDown,
   Sliders,
-  Key
+  Key,
+  Mic
 } from 'lucide-react';
 import { 
   ChileIndicators, 
@@ -37,6 +38,7 @@ interface NavbarProps {
   openAiChat: () => void;
   openAuditor: () => void;
   openManual: () => void;
+  openVoiceDialogue?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -52,6 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   openAiChat,
   openAuditor,
   openManual,
+  openVoiceDialogue,
 }) => {
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
@@ -228,6 +231,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
             <span>Auditor Fiscal</span>
           </button>
+
+          {openVoiceDialogue && (
+            <button
+              onClick={openVoiceDialogue}
+              className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold px-3 py-1.5 rounded-md transition-all shadow-md shadow-indigo-600/30 cursor-pointer text-xs"
+              title="Dialogar por voz con los agentes y personas a cargo de cada área"
+            >
+              <Mic className="w-3.5 h-3.5 text-blue-200 animate-pulse" />
+              <span className="hidden sm:inline">Hablar con</span>
+              <span>Agentes (Voz)</span>
+            </button>
+          )}
 
           <button
             onClick={openAiChat}
