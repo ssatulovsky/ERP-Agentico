@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<AUTORIZACION>
+  <CAF version="1.0">
+    <DA>
+      <RE>96540320-1</RE>
+      <RS>SOCIEDAD DE PROFESIONALES MEDICOS DEL SUR SPA</RS>
+      <TD>34</TD>
+      <RNG>
+        <D>1</D>
+        <H>3000</H>
+      </RNG>
+      <FA>2026-01-15</FA>
+      <RSAPK>
+        <M>caf_rsa_modulus_key_sii_96540320-1_td34==</M>
+        <E>Aw==</E>
+      </RSAPK>
+      <IDK>100</IDK>
+    </DA>
+    <FRMA algoritmo="SHA1withRSA">caf_signature_96540320-1_td34==</FRMA>
+  </CAF>
+  <RSASK>-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0_tenant_96540320-1_key...
+-----END RSA PRIVATE KEY-----</RSASK>
+</AUTORIZACION>
