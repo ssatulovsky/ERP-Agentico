@@ -1077,6 +1077,10 @@ export interface AccountingEntryLine {
   centroCosto?: string;
   documentoRef?: string;
   dteIdAsociado?: string;
+  // Campos Multimoneda (NIC 21 / Divisas Extranjeras)
+  monedaOriginal?: string; // ej: 'USD', 'EUR', 'UF'
+  montoMonedaOriginal?: number; // Monto en la divisa original (ej: 1500.00)
+  tipoCambio?: number; // Tipo de cambio / paridad aplicado en la fecha (ej: 955.20)
 }
 
 export interface AccountingEntry {
@@ -1088,7 +1092,7 @@ export interface AccountingEntry {
   totalDebe: number;
   totalHaber: number;
   balanceado?: boolean;
-  origen?: 'RCV_VENTA' | 'RCV_COMPRA' | 'HONORARIOS' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'ARRIENDO_IFRS16' | 'CAJA_BANCO' | 'INVENTARIO' | 'MANUAL' | string;
+  origen?: 'RCV_VENTA' | 'RCV_COMPRA' | 'HONORARIOS' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'ARRIENDO_IFRS16' | 'CAJA_BANCO' | 'INVENTARIO' | 'MANUAL' | 'AJUSTE_DIF_CAMBIO' | string;
   creadoEn?: string;
   supervisorSignature?: string;
 }
@@ -1105,6 +1109,7 @@ export interface AccountPlanItem {
   esConciliableBancaria?: boolean;
   // Nuevos atributos ERP contables avanzados
   manejaMultimoneda?: boolean; // MANEJA MULTIMONEDA (USD, EUR, UF / NIC 21)
+  monedaCodigo?: string; // Moneda extranjera asignada a la cuenta (ej: 'USD', 'EUR', 'UF')
   requiereDocReferencia?: boolean; // DOCUMENTO REFERENCIA (Factura, Boleta, NC, etc.)
   esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE (NIC 7 / FECU)
   esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE (Puente Tesorería)
@@ -1130,6 +1135,7 @@ export interface HierarchicalAccountItem {
   activa: boolean;
   // Atributos y Validaciones Contables Avanzadas (5 Conceptos ERP)
   manejaMultimoneda?: boolean; // MANEJA MULTIMONEDA
+  monedaCodigo?: string; // Moneda asignada si manejaMultimoneda es true (ej: 'USD', 'EUR', 'UF')
   requiereDocReferencia?: boolean; // DOCUMENTO REFERENCIA
   esEfectivoEquivalente?: boolean; // EFECTIVO Y EFECTIVO EQUIVALENTE
   esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE
@@ -1146,6 +1152,45 @@ export interface HierarchicalAccountItem {
   agrupacionPersonalizada?: string;
   subagrupacionPersonalizada?: string;
   empresaRut?: string;
+}
+
+// =========================================================================
+// DEFINICIÓN DE MONEDAS Y TIPOS DE CAMBIO HISTÓRICOS (NIC 21 / SII)
+// =========================================================================
+export interface CurrencyDefinition {
+  codigo: string; // ej: 'CLP', 'USD', 'EUR', 'UF', 'UTM'
+  nombre: string; // ej: 'Peso Chileno', 'Dólar Estadounidense', 'Euro', 'Unidad de Fomento'
+  simbolo: string; // ej: '$', 'US$', '€', 'UF'
+  decimales: number; // 0 para CLP, 2 para USD/EUR, 2 o 4 para UF
+  esMonedaBase: boolean; // true solo para la moneda funcional de reporte (CLP)
+  activo: boolean;
+  ultimaCotizacion: number; // Último tipo de cambio registrado en CLP (1 para CLP)
+  fechaActualizacion?: string; // YYYY-MM-DD
+  descripcion?: string;
+}
+
+export interface ExchangeRateRecord {
+  id: string;
+  fecha: string; // YYYY-MM-DD
+  monedaCodigo: string; // ej: 'USD', 'EUR', 'UF'
+  valor: number; // Tipo de cambio / paridad en CLP
+  fuente?: string; // 'Banco Central de Chile', 'SII', 'Registro Manual', etc.
+  observacion?: string;
+  creadoEn?: string;
+}
+
+export interface ExchangeDifferenceCalculation {
+  cuentaCodigo: string;
+  cuentaNombre: string;
+  monedaCodigo: string;
+  saldoMonedaExtranjera: number; // Saldo neto en USD, EUR, UF
+  saldoLibroCLP: number; // Saldo contable histórico en Libro Mayor (CLP)
+  tipoCambioCierre: number; // T/C oficial de cierre
+  valorCierreCLP: number; // saldoMonedaExtranjera * tipoCambioCierre
+  diferenciaCLP: number; // valorCierreCLP - saldoLibroCLP
+  tipoResultado: 'GANANCIA' | 'PERDIDA' | 'NEUTRO';
+  cuentaAjusteCodigo: string; // '7.1.01.002' para ganancia, '7.2.01.002' para pérdida
+  cuentaAjusteNombre: string;
 }
 
 // =========================================================================

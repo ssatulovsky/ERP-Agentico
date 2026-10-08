@@ -56,6 +56,8 @@ import {
   parseOfxBankStatement,
   StatementParseResult,
 } from '../utils/chileanBankStatementParser';
+import { CurrencyManagerModal } from './accounting/CurrencyManagerModal';
+import { loadCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
 
 export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
   if (moneda === 'USD') {
@@ -231,7 +233,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         }
       ];
     }
-    return [
+    const base = [
       {
         id: 'trans-chq-1',
         fecha: '2026-09-18',
@@ -251,7 +253,33 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         referencia: 'CHQ-40182',
       }
     ];
-  }, [currentAccount.moneda]);
+
+    // Partidas reales de contabilidad no debitadas aún en la cartola
+    const ledgerTransits: any[] = [];
+    safeAccountingEntries.forEach(entry => {
+      const bankLine = (entry.lineas || []).find(l => {
+        const cod = (l.cuentaCodigo || '').trim();
+        const nom = (l.cuentaNombre || '').toLowerCase();
+        return (cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco')) && (l.haber || 0) > 0;
+      });
+      if (bankLine && Number(bankLine.haber) > 0) {
+        const inCartola = accountMovements.some(m => m.asientoGeneradoId === entry.id || m.documentoRef === entry.documento);
+        if (!inCartola) {
+          ledgerTransits.push({
+            id: `trans-entry-${entry.id}`,
+            fecha: entry.fecha,
+            concepto: entry.concepto,
+            beneficiario: bankLine.rutAuxiliar || 'Beneficiario según Comprobante',
+            monto: Number(bankLine.haber),
+            tipo: 'EGRESO',
+            referencia: entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
+          });
+        }
+      }
+    });
+
+    return [...base, ...ledgerTransits];
+  }, [currentAccount.moneda, safeAccountingEntries, accountMovements]);
 
   // 2. Depósitos en tránsito (cobros en contabilidad no acreditados aún en banco)
   const transitDeposits = useMemo(() => {
@@ -279,7 +307,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         }
       ];
     }
-    return [
+    const baseDep = [
       {
         id: 'trans-dep-1',
         fecha: '2026-09-14',
@@ -289,7 +317,31 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
         referencia: 'DEP-772910',
       }
     ];
-  }, [currentAccount.moneda]);
+
+    const ledgerDepTransits: any[] = [];
+    safeAccountingEntries.forEach(entry => {
+      const bankLine = (entry.lineas || []).find(l => {
+        const cod = (l.cuentaCodigo || '').trim();
+        const nom = (l.cuentaNombre || '').toLowerCase();
+        return (cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco')) && (l.debe || 0) > 0;
+      });
+      if (bankLine && Number(bankLine.debe) > 0) {
+        const inCartola = accountMovements.some(m => m.asientoGeneradoId === entry.id || m.documentoRef === entry.documento);
+        if (!inCartola) {
+          ledgerDepTransits.push({
+            id: `trans-dep-entry-${entry.id}`,
+            fecha: entry.fecha,
+            concepto: entry.concepto,
+            monto: Number(bankLine.debe),
+            tipo: 'INGRESO',
+            referencia: entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
+          });
+        }
+      }
+    });
+
+    return [...baseDep, ...ledgerDepTransits];
+  }, [currentAccount.moneda, safeAccountingEntries, accountMovements]);
 
   const totalTransitCheques = useMemo(() => {
     return transitCheques.reduce((sum, item) => sum + item.monto, 0);
@@ -2013,8 +2065,60 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                             ) : (
                               <button
                                 onClick={() => {
+                                  let genEntryId = m.asientoGeneradoId;
+                                  if (!genEntryId && onAddEntry) {
+                                    genEntryId = `entry-bank-${m.id}-${Date.now()}`;
+                                    const amount = m.cargo > 0 ? m.cargo : m.abono;
+                                    const isCargo = m.cargo > 0;
+                                    const entry: AccountingEntry = {
+                                      id: genEntryId,
+                                      fecha: m.fecha || new Date().toISOString().substring(0, 10),
+                                      concepto: `Conciliación Cartola ${currentAccount.banco}: ${m.glosaBancaria}`,
+                                      documento: m.numeroReferencia || `CARTOLA-${m.id.substring(0, 8)}`,
+                                      totalDebe: amount,
+                                      totalHaber: amount,
+                                      balanceado: true,
+                                      origen: 'CAJA_BANCO',
+                                      creadoEn: new Date().toISOString(),
+                                      lineas: isCargo
+                                        ? [
+                                            {
+                                              cuentaCodigo: '7.2.01.001',
+                                              cuentaNombre: 'Gastos Financieros e Intereses Bancarios',
+                                              debe: amount,
+                                              haber: 0,
+                                            },
+                                            {
+                                              cuentaCodigo: '1.1.02.001',
+                                              cuentaNombre: currentAccount.banco,
+                                              debe: 0,
+                                              haber: amount,
+                                            },
+                                          ]
+                                        : [
+                                            {
+                                              cuentaCodigo: '1.1.02.001',
+                                              cuentaNombre: currentAccount.banco,
+                                              debe: amount,
+                                              haber: 0,
+                                            },
+                                            {
+                                              cuentaCodigo: '1.1.03.001',
+                                              cuentaNombre: 'Clientes Nacionales / Cobranzas en Cuenta',
+                                              debe: 0,
+                                              haber: amount,
+                                            },
+                                          ],
+                                    };
+                                    try {
+                                      onAddEntry(entry);
+                                    } catch (e) {
+                                      console.warn('[BankReconciliation] Error al despachar asiento:', e);
+                                    }
+                                  }
+
                                   const updated = accountMovements.map(item => 
-                                    item.id === m.id ? { ...item, estado: 'CONCILIADO' as const } : item
+                                    item.id === m.id ? { ...item, estado: 'CONCILIADO' as const, asientoGeneradoId: genEntryId, matchCerteza: 100 } : item
                                   );
                                   onUpdateBankMovements(updated);
                                 }}
@@ -3042,6 +3146,22 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* MODAL 4: DIFERENCIA DE CAMBIO (NIC 21) & MULTIMONEDA */}
+      {isDiffCambioModalOpen && (
+        <CurrencyManagerModal
+          isOpen={isDiffCambioModalOpen}
+          onClose={() => setIsDiffCambioModalOpen(false)}
+          empresaRut={activeClient?.rut || company?.rut}
+          entries={accountingEntries}
+          accounts={loadCompanyChartOfAccounts(activeClient?.rut || company?.rut || '')}
+          onApplyAdjustmentEntry={(entry) => {
+            if (onAddEntry) {
+              onAddEntry(entry);
+            }
+          }}
+        />
       )}
     </div>
   );

@@ -201,6 +201,24 @@ export function inferDefaultMultiCurrency(account: { codigo: string; nombre: str
 }
 
 /**
+ * Infiere el código de moneda extranjera por defecto (USD, EUR, UF)
+ */
+export function inferDefaultCurrencyCode(account: { codigo: string; nombre: string }): string {
+  const name = account.nombre.toLowerCase();
+  const code = account.codigo;
+  if (code.startsWith('1.1.02.003') || name.includes('(usd)') || name.includes('dolar') || name.includes('dólar')) {
+    return 'USD';
+  }
+  if (name.includes('euro') || name.includes('(eur)')) {
+    return 'EUR';
+  }
+  if (name.includes('uf') || name.includes('unidad de fomento')) {
+    return 'UF';
+  }
+  return 'USD';
+}
+
+/**
  * Infiere si una cuenta exige documento de referencia (Factura, Boleta, NC, ND, etc.)
  */
 export function inferDefaultDocReferencia(account: { codigo: string; nombre: string }): boolean {
@@ -325,6 +343,7 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
         return parsed.map((item: any) => ({
           ...item,
           manejaMultimoneda: item.manejaMultimoneda ?? inferDefaultMultiCurrency(item),
+          monedaCodigo: item.monedaCodigo ?? ((item.manejaMultimoneda || inferDefaultMultiCurrency(item)) ? inferDefaultCurrencyCode(item) : undefined),
           requiereDocReferencia: item.requiereDocReferencia ?? inferDefaultDocReferencia(item),
           esEfectivoEquivalente: item.esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(item),
           esContracuentaEfectivo: item.esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(item),
@@ -343,9 +362,11 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
 
   const initialChart: HierarchicalAccountItem[] = CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS.map((acc) => {
     const mappings = inferDefaultMappings(acc);
+    const isMulti = (acc as any).manejaMultimoneda ?? inferDefaultMultiCurrency(acc);
     return {
       ...acc,
-      manejaMultimoneda: (acc as any).manejaMultimoneda ?? inferDefaultMultiCurrency(acc),
+      manejaMultimoneda: isMulti,
+      monedaCodigo: (acc as any).monedaCodigo ?? (isMulti ? inferDefaultCurrencyCode(acc) : undefined),
       requiereDocReferencia: (acc as any).requiereDocReferencia ?? inferDefaultDocReferencia(acc),
       esEfectivoEquivalente: (acc as any).esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(acc),
       esContracuentaEfectivo: (acc as any).esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(acc),

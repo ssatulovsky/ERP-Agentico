@@ -56,6 +56,8 @@ import {
   parseOfxBankStatement,
   StatementParseResult,
 } from '../utils/chileanBankStatementParser';
+import { CurrencyManagerModal } from './accounting/CurrencyManagerModal';
+import { loadCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
 
 export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
   if (moneda === 'USD') {
@@ -3144,6 +3146,22 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* MODAL 4: DIFERENCIA DE CAMBIO (NIC 21) & MULTIMONEDA */}
+      {isDiffCambioModalOpen && (
+        <CurrencyManagerModal
+          isOpen={isDiffCambioModalOpen}
+          onClose={() => setIsDiffCambioModalOpen(false)}
+          empresaRut={activeClient?.rut || company?.rut}
+          entries={accountingEntries}
+          accounts={loadCompanyChartOfAccounts(activeClient?.rut || company?.rut || '')}
+          onApplyAdjustmentEntry={(entry) => {
+            if (onAddEntry) {
+              onAddEntry(entry);
+            }
+          }}
+        />
       )}
     </div>
   );

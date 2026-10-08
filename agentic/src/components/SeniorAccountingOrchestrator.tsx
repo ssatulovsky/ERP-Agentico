@@ -50,6 +50,7 @@ import {
   Wallet,
   CreditCard,
   ArrowLeftRight,
+  Coins,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -135,6 +136,13 @@ import {
   saveCompanyFinancialNotes,
   syncChartWithNotes,
 } from '../utils/financialNotesService';
+import { CurrencyManagerModal } from './accounting/CurrencyManagerModal';
+import {
+  getExchangeRateForDate,
+  resolveAccountCurrency,
+  formatCurrencyAmount,
+  getAvailableCurrencies,
+} from '../services/currencyService';
 
 interface SeniorAccountingOrchestratorProps {
   company: CompanyProfile;
@@ -209,6 +217,21 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const safeAbsenteeism = Array.isArray(absenteeismList) ? absenteeismList : [];
   const safeBenefits = Array.isArray(benefits) ? benefits : [];
   const safeExpenseReports = Array.isArray(expenseReports) ? expenseReports : [];
+
+  // Configuración de Períodos y Perfil Efectivo de la Empresa
+  const effectivePeriodos = useMemo(
+    () => company?.periodosCerrados || ['2026-01', '2026-02'],
+    [company?.periodosCerrados]
+  );
+  const effectiveCompany: CompanyProfile = useMemo(
+    () => ({
+      ...company,
+      periodosCerrados: effectivePeriodos,
+      bloqueoPeriodoCerrado: company?.bloqueoPeriodoCerrado !== false,
+    }),
+    [company, effectivePeriodos]
+  );
+
   // Navigation tabs of the orchestrator
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'NOTAS_EEFF' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
@@ -359,6 +382,18 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [manualEntryError, setManualEntryError] = useState<string | null>(null);
   const [isSavingManual, setIsSavingManual] = useState<boolean>(false);
 
+  // Modal de confirmación para reapertura de período mensual cerrado
+  const [periodReopenModal, setPeriodReopenModal] = useState<{
+    isOpen: boolean;
+    periodo: string;
+    fecha: string;
+    ejercicio: number;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+
+  // Modal Multimoneda, Histórico de Tipos de Cambio y Agente NIC 21
+  const [isCurrencyModalOpen, setIsCurrencyModalOpen] = useState<boolean>(false);
+
   // AI Routing state
   const [rawGlosaInput, setRawGlosaInput] = useState<string>('Compra de servidores cloud en AWS para infraestructura web según factura afecta con IVA');
   const [rawMontoInput, setRawMontoInput] = useState<number>(1450000);
@@ -495,15 +530,45 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   // Helper para despachar comprobantes contables con trazabilidad o fallback a onAddEntry
   const dispatchEntry = async (
     entry: AccountingEntry,
-    context?: { agenteNombre?: string; accion?: string; modelName?: string; payloadInput?: any }
+    context?: { agenteNombre?: string; accion?: string; modelName?: string; payloadInput?: any; overridePeriodos?: string[] }
   ) => {
     // Validación estricta de ejercicio fiscal y períodos bloqueados (Art. 16 Código Tributario)
-    const periodCheck = validateEntryFiscalPeriod(entry.fecha, company);
+    const basePeriodos = context?.overridePeriodos || company.periodosCerrados || ['2026-01', '2026-02'];
+    let currentPeriodos = [...basePeriodos];
+    const companyToCheck: CompanyProfile = {
+      ...company,
+      periodosCerrados: currentPeriodos,
+      bloqueoPeriodoCerrado: company.bloqueoPeriodoCerrado !== false,
+    };
+
+    const periodCheck = validateEntryFiscalPeriod(entry.fecha, companyToCheck);
     if (!periodCheck.permitido) {
-      const msg = `BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`;
-      showToast(msg, 'error');
-      throw new Error(msg);
+      if (periodCheck.codigoError === 'PERIODO_CERRADO') {
+        const periodo = entry.fecha.substring(0, 7);
+        const confirmReopen = window.confirm(
+          `CONTROL CONTABLE TRIBUTARIO (SII):\n\nEl período mensual ${periodo} se encuentra cerrado y bloqueado, aunque el ejercicio fiscal está abierto.\n\n¿Desea reabrir el período mensual ${periodo} para permitir el registro y centralización de este comprobante en el Libro Diario?`
+        );
+        if (confirmReopen) {
+          currentPeriodos = currentPeriodos.filter(p => p !== periodo);
+          onUpdateCompany({ periodosCerrados: currentPeriodos });
+          showToast(`Período mensual ${periodo} reabierto con éxito por el Contador Auditor.`, 'info');
+        } else {
+          const msg = `BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`;
+          showToast(msg, 'error');
+          throw new Error(msg);
+        }
+      } else {
+        const msg = `BLOQUEO FISCAL: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`;
+        showToast(msg, 'error');
+        throw new Error(msg);
+      }
     }
+
+    const companyToCommit: CompanyProfile = {
+      ...company,
+      periodosCerrados: currentPeriodos,
+      bloqueoPeriodoCerrado: company.bloqueoPeriodoCerrado !== false,
+    };
 
     if (commitEntry) {
       try {
@@ -512,7 +577,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           accion: context?.accion || `ASIENTO_${entry.origen}`,
           modelName: context?.modelName,
           payloadInput: context?.payloadInput,
-          companyConfig: company,
+          companyConfig: companyToCommit,
         });
       } catch (err: any) {
         console.error('[SeniorOrchestrator] Error al autorizar comprobante contable:', err);
@@ -1436,11 +1501,37 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const handleUpdateManualAccount = (index: number, account: HierarchicalAccountItem) => {
     const updated = [...manualEntry.lineas];
     const isCc = isAccountCostCenterRequired(account.codigo, account.nombre);
+    const currInfo = resolveAccountCurrency(account);
+    const rate = currInfo.manejaMonedaExtranjera
+      ? getExchangeRateForDate(currInfo.monedaCodigo, manualEntry.fecha, effectiveCompany?.rut)
+      : undefined;
+
+    const existingMontoOrig = updated[index].montoMonedaOriginal;
+    const existingDebe = Number(updated[index].debe) || 0;
+    const existingHaber = Number(updated[index].haber) || 0;
+
+    let newMontoOrig = existingMontoOrig;
+    let newDebe = existingDebe;
+    let newHaber = existingHaber;
+
+    if (currInfo.manejaMonedaExtranjera && rate && rate > 0) {
+      if (!newMontoOrig && (existingDebe > 0 || existingHaber > 0)) {
+        newMontoOrig = Number(((existingDebe || existingHaber) / rate).toFixed(2));
+      } else if (newMontoOrig && newMontoOrig > 0 && !existingDebe && !existingHaber) {
+        newDebe = Math.round(newMontoOrig * rate);
+      }
+    }
+
     updated[index] = {
       ...updated[index],
       cuentaNombre: account.nombre,
       cuentaCodigo: account.codigo,
       centroCosto: isCc && !updated[index].centroCosto ? 'CC-ADM-01' : updated[index].centroCosto,
+      monedaOriginal: currInfo.manejaMonedaExtranjera ? currInfo.monedaCodigo : undefined,
+      tipoCambio: rate,
+      montoMonedaOriginal: currInfo.manejaMonedaExtranjera ? newMontoOrig : undefined,
+      debe: newDebe,
+      haber: newHaber,
     };
     setManualEntry(prev => ({ ...prev, lineas: updated }));
     setManualEntryError(null);
@@ -1450,26 +1541,59 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     const updated = [...manualEntry.lineas];
     if (field === 'cuentaNombre') {
       const found = findAccountInChart(value);
+      const currInfo = found ? resolveAccountCurrency(found) : { manejaMonedaExtranjera: false, monedaCodigo: 'CLP', simbolo: '$' };
+      const rate = currInfo.manejaMonedaExtranjera
+        ? getExchangeRateForDate(currInfo.monedaCodigo, manualEntry.fecha, effectiveCompany?.rut)
+        : undefined;
       updated[index] = {
         ...updated[index],
         cuentaNombre: value,
         cuentaCodigo: found?.codigo || updated[index].cuentaCodigo || '9.9.99.999',
+        monedaOriginal: currInfo.manejaMonedaExtranjera ? currInfo.monedaCodigo : updated[index].monedaOriginal,
+        tipoCambio: rate || updated[index].tipoCambio,
+      };
+    } else if (field === 'montoMonedaOriginal') {
+      const valOrig = Number(value) || 0;
+      const rate = Number(updated[index].tipoCambio) || getExchangeRateForDate(updated[index].monedaOriginal || 'USD', manualEntry.fecha, effectiveCompany?.rut);
+      const clp = Math.round(valOrig * rate);
+      const wasHaber = Number(updated[index].haber) > 0;
+      updated[index] = {
+        ...updated[index],
+        montoMonedaOriginal: valOrig,
+        tipoCambio: rate,
+        debe: wasHaber ? 0 : clp,
+        haber: wasHaber ? clp : 0,
+      };
+    } else if (field === 'tipoCambio') {
+      const newRate = Number(value) || 0;
+      const valOrig = Number(updated[index].montoMonedaOriginal) || 0;
+      const clp = Math.round(valOrig * newRate);
+      const wasHaber = Number(updated[index].haber) > 0;
+      updated[index] = {
+        ...updated[index],
+        tipoCambio: newRate,
+        debe: wasHaber ? 0 : clp,
+        haber: wasHaber ? clp : 0,
       };
     } else if (field === 'debe') {
       const valDebe = Number(value) || 0;
+      const rate = Number(updated[index].tipoCambio) || 0;
       updated[index] = {
         ...updated[index],
         debe: valDebe,
         // Si ingresa en el Debe (> 0), el Haber se fuerza automáticamente a 0
         ...(valDebe > 0 ? { haber: 0 } : {}),
+        ...(rate > 0 && updated[index].monedaOriginal ? { montoMonedaOriginal: Number((valDebe / rate).toFixed(2)) } : {}),
       };
     } else if (field === 'haber') {
       const valHaber = Number(value) || 0;
+      const rate = Number(updated[index].tipoCambio) || 0;
       updated[index] = {
         ...updated[index],
         haber: valHaber,
         // Si ingresa en el Haber (> 0), el Debe se fuerza automáticamente a 0
         ...(valHaber > 0 ? { debe: 0 } : {}),
+        ...(rate > 0 && updated[index].monedaOriginal ? { montoMonedaOriginal: Number((valHaber / rate).toFixed(2)) } : {}),
       };
     } else {
       updated[index] = { ...updated[index], [field]: value };
@@ -1492,7 +1616,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   };
 
   const handleRemoveManualLine = (index: number) => {
-    if (manualEntry.lineas.length <= 2) return;
+    if (manualEntry.lineas.length <= 2) {
+      // Si solo quedan 2 líneas (mínimo exigido para partida doble), no bloquear la interfaz: restablecer la partida a cero
+      const updated = [...manualEntry.lineas];
+      updated[index] = {
+        cuentaCodigo: '',
+        cuentaNombre: '',
+        debe: 0,
+        haber: 0,
+        rutAuxiliar: '',
+        centroCosto: '',
+        documentoRef: '',
+        dteIdAsociado: '',
+      };
+      setManualEntry(prev => ({ ...prev, lineas: updated }));
+      setManualEntryError(null);
+      showToast(`Partida #${index + 1} restablecida a cero.`, 'info');
+      return;
+    }
     setManualEntry(prev => ({
       ...prev,
       lineas: prev.lineas.filter((_, i) => i !== index),
@@ -1505,6 +1646,95 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     if (res.lineasCorregidas) {
       setManualEntry(prev => ({ ...prev, lineas: res.lineasCorregidas }));
       setManualEntryError(null);
+    }
+  };
+
+  const executeSaveManualEntry = async (overridePeriodos?: string[]) => {
+    setIsSavingManual(true);
+    try {
+      const normalized = normalizeAndValidateJournalEntry({
+        fecha: manualEntry.fecha,
+        glosaGeneral: manualEntry.concepto,
+        documentoRef: manualEntry.documentoReferencia || 'Comprobante Diario Interno',
+        origenModulo: manualEntry.origen,
+        creadoPorAgente: 'OPERADOR_MANUAL',
+        lineas: manualEntry.lineas.map(l => ({
+          codigoCuenta: l.cuentaCodigo,
+          nombreCuenta: l.cuentaNombre,
+          debe: l.debe,
+          haber: l.haber,
+          rutAuxiliar: l.rutAuxiliar,
+          centroCosto: l.centroCosto,
+          glosaDetalle: l.documentoRef,
+        }))
+      });
+
+      const created: AccountingEntry = {
+        id: `entry-man-${Date.now()}`,
+        fecha: normalized.fecha,
+        concepto: normalized.glosaGeneral,
+        documento: normalized.documentoRef || 'Comprobante Diario Interno',
+        origen: manualEntry.origen,
+        lineas: normalized.lineas.map(l => {
+          const originalLine = manualEntry.lineas.find(orig => orig.cuentaCodigo === l.codigoCuenta);
+          return {
+            cuentaCodigo: l.codigoCuenta,
+            cuentaNombre: l.nombreCuenta,
+            debe: l.debe,
+            haber: l.haber,
+            rutAuxiliar: l.rutAuxiliar || originalLine?.rutAuxiliar,
+            centroCosto: l.centroCosto || originalLine?.centroCosto,
+            documentoRef: l.glosaDetalle || originalLine?.documentoRef || manualEntry.documentoReferencia,
+            dteIdAsociado: originalLine?.dteIdAsociado,
+            monedaOriginal: originalLine?.monedaOriginal,
+            montoMonedaOriginal: originalLine?.montoMonedaOriginal,
+            tipoCambio: originalLine?.tipoCambio,
+          };
+        }),
+        totalDebe: normalized.totalDebe,
+        totalHaber: normalized.totalHaber,
+        balanceado: true,
+        creadoEn: new Date().toISOString(),
+      };
+
+      await dispatchEntry(created, {
+        agenteNombre: 'OPERADOR_MANUAL',
+        accion: 'ASIENTO_MANUAL_DIARIO',
+        overridePeriodos,
+      });
+
+      // Si se imputó cancelación de comprobantes DTE, actualizar su estado a PAGADO/COBRADO
+      if (onUpdateDte) {
+        manualEntry.lineas.forEach(l => {
+          if (l.dteIdAsociado) {
+            const foundDte = safeDtes.find(d => d.id === l.dteIdAsociado);
+            if (foundDte) {
+              onUpdateDte({
+                ...foundDte,
+                estadoPago: foundDte.tipoOperacion === 'COMPRA' ? 'PAGADO' : 'COBRADO',
+              });
+            }
+          }
+        });
+      }
+
+      // Sincronizar desde backend para actualizar Libro Diario y Mayor
+      if (refetchLedger) {
+        await refetchLedger();
+      }
+
+      // Restablecer formulario limpio
+      setManualEntry(getInitialManualEntry());
+      setManualEntryError(null);
+      setShowManualModal(false);
+      setActiveTab('DIARIO'); // Llevar de inmediato al Libro Diario para ver el asiento
+      showToast('Asiento manual registrado con éxito, firmado por el Agente Supervisor y reflejado en el Libro Diario y Mayor.', 'success');
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Error al validar y registrar el comprobante contable.';
+      setManualEntryError(errorMsg);
+      showToast(`Error al guardar asiento: ${errorMsg}`, 'error');
+    } finally {
+      setIsSavingManual(false);
     }
   };
 
@@ -1579,88 +1809,36 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       }
     }
 
-    setIsSavingManual(true);
-    try {
-      const normalized = normalizeAndValidateJournalEntry({
-        fecha: manualEntry.fecha,
-        glosaGeneral: manualEntry.concepto,
-        documentoRef: manualEntry.documentoReferencia || 'Comprobante Diario Interno',
-        origenModulo: manualEntry.origen,
-        creadoPorAgente: 'OPERADOR_MANUAL',
-        lineas: manualEntry.lineas.map(l => ({
-          codigoCuenta: l.cuentaCodigo,
-          nombreCuenta: l.cuentaNombre,
-          debe: l.debe,
-          haber: l.haber,
-          rutAuxiliar: l.rutAuxiliar,
-          centroCosto: l.centroCosto,
-          glosaDetalle: l.documentoRef,
-        }))
-      });
+    // Validación rigurosa de ejercicio fiscal y período mensual (Art. 16 Código Tributario)
+    const periodCheck = validateEntryFiscalPeriod(manualEntry.fecha, effectiveCompany);
 
-      const created: AccountingEntry = {
-        id: `entry-man-${Date.now()}`,
-        fecha: normalized.fecha,
-        concepto: normalized.glosaGeneral,
-        documento: normalized.documentoRef || 'Comprobante Diario Interno',
-        origen: manualEntry.origen,
-        lineas: normalized.lineas.map(l => {
-          const originalLine = manualEntry.lineas.find(orig => orig.cuentaCodigo === l.codigoCuenta);
-          return {
-            cuentaCodigo: l.codigoCuenta,
-            cuentaNombre: l.nombreCuenta,
-            debe: l.debe,
-            haber: l.haber,
-            rutAuxiliar: l.rutAuxiliar || originalLine?.rutAuxiliar,
-            centroCosto: l.centroCosto || originalLine?.centroCosto,
-            documentoRef: l.glosaDetalle || originalLine?.documentoRef || manualEntry.documentoReferencia,
-            dteIdAsociado: originalLine?.dteIdAsociado,
-          };
-        }),
-        totalDebe: normalized.totalDebe,
-        totalHaber: normalized.totalHaber,
-        balanceado: true,
-        creadoEn: new Date().toISOString(),
-      };
-
-      await dispatchEntry(created, {
-        agenteNombre: 'OPERADOR_MANUAL',
-        accion: 'ASIENTO_MANUAL_DIARIO',
-      });
-
-      // Si se imputó cancelación de comprobantes DTE, actualizar su estado a PAGADO/COBRADO
-      if (onUpdateDte) {
-        manualEntry.lineas.forEach(l => {
-          if (l.dteIdAsociado) {
-            const foundDte = safeDtes.find(d => d.id === l.dteIdAsociado);
-            if (foundDte) {
-              onUpdateDte({
-                ...foundDte,
-                estadoPago: foundDte.tipoOperacion === 'COMPRA' ? 'PAGADO' : 'COBRADO',
-              });
-            }
+    if (!periodCheck.permitido) {
+      if (periodCheck.codigoError === 'PERIODO_CERRADO') {
+        const periodo = manualEntry.fecha.substring(0, 7);
+        const ejercicio = Number(manualEntry.fecha.substring(0, 4));
+        setPeriodReopenModal({
+          isOpen: true,
+          periodo,
+          fecha: manualEntry.fecha,
+          ejercicio,
+          onConfirm: async () => {
+            const updatedPeriodos = effectivePeriodos.filter(p => p !== periodo);
+            onUpdateCompany({ periodosCerrados: updatedPeriodos });
+            setPeriodReopenModal(null);
+            showToast(`Período mensual ${periodo} reabierto con éxito por el Contador Auditor.`, 'info');
+            await executeSaveManualEntry(updatedPeriodos);
           }
         });
+        return;
+      } else {
+        setManualEntryError(
+          `Bloqueo Fiscal de Ejercicio: ${periodCheck.motivo}. ${periodCheck.sugerencia || ''}`
+        );
+        return;
       }
-
-      // Sincronizar desde backend para actualizar Libro Diario y Mayor
-      if (refetchLedger) {
-        await refetchLedger();
-      }
-
-      // Restablecer formulario limpio
-      setManualEntry(getInitialManualEntry());
-      setManualEntryError(null);
-      setShowManualModal(false);
-      setActiveTab('DIARIO'); // Llevar de inmediato al Libro Diario para ver el asiento
-      showToast('Asiento manual registrado con éxito, firmado por el Agente Supervisor y reflejado en el Libro Diario y Mayor.', 'success');
-    } catch (err: any) {
-      const errorMsg = err?.message || 'Error al validar y registrar el comprobante contable.';
-      setManualEntryError(errorMsg);
-      showToast(`Error al guardar asiento: ${errorMsg}`, 'error');
-    } finally {
-      setIsSavingManual(false);
     }
+
+    await executeSaveManualEntry(effectivePeriodos);
   };
 
   const manualDebe = manualEntry.lineas.reduce((s, l) => s + (l.debe || 0), 0);
@@ -1769,6 +1947,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 USD (${indicators.dolar})
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setIsCurrencyModalOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              title="Gestión Multimoneda, Histórico de Tipos de Cambio y Agente de Diferencia de Cambio (NIC 21)"
+            >
+              <Coins className="w-4 h-4 text-amber-300" />
+              <span>Multimoneda & T/C (NIC 21)</span>
+            </button>
 
             <button
               onClick={() => setShowManualModal(true)}
@@ -2456,6 +2644,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                     {line.centroCosto && (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
                                         CC: {line.centroCosto}
+                                      </span>
+                                    )}
+                                    {line.monedaOriginal && line.monedaOriginal !== 'CLP' && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200 font-bold" title={`Paridad aplicada: $${line.tipoCambio || ''} CLP`}>
+                                        {line.monedaOriginal} {Number(line.montoMonedaOriginal || 0).toLocaleString('es-CL', { minimumFractionDigits: 2 })} (T/C ${line.tipoCambio || ''})
                                       </span>
                                     )}
                                   </span>
@@ -4272,12 +4465,58 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     type="date"
                     value={manualEntry.fecha}
                     onChange={(e) => {
-                      setManualEntry({ ...manualEntry, fecha: e.target.value });
+                      const newDate = e.target.value;
+                      const updatedLines = manualEntry.lineas.map(line => {
+                        if (line.monedaOriginal && line.monedaOriginal !== 'CLP') {
+                          const newRate = getExchangeRateForDate(line.monedaOriginal, newDate, effectiveCompany?.rut);
+                          const valOrig = line.montoMonedaOriginal || 0;
+                          const clp = Math.round(valOrig * newRate);
+                          const wasHaber = Number(line.haber) > 0;
+                          return {
+                            ...line,
+                            tipoCambio: newRate,
+                            debe: wasHaber ? 0 : clp,
+                            haber: wasHaber ? clp : 0,
+                          };
+                        }
+                        return line;
+                      });
+                      setManualEntry({ ...manualEntry, fecha: newDate, lineas: updatedLines });
                       setManualEntryError(null);
                     }}
                     className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                     required
                   />
+                  {/* Estado del Período Mensual vs Ejercicio */}
+                  {(() => {
+                    const p = manualEntry.fecha ? manualEntry.fecha.substring(0, 7) : '';
+                    const isPeriodClosed = effectivePeriodos.includes(p);
+                    if (!p) return null;
+                    return isPeriodClosed ? (
+                      <div className="mt-1 px-2 py-0.5 bg-amber-50 border border-amber-300 rounded text-[10px] text-amber-900 flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>Período {p} cerrado</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = effectivePeriodos.filter(item => item !== p);
+                            onUpdateCompany({ periodosCerrados: updated });
+                            showToast(`Período mensual ${p} reabierto para edición.`, 'info');
+                          }}
+                          className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer text-[10px]"
+                        >
+                          Reabrir
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-1 px-1.5 py-0.5 text-[10px] text-emerald-700 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span>Período {p} abierto</span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Tipo de Origen</label>
@@ -4361,14 +4600,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   {manualEntry.lineas.map((line, idx) => {
                     const reqAux = isAccountAuxiliarRequired(line.cuentaCodigo, line.cuentaNombre);
                     const reqCc = isAccountCostCenterRequired(line.cuentaCodigo, line.cuentaNombre);
-                    const isDebeDisabled = Number(line.haber) > 0;
-                    const isHaberDisabled = Number(line.debe) > 0;
+                    const hasConflict = Number(line.debe) > 0 && Number(line.haber) > 0;
+                    // Solo se deshabilita si la otra columna tiene saldo Y la columna actual está en cero.
+                    // Si ambas tienen saldo (conflicto), AMBAS quedan editables para permitir corrección.
+                    const isDebeDisabled = Number(line.haber) > 0 && Number(line.debe) === 0;
+                    const isHaberDisabled = Number(line.debe) > 0 && Number(line.haber) === 0;
 
                     return (
                       <div
                         key={idx}
                         className={`p-2.5 rounded-xl border transition-all ${
-                          reqAux || reqCc
+                          hasConflict
+                            ? 'bg-rose-50/50 border-rose-300 shadow-sm'
+                            : reqAux || reqCc
                             ? 'bg-slate-50/90 border-slate-300 shadow-2xs'
                             : 'bg-white border-slate-200 hover:border-slate-300'
                         }`}
@@ -4402,10 +4646,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   Exige Centro de Costos
                                 </span>
                               )}
+                              {line.monedaOriginal && line.monedaOriginal !== 'CLP' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-300">
+                                  <Coins className="w-3 h-3 text-blue-600" />
+                                  Multimoneda ({line.monedaOriginal})
+                                </span>
+                              )}
                             </div>
                           </div>
 
-                          {/* Monto Debe (Ingreso manual con bloqueo exclusivo) */}
+                          {/* Monto Debe (Ingreso manual con exclusividad y botón de limpieza) */}
                           <div className="relative w-28 sm:w-32 shrink-0">
                             <span className={`absolute left-2.5 top-2 text-[10px] font-bold ${isDebeDisabled ? 'text-slate-300' : 'text-slate-400'}`}>$</span>
                             <input
@@ -4416,14 +4666,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                               value={line.debe ? Number(line.debe).toLocaleString('es-CL') : ''}
                               title={
                                 isDebeDisabled
-                                  ? 'No editable: esta partida ya tiene saldo asignado al Haber. Deje el Haber en $0 para habilitar el Debe.'
+                                  ? 'No editable: esta partida ya tiene saldo asignado al Haber. Presione ✕ en Haber o ⇄ para transferir.'
                                   : 'Monto a imputar al Debe'
                               }
                               onChange={(e) => {
                                 const clean = e.target.value.replace(/\D/g, '');
                                 handleUpdateManualLine(idx, 'debe', clean ? parseInt(clean, 10) : 0);
                               }}
-                              className={`w-full pl-6 pr-2.5 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                              className={`w-full pl-6 pr-6 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                                 isDebeDisabled
                                   ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
                                   : Number(line.debe) > 0
@@ -4431,6 +4681,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   : 'bg-white border border-slate-300 text-slate-800 font-medium focus:ring-1 focus:ring-blue-500 focus:outline-hidden'
                               }`}
                             />
+                            {Number(line.debe) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateManualLine(idx, 'debe', 0)}
+                                className="absolute right-1.5 top-2 text-slate-400 hover:text-rose-600 font-bold text-[10px] p-0.5 rounded hover:bg-slate-100 cursor-pointer"
+                                title="Limpiar monto Debe ($0)"
+                              >
+                                ✕
+                              </button>
+                            )}
                           </div>
 
                           {/* Botón Rápido de Inversión / Transferencia Debe <-> Haber */}
@@ -4452,7 +4712,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                             <ArrowLeftRight className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* Monto Haber (Ingreso manual con bloqueo exclusivo) */}
+                          {/* Monto Haber (Ingreso manual con exclusividad y botón de limpieza) */}
                           <div className="relative w-28 sm:w-32 shrink-0">
                             <span className={`absolute left-2.5 top-2 text-[10px] font-bold ${isHaberDisabled ? 'text-slate-300' : 'text-slate-400'}`}>$</span>
                             <input
@@ -4463,14 +4723,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                               value={line.haber ? Number(line.haber).toLocaleString('es-CL') : ''}
                               title={
                                 isHaberDisabled
-                                  ? 'No editable: esta partida ya tiene saldo asignado al Debe. Deje el Debe en $0 para habilitar el Haber.'
+                                  ? 'No editable: esta partida ya tiene saldo asignado al Debe. Presione ✕ en Debe o ⇄ para transferir.'
                                   : 'Monto a imputar al Haber'
                               }
                               onChange={(e) => {
                                 const clean = e.target.value.replace(/\D/g, '');
                                 handleUpdateManualLine(idx, 'haber', clean ? parseInt(clean, 10) : 0);
                               }}
-                              className={`w-full pl-6 pr-2.5 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                              className={`w-full pl-6 pr-6 py-1.5 text-xs rounded-lg text-right font-mono transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                                 isHaberDisabled
                                   ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
                                   : Number(line.haber) > 0
@@ -4478,27 +4738,123 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   : 'bg-white border border-slate-300 text-slate-800 font-medium focus:ring-1 focus:ring-emerald-500 focus:outline-hidden'
                               }`}
                             />
+                            {Number(line.haber) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateManualLine(idx, 'haber', 0)}
+                                className="absolute right-1.5 top-2 text-slate-400 hover:text-rose-600 font-bold text-[10px] p-0.5 rounded hover:bg-slate-100 cursor-pointer"
+                                title="Limpiar monto Haber ($0)"
+                              >
+                                ✕
+                              </button>
+                            )}
                           </div>
 
-                          {/* Botón para Eliminar Cuenta / Partida */}
+                          {/* Botón para Eliminar / Restablecer Cuenta */}
                           <button
                             type="button"
-                            disabled={manualEntry.lineas.length <= 2}
                             onClick={() => handleRemoveManualLine(idx)}
-                            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
-                              manualEntry.lineas.length > 2
-                                ? 'border-rose-200 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer shadow-2xs'
-                                : 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-100'
-                            }`}
+                            className="p-1.5 rounded-lg border transition-colors shrink-0 border-rose-200 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer shadow-2xs"
                             title={
                               manualEntry.lineas.length > 2
                                 ? `Eliminar cuenta "${line.cuentaNombre || line.cuentaCodigo}" (Línea ${idx + 1})`
-                                : 'No se puede eliminar: el asiento contable requiere mínimo 2 cuentas para partida doble (Debe y Haber)'
+                                : `Restablecer cuenta "${line.cuentaNombre || line.cuentaCodigo}" a $0 (Mínimo 2 partidas requeridas)`
                             }
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
+
+                        {/* Banner Informativo y Solucionador Rápido de Conflicto Debe/Haber */}
+                        {hasConflict && (
+                          <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 animate-in fade-in">
+                            <div className="flex items-center gap-1.5">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                              <span className="font-semibold text-[11px]">
+                                Conflicto detectado: Movimiento en Debe (${Number(line.debe).toLocaleString('es-CL')}) y Haber (${Number(line.haber).toLocaleString('es-CL')}). Seleccione una columna:
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateManualLine(idx, 'haber', 0)}
+                                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold cursor-pointer transition-colors"
+                              >
+                                Mantener solo Debe
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateManualLine(idx, 'debe', 0)}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer transition-colors"
+                              >
+                                Mantener solo Haber
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleUpdateManualLine(idx, 'debe', 0);
+                                  handleUpdateManualLine(idx, 'haber', 0);
+                                }}
+                                className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                              >
+                                Limpiar ambos ($0)
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Sub-panel Multimoneda & Tipo de Cambio Histórico (NIC 21) */}
+                        {line.monedaOriginal && line.monedaOriginal !== 'CLP' && (
+                          <div className="mt-2 p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs animate-in fade-in">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-mono font-bold text-[11px] shadow-2xs">
+                                {line.monedaOriginal}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-semibold text-slate-700">Monto {line.monedaOriginal}:</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min={0}
+                                  placeholder={`0.00 ${line.monedaOriginal}`}
+                                  value={line.montoMonedaOriginal !== undefined && line.montoMonedaOriginal > 0 ? line.montoMonedaOriginal : ''}
+                                  onChange={(e) => handleUpdateManualLine(idx, 'montoMonedaOriginal', e.target.value)}
+                                  className="w-28 bg-white border border-blue-300 rounded px-2 py-1 font-mono font-bold text-blue-950 text-right text-xs focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-semibold text-slate-700">T/C Aplicado:</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min={0.01}
+                                  placeholder="955.20"
+                                  value={line.tipoCambio || ''}
+                                  onChange={(e) => handleUpdateManualLine(idx, 'tipoCambio', e.target.value)}
+                                  className="w-24 bg-white border border-blue-300 rounded px-2 py-1 font-mono font-bold text-slate-800 text-right text-xs focus:ring-1 focus:ring-blue-500"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const officialRate = getExchangeRateForDate(line.monedaOriginal || 'USD', manualEntry.fecha, effectiveCompany?.rut);
+                                    handleUpdateManualLine(idx, 'tipoCambio', officialRate);
+                                  }}
+                                  className="text-[10px] text-blue-700 hover:text-blue-900 underline font-semibold cursor-pointer"
+                                  title="Restablecer a cotización oficial histórica de la fecha"
+                                >
+                                  T/C Oficial
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="text-[11px] text-blue-900 font-mono font-semibold bg-white/80 px-2 py-0.5 rounded border border-blue-200">
+                              ≈ ${(Math.round((Number(line.montoMonedaOriginal) || 0) * (Number(line.tipoCambio) || 1))).toLocaleString('es-CL')} CLP
+                            </div>
+                          </div>
+                        )}
 
                         {/* Sub-panel Analítico de Imputación (Auxiliares y Centros de Costos) */}
                         {(reqAux || reqCc) && (
@@ -4560,13 +4916,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                         if (doc) {
                                           const updated = [...manualEntry.lineas];
                                           const isSupplier = updated[idx].cuentaCodigo.startsWith('2.1');
+                                          // Exclusividad contable estricta: si se imputa a una columna, la contraria se salda a 0
                                           updated[idx] = {
                                             ...updated[idx],
                                             dteIdAsociado: doc.id,
                                             rutAuxiliar: doc.rutContraparte,
                                             documentoRef: `Factura ${doc.tipoDte === '33' ? 'Electrónica' : ''} F.${doc.folio}`,
-                                            debe: isSupplier ? (updated[idx].debe || doc.montoTotal) : updated[idx].debe,
-                                            haber: !isSupplier ? (updated[idx].haber || doc.montoTotal) : updated[idx].haber,
+                                            debe: isSupplier ? doc.montoTotal : 0,
+                                            haber: !isSupplier ? doc.montoTotal : 0,
                                           };
                                           setManualEntry((prev) => ({ ...prev, lineas: updated }));
                                         }
@@ -4759,6 +5116,78 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               prev.map(a => (a.id === updatedAdj.id ? updatedAdj : a))
             );
             showToast(`Ajuste "${updatedAdj.titulo}" actualizado con cifras personalizadas.`, 'success');
+          }}
+        />
+      )}
+
+      {/* MODAL: CONFIRMACIÓN DE REAPERTURA DE PERÍODO MENSUAL CERRADO */}
+      {periodReopenModal && periodReopenModal.isOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-amber-300 max-w-lg w-full p-6 space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0">
+                <Lock className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                  Control Normativo de Períodos (SII)
+                </span>
+                <h3 className="text-base font-bold text-slate-900 mt-1">
+                  Período Mensual Cerrado: {periodReopenModal.periodo}
+                </h3>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-amber-50/80 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-2">
+              <p className="leading-relaxed">
+                El período mensual <strong>{periodReopenModal.periodo}</strong> se encuentra formalmente cerrado y con bloqueo tributario.
+              </p>
+              <p className="leading-relaxed text-slate-700">
+                No obstante, el <strong>ejercicio fiscal {periodReopenModal.ejercicio}</strong> se encuentra <strong>abierto</strong>.
+              </p>
+              <div className="pt-2 border-t border-amber-200/60 font-semibold text-slate-900">
+                ¿Desea reabrir temporalmente el período mensual <strong>{periodReopenModal.periodo}</strong> para permitir el registro inmediato de este asiento contable en el Libro Diario?
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPeriodReopenModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar (Mantener Cerrado)
+              </button>
+              <button
+                type="button"
+                onClick={() => periodReopenModal.onConfirm()}
+                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>Reabrir Período y Guardar Asiento</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: GESTIÓN MULTIMONEDA, HISTÓRICO DE COTIZACIONES Y AGENTE NIC 21 */}
+      {isCurrencyModalOpen && (
+        <CurrencyManagerModal
+          isOpen={isCurrencyModalOpen}
+          onClose={() => setIsCurrencyModalOpen(false)}
+          empresaRut={effectiveCompany?.rut}
+          entries={safeEntries}
+          accounts={chartOfAccounts}
+          onApplyAdjustmentEntry={async (entry) => {
+            await dispatchEntry(entry, {
+              agenteNombre: 'AGENTE_NIC21',
+              accion: 'AJUSTE_DIFERENCIA_CAMBIO',
+            });
+            if (refetchLedger) {
+              await refetchLedger();
+            }
+            showToast('Asiento de Diferencia de Cambio (NIC 21) registrado y centralizado en el Libro Diario.', 'success');
           }}
         />
       )}

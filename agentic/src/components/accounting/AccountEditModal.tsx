@@ -10,6 +10,7 @@ import {
   HEADQUARTERS_GROUPING_OPTIONS,
 } from '../../utils/companyChartOfAccountsService';
 import { inferDefaultNoteNumbers } from '../../utils/financialNotesService';
+import { getAvailableCurrencies } from '../../services/currencyService';
 
 interface AccountEditModalProps {
   isOpen: boolean;
@@ -56,6 +57,7 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
 
   // 5 Conceptos Contables Avanzados ERP
   const [manejaMultimoneda, setManejaMultimoneda] = useState(false);
+  const [monedaCodigo, setMonedaCodigo] = useState<string>('USD');
   const [requiereDocReferencia, setRequiereDocReferencia] = useState(false);
   const [esEfectivoEquivalente, setEsEfectivoEquivalente] = useState(false);
   const [esContracuentaEfectivo, setEsContracuentaEfectivo] = useState(false);
@@ -92,6 +94,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
 
       // 5 Conceptos
       setManejaMultimoneda(Boolean(accountToEdit.manejaMultimoneda));
+      const defaultCur = accountToEdit.nombre.toLowerCase().includes('eur') ? 'EUR' : accountToEdit.nombre.toLowerCase().includes('uf') ? 'UF' : 'USD';
+      setMonedaCodigo(accountToEdit.monedaCodigo || defaultCur);
       setRequiereDocReferencia(Boolean(accountToEdit.requiereDocReferencia));
       setEsEfectivoEquivalente(Boolean(accountToEdit.esEfectivoEquivalente));
       setEsContracuentaEfectivo(Boolean(accountToEdit.esContracuentaEfectivo));
@@ -142,6 +146,7 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
 
       // 5 Conceptos iniciales
       setManejaMultimoneda(false);
+      setMonedaCodigo('USD');
       setRequiereDocReferencia(false);
       setEsEfectivoEquivalente(false);
       setEsContracuentaEfectivo(false);
@@ -276,6 +281,7 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       activa,
       // 5 Conceptos Contables Avanzados
       manejaMultimoneda,
+      monedaCodigo: manejaMultimoneda ? (monedaCodigo || 'USD') : undefined,
       requiereDocReferencia,
       esEfectivoEquivalente,
       esContracuentaEfectivo,
@@ -551,23 +557,44 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
               {/* 1. MANEJA MULTIMONEDA */}
-              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-blue-50/40 cursor-pointer border border-slate-200 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={manejaMultimoneda}
-                  onChange={(e) => setManejaMultimoneda(e.target.checked)}
-                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-800 font-semibold">Maneja Multimoneda</span>
-                    <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">USD/EUR/UF</span>
+              <div className="flex flex-col gap-2 p-2.5 rounded-lg bg-white border border-slate-200 transition-colors">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={manejaMultimoneda}
+                    onChange={(e) => setManejaMultimoneda(e.target.checked)}
+                    className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-800 font-semibold">Maneja Multimoneda</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">NIC 21</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                      Habilita registros en divisa extranjera y revalorización por diferencia de cambio (NIC 21).
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                    Habilita registros en divisas extranjeras y revalorización por diferencia de cambio (NIC 21).
-                  </p>
-                </div>
-              </label>
+                </label>
+
+                {manejaMultimoneda && (
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-700">Moneda asignada:</span>
+                    <select
+                      value={monedaCodigo}
+                      onChange={(e) => setMonedaCodigo(e.target.value)}
+                      className="text-xs bg-blue-50/80 border border-blue-300 text-blue-900 rounded-md px-2 py-1 font-bold focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                    >
+                      {getAvailableCurrencies()
+                        .filter((c) => !c.esMonedaBase && c.activo)
+                        .map((curr) => (
+                          <option key={curr.codigo} value={curr.codigo}>
+                            {curr.codigo} - {curr.nombre} ({curr.simbolo})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+              </div>
 
               {/* 2. DOCUMENTO REFERENCIA */}
               <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-blue-50/40 cursor-pointer border border-slate-200 transition-colors">

@@ -2050,10 +2050,41 @@ export function generatePeriodClosingAdjustments(
     aplicado: false,
   };
 
-  // 2. Corrección Monetaria / Diferencia de Cambio USD (NIC 21)
-  const saldoUsdCaja = 8500; // USD 8,500 en cuenta bancaria en dólares
-  const variacionTipoCambio = Number((dolarActual - dolarApertura).toFixed(2)); // ej: +12.50 CLP/USD
-  const gananciaDiferenciaCambio = Math.round(saldoUsdCaja * variacionTipoCambio);
+  // 2. Corrección Monetaria / Diferencia de Cambio USD / Divisas (NIC 21)
+  let realSaldoUsd = 0;
+  let realSaldoLibroClp = 0;
+  let hasRealForeignLines = false;
+
+  (entries || []).forEach(e => {
+    (e.lineas || []).forEach(l => {
+      if (l.cuentaCodigo === '1.1.02.003' || l.monedaOriginal === 'USD') {
+        hasRealForeignLines = true;
+        const d = Number(l.debe) || 0;
+        const h = Number(l.haber) || 0;
+        realSaldoLibroClp += (d - h);
+
+        if (l.montoMonedaOriginal !== undefined && l.montoMonedaOriginal > 0) {
+          if (d > 0) realSaldoUsd += Number(l.montoMonedaOriginal);
+          else if (h > 0) realSaldoUsd -= Number(l.montoMonedaOriginal);
+        } else {
+          const rate = Number(l.tipoCambio) || dolarApertura;
+          if (rate > 0) {
+            if (d > 0) realSaldoUsd += (d / rate);
+            else if (h > 0) realSaldoUsd -= (h / rate);
+          }
+        }
+      }
+    });
+  });
+
+  const saldoUsdCaja = hasRealForeignLines && Math.abs(realSaldoUsd) > 0 ? Number(realSaldoUsd.toFixed(2)) : 8500;
+  const valorCierreClp = Math.round(saldoUsdCaja * dolarActual);
+  const diffCambio = hasRealForeignLines && realSaldoLibroClp !== 0
+    ? (valorCierreClp - realSaldoLibroClp)
+    : Math.round(saldoUsdCaja * (dolarActual - dolarApertura));
+
+  const isGanancia = diffCambio >= 0;
+  const absDiff = Math.abs(diffCambio);
 
   const adjDiferenciaCambio: PeriodClosingAdjustment = {
     id: 'adj-dif-cambio-02',
@@ -2061,26 +2092,41 @@ export function generatePeriodClosingAdjustments(
     titulo: 'Ajuste Diferencia de Cambio Moneda Extranjera (USD)',
     descripcion: `Revalorización de saldo de US$${saldoUsdCaja.toLocaleString()} a TC de cierre $${dolarActual} CLP/USD (NIC 21).`,
     baseCalculo: saldoUsdCaja * dolarActual,
-    montoAjuste: gananciaDiferenciaCambio,
+    montoAjuste: absDiff,
     fuenteDatos: `Cuenta bancaria Moneda Extranjera (saldo contable US$${saldoUsdCaja.toLocaleString()}) e Indicador Dólar Observado oficial del Banco Central de Chile ($${dolarActual} CLP/USD).`,
-    memoriaCalculo: `Saldo en USD (US$${saldoUsdCaja.toLocaleString()}) × Variación cambiaria del período (+$${variacionTipoCambio} CLP/USD: desde $${dolarApertura.toFixed(2)} hasta $${dolarActual.toFixed(2)}) = Ajuste por mayor valor de $${gananciaDiferenciaCambio.toLocaleString('es-CL')} CLP.`,
+    memoriaCalculo: `Saldo en USD (US$${saldoUsdCaja.toLocaleString()}) reexpresado a $${dolarActual} CLP/USD = $${valorCierreClp.toLocaleString('es-CL')} CLP. Variación patrimonial neta: ${isGanancia ? 'Ganancia' : 'Pérdida'} por $${absDiff.toLocaleString('es-CL')} CLP.`,
     normaReferencia: 'NIC 21 (Efectos de las Variaciones en las Tasas de Cambio de la Moneda Extranjera). Partidas monetarias deben reexpresarse a tipo de cambio de cierre.',
     asientoPropuesto: {
-      glosa: `Ajuste Cierre: Revalorización cambiaria Banco Moneda Extranjera a $${dolarActual} CLP/USD`,
-      lineas: [
-        {
-          codigo_cuenta: '1.1.02.003',
-          nombre_cuenta: 'Banco Moneda Extranjera (USD)',
-          debe: gananciaDiferenciaCambio,
-          haber: 0,
-        },
-        {
-          codigo_cuenta: '7.1.01.002',
-          nombre_cuenta: 'Diferencia de Cambio a Favor (USD / EUR)',
-          debe: 0,
-          haber: gananciaDiferenciaCambio,
-        },
-      ],
+      glosa: `Ajuste Cierre: Revalorización cambiaria Banco Moneda Extranjera a $${dolarActual} CLP/USD (NIC 21)`,
+      lineas: isGanancia
+        ? [
+            {
+              codigo_cuenta: '1.1.02.003',
+              nombre_cuenta: 'Banco Moneda Extranjera (USD)',
+              debe: absDiff,
+              haber: 0,
+            },
+            {
+              codigo_cuenta: '7.1.01.002',
+              nombre_cuenta: 'Diferencia de Cambio a Favor (USD / EUR)',
+              debe: 0,
+              haber: absDiff,
+            },
+          ]
+        : [
+            {
+              codigo_cuenta: '7.2.01.002',
+              nombre_cuenta: 'Diferencia de Cambio en Contra (USD / EUR)',
+              debe: absDiff,
+              haber: 0,
+            },
+            {
+              codigo_cuenta: '1.1.02.003',
+              nombre_cuenta: 'Banco Moneda Extranjera (USD)',
+              debe: 0,
+              haber: absDiff,
+            },
+          ],
     },
     aplicado: false,
   };

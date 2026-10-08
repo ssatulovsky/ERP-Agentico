@@ -152,7 +152,23 @@ export default function App() {
 
   // Active Client derived object (backward-compatible with company)
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
-  const [company, setCompany] = useState(activeClient);
+  const [company, setCompany] = useState<ClientCompany>(() => {
+    const savedPeriodos = loadClientState<string[]>(
+      activeClient.id, 
+      'periodosCerrados', 
+      activeClient.periodosCerrados || ['2026-01', '2026-02']
+    );
+    return {
+      ...activeClient,
+      ejercicioActivo: activeClient.ejercicioActivo || 2026,
+      mesCierreEjercicio: activeClient.mesCierreEjercicio || 12,
+      diaCierreEjercicio: activeClient.diaCierreEjercicio || 31,
+      fechaInicioEjercicio: activeClient.fechaInicioEjercicio || '2026-01-01',
+      fechaFinEjercicio: activeClient.fechaFinEjercicio || '2026-12-31',
+      periodosCerrados: savedPeriodos,
+      bloqueoPeriodoCerrado: activeClient.bloqueoPeriodoCerrado !== false,
+    };
+  });
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
   // Core Data States with Multi-Tenant Local Persistence (Sin datos fijos, almacenamiento real segregado)
@@ -374,7 +390,11 @@ export default function App() {
     const selected = clients.find(c => c.id === clientId);
     if (!selected) return;
     setActiveClientId(clientId);
-    setCompany(selected);
+    const loadedPeriodos = loadClientState<string[]>(clientId, 'periodosCerrados', selected.periodosCerrados || ['2026-01', '2026-02']);
+    setCompany({
+      ...selected,
+      periodosCerrados: loadedPeriodos,
+    });
     const isExento = Boolean((selected as any)?.exentoIvaGiro);
     const isDemo = selected.id === 'client-retail-01' || (selected as any)?.isDemo;
 
@@ -1558,7 +1578,15 @@ export default function App() {
           {activeTab === 'ledger' && (
             <SeniorAccountingOrchestrator
               company={company}
-              onUpdateCompany={(updated) => setCompany(prev => ({ ...prev, ...updated }))}
+              onUpdateCompany={(updated) => {
+                setCompany(prev => {
+                  const next = { ...prev, ...updated };
+                  if (updated.periodosCerrados) {
+                    saveClientState(activeClientId, 'periodosCerrados', updated.periodosCerrados);
+                  }
+                  return next;
+                });
+              }}
               firm={firm}
               indicators={indicators}
               entries={entries}

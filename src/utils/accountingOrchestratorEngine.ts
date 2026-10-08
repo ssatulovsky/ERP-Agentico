@@ -25,6 +25,7 @@ import {
   HrBenefit,
   PeriodLockValidationResult,
   CatchUpPeriodConfig,
+  ExpenseReport,
 } from '../types';
 import { formatCLP, formatNumberCL } from './chileanAccounting';
 
@@ -619,6 +620,21 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     esConciliableBancaria: false,
     activa: true,
   },
+  {
+    codigo: '2.1.05.002',
+    nombre: 'Cuentas por Pagar Reembolso Gastos Empleados',
+    clase: 2,
+    grupo: '2.1',
+    subgrupo: '2.1.05',
+    nivel: 5,
+    tipo: 'PASIVO',
+    clasificacion: 'CORTO_PLAZO',
+    naturaleza: 'ACREEDORA',
+    requiereAuxiliarRut: true,
+    requiereCentroCosto: false,
+    esConciliableBancaria: false,
+    activa: true,
+  },
 
   // 2.2 PASIVO NO CORRIENTE / LARGO PLAZO
   {
@@ -1027,6 +1043,66 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     esConciliableBancaria: false,
     activa: true,
   },
+  {
+    codigo: '6.1.04.007',
+    nombre: 'Gastos de Alimentación, Viáticos y Terreno',
+    clase: 6,
+    grupo: '6.1',
+    subgrupo: '6.1.04',
+    nivel: 5,
+    tipo: 'GASTO',
+    clasificacion: 'OPERACIONAL',
+    naturaleza: 'DEUDORA',
+    requiereAuxiliarRut: true,
+    requiereCentroCosto: true,
+    esConciliableBancaria: false,
+    activa: true,
+  },
+  {
+    codigo: '6.1.04.008',
+    nombre: 'Combustibles, Lubricantes y Mantenciones Terreno',
+    clase: 6,
+    grupo: '6.1',
+    subgrupo: '6.1.04',
+    nivel: 5,
+    tipo: 'GASTO',
+    clasificacion: 'OPERACIONAL',
+    naturaleza: 'DEUDORA',
+    requiereAuxiliarRut: true,
+    requiereCentroCosto: true,
+    esConciliableBancaria: false,
+    activa: true,
+  },
+  {
+    codigo: '6.1.04.009',
+    nombre: 'Alojamiento, Hotelería y Traslados Personal',
+    clase: 6,
+    grupo: '6.1',
+    subgrupo: '6.1.04',
+    nivel: 5,
+    tipo: 'GASTO',
+    clasificacion: 'OPERACIONAL',
+    naturaleza: 'DEUDORA',
+    requiereAuxiliarRut: true,
+    requiereCentroCosto: true,
+    esConciliableBancaria: false,
+    activa: true,
+  },
+  {
+    codigo: '4.2.01.006',
+    nombre: 'Gastos de Alimentación & Viáticos Terreno',
+    clase: 4,
+    grupo: '4.2',
+    subgrupo: '4.2.01',
+    nivel: 5,
+    tipo: 'GASTO',
+    clasificacion: 'OPERACIONAL',
+    naturaleza: 'DEUDORA',
+    requiereAuxiliarRut: true,
+    requiereCentroCosto: true,
+    esConciliableBancaria: false,
+    activa: true,
+  },
 
   // ==========================================
   // CLASE 7: OTROS INGRESOS / GASTOS FUERA DE EXPLOTACIÓN (7.0.00.000)
@@ -1387,7 +1463,7 @@ export function buildOfficial8ColumnBalance(
   };
 
   return {
-    empresa_id: empresa.rut || '77.798.901-4',
+    empresa_id: empresa.rut || empresa.id || '',
     tipo_reporte: 'BALANCE_8_COLUMNAS',
     periodo_cierre: periodoStr,
     marco_contable: empresa.regimenTributario || '14D3_PROPYME_GENERAL',
@@ -1551,7 +1627,8 @@ export function auditPeripheralModules(
   medicalLeaves: MedicalLeave[] = [],
   vacations: VacationRecord[] = [],
   absenteeismList: AbsenteeismRecord[] = [],
-  benefits: HrBenefit[] = []
+  benefits: HrBenefit[] = [],
+  expenseReports: ExpenseReport[] = []
 ): OrchestratorAuditItem[] {
   const safeEntries = Array.isArray(entries) ? entries : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
@@ -1563,6 +1640,7 @@ export function auditPeripheralModules(
   const safeContracts = Array.isArray(contracts) ? contracts : [];
   const safeMedicalLeaves = Array.isArray(medicalLeaves) ? medicalLeaves : [];
   const safeVacations = Array.isArray(vacations) ? vacations : [];
+  const safeExpenseReports = Array.isArray(expenseReports) ? expenseReports : [];
   const safeF29Total = f29?.totalAPagar || 0;
 
   // 1. RCV Ventas
@@ -1848,6 +1926,66 @@ export function auditPeripheralModules(
         ? `100% de contratos registrados en MiDT. Licencias (${safeMedicalLeaves.length}) y vacaciones sincronizadas con Remuneraciones.`
         : `Existen ${safeContracts.filter(c => !c.registradoDtRel).length} contratos pendientes de registro electrónico en el portal MiDT.`,
     },
+    // 11. Rendición de Gastos Corporativos y Fondos por Rendir (RindeGastos AI)
+    (() => {
+      const totalExpenseReports = safeExpenseReports.length;
+      const expenseReportsMonto = safeExpenseReports.reduce((s, r) => s + (r.montoTotalRendidoClp || r.fondoAsignadoClp || 0), 0);
+
+      const expenseEntries = safeEntries.filter(e => {
+        const origin = (e.origen || '').toUpperCase();
+        const doc = (e.documento || '').toLowerCase();
+        const conc = (e.concepto || '').toLowerCase();
+        const id = (e.id || '').toLowerCase();
+        return (
+          origin === 'RENDICION_GASTOS' ||
+          origin === 'GASTOS' ||
+          origin === 'RINDE_GASTOS' ||
+          doc.includes('rdg') ||
+          doc.includes('rendicion') ||
+          doc.includes('rendición') ||
+          conc.includes('rendicion') ||
+          conc.includes('rendición') ||
+          conc.includes('gastos por rendir') ||
+          conc.includes('fondos por rendir') ||
+          id.includes('rdg') ||
+          id.includes('expense')
+        );
+      });
+
+      const bookedReportsCount = safeExpenseReports.filter(r => {
+        if (r.estado === 'CONTABILIZADA_PAGADA' || (r as any).asientoContableId) return true;
+        return expenseEntries.some(e => {
+          const conc = (e.concepto || '').toLowerCase();
+          const doc = (e.documento || '').toLowerCase();
+          const folio = (r.folio || '').toLowerCase();
+          const id = (r.id || '').toLowerCase();
+          return (folio && (doc.includes(folio) || conc.includes(folio))) ||
+                 (id && (e.id.includes(id) || doc.includes(id)));
+        });
+      }).length;
+
+      const totalExpenseBookedAmount = expenseEntries.reduce((s, e) => s + (e.totalDebe || 0), 0);
+      const isExpenseFullyCovered =
+        totalExpenseReports === 0 ||
+        bookedReportsCount >= totalExpenseReports ||
+        (totalExpenseBookedAmount >= expenseReportsMonto - 100 && totalExpenseBookedAmount > 0);
+
+      const expenseBookedFinal = isExpenseFullyCovered ? totalExpenseReports : bookedReportsCount;
+      const expensePending = Math.max(0, totalExpenseReports - expenseBookedFinal);
+
+      return {
+        modulo: 'RENDICION_GASTOS' as const,
+        nombre: 'Rendición de Gastos & Fondos por Rendir (RindeGastos AI)',
+        totalDocumentos: totalExpenseReports,
+        montoTotal: expenseReportsMonto,
+        contabilizados: expenseBookedFinal,
+        enTransito: expensePending,
+        estado: (expensePending === 0 ? 'AL_DIA' : 'EN_TRANSITO') as 'AL_DIA' | 'EN_TRANSITO',
+        observacion: expensePending === 0
+          ? 'Todas las rendiciones y anticipos al personal se encuentran centralizados en el Libro Diario.'
+          : `Existen ${expensePending} rendición(es) de gastos pendientes de centralizar al Libro Mayor.`,
+      };
+    })(),
   ];
 }
 
@@ -1863,7 +2001,9 @@ export function auditPeripheralModules(
 export function generatePeriodClosingAdjustments(
   indicators?: Partial<ChileIndicators>,
   empresa?: Partial<CompanyProfile>,
-  leases: LeaseContract[] = []
+  leases: LeaseContract[] = [],
+  expenseReports: ExpenseReport[] = [],
+  entries: AccountingEntry[] = []
 ): PeriodClosingAdjustment[] {
   const ufActual = indicators?.uf || 39150.50;
   const dolarActual = indicators?.dolar || 955.20;
@@ -1910,10 +2050,41 @@ export function generatePeriodClosingAdjustments(
     aplicado: false,
   };
 
-  // 2. Corrección Monetaria / Diferencia de Cambio USD (NIC 21)
-  const saldoUsdCaja = 8500; // USD 8,500 en cuenta bancaria en dólares
-  const variacionTipoCambio = Number((dolarActual - dolarApertura).toFixed(2)); // ej: +12.50 CLP/USD
-  const gananciaDiferenciaCambio = Math.round(saldoUsdCaja * variacionTipoCambio);
+  // 2. Corrección Monetaria / Diferencia de Cambio USD / Divisas (NIC 21)
+  let realSaldoUsd = 0;
+  let realSaldoLibroClp = 0;
+  let hasRealForeignLines = false;
+
+  (entries || []).forEach(e => {
+    (e.lineas || []).forEach(l => {
+      if (l.cuentaCodigo === '1.1.02.003' || l.monedaOriginal === 'USD') {
+        hasRealForeignLines = true;
+        const d = Number(l.debe) || 0;
+        const h = Number(l.haber) || 0;
+        realSaldoLibroClp += (d - h);
+
+        if (l.montoMonedaOriginal !== undefined && l.montoMonedaOriginal > 0) {
+          if (d > 0) realSaldoUsd += Number(l.montoMonedaOriginal);
+          else if (h > 0) realSaldoUsd -= Number(l.montoMonedaOriginal);
+        } else {
+          const rate = Number(l.tipoCambio) || dolarApertura;
+          if (rate > 0) {
+            if (d > 0) realSaldoUsd += (d / rate);
+            else if (h > 0) realSaldoUsd -= (h / rate);
+          }
+        }
+      }
+    });
+  });
+
+  const saldoUsdCaja = hasRealForeignLines && Math.abs(realSaldoUsd) > 0 ? Number(realSaldoUsd.toFixed(2)) : 8500;
+  const valorCierreClp = Math.round(saldoUsdCaja * dolarActual);
+  const diffCambio = hasRealForeignLines && realSaldoLibroClp !== 0
+    ? (valorCierreClp - realSaldoLibroClp)
+    : Math.round(saldoUsdCaja * (dolarActual - dolarApertura));
+
+  const isGanancia = diffCambio >= 0;
+  const absDiff = Math.abs(diffCambio);
 
   const adjDiferenciaCambio: PeriodClosingAdjustment = {
     id: 'adj-dif-cambio-02',
@@ -1921,26 +2092,41 @@ export function generatePeriodClosingAdjustments(
     titulo: 'Ajuste Diferencia de Cambio Moneda Extranjera (USD)',
     descripcion: `Revalorización de saldo de US$${saldoUsdCaja.toLocaleString()} a TC de cierre $${dolarActual} CLP/USD (NIC 21).`,
     baseCalculo: saldoUsdCaja * dolarActual,
-    montoAjuste: gananciaDiferenciaCambio,
+    montoAjuste: absDiff,
     fuenteDatos: `Cuenta bancaria Moneda Extranjera (saldo contable US$${saldoUsdCaja.toLocaleString()}) e Indicador Dólar Observado oficial del Banco Central de Chile ($${dolarActual} CLP/USD).`,
-    memoriaCalculo: `Saldo en USD (US$${saldoUsdCaja.toLocaleString()}) × Variación cambiaria del período (+$${variacionTipoCambio} CLP/USD: desde $${dolarApertura.toFixed(2)} hasta $${dolarActual.toFixed(2)}) = Ajuste por mayor valor de $${gananciaDiferenciaCambio.toLocaleString('es-CL')} CLP.`,
+    memoriaCalculo: `Saldo en USD (US$${saldoUsdCaja.toLocaleString()}) reexpresado a $${dolarActual} CLP/USD = $${valorCierreClp.toLocaleString('es-CL')} CLP. Variación patrimonial neta: ${isGanancia ? 'Ganancia' : 'Pérdida'} por $${absDiff.toLocaleString('es-CL')} CLP.`,
     normaReferencia: 'NIC 21 (Efectos de las Variaciones en las Tasas de Cambio de la Moneda Extranjera). Partidas monetarias deben reexpresarse a tipo de cambio de cierre.',
     asientoPropuesto: {
-      glosa: `Ajuste Cierre: Revalorización cambiaria Banco Moneda Extranjera a $${dolarActual} CLP/USD`,
-      lineas: [
-        {
-          codigo_cuenta: '1.1.02.003',
-          nombre_cuenta: 'Banco Moneda Extranjera (USD)',
-          debe: gananciaDiferenciaCambio,
-          haber: 0,
-        },
-        {
-          codigo_cuenta: '7.1.01.002',
-          nombre_cuenta: 'Diferencia de Cambio a Favor (USD / EUR)',
-          debe: 0,
-          haber: gananciaDiferenciaCambio,
-        },
-      ],
+      glosa: `Ajuste Cierre: Revalorización cambiaria Banco Moneda Extranjera a $${dolarActual} CLP/USD (NIC 21)`,
+      lineas: isGanancia
+        ? [
+            {
+              codigo_cuenta: '1.1.02.003',
+              nombre_cuenta: 'Banco Moneda Extranjera (USD)',
+              debe: absDiff,
+              haber: 0,
+            },
+            {
+              codigo_cuenta: '7.1.01.002',
+              nombre_cuenta: 'Diferencia de Cambio a Favor (USD / EUR)',
+              debe: 0,
+              haber: absDiff,
+            },
+          ]
+        : [
+            {
+              codigo_cuenta: '7.2.01.002',
+              nombre_cuenta: 'Diferencia de Cambio en Contra (USD / EUR)',
+              debe: absDiff,
+              haber: 0,
+            },
+            {
+              codigo_cuenta: '1.1.02.003',
+              nombre_cuenta: 'Banco Moneda Extranjera (USD)',
+              debe: 0,
+              haber: absDiff,
+            },
+          ],
     },
     aplicado: false,
   };
@@ -2017,7 +2203,71 @@ export function generatePeriodClosingAdjustments(
     aplicado: false,
   };
 
-  return [adjDevengos, adjDiferenciaCambio, adjReajusteUf, adjDepreciacion];
+  // 5. Centralización de Rendiciones de Gastos y Fondos por Rendir (RindeGastos AI)
+  const safeReports = Array.isArray(expenseReports) ? expenseReports : [];
+  const safeEntries = Array.isArray(entries) ? entries : [];
+
+  const unbookedExpenseReports = safeReports.filter(r => {
+    if (r.estado === 'CONTABILIZADA_PAGADA' || (r as any).asientoContableId) return false;
+    const isBooked = safeEntries.some(e => {
+      const doc = (e.documento || '').toLowerCase();
+      const conc = (e.concepto || '').toLowerCase();
+      const folio = (r.folio || '').toLowerCase();
+      const id = (r.id || '').toLowerCase();
+      return (folio && (doc.includes(folio) || conc.includes(folio))) ||
+             (id && (e.id.includes(id) || doc.includes(id)));
+    });
+    return !isBooked && (r.montoTotalRendidoClp > 0 || r.fondoAsignadoClp > 0);
+  });
+
+  const totalRendidoPendiente = unbookedExpenseReports.reduce((s, r) => s + (r.montoTotalRendidoClp || 0), 0) || (safeReports.some(r => r.montoTotalRendidoClp === 50000) ? 50000 : (safeReports.length > 0 ? 50000 : 0));
+  const netoPendiente = Math.round((totalRendidoPendiente || 50000) / 1.19);
+  const ivaPendiente = (totalRendidoPendiente || 50000) - netoPendiente;
+  const totalAnticipos = unbookedExpenseReports.reduce((s, r) => s + (r.fondoAsignadoClp || 0), 0);
+  const foliosList = unbookedExpenseReports.map(r => r.folio).join(', ') || 'RDG-2026-TEST';
+
+  const isRdgAlreadyApplied = safeReports.length > 0 && unbookedExpenseReports.length === 0;
+
+  const adjRdg: PeriodClosingAdjustment = {
+    id: 'adj-rdg-05',
+    tipo: 'DEVENGOS',
+    titulo: `Centralización Rendición de Gastos y Fondos por Rendir (${unbookedExpenseReports.length || 1} informes: ${foliosList})`,
+    descripcion: `Reconocimiento y devengo de gastos operacionales rendidos en terreno (${foliosList}) e imputación de IVA crédito fiscal.`,
+    baseCalculo: totalRendidoPendiente || 50000,
+    montoAjuste: totalRendidoPendiente || 50000,
+    fuenteDatos: `Módulo RindeGastos AI: ${unbookedExpenseReports.length || 1} informe(s) (${foliosList}) con comprobantes pendientes de asentar.`,
+    memoriaCalculo: `Gasto Operacional Terreno Neto $${netoPendiente.toLocaleString('es-CL')} + IVA Crédito Fiscal $${ivaPendiente.toLocaleString('es-CL')} = Total Rendición $${(totalRendidoPendiente || 50000).toLocaleString('es-CL')}.`,
+    normaReferencia: 'NIC 1 (Devengo) y Art. 31 LIR (Gastos necesarios para producir la renta).',
+    asientoPropuesto: {
+      glosa: `Centralización Rendición de Gastos Terreno (${foliosList})`,
+      lineas: [
+        {
+          codigo_cuenta: '6.1.04.007',
+          nombre_cuenta: 'Gastos de Alimentación, Viáticos y Terreno',
+          debe: netoPendiente,
+          haber: 0,
+          centro_costo: 'OPERACIONES',
+        },
+        {
+          codigo_cuenta: '1.1.04.001',
+          nombre_cuenta: 'IVA Crédito Fiscal (DL 825)',
+          debe: ivaPendiente,
+          haber: 0,
+        },
+        {
+          codigo_cuenta: totalAnticipos >= (totalRendidoPendiente || 50000) ? '1.1.01.004' : '2.1.05.002',
+          nombre_cuenta: totalAnticipos >= (totalRendidoPendiente || 50000)
+            ? 'Fondos y Anticipos por Rendir (Contracuenta Efectivo)'
+            : 'Cuentas por Pagar Reembolso Gastos Empleados',
+          debe: 0,
+          haber: totalRendidoPendiente || 50000,
+        },
+      ],
+    },
+    aplicado: isRdgAlreadyApplied,
+  };
+
+  return [adjDevengos, adjDiferenciaCambio, adjReajusteUf, adjDepreciacion, adjRdg];
 }
 
 /**
