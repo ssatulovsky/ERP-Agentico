@@ -297,7 +297,7 @@ export const ProvisionesEgresosManagerModal: React.FC<ProvisionesEgresosManagerM
       const newId = `prov-${Date.now()}`;
       const newProvision: ProvisionEgreso = {
         id: newId,
-        empresaId: empresaId || 'client-innovagile',
+        empresaId: empresaId || '',
         concepto: formData.concepto,
         tipoProvision: formData.tipoProvision,
         naturaleza: formData.naturaleza,

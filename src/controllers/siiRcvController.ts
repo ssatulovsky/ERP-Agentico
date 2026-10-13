@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { sql, eq, and } from 'drizzle-orm';
 import { dtesRcv } from '../db/schema/dtesSchema';
 import { getMysqlDb, isRealMysqlConnected, inMemoryDtesRcv } from '../db/mysqlClient';
+import { diskPersistence } from '../services/diskPersistenceService';
 import { SiiRcvService, SiiGatewayError } from '../services/siiRcvService';
 import { RcvIngestionService } from '../services/rcvIngestionService';
 
@@ -177,6 +178,13 @@ siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
         const matchTipo = tipo ? d.tipoOperacion === tipo : true;
         return matchEmpresa && matchPeriodo && matchTipo;
       });
+    }
+
+    if (records.length === 0) {
+      const diskRecords = diskPersistence.getDtes(empresaRut, periodo);
+      if (diskRecords.length > 0) {
+        records = diskRecords.filter((d: any) => (tipo ? d.tipoOperacion === tipo : true));
+      }
     }
 
     res.status(200).json({

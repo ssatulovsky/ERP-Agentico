@@ -19,8 +19,8 @@ import { sql, relations } from 'drizzle-orm';
 export const expenseProjects = mysqlTable(
   'expense_projects',
   {
-    id: varchar('id', { length: 36 }).primaryKey(),
-    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    id: varchar('id', { length: 64 }).primaryKey(),
+    empresaId: varchar('empresa_id', { length: 64 }).notNull(),
     codigo: varchar('codigo', { length: 50 }).notNull(), // ej: "PRY-QUELLON-01"
     nombre: varchar('nombre', { length: 200 }).notNull(),
     clienteNombre: varchar('cliente_nombre', { length: 200 }),
@@ -41,23 +41,23 @@ export const expenseProjects = mysqlTable(
 export const expenseReports = mysqlTable(
   'expense_reports',
   {
-    id: varchar('id', { length: 36 }).primaryKey(), // UUID v4
-    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    id: varchar('id', { length: 64 }).primaryKey(), // UUID v4 o identificador correlativo
+    empresaId: varchar('empresa_id', { length: 64 }).notNull(),
     folio: varchar('folio', { length: 50 }).notNull(), // ej: "RDG-2026-001"
     titulo: varchar('titulo', { length: 255 }).notNull(),
     
     // Datos del Rendidor / Empleado
-    rendidorId: varchar('rendidor_id', { length: 36 }),
+    rendidorId: varchar('rendidor_id', { length: 64 }),
     rendidorNombre: varchar('rendidor_nombre', { length: 200 }).notNull(),
     rendidorRut: varchar('rendidor_rut', { length: 20 }).notNull(),
     rendidorEmail: varchar('rendidor_email', { length: 255 }),
     rendidorCargo: varchar('rendidor_cargo', { length: 150 }),
     
     // Imputación Analítica
-    centroCostoId: varchar('centro_costo_id', { length: 36 }),
+    centroCostoId: varchar('centro_costo_id', { length: 64 }),
     centroCostoCodigo: varchar('centro_costo_codigo', { length: 50 }),
     centroCostoNombre: varchar('centro_costo_nombre', { length: 200 }),
-    proyectoId: varchar('proyecto_id', { length: 36 }),
+    proyectoId: varchar('proyecto_id', { length: 64 }),
     proyectoCodigo: varchar('proyecto_codigo', { length: 50 }),
     proyectoNombre: varchar('proyecto_nombre', { length: 200 }),
     
@@ -80,7 +80,7 @@ export const expenseReports = mysqlTable(
     observacionesAprobador: text('observaciones_aprobador'),
     
     // Integración Contable con Libro Diario
-    asientoContableId: varchar('asiento_contable_id', { length: 36 }),
+    asientoContableId: varchar('asiento_contable_id', { length: 64 }),
     
     // Auditoría y Scoring Agéntico
     agenteAuditorScore: int('agente_auditor_score').notNull().default(100),
@@ -104,11 +104,11 @@ export const expenseReports = mysqlTable(
 export const expenseItems = mysqlTable(
   'expense_items',
   {
-    id: varchar('id', { length: 36 }).primaryKey(),
-    expenseReportId: varchar('expense_report_id', { length: 36 })
+    id: varchar('id', { length: 64 }).primaryKey(),
+    expenseReportId: varchar('expense_report_id', { length: 64 })
       .notNull()
       .references(() => expenseReports.id, { onDelete: 'cascade' }),
-    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    empresaId: varchar('empresa_id', { length: 64 }).notNull(),
     
     fecha: date('fecha', { mode: 'string' }).notNull(),
     tipoDocumento: varchar('tipo_documento', { length: 50 }).notNull(), // BOLETA_ELECTRONICA, FACTURA_ELECTRONICA_33, etc.
@@ -129,9 +129,9 @@ export const expenseItems = mysqlTable(
     tipoCambio: decimal('tipo_cambio', { precision: 12, scale: 4 }).default('1.0000'),
     
     // Imputación Analítica Específica de Línea
-    centroCostoId: varchar('centro_costo_id', { length: 36 }),
+    centroCostoId: varchar('centro_costo_id', { length: 64 }),
     centroCostoCodigo: varchar('centro_costo_codigo', { length: 50 }),
-    proyectoId: varchar('proyecto_id', { length: 36 }),
+    proyectoId: varchar('proyecto_id', { length: 64 }),
     proyectoCodigo: varchar('proyecto_codigo', { length: 50 }),
     cuentaContableCodigo: varchar('cuenta_contable_codigo', { length: 50 }).notNull(),
     cuentaContableNombre: varchar('cuenta_contable_nombre', { length: 150 }),

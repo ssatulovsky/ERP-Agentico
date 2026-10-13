@@ -18,7 +18,11 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  ShieldAlert,
+  KeyRound,
+  AlertOctagon,
 } from 'lucide-react';
+import { ExtraordinaryFiscalYearReopenModal } from './accounting/ExtraordinaryFiscalYearReopenModal';
 import {
   AccountingEntry,
   Balance8ColumnasReport,
@@ -90,6 +94,7 @@ export const FiscalYearClosingModule: React.FC<FiscalYearClosingModuleProps> = (
   const [periodosCerrados, setPeriodosCerrados] = useState<string[]>(
     company.periodosCerrados || ['2026-01', '2026-02']
   );
+  const [isReopenModalOpen, setIsReopenModalOpen] = useState<boolean>(false);
 
   // Subpestaña activa del módulo
   const [subTab, setSubTab] = useState<'CONFIG' | 'CIERRE_APERTURA' | 'CATCH_UP'>('CONFIG');
@@ -184,6 +189,69 @@ export const FiscalYearClosingModule: React.FC<FiscalYearClosingModuleProps> = (
     }
     setPeriodosCerrados(updated);
     onUpdateCompany({ periodosCerrados: updated });
+  };
+
+  // Manejo de Reapertura Extraordinaria Justificada (NIC 8 / Art. 16 Código Tributario)
+  const handleConfirmReopen = ({
+    ejercicio,
+    motivoLegal,
+    usuario,
+    resolucionSii,
+  }: {
+    ejercicio: number;
+    motivoLegal: string;
+    usuario: string;
+    resolucionSii?: string;
+  }) => {
+    const currentClosed =
+      company.ejerciciosCerrados && company.ejerciciosCerrados.length > 0
+        ? company.ejerciciosCerrados
+        : [ejercicioActivo - 2, ejercicioActivo - 1];
+    const newClosed = currentClosed.filter((y) => y !== ejercicio);
+    const auditEntry = {
+      id: `reopen-${ejercicio}-${Date.now()}`,
+      fecha: new Date().toISOString().substring(0, 10),
+      ejercicio,
+      usuario,
+      motivoLegal,
+      resolucionSii,
+      timestamp: new Date().toISOString(),
+    };
+    const updatedAudit = [auditEntry, ...(company.auditoriaReaperturas || [])];
+
+    onUpdateCompany({
+      ejerciciosCerrados: newClosed,
+      auditoriaReaperturas: updatedAudit,
+      reaperturaExtraordinariaActiva: {
+        ejercicio,
+        fechaReapertura: new Date().toISOString().substring(0, 10),
+        motivoLegal,
+        usuario,
+        resolucionSii,
+      },
+    });
+
+    onShowToast(
+      `Ejercicio fiscal ${ejercicio} reabierto extraordinariamente bajo régimen de auditoría. Puede proceder con los ajustes legales.`,
+      'info'
+    );
+  };
+
+  const handleRecloseExtraordinary = (ejercicio: number) => {
+    const currentClosed = company.ejerciciosCerrados || [];
+    const newClosed = currentClosed.includes(ejercicio)
+      ? currentClosed
+      : [...currentClosed, ejercicio];
+
+    onUpdateCompany({
+      ejerciciosCerrados: newClosed,
+      reaperturaExtraordinariaActiva: undefined,
+    });
+
+    onShowToast(
+      `Ejercicio fiscal ${ejercicio} cerrado y bloqueado formalmente tras concluir los ajustes extraordinarios.`,
+      'success'
+    );
   };
 
   // Despacho de asientos con trazabilidad
@@ -520,6 +588,135 @@ export const FiscalYearClosingModule: React.FC<FiscalYearClosingModuleProps> = (
                 );
               })}
             </div>
+          </div>
+
+          {/* Panel de Ejercicios Anuales y Régimen de Reapertura Extraordinaria */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-700 shrink-0">
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>Ejercicios Fiscales Anuales y Régimen de Reapertura Extraordinaria</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-extrabold uppercase">
+                      NIC 8 / SII
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Control de ejercicios cerrados, reapertura restringida por error grave y auditoría inmutable.
+                  </p>
+                </div>
+              </div>
+
+              {!company.reaperturaExtraordinariaActiva && (
+                <button
+                  type="button"
+                  onClick={() => setIsReopenModalOpen(true)}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs shrink-0"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Solicitar Reapertura Extraordinaria</span>
+                </button>
+              )}
+            </div>
+
+            {/* Banner si hay una reapertura extraordinaria activa */}
+            {company.reaperturaExtraordinariaActiva ? (
+              <div className="p-3.5 bg-rose-50 border-2 border-rose-400 rounded-xl text-xs space-y-2 animate-in fade-in">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="font-black text-rose-950 text-xs sm:text-sm">
+                      EJERCICIO FISCAL {company.reaperturaExtraordinariaActiva.ejercicio} EN RÉGIMEN DE REAPERTURA EXTRAORDINARIA
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRecloseExtraordinary(company.reaperturaExtraordinariaActiva!.ejercicio)}
+                    className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-bold cursor-pointer transition-colors flex items-center gap-1"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>Finalizar Ajustes y Volver a Cerrar {company.reaperturaExtraordinariaActiva.ejercicio}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px] text-rose-900 font-mono">
+                  <div><strong>Fecha Reapertura:</strong> {company.reaperturaExtraordinariaActiva.fechaReapertura}</div>
+                  <div><strong>Autorizado por:</strong> {company.reaperturaExtraordinariaActiva.usuario}</div>
+                  <div><strong>Folio/Respaldo SII:</strong> {company.reaperturaExtraordinariaActiva.resolucionSii || 'S/N'}</div>
+                </div>
+
+                <div className="text-[11px] text-rose-950 bg-white/70 p-2 rounded border border-rose-200">
+                  <strong>Fundamentación legal del ajuste:</strong> {company.reaperturaExtraordinariaActiva.motivoLegal}
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg">
+                  <div className="text-[11px] font-bold text-emerald-900">Ejercicio Activo en Curso</div>
+                  <div className="text-lg font-black font-mono text-emerald-950 mt-0.5">{ejercicioActivo}</div>
+                  <div className="text-[10px] text-emerald-800 mt-1">Operaciones corrientes abiertas</div>
+                </div>
+
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg sm:col-span-2">
+                  <div className="text-[11px] font-bold text-slate-800">Ejercicios Históricos Cerrados y Auditados</div>
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    {(company.ejerciciosCerrados && company.ejerciciosCerrados.length > 0
+                      ? company.ejerciciosCerrados
+                      : [ejercicioActivo - 2, ejercicioActivo - 1]
+                    ).map((yr) => (
+                      <span
+                        key={yr}
+                        className="px-2.5 py-1 rounded-md bg-slate-200 text-slate-800 font-mono font-bold text-xs flex items-center gap-1.5 border border-slate-300"
+                      >
+                        <Lock className="w-3 h-3 text-rose-600" />
+                        <span>Ejercicio {yr}</span>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Prohíbe asientos manuales salvo autorización de Reapertura Extraordinaria bajo fe pública de auditoría.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Historial de Auditoría de Reaperturas */}
+            {company.auditoriaReaperturas && company.auditoriaReaperturas.length > 0 && (
+              <div className="pt-2 border-t border-slate-100">
+                <span className="text-[11px] font-bold text-slate-700 block mb-1.5">
+                  Bitácora Inmutable de Auditoría de Reaperturas Extraordinarias:
+                </span>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px] text-left">
+                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-1.5">Fecha</th>
+                        <th className="p-1.5">Ejercicio</th>
+                        <th className="p-1.5">Autorizado Por</th>
+                        <th className="p-1.5">Folio / Caso SII</th>
+                        <th className="p-1.5">Motivo Técnico-Legal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {company.auditoriaReaperturas.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50">
+                          <td className="p-1.5 text-slate-600 whitespace-nowrap">{item.fecha}</td>
+                          <td className="p-1.5 font-bold text-rose-800">{item.ejercicio}</td>
+                          <td className="p-1.5 font-sans text-slate-800">{item.usuario}</td>
+                          <td className="p-1.5 text-blue-800">{item.resolucionSii || 'S/N'}</td>
+                          <td className="p-1.5 font-sans text-slate-600 truncate max-w-xs" title={item.motivoLegal}>
+                            {item.motivoLegal}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Guía Contable Técnica para el Contador */}
@@ -1010,6 +1207,14 @@ export const FiscalYearClosingModule: React.FC<FiscalYearClosingModuleProps> = (
           </div>
         </div>
       )}
+
+      {/* Modal de Reapertura Extraordinaria Justificada (NIC 8 / SII) */}
+      <ExtraordinaryFiscalYearReopenModal
+        isOpen={isReopenModalOpen}
+        onClose={() => setIsReopenModalOpen(false)}
+        company={company}
+        onConfirmReopen={handleConfirmReopen}
+      />
     </div>
   );
 };

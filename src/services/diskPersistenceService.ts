@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { isRealMysqlConnected, db as mysqlDb } from '../db/mysqlClient';
 import {
   accountingEntries,
@@ -15,6 +16,7 @@ import {
   expenseReports,
   expenseItems,
   expenseProjects,
+  bankTransactions,
 } from '../db/mysqlSchema';
 
 export interface DiskDataStore {
@@ -565,6 +567,9 @@ class DiskPersistenceService {
             fecha: entry.fecha,
             concepto: entry.concepto,
             documentoRef: entry.documentoRef || null,
+            documentoReferencia: entry.documentoReferencia || entry.documentoRef || null,
+            tipoDocumentoRef: entry.tipoDocumentoRef || null,
+            folioDocumentoRef: entry.folioDocumentoRef || null,
             origenModulo: entry.origenModulo,
             totalDebe: String(entry.totalDebe),
             totalHaber: String(entry.totalHaber),
@@ -585,6 +590,21 @@ class DiskPersistenceService {
               haber: String(line.haber),
               rutAuxiliar: line.rutAuxiliar || null,
               centroCosto: line.centroCosto || null,
+              documentoRef: line.documentoRef || entry.documentoRef || null,
+              dteIdAsociado: line.dteIdAsociado || null,
+              tipoDocumentoRef: line.tipoDocumentoRef || entry.tipoDocumentoRef || null,
+              folioDocumentoRef: line.folioDocumentoRef || entry.folioDocumentoRef || null,
+              montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+              fechaDocumentoRef: line.fechaDocumentoRef || null,
+              fechaVencimientoRef: line.fechaVencimientoRef || null,
+              documentoOperacion: line.documentoOperacion || null,
+              tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+              fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+              documentoConciliacion: line.documentoConciliacion || null,
+              tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+              monedaOriginal: line.monedaOriginal || null,
+              montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+              tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
             });
           }
         } catch (sqlErr: any) {
@@ -592,6 +612,136 @@ class DiskPersistenceService {
         }
       })();
     }
+  }
+
+  public deleteAccountingEntry(entryId: string): boolean {
+    const initialCount = this.store.entries.length;
+    this.store.entries = this.store.entries.filter((e) => e.id !== entryId);
+    this.store.lines = this.store.lines.filter((l) => l.entryId !== entryId);
+    this.scheduleFlush();
+
+    // Purgar también de memoria de proceso si estuviese ahí
+    try {
+      const { inMemoryEntries, inMemoryLines } = require('../db/mysqlClient');
+      if (Array.isArray(inMemoryEntries)) {
+        const idx = inMemoryEntries.findIndex((e: any) => e.id === entryId);
+        if (idx >= 0) inMemoryEntries.splice(idx, 1);
+      }
+      if (Array.isArray(inMemoryLines)) {
+        for (let i = inMemoryLines.length - 1; i >= 0; i--) {
+          if (inMemoryLines[i].entryId === entryId) {
+            inMemoryLines.splice(i, 1);
+          }
+        }
+      }
+    } catch {}
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, entryId));
+          await mysqlDb.delete(accountingEntries).where(eq(accountingEntries.id, entryId));
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al eliminar asiento en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+
+    return this.store.entries.length < initialCount;
+  }
+
+  public updateAccountingEntry(entryId: string, updatedFields: any, newLines?: any[]): boolean {
+    const existingIndex = this.store.entries.findIndex((e) => e.id === entryId);
+    if (existingIndex < 0) return false;
+
+    this.store.entries[existingIndex] = {
+      ...this.store.entries[existingIndex],
+      ...updatedFields,
+    };
+
+    if (Array.isArray(newLines)) {
+      this.store.lines = this.store.lines.filter((l) => l.entryId !== entryId);
+      this.store.lines.push(...newLines);
+    }
+
+    this.scheduleFlush();
+
+    // Sincronizar en memoria de proceso
+    try {
+      const { inMemoryEntries, inMemoryLines } = require('../db/mysqlClient');
+      if (Array.isArray(inMemoryEntries)) {
+        const idx = inMemoryEntries.findIndex((e: any) => e.id === entryId);
+        if (idx >= 0) inMemoryEntries[idx] = { ...inMemoryEntries[idx], ...updatedFields };
+      }
+      if (Array.isArray(newLines) && Array.isArray(inMemoryLines)) {
+        for (let i = inMemoryLines.length - 1; i >= 0; i--) {
+          if (inMemoryLines[i].entryId === entryId) {
+            inMemoryLines.splice(i, 1);
+          }
+        }
+        inMemoryLines.push(...newLines);
+      }
+    } catch {}
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          const entryUpdate: any = {};
+          if (updatedFields.concepto !== undefined) entryUpdate.concepto = updatedFields.concepto;
+          if (updatedFields.fecha !== undefined) entryUpdate.fecha = updatedFields.fecha;
+          if (updatedFields.documentoRef !== undefined) {
+            entryUpdate.documentoRef = updatedFields.documentoRef;
+            entryUpdate.documentoReferencia = updatedFields.documentoReferencia || updatedFields.documentoRef;
+          }
+          if (updatedFields.documentoReferencia !== undefined) entryUpdate.documentoReferencia = updatedFields.documentoReferencia;
+          if (updatedFields.tipoDocumentoRef !== undefined) entryUpdate.tipoDocumentoRef = updatedFields.tipoDocumentoRef;
+          if (updatedFields.folioDocumentoRef !== undefined) entryUpdate.folioDocumentoRef = updatedFields.folioDocumentoRef;
+          if (updatedFields.totalDebe !== undefined) entryUpdate.totalDebe = String(updatedFields.totalDebe);
+          if (updatedFields.totalHaber !== undefined) entryUpdate.totalHaber = String(updatedFields.totalHaber);
+          if (updatedFields.supervisorSignature !== undefined) entryUpdate.supervisorSignature = updatedFields.supervisorSignature;
+
+          if (Object.keys(entryUpdate).length > 0) {
+            await mysqlDb.update(accountingEntries).set(entryUpdate).where(eq(accountingEntries.id, entryId));
+          }
+
+          if (Array.isArray(newLines)) {
+            await mysqlDb.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, entryId));
+            for (const line of newLines) {
+              await mysqlDb.insert(accountingEntryLines).values({
+                id: line.id || crypto.randomUUID(),
+                entryId,
+                lineaNumero: line.lineaNumero || 1,
+                codigoCuenta: line.codigoCuenta,
+                nombreCuenta: line.nombreCuenta,
+                debe: String(line.debe),
+                haber: String(line.haber),
+                rutAuxiliar: line.rutAuxiliar || null,
+                centroCosto: line.centroCosto || null,
+                documentoRef: line.documentoRef || updatedFields.documentoRef || null,
+                dteIdAsociado: line.dteIdAsociado || null,
+                tipoDocumentoRef: line.tipoDocumentoRef || updatedFields.tipoDocumentoRef || null,
+                folioDocumentoRef: line.folioDocumentoRef || updatedFields.folioDocumentoRef || null,
+                montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+                fechaDocumentoRef: line.fechaDocumentoRef || null,
+                fechaVencimientoRef: line.fechaVencimientoRef || null,
+                documentoOperacion: line.documentoOperacion || null,
+                tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+                fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+                documentoConciliacion: line.documentoConciliacion || null,
+                tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+                monedaOriginal: line.monedaOriginal || null,
+                montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+                tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
+              });
+            }
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al actualizar asiento en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+
+    return true;
   }
 
   public addAccountingLines(lines: any[]) {
@@ -620,6 +770,21 @@ class DiskPersistenceService {
               haber: String(line.haber),
               rutAuxiliar: line.rutAuxiliar || null,
               centroCosto: line.centroCosto || null,
+              documentoRef: line.documentoRef || null,
+              dteIdAsociado: line.dteIdAsociado || null,
+              tipoDocumentoRef: line.tipoDocumentoRef || null,
+              folioDocumentoRef: line.folioDocumentoRef || null,
+              montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+              fechaDocumentoRef: line.fechaDocumentoRef || null,
+              fechaVencimientoRef: line.fechaVencimientoRef || null,
+              documentoOperacion: line.documentoOperacion || null,
+              tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+              fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+              documentoConciliacion: line.documentoConciliacion || null,
+              tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+              monedaOriginal: line.monedaOriginal || null,
+              montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+              tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
             });
           }
         } catch (sqlErr: any) {
@@ -627,6 +792,78 @@ class DiskPersistenceService {
         }
       })();
     }
+  }
+
+  public saveBankMovements(movements: any[]) {
+    if (!Array.isArray(movements) || movements.length === 0) return;
+    for (const mov of movements) {
+      const idx = this.store.bankMovements.findIndex((m) => m.id === mov.id);
+      if (idx >= 0) {
+        this.store.bankMovements[idx] = { ...this.store.bankMovements[idx], ...mov };
+      } else {
+        this.store.bankMovements.push(mov);
+      }
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          for (const mov of movements) {
+            await mysqlDb
+              .insert(bankTransactions)
+              .values({
+                id: mov.id,
+                accountId: mov.cuentaId || mov.accountId || 'bank-acc-01',
+                fecha: mov.fecha,
+                descripcion: mov.glosaBancaria || mov.descripcion || '',
+                cargo: String(mov.cargo || 0),
+                abono: String(mov.abono || 0),
+                documentoRef: mov.documentoRef || mov.numeroReferencia || null,
+                estadoConciliacion: mov.estado || 'PENDIENTE',
+                matchedDteId: mov.dteFolioAsociado ? String(mov.dteFolioAsociado) : null,
+                moneda: mov.moneda || 'CLP',
+                tipoCambio: mov.tipoCambio != null ? String(mov.tipoCambio) : '1.0000',
+                montoClpEquivalente: mov.montoCLPEquivalente != null ? String(mov.montoCLPEquivalente) : null,
+                matchCerteza: mov.matchCerteza || null,
+                matchSugeridoId: mov.matchSugeridoId || null,
+                matchSugeridoGlosa: mov.matchSugeridoGlosa || null,
+                codigoConciliacion: mov.codigoConciliacion || null,
+                fechaConciliacion: mov.fechaConciliacion ? new Date(mov.fechaConciliacion) : null,
+                matchCriterio: mov.matchCriterio || null,
+                usuarioConciliador: mov.usuarioConciliador || null,
+                asientoGeneradoId: mov.asientoGeneradoId || null,
+                partidaContableDetalle: mov.partidaContableDetalle || null,
+                esAmbiguo: Boolean(mov.esAmbiguo),
+                candidatosMatchesCount: mov.candidatosMatchesCount || 0,
+                origenImportacion: mov.origenImportacion || 'MANUAL',
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  estadoConciliacion: mov.estado || 'PENDIENTE',
+                  codigoConciliacion: mov.codigoConciliacion || null,
+                  fechaConciliacion: mov.fechaConciliacion ? new Date(mov.fechaConciliacion) : null,
+                  matchCriterio: mov.matchCriterio || null,
+                  usuarioConciliador: mov.usuarioConciliador || null,
+                  asientoGeneradoId: mov.asientoGeneradoId || null,
+                  partidaContableDetalle: mov.partidaContableDetalle || null,
+                  esAmbiguo: Boolean(mov.esAmbiguo),
+                  candidatosMatchesCount: mov.candidatosMatchesCount || 0,
+                },
+              });
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al escribir movimientos bancarios en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+  }
+
+  public getBankMovements(accountId?: string): any[] {
+    if (accountId) {
+      return this.store.bankMovements.filter((m) => m.cuentaId === accountId || m.accountId === accountId);
+    }
+    return this.store.bankMovements || [];
   }
 
   public getAccountingEntries(empresaId?: string, periodo?: string): any[] {

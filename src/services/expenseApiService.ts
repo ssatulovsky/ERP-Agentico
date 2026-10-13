@@ -62,27 +62,28 @@ export const expenseApiService = {
   },
 
   /**
-   * Registra una nueva rendición de gastos en MySQL 8.0
+   * Registra una nueva rendición de gastos en MySQL 8.0 / Disco Persistente
    */
   async createExpenseReport(
     report: Omit<ExpenseReport, 'id' | 'createdAt' | 'updatedAt' | 'comprobantes'>
-  ): Promise<ExpenseReport | null> {
-    try {
-      const res = await fetch('/api/expenses/reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(report),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      const json = await res.json();
-      if (json.success && json.data) {
-        return json.data;
-      }
-      return null;
-    } catch (err) {
-      console.error('[ExpenseApiService] Error al crear rendición en MySQL 8.0:', err);
-      return null;
+  ): Promise<ExpenseReport> {
+    const res = await fetch('/api/expenses/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      throw new Error(json?.error || `Error ${res.status}: ${res.statusText}`);
     }
+
+    if (json?.success && json?.data) {
+      return json.data;
+    }
+
+    throw new Error(json?.error || 'No se pudo guardar la rendición en la base de datos.');
   },
 
   /**
@@ -119,23 +120,24 @@ export const expenseApiService = {
   async addExpenseItem(
     reportId: string,
     item: Omit<ExpenseItem, 'id' | 'createdAt'>
-  ): Promise<ExpenseItem | null> {
-    try {
-      const res = await fetch(`/api/expenses/reports/${encodeURIComponent(reportId)}/items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      const json = await res.json();
-      if (json.success && json.data) {
-        return json.data;
-      }
-      return null;
-    } catch (err) {
-      console.error('[ExpenseApiService] Error al agregar comprobante en MySQL 8.0:', err);
-      return null;
+  ): Promise<ExpenseItem> {
+    const res = await fetch(`/api/expenses/reports/${encodeURIComponent(reportId)}/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      throw new Error(json?.error || `Error ${res.status}: ${res.statusText}`);
     }
+
+    if (json?.success && json?.data) {
+      return json.data;
+    }
+
+    throw new Error(json?.error || 'No se pudo guardar el comprobante en la base de datos.');
   },
 
   /**
@@ -197,14 +199,33 @@ export const expenseApiService = {
    */
   async contabilizarReport(
     reportId: string,
-    periodo?: string,
-    fechaContabilizacion?: string
+    optionsOrPeriod?: {
+      periodo?: string;
+      fechaContabilizacion?: string;
+      cuentaAnticipoCodigo?: string;
+      cuentaAnticipoNombre?: string;
+      cuentaReembolsoCodigo?: string;
+      cuentaReembolsoNombre?: string;
+      cuentaReintegroCodigo?: string;
+      cuentaReintegroNombre?: string;
+    } | string,
+    fechaContabilizacionLegacy?: string
   ): Promise<{ success: boolean; asientoContableId?: string; error?: string }> {
     try {
+      let bodyData: any = {};
+      if (typeof optionsOrPeriod === 'object' && optionsOrPeriod !== null) {
+        bodyData = optionsOrPeriod;
+      } else if (typeof optionsOrPeriod === 'string') {
+        bodyData = {
+          periodo: optionsOrPeriod,
+          fechaContabilizacion: fechaContabilizacionLegacy,
+        };
+      }
+
       const res = await fetch(`/api/expenses/reports/${encodeURIComponent(reportId)}/contabilizar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ periodo, fechaContabilizacion }),
+        body: JSON.stringify(bodyData),
       });
       const json = await res.json();
       return json;

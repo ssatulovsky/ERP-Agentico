@@ -70,6 +70,15 @@ CREATE TABLE `companies` (
   `periodos_cerrados` JSON NULL, -- Array de períodos bloqueados ej: ["2025-12", "2026-01"]
   `bloqueo_periodo_cerrado` BOOLEAN NOT NULL DEFAULT TRUE,
   `resolucion_sii_cierre_especial` VARCHAR(100) NULL,
+  -- Reaperturas Extraordinarias y Auditoría de Ejercicios Cerrados (NIC 8 / Art. 16 CT)
+  `ejercicios_cerrados` JSON NULL,
+  `reapertura_extraordinaria_activa` JSON NULL,
+  `auditoria_reaperturas` JSON NULL,
+  -- Parámetros Multimoneda (NIC 21)
+  `moneda_defecto` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  `monedas_habilitadas` JSON NULL,
+  `cuenta_dif_cambio_ganancia_id` VARCHAR(30) NULL DEFAULT '7.1.01.002',
+  `cuenta_dif_cambio_perdida_id` VARCHAR(30) NULL DEFAULT '7.2.01.002',
   `capital_propio_tributario` DECIMAL(15, 2) NULL,
   `patente_municipal_tasa_por_mil` DECIMAL(5, 2) NULL DEFAULT 2.50,
   `remanente_credito_fiscal_utm` DECIMAL(10, 4) NULL DEFAULT 0.0000,
@@ -292,10 +301,12 @@ CREATE TABLE `chart_of_accounts` (
   `clasificacion` ENUM('ACTIVO', 'PASIVO', 'PATRIMONIO', 'INGRESOS', 'COSTOS', 'GASTOS') NOT NULL,
   `acepta_auxiliar` BOOLEAN NOT NULL DEFAULT FALSE,
   `maneja_multimoneda` BOOLEAN NOT NULL DEFAULT FALSE,
+  `moneda_codigo` VARCHAR(10) NULL DEFAULT 'CLP',
   `requiere_doc_ref` BOOLEAN NOT NULL DEFAULT FALSE,
   `es_efectivo_equivalente` BOOLEAN NOT NULL DEFAULT FALSE,
   `es_contracuenta_efectivo` BOOLEAN NOT NULL DEFAULT FALSE,
   `requiere_proyecto` BOOLEAN NOT NULL DEFAULT FALSE,
+  `notas_explicativas` JSON NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_chart_empresa_codigo` (`empresa_id`, `codigo_cuenta`),
@@ -314,6 +325,9 @@ CREATE TABLE `accounting_entries` (
   `fecha` DATE NOT NULL,
   `concepto` TEXT NOT NULL,
   `documento_ref` VARCHAR(100) NULL,
+  `documento_referencia` VARCHAR(150) NULL,
+  `tipo_documento_ref` VARCHAR(50) NULL,
+  `folio_documento_ref` VARCHAR(100) NULL,
   `origen_modulo` VARCHAR(50) NOT NULL,
   `total_debe` DECIMAL(15, 2) NOT NULL,
   `total_haber` DECIMAL(15, 2) NOT NULL,
@@ -322,7 +336,7 @@ CREATE TABLE `accounting_entries` (
   `supervisor_signature` VARCHAR(128) NOT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_entries_empresa_origen_doc` (`empresa_id`, `periodo`, `origen_modulo`, `documento_ref`),
+  KEY `idx_entries_empresa_origen_doc` (`empresa_id`, `periodo`, `origen_modulo`, `documento_ref`),
   KEY `idx_entries_empresa_periodo` (`empresa_id`, `periodo`),
   KEY `idx_entries_firm_empresa` (`firm_id`, `empresa_id`),
   KEY `idx_entries_fecha` (`fecha`)
@@ -341,7 +355,19 @@ CREATE TABLE `accounting_entry_lines` (
   `debe` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `haber` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `rut_auxiliar` VARCHAR(20) NULL,
-  `centro_costo` VARCHAR(50) NULL,
+  `centro_costo` VARCHAR(100) NULL,
+  `documento_ref` VARCHAR(150) NULL,
+  `dte_id_asociado` VARCHAR(36) NULL,
+  `tipo_documento_ref` VARCHAR(50) NULL,
+  `folio_documento_ref` VARCHAR(100) NULL,
+  `monto_documento_ref` DECIMAL(15, 2) NULL,
+  `documento_operacion` VARCHAR(100) NULL,
+  `tipo_documento_operacion` VARCHAR(50) NULL,
+  `documento_conciliacion` VARCHAR(100) NULL,
+  `tipo_documento_conciliacion` VARCHAR(50) NULL,
+  `moneda_original` VARCHAR(10) NULL,
+  `monto_moneda_original` DECIMAL(15, 2) NULL,
+  `tipo_cambio` DECIMAL(12, 4) NULL,
   PRIMARY KEY (`id`),
   KEY `idx_lines_entry_id` (`entry_id`),
   KEY `idx_lines_cuenta` (`codigo_cuenta`),
@@ -358,24 +384,13 @@ CREATE TABLE `agent_audit_logs` (
   `trace_id` VARCHAR(64) NOT NULL,
   `firm_id` VARCHAR(36) NOT NULL DEFAULT 'firm-default-001',
   `empresa_id` VARCHAR(36) NOT NULL,
+  `modulo` VARCHAR(50) NOT NULL,
   `agente_nombre` VARCHAR(60) NOT NULL,
-  `modulo` VARCHAR(60) NOT NULL DEFAULT 'CONTABILIDAD',
-  `accion` VARCHAR(100) NOT NULL DEFAULT 'COMMIT_ASIENTO',
-  `estado_transicion` VARCHAR(50) NOT NULL DEFAULT 'APROBADO',
-  `prompt_tokens` INT NULL,
-  `completion_tokens` INT NULL,
-  `model_name` VARCHAR(50) NULL,
-  `prompt_hash` VARCHAR(64) NULL,
-  `payload_input` JSON NULL,
-  `payload_output` JSON NULL,
-  `diff_contable` JSON NULL,
-  `supervisor_veredicto` VARCHAR(50) NULL,
-  `supervisor_signature` VARCHAR(128) NULL,
-  `tiempo_ejecucion_ms` INT NOT NULL DEFAULT 0,
-  `tipo_evento` VARCHAR(50) NULL,
-  `payload_entrada` JSON NULL,
-  `resultado_validacion` JSON NULL,
-  `tiempo_inferencia_ms` INT NULL DEFAULT 0,
+  `tipo_evento` ENUM('REGISTRO_ASIENTO', 'VALIDACION_NORMATIVA', 'DESCUADRE_DETECTADO', 'AUTO_CORRECCION', 'RECHAZO_SUPERVISOR', 'FIRMA_HMAC_APLICADA') NOT NULL,
+  `payload_entrada` JSON NOT NULL,
+  `resultado_validacion` JSON NOT NULL,
+  `tiempo_inferencia_ms` INT NOT NULL DEFAULT 0,
+  `supervisor_signature` VARCHAR(128) NOT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_audit_trace` (`trace_id`),
@@ -455,21 +470,20 @@ DROP TABLE IF EXISTS `dtes_rcv`;
 CREATE TABLE `dtes_rcv` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
-  `periodo` VARCHAR(7) NOT NULL, -- Formato: 'AAAA-MM'
   `tipo_operacion` ENUM('VENTA', 'COMPRA') NOT NULL,
-  `tipo_dte` INT NOT NULL, -- 33 (Factura), 34 (Exenta), 61 (NC), 56 (ND), 52 (Guía), etc.
+  `tipo_dte` INT NOT NULL, -- 33 (Factura), 34 (Exenta), 61 (Nota Crédito), 56 (Nota Débito), etc.
   `folio` BIGINT NOT NULL,
+  `fecha_emision` DATE NOT NULL,
   `rut_contraparte` VARCHAR(20) NOT NULL,
   `razon_social_contraparte` VARCHAR(255) NOT NULL,
-  `fecha_emision` DATE NOT NULL,
   `monto_exento` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `monto_neto` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `monto_iva` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `monto_iva_recuperable` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `monto_iva_no_recuperable` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `monto_total` DECIMAL(15, 2) NOT NULL,
-  `estado_acuse` VARCHAR(50) NULL,
-  `estado_contable` ENUM('PENDIENTE', 'CENTRALIZADO') NOT NULL DEFAULT 'PENDIENTE',
+  `estado_sii` VARCHAR(50) NOT NULL DEFAULT 'ACEPTADO',
+  `estado_contable` ENUM('PENDIENTE', 'CONTABILIZADO', 'RECHAZADO') NOT NULL DEFAULT 'PENDIENTE',
+  `acuse_recibo_ley19983` BOOLEAN NOT NULL DEFAULT FALSE,
+  `fecha_acuse_recibo` DATETIME(3) NULL,
   `glosa` TEXT NULL,
   `centro_costo_id` VARCHAR(36) NULL,
   `centro_costo_codigo` VARCHAR(50) NULL,
@@ -477,19 +491,12 @@ CREATE TABLE `dtes_rcv` (
   `cuenta_gasto_imputada_codigo` VARCHAR(50) NULL,
   `cuenta_gasto_imputada_nombre` VARCHAR(200) NULL,
   `items` JSON NULL,
-  `entry_id_ref` VARCHAR(36) NULL,
-  `track_id` VARCHAR(100) NULL,
-  `ted_xml` TEXT NULL,
-  `xml_timbrado` MEDIUMTEXT NULL,
-  `pdf_url` VARCHAR(500) NULL,
-  `ambiente_sii` INT NOT NULL DEFAULT 1,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_dte_registro` (`empresa_id`, `tipo_operacion`, `tipo_dte`, `folio`, `rut_contraparte`),
-  KEY `idx_dtes_periodo` (`empresa_id`, `periodo`, `tipo_operacion`),
-  KEY `idx_dtes_fecha` (`fecha_emision`),
-  KEY `idx_dtes_centro_costo` (`centro_costo_id`),
-  CONSTRAINT `fk_dtes_rcv_entry` FOREIGN KEY (`entry_id_ref`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+  KEY `idx_dte_empresa_fecha` (`empresa_id`, `fecha_emision`),
+  KEY `idx_dte_estado_contable` (`estado_contable`),
+  KEY `idx_dte_centro_costo` (`centro_costo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -528,21 +535,19 @@ CREATE TABLE `boletas_honorarios` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
   `folio` BIGINT NOT NULL,
-  `rut_emisor` VARCHAR(20) NOT NULL,
-  `nombre_emisor` VARCHAR(255) NOT NULL,
   `fecha_emision` DATE NOT NULL,
-  `monto_bruto` DECIMAL(15, 2) NOT NULL,
-  `tasa_retencion` DECIMAL(5, 2) NOT NULL DEFAULT 14.50, -- 14.50% vigente en 2026 (Ley 21.133)
-  `retencion_monto` DECIMAL(15, 2) NOT NULL,
-  `liquido_pagado` DECIMAL(15, 2) NOT NULL,
-  `estado_pago` ENUM('PENDIENTE', 'PAGADO', 'ANULADO') NOT NULL DEFAULT 'PENDIENTE',
-  `bhe_estado_contable` ENUM('PENDIENTE', 'CENTRALIZADO') NOT NULL DEFAULT 'PENDIENTE',
-  `entry_id_ref` VARCHAR(36) NULL,
+  `rut_prestador` VARCHAR(20) NOT NULL,
+  `nombre_prestador` VARCHAR(255) NOT NULL,
+  `bruto` DECIMAL(15, 2) NOT NULL,
+  `tasa_retencion` DECIMAL(5, 4) NOT NULL DEFAULT 0.1450, -- 14.50% vigente en 2026 (Ley 21.133)
+  `retencion` DECIMAL(15, 2) NOT NULL,
+  `liquido` DECIMAL(15, 2) NOT NULL,
+  `descripcion_servicio` TEXT NOT NULL,
+  `estado_contable` ENUM('PENDIENTE', 'CONTABILIZADO', 'PAGADO') NOT NULL DEFAULT 'PENDIENTE',
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_bhe_folio` (`empresa_id`, `folio`, `rut_emisor`),
-  KEY `idx_bhe_fecha` (`empresa_id`, `fecha_emision`),
-  CONSTRAINT `fk_bhe_entry` FOREIGN KEY (`entry_id_ref`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+  UNIQUE KEY `uq_bhe_empresa_folio` (`empresa_id`, `folio`),
+  KEY `idx_bhe_empresa_fecha` (`empresa_id`, `fecha_emision`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -574,16 +579,32 @@ CREATE TABLE `bank_transactions` (
   `account_id` VARCHAR(36) NOT NULL,
   `fecha` DATE NOT NULL,
   `descripcion` VARCHAR(255) NOT NULL,
-  `numero_documento` VARCHAR(50) NULL,
-  `monto_cargo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `monto_abono` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `saldo_linea` DECIMAL(15, 2) NOT NULL,
-  `estado_conciliacion` ENUM('NO_CONCILIADO', 'CONCILIADO_AUTOMATICO', 'CONCILIADO_MANUAL', 'EN_DISPUTA') NOT NULL DEFAULT 'NO_CONCILIADO',
-  `entry_id` VARCHAR(36) NULL,
+  `cargo` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `abono` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `documento_ref` VARCHAR(100) NULL,
+  `estado_conciliacion` ENUM('PENDIENTE', 'CONCILIADO', 'NOVEDAD', 'NO_CONCILIADO', 'CONCILIADO_AUTOMATICO', 'CONCILIADO_MANUAL', 'EN_DISPUTA') NOT NULL DEFAULT 'PENDIENTE',
+  `matched_dte_id` VARCHAR(36) NULL,
+  `moneda` VARCHAR(10) NOT NULL DEFAULT 'CLP',
+  `tipo_cambio` DECIMAL(12, 4) NULL DEFAULT 1.0000,
+  `monto_clp_equivalente` DECIMAL(15, 2) NULL,
+  `match_certeza` INT NULL,
+  `match_sugerido_id` VARCHAR(36) NULL,
+  `match_sugerido_glosa` VARCHAR(255) NULL,
+  `codigo_conciliacion` VARCHAR(50) NULL,
+  `fecha_conciliacion` DATETIME(3) NULL,
+  `match_criterio` VARCHAR(255) NULL,
+  `usuario_conciliador` VARCHAR(100) NULL,
+  `asiento_generado_id` VARCHAR(36) NULL,
+  `partida_contable_detalle` JSON NULL,
+  `es_ambiguo` BOOLEAN NOT NULL DEFAULT FALSE,
+  `candidatos_matches_count` INT NULL DEFAULT 0,
+  `origen_importacion` VARCHAR(50) NULL DEFAULT 'MANUAL',
+  `raw_hash_transaction` VARCHAR(64) NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_bank_tx_account_fecha` (`account_id`, `fecha`),
   KEY `idx_bank_tx_estado` (`estado_conciliacion`),
+  KEY `idx_bank_tx_codigo_conc` (`codigo_conciliacion`),
   CONSTRAINT `fk_tx_bank_account` FOREIGN KEY (`account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -673,23 +694,6 @@ CREATE TABLE `cash_flow_movements` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 18.0 TABLA: cashflow_forecasts (Proyecciones de Flujo de Caja Agénticas)
--- ============================================================================
-DROP TABLE IF EXISTS `cashflow_forecasts`;
-CREATE TABLE `cashflow_forecasts` (
-  `id` VARCHAR(36) NOT NULL,
-  `empresa_id` VARCHAR(36) NOT NULL,
-  `periodo_proyeccion` ENUM('30_DIAS', '60_DIAS', '90_DIAS') NOT NULL,
-  `ingresos_proyectados` DECIMAL(15, 2) NOT NULL,
-  `egresos_proyectados` DECIMAL(15, 2) NOT NULL,
-  `saldo_neto_proyectado` DECIMAL(15, 2) NOT NULL,
-  `fecha_calculo` DATE NOT NULL,
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  KEY `idx_cashflow_empresa_fecha` (`empresa_id`, `fecha_calculo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ============================================================================
 -- 18.1 TABLA: cash_flow_indirect_reports (Reportes de Flujo de Efectivo Método Indirecto NIC 7)
 -- ============================================================================
 DROP TABLE IF EXISTS `cash_flow_indirect_reports`;
@@ -736,23 +740,21 @@ CREATE TABLE `f29_declarations` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
   `periodo` VARCHAR(7) NOT NULL, -- Formato: 'AAAA-MM'
-  `folio_sii` VARCHAR(50) NULL,
-  `total_iva_debito` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `total_iva_credito` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `debito_fiscal` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `credito_fiscal` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `remanente_mes_anterior` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `remanente_siguiente_mes` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `remanente_mes_siguiente` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `iva_determinado` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
   `ppm_determinado` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `retenciones_segunda_cat` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `total_a_pagar` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-  `f29_estado` ENUM('BORRADOR', 'VALIDADO', 'DECLARADO') NOT NULL DEFAULT 'BORRADOR',
-  `json_casillas` JSON NOT NULL,
-  `capital_propio_tributario` DECIMAL(15, 2) NULL,
-  `entry_id_ref` VARCHAR(36) NULL,
+  `retenciones_segunda_categoria` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+  `total_a_pagar` DECIMAL(15, 2) NOT NULL,
+  `estado` ENUM('BORRADOR', 'CALCULADO', 'VALIDADO_SUPERVISOR', 'ENVIADO_SII', 'PAGADO') NOT NULL DEFAULT 'BORRADOR',
+  `folio_sii` BIGINT NULL,
+  `casillas_json` JSON NOT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_f29_empresa_periodo` (`empresa_id`, `periodo`),
-  KEY `idx_f29_empresa` (`empresa_id`),
-  CONSTRAINT `fk_f29_entry` FOREIGN KEY (`entry_id_ref`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+  KEY `idx_f29_empresa` (`empresa_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -951,19 +953,17 @@ CREATE TABLE `payroll_periods` (
   `id` VARCHAR(36) NOT NULL,
   `empresa_id` VARCHAR(36) NOT NULL,
   `periodo` VARCHAR(7) NOT NULL,
-  `uf_fin_mes` DECIMAL(12, 4) NOT NULL,
-  `utm_mes` DECIMAL(12, 4) NOT NULL,
-  `total_haberes` DECIMAL(15, 2) NOT NULL,
-  `total_descuentos` DECIMAL(15, 2) NOT NULL,
-  `liquido_a_pagar` DECIMAL(15, 2) NOT NULL,
-  `total_leyes_sociales` DECIMAL(15, 2) NOT NULL,
-  `payroll_estado` ENUM('LIQUIDADO', 'CENTRALIZADO') NOT NULL DEFAULT 'LIQUIDADO',
-  `entry_id_ref` VARCHAR(36) NULL,
+  `total_trabajadores` INT NOT NULL,
+  `total_liquido` DECIMAL(15, 2) NOT NULL,
+  `total_imposiciones_previred` DECIMAL(15, 2) NOT NULL,
+  `total_impuesto_unico` DECIMAL(15, 2) NOT NULL,
+  `total_costo_empresa` DECIMAL(15, 2) NOT NULL,
+  `centralizado_contable` BOOLEAN NOT NULL DEFAULT FALSE,
+  `entry_id` VARCHAR(36) NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_payroll_empresa_periodo` (`empresa_id`, `periodo`),
-  KEY `idx_payroll_empresa` (`empresa_id`),
-  CONSTRAINT `fk_payroll_period_entry` FOREIGN KEY (`entry_id_ref`) REFERENCES `accounting_entries` (`id`) ON DELETE SET NULL
+  KEY `idx_payroll_empresa` (`empresa_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -1369,23 +1369,6 @@ CREATE TABLE `warehouses` (
   UNIQUE KEY `uq_warehouse_codigo` (`empresa_id`, `codigo`),
   KEY `idx_warehouse_empresa` (`empresa_id`),
   CONSTRAINT `fk_warehouse_company` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ============================================================================
--- 34.1 TABLA: inventory_items (Módulo de Inventarios Drizzle / PMP)
--- ============================================================================
-DROP TABLE IF EXISTS `inventory_items`;
-CREATE TABLE `inventory_items` (
-  `id` VARCHAR(36) NOT NULL,
-  `empresa_id` VARCHAR(36) NOT NULL,
-  `sku` VARCHAR(50) NOT NULL,
-  `descripcion` VARCHAR(255) NOT NULL,
-  `stock_actual` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
-  `costo_promedio_ponderado` DECIMAL(15, 4) NOT NULL DEFAULT 0.0000,
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_inventory_empresa_sku` (`empresa_id`, `sku`),
-  CONSTRAINT `fk_inventory_items_company` FOREIGN KEY (`empresa_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
@@ -1968,14 +1951,14 @@ VALUES
   FALSE, NOW()
 ),
 (
-  'client-innovagile', 'firm-001-audicon', '77.798.901-4', 'InnovAgile Group SpA',
+  'client-innovagile', 'firm-001-audicon', '77.210.980-5', 'InnovAgile Software SpA',
   'Desarrollo de software y servicios cloud', '14_D8',
   0.0025, 12, 31, 2026,
   '2026-01-01', '2026-12-31', '["2025-12"]',
   TRUE, 65000000.00, 2.50,
   FALSE, NOW()
 )
-ON DUPLICATE KEY UPDATE `rut` = VALUES(`rut`), `razon_social` = VALUES(`razon_social`), `mes_cierre_ejercicio` = VALUES(`mes_cierre_ejercicio`);
+ON DUPLICATE KEY UPDATE `razon_social` = VALUES(`razon_social`), `mes_cierre_ejercicio` = VALUES(`mes_cierre_ejercicio`);
 
 -- Suscripciones por Módulo
 INSERT INTO `company_module_subscriptions` (`id`, `empresa_id`, `modulo_codigo`, `pagado_por`, `estado`, `created_at`)
@@ -2473,8 +2456,8 @@ DROP TABLE IF EXISTS `expense_reports`;
 DROP TABLE IF EXISTS `expense_projects`;
 
 CREATE TABLE `expense_projects` (
-  `id` VARCHAR(64) NOT NULL,
-  `empresa_id` VARCHAR(64) NOT NULL,
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
   `codigo` VARCHAR(50) NOT NULL,
   `nombre` VARCHAR(200) NOT NULL,
   `cliente_nombre` VARCHAR(200) NULL,
@@ -2488,19 +2471,19 @@ CREATE TABLE `expense_projects` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `expense_reports` (
-  `id` VARCHAR(64) NOT NULL,
-  `empresa_id` VARCHAR(64) NOT NULL,
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
   `folio` VARCHAR(50) NOT NULL,
   `titulo` VARCHAR(255) NOT NULL,
-  `rendidor_id` VARCHAR(64) NULL,
+  `rendidor_id` VARCHAR(36) NULL,
   `rendidor_nombre` VARCHAR(200) NOT NULL,
   `rendidor_rut` VARCHAR(20) NOT NULL,
   `rendidor_email` VARCHAR(255) NULL,
   `rendidor_cargo` VARCHAR(150) NULL,
-  `centro_costo_id` VARCHAR(64) NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
   `centro_costo_codigo` VARCHAR(50) NULL,
   `centro_costo_nombre` VARCHAR(200) NULL,
-  `proyecto_id` VARCHAR(64) NULL,
+  `proyecto_id` VARCHAR(36) NULL,
   `proyecto_codigo` VARCHAR(50) NULL,
   `proyecto_nombre` VARCHAR(200) NULL,
   `fondo_asignado_clp` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
@@ -2516,7 +2499,7 @@ CREATE TABLE `expense_reports` (
   `aprobador_nombre` VARCHAR(200) NULL,
   `aprobador_email` VARCHAR(255) NULL,
   `observaciones_aprobador` TEXT NULL,
-  `asiento_contable_id` VARCHAR(64) NULL,
+  `asiento_contable_id` VARCHAR(36) NULL,
   `agente_auditor_score` INT NOT NULL DEFAULT 100,
   `agente_auditor_diagnostico` JSON NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -2530,9 +2513,9 @@ CREATE TABLE `expense_reports` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `expense_items` (
-  `id` VARCHAR(64) NOT NULL,
-  `expense_report_id` VARCHAR(64) NOT NULL,
-  `empresa_id` VARCHAR(64) NOT NULL,
+  `id` VARCHAR(36) NOT NULL,
+  `expense_report_id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
   `fecha` DATE NOT NULL,
   `tipo_documento` VARCHAR(50) NOT NULL,
   `folio_documento` VARCHAR(100) NOT NULL,
@@ -2547,9 +2530,9 @@ CREATE TABLE `expense_items` (
   `moneda_original` VARCHAR(10) NOT NULL DEFAULT 'CLP',
   `monto_original` DECIMAL(15, 2) NULL,
   `tipo_cambio` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
-  `centro_costo_id` VARCHAR(64) NULL,
+  `centro_costo_id` VARCHAR(36) NULL,
   `centro_costo_codigo` VARCHAR(50) NULL,
-  `proyecto_id` VARCHAR(64) NULL,
+  `proyecto_id` VARCHAR(36) NULL,
   `proyecto_codigo` VARCHAR(50) NULL,
   `cuenta_contable_codigo` VARCHAR(50) NOT NULL,
   `cuenta_contable_nombre` VARCHAR(150) NULL,

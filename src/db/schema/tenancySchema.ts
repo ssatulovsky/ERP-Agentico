@@ -58,6 +58,29 @@ export const companies = mysqlTable(
     periodosCerrados: json('periodos_cerrados'), // Array de períodos ej: ["2026-01", "2026-02"]
     bloqueoPeriodoCerrado: boolean('bloqueo_periodo_cerrado').notNull().default(true),
     resolucionSiiCierreEspecial: varchar('resolucion_sii_cierre_especial', { length: 100 }),
+    // Reaperturas Extraordinarias y Auditoría de Ejercicios Cerrados (NIC 8 / Art. 16 CT)
+    ejerciciosCerrados: json('ejercicios_cerrados').$type<number[]>(),
+    reaperturaExtraordinariaActiva: json('reapertura_extraordinaria_activa').$type<{
+      ejercicio: number;
+      fechaReapertura: string;
+      motivoLegal: string;
+      usuario: string;
+      resolucionSii?: string;
+    }>(),
+    auditoriaReaperturas: json('auditoria_reaperturas').$type<Array<{
+      id: string;
+      fecha: string;
+      ejercicio: number;
+      usuario: string;
+      motivoLegal: string;
+      resolucionSii?: string;
+      timestamp: string;
+    }>>(),
+    // Parámetros Multimoneda (NIC 21)
+    monedaDefecto: varchar('moneda_defecto', { length: 10 }).notNull().default('CLP'),
+    monedasHabilitadas: json('monedas_habilitadas').$type<string[]>(),
+    cuentaDiferencialCambioGananciaId: varchar('cuenta_dif_cambio_ganancia_id', { length: 30 }).default('7.1.01.002'),
+    cuentaDiferencialCambioPerdidaId: varchar('cuenta_dif_cambio_perdida_id', { length: 30 }).default('7.2.01.002'),
     capitalPropioTributario: decimal('capital_propio_tributario', { precision: 15, scale: 2 }),
     patenteMunicipalTasaPorMil: decimal('patente_municipal_tasa_por_mil', { precision: 5, scale: 2 }).default('2.50'),
     remanenteCreditoFiscalUtm: decimal('remanente_credito_fiscal_utm', { precision: 10, scale: 4 }).default('0.0000'),

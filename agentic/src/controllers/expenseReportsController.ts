@@ -710,8 +710,16 @@ expenseReportsRouter.post('/projects', async (req: Request, res: Response) => {
 // ============================================================================
 expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const { periodo, fechaContabilizacion } = req.body;
+    const {
+      periodo,
+      fechaContabilizacion,
+      cuentaAnticipoCodigo,
+      cuentaAnticipoNombre,
+      cuentaReembolsoCodigo,
+      cuentaReembolsoNombre,
+      cuentaReintegroCodigo,
+      cuentaReintegroNombre,
+    } = req.body;
     const db = getMysqlDb();
 
     // Obtener la rendición y sus comprobantes
@@ -834,25 +842,38 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
     }
 
     // Construir partidas del HABER (Liquidación de Anticipo y/o Reembolso por Pagar)
+    const effectiveCtaAnticipoCod = cuentaAnticipoCodigo || '1.1.03.002';
+    const effectiveCtaAnticipoNom = cuentaAnticipoNombre || 'Gastos por Rendir / Anticipos al Personal';
+
+    const effectiveCtaReembolsoCod = cuentaReembolsoCodigo || '2.1.02.001';
+    const effectiveCtaReembolsoNom = cuentaReembolsoNombre || 'Cuentas por Pagar al Personal (Reembolso de Gastos)';
+
+    const effectiveCtaReintegroCod = cuentaReintegroCodigo || '1.1.02.001';
+    const effectiveCtaReintegroNom = cuentaReintegroNombre || 'Banco Santander Chile - Reintegro Sobrante de Fondo';
+
     if (fondoAnticipo > 0) {
       const anticipoLiquidado = Math.min(fondoAnticipo, totalRendido);
       journalLines.push({
-        codigoCuenta: '1.1.03.002',
-        nombreCuenta: 'Gastos por Rendir / Anticipos al Personal',
+        codigoCuenta: effectiveCtaAnticipoCod,
+        nombreCuenta: effectiveCtaAnticipoNom,
         debe: 0,
         haber: anticipoLiquidado,
         rutAuxiliar: report.rendidorRut,
+        documentoRef: report.folio,
+        fechaDocumentoRef: effectiveDate,
         centroCosto: report.centroCostoCodigo || undefined,
       });
     }
 
     if (saldoReembolsar > 0) {
       journalLines.push({
-        codigoCuenta: '2.1.02.001',
-        nombreCuenta: 'Cuentas por Pagar al Personal (Reembolso de Gastos)',
+        codigoCuenta: effectiveCtaReembolsoCod,
+        nombreCuenta: effectiveCtaReembolsoNom,
         debe: 0,
         haber: saldoReembolsar,
         rutAuxiliar: report.rendidorRut,
+        documentoRef: report.folio,
+        fechaDocumentoRef: effectiveDate,
         centroCosto: report.centroCostoCodigo || undefined,
       });
     }
@@ -862,11 +883,13 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
     if (saldoReintegrar > 0) {
       // En este caso, el DEBE ya totalizó `totalRendido`. Para cuadrar con el fondo liquidado, agregamos el reintegro a Banco/Caja al DEBE:
       journalLines.unshift({
-        codigoCuenta: '1.1.02.001',
-        nombreCuenta: 'Banco Santander Chile - Reintegro Sobrante de Fondo',
+        codigoCuenta: effectiveCtaReintegroCod,
+        nombreCuenta: effectiveCtaReintegroNom,
         debe: saldoReintegrar,
         haber: 0,
         rutAuxiliar: report.rendidorRut,
+        documentoRef: report.folio,
+        fechaDocumentoRef: effectiveDate,
       });
     }
 

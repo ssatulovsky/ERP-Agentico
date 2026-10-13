@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Plus, Calendar, DollarSign, Building2, Briefcase, User, Mail, CreditCard, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
 import { ExpenseReport, ExpenseProject, CostCenterMaster } from '../../types';
 import { formatCLP } from '../../utils/expenseManagementAgent';
@@ -28,8 +28,8 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
   const [rendidorEmail, setRendidorEmail] = useState('gonzalo.silva@maraustral.cl');
   const [rendidorCargo, setRendidorCargo] = useState('Supervisor Comercial & Operaciones');
 
-  const [centroCostoId, setCentroCostoId] = useState(costCenters[0]?.id || 'cc-02');
-  const [proyectoId, setProyectoId] = useState(projects[0]?.id || 'pry-01');
+  const [centroCostoId, setCentroCostoId] = useState(costCenters[0]?.id || '');
+  const [proyectoId, setProyectoId] = useState(projects[0]?.id || '');
   
   // Importe sin spinup / spindown: almacenamos valor numérico y permitimos entrada limpia
   const [fondoAsignadoClp, setFondoAsignadoClp] = useState<number>(150000);
@@ -39,6 +39,19 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
   const todayStr = new Date().toISOString().substring(0, 10);
   const [fechaInicio, setFechaInicio] = useState(todayStr);
   const [fechaCierre, setFechaCierre] = useState(todayStr);
+
+  // Sincronización cuando se abre el modal o se cargan centros de costo / proyectos
+  useEffect(() => {
+    if (isOpen) {
+      setErrorMessage(null);
+      if (!centroCostoId && costCenters.length > 0) {
+        setCentroCostoId(costCenters[0].id);
+      }
+      if (!proyectoId && projects.length > 0) {
+        setProyectoId(projects[0].id);
+      }
+    }
+  }, [isOpen, costCenters, projects]);
 
   if (!isOpen) return null;
 

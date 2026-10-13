@@ -2445,14 +2445,23 @@ export function validateEntryFiscalPeriod(
 
   const { fechaInicio, fechaFin, ejercicioActivo } = getFiscalYearDates(company);
   const periodo = fecha.substring(0, 7);
+  const anio = parseInt(fecha.substring(0, 4), 10);
 
-  // 1. Validar si es anterior al inicio del ejercicio
+  // 0. Comprobar si existe una Reapertura Extraordinaria Activa para el Ejercicio
+  if (company.reaperturaExtraordinariaActiva && company.reaperturaExtraordinariaActiva.ejercicio === anio) {
+    return {
+      permitido: true,
+      motivo: `Ejercicio ${anio} admitido bajo RÉGIMEN DE REAPERTURA EXTRAORDINARIA (Resolución/Folio: ${company.reaperturaExtraordinariaActiva.resolucionSii || 'S/N'} - Motivo: ${company.reaperturaExtraordinariaActiva.motivoLegal}).`,
+    };
+  }
+
+  // 1. Validar si es anterior al inicio del ejercicio activo
   if (fecha < fechaInicio) {
     return {
       permitido: false,
       codigoError: 'EJERCICIO_ANTERIOR',
-      motivo: `La fecha ${fecha} corresponde a un ejercicio fiscal anterior ya cerrado (anterior al ${fechaInicio}).`,
-      sugerencia: `Los saldos y movimientos anteriores deben consolidarse en el Asiento de Apertura al ${fechaInicio} o regularizarse contra la cuenta patrimonial '3.1.02.001 Resultados Acumulados' bajo norma NIC 8.`,
+      motivo: `La fecha ${fecha} corresponde al ejercicio fiscal ${anio}, el cual se encuentra formalmente cerrado (anterior a ${fechaInicio}).`,
+      sugerencia: `En casos SUPER EXCEPCIONALES (errores materiales graves o rectificatorias formales ante el SII), un perfil con accesos totales (Socio Auditor Principal) puede solicitar una 'Reapertura Extraordinaria Justificada' desde 'Ejercicio & Cierre'. De lo contrario, registre el ajuste en el ejercicio corriente contra Resultados Acumulados (NIC 8).`,
     };
   }
 
@@ -2474,8 +2483,8 @@ export function validateEntryFiscalPeriod(
     return {
       permitido: false,
       codigoError: 'PERIODO_CERRADO',
-      motivo: `El período contable ${periodo} se encuentra cerrado y bloqueado (declaración F29 / conciliación cerrada).`,
-      sugerencia: `Para registrar movimientos retroactivos o ajustes en ${periodo}, debe desbloquear temporalmente el período desde la pestaña 'Ejercicio & Cierre' con autorización del Contador Auditor.`,
+      motivo: `El período mensual ${periodo} se encuentra cerrado y bloqueado (declaración F29 / conciliación cerrada).`,
+      sugerencia: `Si el ejercicio anual está abierto, puede reabrir el período mensual directamente desde este formulario o desde 'Ejercicio & Cierre'.`,
     };
   }
 

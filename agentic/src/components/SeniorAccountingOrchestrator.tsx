@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { loadClientState, saveClientState } from '../utils/storageService';
 import {
   BookOpen,
   Scale,
@@ -51,6 +52,7 @@ import {
   CreditCard,
   ArrowLeftRight,
   Coins,
+  RotateCcw,
 } from 'lucide-react';
 import {
   AccountingEntry,
@@ -109,6 +111,7 @@ import {
   buildTransactionalAccountingProposalJSON,
   findAccountInChart,
   validateEntryFiscalPeriod,
+  getFiscalYearDates,
 } from '../utils/accountingOrchestratorEngine';
 import { FiscalYearClosingModule } from './FiscalYearClosingModule';
 import {
@@ -128,6 +131,9 @@ import { AccountingEventAssistant } from './accounting/AccountingEventAssistant'
 import { EditClosingAdjustmentModal } from './accounting/EditClosingAdjustmentModal';
 import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
 import { SearchableAccountSelect } from './accounting/SearchableAccountSelect';
+import { SearchableAuxiliarySelect } from './accounting/SearchableAuxiliarySelect';
+import { ExtraordinaryFiscalYearReopenModal } from './accounting/ExtraordinaryFiscalYearReopenModal';
+import { EditAccountingEntryModal } from './accounting/EditAccountingEntryModal';
 import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import { INITIAL_CLIENT_AUXILIARIES } from '../data/erpMasterConfig';
 import { FinancialStatementNotesView } from './accounting/FinancialStatementNotesView';
@@ -155,6 +161,9 @@ interface SeniorAccountingOrchestratorProps {
     payloadOrEntry: any,
     auditContextOverrides?: any
   ) => Promise<any>;
+  onUpdateEntry?: (id: string, payload: any) => Promise<any>;
+  onDeleteEntry?: (id: string, motivo?: string) => Promise<any>;
+  onReverseEntry?: (id: string, motivo?: string, fecha?: string) => Promise<any>;
   isLedgerLoading?: boolean;
   isLedgerCommitting?: boolean;
   refetchLedger?: () => Promise<void>;
@@ -184,6 +193,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   entries = [],
   onAddEntry,
   commitEntry,
+  onUpdateEntry,
+  onDeleteEntry,
+  onReverseEntry,
   isLedgerLoading = false,
   isLedgerCommitting = false,
   refetchLedger,
@@ -231,6 +243,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     }),
     [company, effectivePeriodos]
   );
+  const dates = useMemo(() => getFiscalYearDates(effectiveCompany), [effectiveCompany]);
 
   // Navigation tabs of the orchestrator
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'NOTAS_EEFF' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
@@ -342,6 +355,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [importExportModalOpen, setImportExportModalOpen] = useState(false);
 
+  // Modal de Edición de Asientos del Libro Diario
+  const [editingEntry, setEditingEntry] = useState<AccountingEntry | null>(null);
+  const [isEditEntryModalOpen, setIsEditEntryModalOpen] = useState(false);
+
   // Modo de agrupación de Balance (Tradicional CMF, Fiscal SII, Casa Matriz HQ, Personalizado)
   const [balanceGroupingMode, setBalanceGroupingMode] = useState<BalanceGroupingMode>('TRADICIONAL_CMF');
   const [isGroupedView, setIsGroupedView] = useState<boolean>(true);
@@ -351,6 +368,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     fecha: '2026-09-15',
     concepto: '',
     documentoReferencia: '',
+    tipoDocumentoRef: undefined as TipoDocumentoRespaldo | undefined,
     origen: 'MANUAL' as AccountingEntry['origen'],
     lineas: [
       {
@@ -359,9 +377,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         debe: 0,
         haber: 0,
         rutAuxiliar: '',
+        nombreAuxiliar: '',
         centroCosto: '',
         documentoRef: '',
         dteIdAsociado: '',
+        tipoDocumentoRef: undefined,
+        folioDocumentoRef: '',
+        montoDocumentoRef: undefined as number | undefined,
+        documentoOperacion: '',
+        tipoDocumentoOperacion: '',
+        documentoConciliacion: '',
+        tipoDocumentoConciliacion: '',
       },
       {
         cuentaCodigo: '2.1.01.001',
@@ -369,9 +395,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         debe: 0,
         haber: 0,
         rutAuxiliar: '',
+        nombreAuxiliar: '',
         centroCosto: '',
         documentoRef: '',
         dteIdAsociado: '',
+        tipoDocumentoRef: undefined,
+        folioDocumentoRef: '',
+        montoDocumentoRef: undefined as number | undefined,
+        documentoOperacion: '',
+        tipoDocumentoOperacion: '',
+        documentoConciliacion: '',
+        tipoDocumentoConciliacion: '',
       },
     ],
   });
@@ -381,6 +415,79 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [manualEntry, setManualEntry] = useState(getInitialManualEntry());
   const [manualEntryError, setManualEntryError] = useState<string | null>(null);
   const [isSavingManual, setIsSavingManual] = useState<boolean>(false);
+  const [showReopenModal, setShowReopenModal] = useState<boolean>(false);
+
+  // Auxiliares personalizados guardados en caliente
+  const [customAuxiliaries, setCustomAuxiliaries] = useState<any[]>(() => {
+    return loadClientState<any[]>(company?.rut || 'default', 'customAuxiliaries', []);
+  });
+
+  useEffect(() => {
+    if (effectiveCompany?.rut) {
+      setCustomAuxiliaries(loadClientState<any[]>(effectiveCompany.rut, 'customAuxiliaries', []));
+    }
+  }, [effectiveCompany?.rut]);
+
+  const handleAddNewAuxiliary = (newAux: any) => {
+    setCustomAuxiliaries((prev) => {
+      const exists = prev.some((a) => (a.rut || a.rutCompleto || '').trim().toUpperCase() === (newAux.rut || '').trim().toUpperCase());
+      const next = exists ? prev : [...prev, newAux];
+      if (effectiveCompany?.rut) {
+        saveClientState(effectiveCompany.rut, 'customAuxiliaries', next);
+      }
+      return next;
+    });
+    showToast(`Auxiliar "${newAux.razonSocial || newAux.rut}" incorporado con éxito al padrón auxiliar de la empresa.`, 'success');
+  };
+
+  // Manejo de Reapertura Extraordinaria Justificada desde el formulario de asiento
+  const handleConfirmReopenFromModal = ({
+    ejercicio,
+    motivoLegal,
+    usuario,
+    resolucionSii,
+  }: {
+    ejercicio: number;
+    motivoLegal: string;
+    usuario: string;
+    resolucionSii?: string;
+  }) => {
+    const currentClosed =
+      effectiveCompany.ejerciciosCerrados && effectiveCompany.ejerciciosCerrados.length > 0
+        ? effectiveCompany.ejerciciosCerrados
+        : [dates.ejercicioActivo - 2, dates.ejercicioActivo - 1];
+    const newClosed = currentClosed.filter((y) => y !== ejercicio);
+    const auditEntry = {
+      id: `reopen-${ejercicio}-${Date.now()}`,
+      fecha: new Date().toISOString().substring(0, 10),
+      ejercicio,
+      usuario,
+      motivoLegal,
+      resolucionSii,
+      timestamp: new Date().toISOString(),
+    };
+    const updatedAudit = [auditEntry, ...(effectiveCompany.auditoriaReaperturas || [])];
+
+    if (onUpdateCompany) {
+      onUpdateCompany({
+        ejerciciosCerrados: newClosed,
+        auditoriaReaperturas: updatedAudit,
+        reaperturaExtraordinariaActiva: {
+          ejercicio,
+          fechaReapertura: new Date().toISOString().substring(0, 10),
+          motivoLegal,
+          usuario,
+          resolucionSii,
+        },
+      });
+    }
+
+    setManualEntryError(null);
+    showToast(
+      `Ejercicio fiscal ${ejercicio} reabierto extraordinariamente con registro de auditoría. Ya puede registrar el asiento de ajuste legal.`,
+      'info'
+    );
+  };
 
   // Modal de confirmación para reapertura de período mensual cerrado
   const [periodReopenModal, setPeriodReopenModal] = useState<{
@@ -412,6 +519,61 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ type, message });
     setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Manejadores de Edición, Eliminación y Reversión de Asientos del Libro Diario
+  const handleOpenEditEntry = (entry: AccountingEntry) => {
+    setEditingEntry(entry);
+    setIsEditEntryModalOpen(true);
+  };
+
+  const handleSaveEditedEntry = async (id: string, payload: any) => {
+    try {
+      if (onUpdateEntry) {
+        await onUpdateEntry(id, payload);
+      }
+      showToast('Asiento contable actualizado exitosamente con respaldo de auditoría.', 'success');
+      if (refetchLedger) {
+        await refetchLedger();
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error al actualizar asiento contable.', 'error');
+      throw err;
+    }
+  };
+
+  const handleDeleteEntryConfirm = async (entry: AccountingEntry) => {
+    const confirmMsg = `¿Está seguro de eliminar el comprobante [${entry.documento || entry.id}]?\n\nConcepto: "${entry.concepto}"\nTotal: $${formatCLP(entry.totalDebe)}\n\nEsta acción registrará un evento de auditoría del comprobante suprimido.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      if (onDeleteEntry) {
+        await onDeleteEntry(entry.id, 'Eliminación manual por corrección de usuario');
+      }
+      showToast(`Comprobante [${entry.documento || entry.id}] eliminado del Libro Diario.`, 'success');
+      if (refetchLedger) {
+        await refetchLedger();
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error al eliminar asiento contable.', 'error');
+    }
+  };
+
+  const handleReverseEntryConfirm = async (entry: AccountingEntry) => {
+    const confirmMsg = `¿Desea generar un contra-asiento de anulación / reversión para el comprobante [${entry.documento || entry.id}]?\n\nSe creará un nuevo comprobante invirtiendo el Debe y Haber para anular su efecto contable manteniendo la trazabilidad histórica IFRS.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      if (onReverseEntry) {
+        await onReverseEntry(entry.id, 'Anulación voluntaria de comprobante');
+      }
+      showToast(`Contra-asiento de reversión registrado con éxito en el Libro Diario.`, 'success');
+      if (refetchLedger) {
+        await refetchLedger();
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error al revertir asiento contable.', 'error');
+    }
   };
 
   // Period Closing Adjustments
@@ -1275,8 +1437,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     return list;
   }, [safeEntries, selectedMayorAccountCode]);
 
-  // Auxiliar & Cost Center Detection Helpers
+  // Auxiliar, Cost Center & Bank Reconcilable Detection Helpers
+  const isAccountBankReconcilable = (code: string, name: string): boolean => {
+    const acc = findAccountInChart(code) || findAccountInChart(name);
+    if (acc?.esConciliableBancaria) return true;
+    if (code.startsWith('1.1.02')) return true;
+    return /banco|cuenta corriente|cta\.? ?cte|bancari/i.test(name) && !/caja chica|efectivo|reintegro/i.test(name);
+  };
+
   const isAccountAuxiliarRequired = (code: string, name: string): boolean => {
+    // Las cuentas bancarias se concilian con cartola, no con auxiliar mercantil
+    if (code.startsWith('1.1.02') || (/banco|cuenta corriente|cta\.? ?cte/i.test(name) && !/caja chica|efectivo/i.test(name))) {
+      return false;
+    }
     const acc = findAccountInChart(code) || findAccountInChart(name);
     if (acc?.requiereAuxiliarRut) return true;
     if (
@@ -1308,6 +1481,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       });
     });
 
+    customAuxiliaries.forEach(aux => {
+      const rutKey = (aux.rut || aux.rutCompleto || '').trim().toUpperCase();
+      if (rutKey) {
+        map.set(rutKey, {
+          rut: (aux.rut || aux.rutCompleto || '').trim(),
+          razonSocial: aux.razonSocial || aux.nombreFantasia || rutKey,
+          tipo: (aux.tipo === 'CLIENTE' || aux.tipo === 'PROVEEDOR' ? aux.tipo : 'AMBOS') as any,
+        });
+      }
+    });
+
     safeDtes.forEach(d => {
       if (d.rutContraparte) {
         const norm = d.rutContraparte.trim().toUpperCase();
@@ -1326,7 +1510,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     });
 
     return Array.from(map.values());
-  }, [safeDtes]);
+  }, [safeDtes, customAuxiliaries]);
 
   // Helper de normalización de RUT para cruces seguros
   const normRut = (r?: string | null) => (r || '').replace(/[\.\-\s]/g, '').toUpperCase();
@@ -1369,6 +1553,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         haber: number;
       }> = [];
 
+      // Mapeo de documentos de asientos para extraer deudas vivas por pagar
+      const entryDocsMap = new Map<string, {
+        folio: string;
+        tipoLabel: string;
+        tipo: string;
+        montoTotal: number;
+        haberTotal: number;
+        debeTotal: number;
+        fechaEmision: string;
+        fechaVencimiento: string;
+        concepto: string;
+      }>();
+
       safeEntries.forEach(entry => {
         entry.lineas.forEach(line => {
           if ((line.cuentaCodigo.startsWith('2.1.01') || line.cuentaCodigo.startsWith('2.1.02')) && normRut(line.rutAuxiliar) === rutKey) {
@@ -1382,6 +1579,27 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               debe: line.debe,
               haber: line.haber,
             });
+
+            const docKey = (line.folioDocumentoRef || line.documentoRef || entry.documento || '').trim();
+            if (docKey) {
+              const existing = entryDocsMap.get(docKey) || {
+                folio: line.folioDocumentoRef || line.documentoRef || entry.documento || '1',
+                tipoLabel: String(line.tipoDocumentoRef || 'Factura Electrónica'),
+                tipo: String(line.tipoDocumentoRef || 'FACTURA_ELECTRONICA_33'),
+                montoTotal: line.montoDocumentoRef || 0,
+                haberTotal: 0,
+                debeTotal: 0,
+                fechaEmision: line.fechaDocumentoRef || entry.fecha,
+                fechaVencimiento: line.fechaVencimientoRef || line.fechaDocumentoRef || entry.fecha,
+                concepto: entry.concepto || '',
+              };
+              existing.haberTotal += Number(line.haber) || 0;
+              existing.debeTotal += Number(line.debe) || 0;
+              if (line.montoDocumentoRef && Number(line.montoDocumentoRef) > existing.montoTotal) {
+                existing.montoTotal = Number(line.montoDocumentoRef);
+              }
+              entryDocsMap.set(docKey, existing);
+            }
           }
         });
       });
@@ -1389,6 +1607,86 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       const facturacionTotal = Math.max(totalDtesMonto, journalCreditos);
       const pagosTotales = journalDebitos > 0 ? journalDebitos : totalDtesPagados;
       const saldoPendiente = Math.max(0, facturacionTotal - pagosTotales);
+
+      // Consolidar documentos con saldo pendiente de este proveedor
+      const pendingDocuments: Array<{
+        id: string;
+        tipo: string;
+        tipoLabel: string;
+        folio: string;
+        montoTotal: number;
+        saldoPendiente: number;
+        fechaEmision?: string;
+        fechaVencimiento?: string;
+        concepto?: string;
+        dteId?: string;
+        origen: 'DTE' | 'ASIENTO';
+      }> = [];
+
+      // 1. DTEs de compra no saldados
+      supplierDtes.forEach(dte => {
+        if (dte.estadoPago !== 'PAGADO') {
+          const tipoLabel =
+            dte.tipoDte === '33'
+              ? 'Factura Electrónica'
+              : dte.tipoDte === '34'
+              ? 'Factura Exenta'
+              : dte.tipoDte === '61'
+              ? 'Nota de Crédito'
+              : 'DTE SII';
+          pendingDocuments.push({
+            id: `dte-${dte.id}`,
+            tipo: dte.tipoDte === '33' ? 'FACTURA_ELECTRONICA_33' : dte.tipoDte === '34' ? 'FACTURA_EXENTA_34' : 'DTE_SII',
+            tipoLabel,
+            folio: String(dte.folio),
+            montoTotal: dte.montoTotal || 0,
+            saldoPendiente: dte.montoTotal || 0,
+            fechaEmision: dte.fechaEmision,
+            fechaVencimiento: dte.fechaVencimiento || dte.fechaEmision,
+            concepto: `DTE F.${dte.folio} - ${dte.razonSocialContraparte || razonSocial}`,
+            dteId: dte.id,
+            origen: 'DTE',
+          });
+        }
+      });
+
+      // 2. Deudas vivas de asientos contables
+      entryDocsMap.forEach((val, docKey) => {
+        const saldoVivo = Math.max(0, val.haberTotal - val.debeTotal);
+        const alreadyInDtes = pendingDocuments.some(
+          p => p.folio === val.folio || docKey.includes(p.folio)
+        );
+        if (saldoVivo > 0 && !alreadyInDtes) {
+          pendingDocuments.push({
+            id: `entry-doc-${docKey}`,
+            tipo: val.tipo,
+            tipoLabel: val.tipoLabel,
+            folio: val.folio,
+            montoTotal: val.montoTotal || val.haberTotal,
+            saldoPendiente: saldoVivo,
+            fechaEmision: val.fechaEmision,
+            fechaVencimiento: val.fechaVencimiento,
+            concepto: val.concepto,
+            origen: 'ASIENTO',
+          });
+        }
+      });
+
+      // Si hay saldo pero no documentos detallados, crear un documento pendiente sintético
+      if (pendingDocuments.length === 0 && saldoPendiente > 0) {
+        pendingDocuments.push({
+          id: `saldo-${rutKey}`,
+          tipo: 'FACTURA_ELECTRONICA_33',
+          tipoLabel: 'Factura / Deuda Pendiente',
+          folio: '1',
+          montoTotal: saldoPendiente,
+          saldoPendiente,
+          fechaEmision: '2026-09-15',
+          fechaVencimiento: '2026-09-15',
+          concepto: `Saldo Pendiente ${razonSocial}`,
+          origen: 'ASIENTO',
+        });
+      }
 
       return {
         rut: rutDisplay,
@@ -1398,6 +1696,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         saldoPendiente,
         dtes: supplierDtes,
         journalMovements,
+        pendingDocuments,
       };
     });
 
@@ -1442,6 +1741,18 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         haber: number;
       }> = [];
 
+      const entryDocsMap = new Map<string, {
+        folio: string;
+        tipoLabel: string;
+        tipo: string;
+        montoTotal: number;
+        debeTotal: number;
+        haberTotal: number;
+        fechaEmision: string;
+        fechaVencimiento: string;
+        concepto: string;
+      }>();
+
       safeEntries.forEach(entry => {
         entry.lineas.forEach(line => {
           if (line.cuentaCodigo.startsWith('1.1.03') && normRut(line.rutAuxiliar) === rutKey) {
@@ -1455,6 +1766,27 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               debe: line.debe,
               haber: line.haber,
             });
+
+            const docKey = (line.folioDocumentoRef || line.documentoRef || entry.documento || '').trim();
+            if (docKey) {
+              const existing = entryDocsMap.get(docKey) || {
+                folio: line.folioDocumentoRef || line.documentoRef || entry.documento || '1',
+                tipoLabel: String(line.tipoDocumentoRef || 'Factura Electrónica'),
+                tipo: String(line.tipoDocumentoRef || 'FACTURA_ELECTRONICA_33'),
+                montoTotal: line.montoDocumentoRef || 0,
+                debeTotal: 0,
+                haberTotal: 0,
+                fechaEmision: line.fechaDocumentoRef || entry.fecha,
+                fechaVencimiento: line.fechaVencimientoRef || line.fechaDocumentoRef || entry.fecha,
+                concepto: entry.concepto || '',
+              };
+              existing.debeTotal += Number(line.debe) || 0;
+              existing.haberTotal += Number(line.haber) || 0;
+              if (line.montoDocumentoRef && Number(line.montoDocumentoRef) > existing.montoTotal) {
+                existing.montoTotal = Number(line.montoDocumentoRef);
+              }
+              entryDocsMap.set(docKey, existing);
+            }
           }
         });
       });
@@ -1462,6 +1794,85 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       const facturacionTotal = Math.max(totalDtesMonto, journalDebitos);
       const cobrosTotales = journalCreditos > 0 ? journalCreditos : totalDtesCobrados;
       const saldoPorCobrar = Math.max(0, facturacionTotal - cobrosTotales);
+
+      // Consolidar documentos con saldo pendiente de cobranza
+      const pendingDocuments: Array<{
+        id: string;
+        tipo: string;
+        tipoLabel: string;
+        folio: string;
+        montoTotal: number;
+        saldoPendiente: number;
+        fechaEmision?: string;
+        fechaVencimiento?: string;
+        concepto?: string;
+        dteId?: string;
+        origen: 'DTE' | 'ASIENTO';
+      }> = [];
+
+      // 1. DTEs de venta no cobrados
+      clientDtes.forEach(dte => {
+        if (dte.estadoPago !== 'PAGADO' && dte.estadoPago !== 'COBRADO') {
+          const tipoLabel =
+            dte.tipoDte === '33'
+              ? 'Factura Electrónica'
+              : dte.tipoDte === '34'
+              ? 'Factura Exenta'
+              : dte.tipoDte === '61'
+              ? 'Nota de Crédito'
+              : 'DTE SII';
+          pendingDocuments.push({
+            id: `dte-${dte.id}`,
+            tipo: dte.tipoDte === '33' ? 'FACTURA_ELECTRONICA_33' : dte.tipoDte === '34' ? 'FACTURA_EXENTA_34' : 'DTE_SII',
+            tipoLabel,
+            folio: String(dte.folio),
+            montoTotal: dte.montoTotal || 0,
+            saldoPendiente: dte.montoTotal || 0,
+            fechaEmision: dte.fechaEmision,
+            fechaVencimiento: dte.fechaVencimiento || dte.fechaEmision,
+            concepto: `DTE F.${dte.folio} - ${dte.razonSocialContraparte || razonSocial}`,
+            dteId: dte.id,
+            origen: 'DTE',
+          });
+        }
+      });
+
+      // 2. Cuentas por cobrar de asientos contables
+      entryDocsMap.forEach((val, docKey) => {
+        const saldoVivo = Math.max(0, val.debeTotal - val.haberTotal);
+        const alreadyInDtes = pendingDocuments.some(
+          p => p.folio === val.folio || docKey.includes(p.folio)
+        );
+        if (saldoVivo > 0 && !alreadyInDtes) {
+          pendingDocuments.push({
+            id: `entry-doc-${docKey}`,
+            tipo: val.tipo,
+            tipoLabel: val.tipoLabel,
+            folio: val.folio,
+            montoTotal: val.montoTotal || val.debeTotal,
+            saldoPendiente: saldoVivo,
+            fechaEmision: val.fechaEmision,
+            fechaVencimiento: val.fechaVencimiento,
+            concepto: val.concepto,
+            origen: 'ASIENTO',
+          });
+        }
+      });
+
+      if (pendingDocuments.length === 0 && saldoPorCobrar > 0) {
+        pendingDocuments.push({
+          id: `saldo-${rutKey}`,
+          tipo: 'FACTURA_ELECTRONICA_33',
+          tipoLabel: 'Factura / Cuenta por Cobrar',
+          folio: '1',
+          montoTotal: saldoPorCobrar,
+          saldoPendiente: saldoPorCobrar,
+          fechaEmision: '2026-09-15',
+          fechaVencimiento: '2026-09-15',
+          concepto: `Saldo por Cobrar ${razonSocial}`,
+          origen: 'ASIENTO',
+        });
+      }
 
       return {
         rut: rutDisplay,
@@ -1471,11 +1882,33 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         saldoPorCobrar,
         dtes: clientDtes,
         journalMovements,
+        pendingDocuments,
       };
     });
 
     return result.sort((a, b) => b.saldoPorCobrar - a.saldoPorCobrar);
   }, [safeDtes, availableAuxiliaries, safeEntries]);
+
+  // Helper para recuperar los documentos con saldo pendiente de un auxiliar específico
+  const getPendingDocsForAuxiliary = useCallback(
+    (rut?: string, accountCode?: string) => {
+      if (!rut) return [];
+      const cleanRut = normRut(rut);
+      if (accountCode && accountCode.startsWith('2.1')) {
+        const found = auxiliarSuppliersSummary.find(s => normRut(s.rut) === cleanRut);
+        return found?.pendingDocuments || [];
+      }
+      if (accountCode && (accountCode.startsWith('1.1.03') || accountCode.startsWith('1.1'))) {
+        const found = auxiliarClientsSummary.find(c => normRut(c.rut) === cleanRut);
+        return found?.pendingDocuments || [];
+      }
+      const supp = auxiliarSuppliersSummary.find(s => normRut(s.rut) === cleanRut);
+      if (supp && supp.pendingDocuments?.length) return supp.pendingDocuments;
+      const clie = auxiliarClientsSummary.find(c => normRut(c.rut) === cleanRut);
+      return clie?.pendingDocuments || [];
+    },
+    [auxiliarSuppliersSummary, auxiliarClientsSummary]
+  );
 
   // Manual Entry Form Line Handlers
   const handleAddManualLine = () => {
@@ -1489,9 +1922,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           debe: 0,
           haber: 0,
           rutAuxiliar: '',
+          nombreAuxiliar: '',
           centroCosto: '',
           documentoRef: '',
           dteIdAsociado: '',
+          tipoDocumentoRef: undefined,
+          folioDocumentoRef: '',
+          montoDocumentoRef: undefined as number | undefined,
+          documentoOperacion: '',
+          tipoDocumentoOperacion: '',
+          documentoConciliacion: '',
+          tipoDocumentoConciliacion: '',
         },
       ],
     }));
@@ -1669,28 +2110,64 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         }))
       });
 
+      const remainingOriginals = [...manualEntry.lineas];
+      const createdLines: AccountingEntryLine[] = normalized.lineas.map(l => {
+        const matchIdx = remainingOriginals.findIndex(orig =>
+          orig.cuentaCodigo === l.codigoCuenta &&
+          (Number(orig.debe) || 0) === l.debe &&
+          (Number(orig.haber) || 0) === l.haber &&
+          (orig.rutAuxiliar || '') === (l.rutAuxiliar || '')
+        );
+        let originalLine: AccountingEntryLine | undefined;
+        if (matchIdx !== -1) {
+          originalLine = remainingOriginals.splice(matchIdx, 1)[0];
+        } else {
+          const fallbackIdx = remainingOriginals.findIndex(orig => orig.cuentaCodigo === l.codigoCuenta);
+          if (fallbackIdx !== -1) {
+            originalLine = remainingOriginals.splice(fallbackIdx, 1)[0];
+          } else {
+            originalLine = remainingOriginals.shift();
+          }
+        }
+
+        return {
+          cuentaCodigo: l.codigoCuenta,
+          cuentaNombre: l.nombreCuenta,
+          debe: l.debe,
+          haber: l.haber,
+          glosa: originalLine?.glosa || l.glosaDetalle || undefined,
+          rutAuxiliar: l.rutAuxiliar || originalLine?.rutAuxiliar || undefined,
+          nombreAuxiliar: originalLine?.nombreAuxiliar || undefined,
+          centroCosto: l.centroCosto || originalLine?.centroCosto || undefined,
+          documentoRef: originalLine?.documentoRef || l.glosaDetalle || manualEntry.documentoReferencia || undefined,
+          dteIdAsociado: originalLine?.dteIdAsociado || undefined,
+          tipoDocumentoRef: originalLine?.tipoDocumentoRef || undefined,
+          folioDocumentoRef: originalLine?.folioDocumentoRef || undefined,
+          montoDocumentoRef: originalLine?.montoDocumentoRef,
+          fechaDocumentoRef: originalLine?.fechaDocumentoRef || undefined,
+          fechaVencimientoRef: originalLine?.fechaVencimientoRef || undefined,
+          documentoOperacion: originalLine?.documentoOperacion || undefined,
+          tipoDocumentoOperacion: originalLine?.tipoDocumentoOperacion || undefined,
+          fechaDocumentoOperacion: originalLine?.fechaDocumentoOperacion || undefined,
+          documentoConciliacion: originalLine?.documentoConciliacion || undefined,
+          tipoDocumentoConciliacion: originalLine?.tipoDocumentoConciliacion || undefined,
+          monedaOriginal: originalLine?.monedaOriginal || undefined,
+          montoMonedaOriginal: originalLine?.montoMonedaOriginal,
+          tipoCambio: originalLine?.tipoCambio,
+        };
+      });
+
+      const firstLineWithDoc = createdLines.find(l => l.folioDocumentoRef || l.tipoDocumentoRef);
       const created: AccountingEntry = {
         id: `entry-man-${Date.now()}`,
         fecha: normalized.fecha,
         concepto: normalized.glosaGeneral,
         documento: normalized.documentoRef || 'Comprobante Diario Interno',
+        documentoReferencia: manualEntry.documentoReferencia || normalized.documentoRef || 'Comprobante Diario Interno',
+        tipoDocumentoRef: firstLineWithDoc?.tipoDocumentoRef as any,
+        folioDocumentoRef: firstLineWithDoc?.folioDocumentoRef,
         origen: manualEntry.origen,
-        lineas: normalized.lineas.map(l => {
-          const originalLine = manualEntry.lineas.find(orig => orig.cuentaCodigo === l.codigoCuenta);
-          return {
-            cuentaCodigo: l.codigoCuenta,
-            cuentaNombre: l.nombreCuenta,
-            debe: l.debe,
-            haber: l.haber,
-            rutAuxiliar: l.rutAuxiliar || originalLine?.rutAuxiliar,
-            centroCosto: l.centroCosto || originalLine?.centroCosto,
-            documentoRef: l.glosaDetalle || originalLine?.documentoRef || manualEntry.documentoReferencia,
-            dteIdAsociado: originalLine?.dteIdAsociado,
-            monedaOriginal: originalLine?.monedaOriginal,
-            montoMonedaOriginal: originalLine?.montoMonedaOriginal,
-            tipoCambio: originalLine?.tipoCambio,
-          };
-        }),
+        lineas: createdLines,
         totalDebe: normalized.totalDebe,
         totalHaber: normalized.totalHaber,
         balanceado: true,
@@ -1803,6 +2280,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         if (!l.centroCosto || !l.centroCosto.trim()) {
           setManualEntryError(
             `La cuenta de resultado "${l.cuentaCodigo} - ${l.cuentaNombre}" (Línea #${i + 1}) exige asignación de Centro de Costos. Por favor seleccione el Centro de Costos antes de guardar.`
+          );
+          return;
+        }
+      }
+
+      // Validación de Documento de Referencia según Plan de Cuentas (NIIF / CMF)
+      const accMeta = chartOfAccounts.find((a) => a.codigo === l.cuentaCodigo);
+      if (accMeta?.requiereDocReferencia) {
+        const lineDoc = (l.documentoRef || '').trim();
+        const headerDoc = (manualEntry.documentoReferencia || '').trim();
+        if (!lineDoc && !headerDoc && !l.dteIdAsociado) {
+          setManualEntryError(
+            `La cuenta "${l.cuentaCodigo} - ${l.cuentaNombre}" (Línea #${i + 1}) exige Documento de Referencia obligatorio según el Plan de Cuentas. Puede respaldarse válidamente con un DTE del SII, Contrato (arriendo, mutuo, servicios), Rendición de Gastos (RDG), Transferencia Bancaria (TEF), Finiquito u otro documento mercantil. Por favor indique el documento en la partida o en el encabezado.`
           );
           return;
         }
@@ -2599,6 +3089,34 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                       >
                         {copiedText === entry.id ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                       </button>
+
+                      {/* Botón Editar Asiento */}
+                      <button
+                        onClick={() => handleOpenEditEntry(entry)}
+                        className="px-2 py-1 text-slate-700 hover:text-blue-700 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Editar referencia de documento, concepto o cuentas de este asiento"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Editar</span>
+                      </button>
+
+                      {/* Botón Reversar / Anular Asiento */}
+                      <button
+                        onClick={() => handleReverseEntryConfirm(entry)}
+                        className="p-1.5 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition-colors cursor-pointer"
+                        title="Generar contra-asiento de anulación / reversión contable"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Botón Eliminar Asiento */}
+                      <button
+                        onClick={() => handleDeleteEntryConfirm(entry)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                        title="Eliminar asiento contable del Libro Diario"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
@@ -2644,6 +3162,21 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                     {line.centroCosto && (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
                                         CC: {line.centroCosto}
+                                      </span>
+                                    )}
+                                    {line.montoDocumentoRef !== undefined && line.montoDocumentoRef !== null && Number(line.montoDocumentoRef) > 0 && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 font-mono border border-amber-200 font-semibold" title={`Importe Total del Documento: $${formatCLP(Number(line.montoDocumentoRef))}`}>
+                                        Tot. Doc: ${formatCLP(Number(line.montoDocumentoRef))}
+                                      </span>
+                                    )}
+                                    {line.documentoOperacion && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 font-mono border border-emerald-200 font-semibold" title={`Documento de Operación: ${line.tipoDocumentoOperacion || 'OPERACIÓN'} N° ${line.documentoOperacion}`}>
+                                        Op: {line.tipoDocumentoOperacion ? `${line.tipoDocumentoOperacion} ` : ''}#{line.documentoOperacion}
+                                      </span>
+                                    )}
+                                    {line.documentoConciliacion && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-800 font-mono border border-cyan-200 font-semibold" title={`Documento de Conciliación: ${line.tipoDocumentoConciliacion || 'CONCILIACIÓN'} N° ${line.documentoConciliacion}`}>
+                                        Conc: {line.tipoDocumentoConciliacion ? `${line.tipoDocumentoConciliacion} ` : ''}#{line.documentoConciliacion}
                                       </span>
                                     )}
                                     {line.monedaOriginal && line.monedaOriginal !== 'CLP' && (
@@ -3104,36 +3637,63 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    // Abrir modal de nuevo asiento con este auxiliar pre-seleccionado
+                                    // Abrir modal de nuevo asiento con este auxiliar y su documento pendiente pre-seleccionado
                                     const isProv = auxiliarSubTab === 'PROVEEDORES';
+                                    const pendingDoc = (item as any).pendingDocuments?.[0];
                                     const pendingDte = item.dtes.find(d => d.estadoPago === 'PENDIENTE') || item.dtes[0];
+
+                                    const docRefLabel = pendingDoc
+                                      ? `${pendingDoc.tipoLabel || 'Factura'} F.${pendingDoc.folio}`
+                                      : pendingDte
+                                      ? `Factura Electrónica F.${pendingDte.folio}`
+                                      : 'Factura F.1';
+                                    const docFolio = pendingDoc ? String(pendingDoc.folio) : pendingDte ? String(pendingDte.folio) : '1';
+                                    const docTipo = pendingDoc ? pendingDoc.tipo : pendingDte ? (pendingDte.tipoDte === '33' ? 'FACTURA_ELECTRONICA_33' : 'DTE_SII') : 'FACTURA_ELECTRONICA_33';
+                                    const docMontoTotal = pendingDoc ? pendingDoc.montoTotal : pendingDte ? pendingDte.montoTotal : saldo;
+                                    const docMontoAplicar = pendingDoc ? pendingDoc.saldoPendiente : pendingDte ? pendingDte.montoTotal : saldo;
+                                    const docFechaEmision = pendingDoc ? (pendingDoc.fechaEmision || '2026-09-15') : pendingDte ? (pendingDte.fechaEmision || '2026-09-15') : '2026-09-15';
+                                    const docFechaVenc = pendingDoc ? (pendingDoc.fechaVencimiento || pendingDoc.fechaEmision || '2026-09-15') : pendingDte ? (pendingDte.fechaVencimiento || pendingDte.fechaEmision || '2026-09-15') : '2026-09-15';
+                                    const dteIdAsoc = pendingDoc?.dteId || pendingDte?.id || '';
+
                                     setManualEntry({
                                       fecha: '2026-09-15',
                                       concepto: isProv
-                                        ? `Pago a Proveedor ${item.razonSocial} - ${pendingDte ? `F. ${pendingDte.folio}` : 'Factura pendiente'}`
-                                        : `Cobranza de Cliente ${item.razonSocial} - ${pendingDte ? `F. ${pendingDte.folio}` : 'Factura'}`,
-                                      documentoReferencia: pendingDte ? `Factura Electrónica F.${pendingDte.folio}` : '',
+                                        ? `Pago a Proveedor ${item.razonSocial} - ${docRefLabel}`
+                                        : `Cobranza de Cliente ${item.razonSocial} - ${docRefLabel}`,
+                                      documentoReferencia: docRefLabel,
                                       origen: 'CAJA_BANCO',
                                       lineas: isProv
                                         ? [
                                             {
                                               cuentaCodigo: '2.1.01.001',
                                               cuentaNombre: 'Proveedores Nacionales (Cuentas por Pagar)',
-                                              debe: pendingDte ? pendingDte.montoTotal : saldo,
+                                              debe: docMontoAplicar,
                                               haber: 0,
                                               rutAuxiliar: item.rut,
+                                              nombreAuxiliar: item.razonSocial,
                                               centroCosto: '',
-                                              documentoRef: pendingDte ? `Factura F.${pendingDte.folio}` : '',
-                                              dteIdAsociado: pendingDte?.id || '',
+                                              documentoRef: docRefLabel,
+                                              tipoDocumentoRef: docTipo,
+                                              folioDocumentoRef: docFolio,
+                                              montoDocumentoRef: docMontoTotal,
+                                              fechaDocumentoRef: docFechaEmision,
+                                              fechaVencimientoRef: docFechaVenc,
+                                              documentoOperacion: docFolio,
+                                              tipoDocumentoOperacion: pendingDoc?.tipoLabel?.toUpperCase() || 'PAGO DIRECTO',
+                                              dteIdAsociado: dteIdAsoc,
                                             },
                                             {
                                               cuentaCodigo: '1.1.02.001',
                                               cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
                                               debe: 0,
-                                              haber: pendingDte ? pendingDte.montoTotal : saldo,
+                                              haber: docMontoAplicar,
                                               rutAuxiliar: '',
                                               centroCosto: '',
-                                              documentoRef: '',
+                                              documentoRef: `TEF-${docFolio}`,
+                                              tipoDocumentoConciliacion: 'TRANSFERENCIA',
+                                              documentoConciliacion: `TEF-${docFolio}`,
+                                              fechaDocumentoRef: docFechaEmision,
+                                              fechaVencimientoRef: docFechaEmision,
                                               dteIdAsociado: '',
                                             },
                                           ]
@@ -3141,22 +3701,34 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                             {
                                               cuentaCodigo: '1.1.02.001',
                                               cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
-                                              debe: pendingDte ? pendingDte.montoTotal : saldo,
+                                              debe: docMontoAplicar,
                                               haber: 0,
                                               rutAuxiliar: '',
                                               centroCosto: '',
-                                              documentoRef: '',
+                                              documentoRef: `TEF-${docFolio}`,
+                                              tipoDocumentoConciliacion: 'TRANSFERENCIA',
+                                              documentoConciliacion: `TEF-${docFolio}`,
+                                              fechaDocumentoRef: docFechaEmision,
+                                              fechaVencimientoRef: docFechaEmision,
                                               dteIdAsociado: '',
                                             },
                                             {
                                               cuentaCodigo: '1.1.03.001',
                                               cuentaNombre: 'Clientes Nacionales (Cuentas por Cobrar)',
                                               debe: 0,
-                                              haber: pendingDte ? pendingDte.montoTotal : saldo,
+                                              haber: docMontoAplicar,
                                               rutAuxiliar: item.rut,
+                                              nombreAuxiliar: item.razonSocial,
                                               centroCosto: '',
-                                              documentoRef: pendingDte ? `Factura F.${pendingDte.folio}` : '',
-                                              dteIdAsociado: pendingDte?.id || '',
+                                              documentoRef: docRefLabel,
+                                              tipoDocumentoRef: docTipo,
+                                              folioDocumentoRef: docFolio,
+                                              montoDocumentoRef: docMontoTotal,
+                                              fechaDocumentoRef: docFechaEmision,
+                                              fechaVencimientoRef: docFechaVenc,
+                                              documentoOperacion: docFolio,
+                                              tipoDocumentoOperacion: pendingDoc?.tipoLabel?.toUpperCase() || 'COBRANZA DIRECTA',
+                                              dteIdAsociado: dteIdAsoc,
                                             },
                                           ],
                                     });
@@ -4426,17 +4998,32 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowManualModal(false);
-                  setManualEntryError(null);
-                }}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                title="Cerrar ventana"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualEntry(getInitialManualEntry());
+                    setManualEntryError(null);
+                    showToast('Formulario limpiado y restablecido a valores iniciales.', 'info');
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors border border-slate-300 cursor-pointer flex items-center gap-1.5"
+                  title="Limpiar todos los campos del formulario"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Limpiar Formulario</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManualModal(false);
+                    setManualEntryError(null);
+                  }}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Cerrar ventana"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Banner de error visible y explícito para el usuario */}
@@ -4490,30 +5077,75 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   {/* Estado del Período Mensual vs Ejercicio */}
                   {(() => {
                     const p = manualEntry.fecha ? manualEntry.fecha.substring(0, 7) : '';
-                    const isPeriodClosed = effectivePeriodos.includes(p);
+                    const yr = manualEntry.fecha ? parseInt(manualEntry.fecha.substring(0, 4), 10) : 0;
                     if (!p) return null;
-                    return isPeriodClosed ? (
-                      <div className="mt-1 px-2 py-0.5 bg-amber-50 border border-amber-300 rounded text-[10px] text-amber-900 flex items-center justify-between">
-                        <span className="flex items-center gap-1">
-                          <Lock className="w-3 h-3 text-amber-600 shrink-0" />
-                          <span>Período {p} cerrado</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = effectivePeriodos.filter(item => item !== p);
-                            onUpdateCompany({ periodosCerrados: updated });
-                            showToast(`Período mensual ${p} reabierto para edición.`, 'info');
-                          }}
-                          className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer text-[10px]"
-                        >
-                          Reabrir
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="mt-1 px-1.5 py-0.5 text-[10px] text-emerald-700 font-medium flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <span>Período {p} abierto</span>
+
+                    const closedYears =
+                      effectiveCompany.ejerciciosCerrados && effectiveCompany.ejerciciosCerrados.length > 0
+                        ? effectiveCompany.ejerciciosCerrados
+                        : [dates.ejercicioActivo - 2, dates.ejercicioActivo - 1];
+                    const isYearClosed =
+                      (closedYears.includes(yr) || yr < dates.ejercicioActivo) &&
+                      effectiveCompany.reaperturaExtraordinariaActiva?.ejercicio !== yr;
+                    const isYearReopened =
+                      effectiveCompany.reaperturaExtraordinariaActiva?.ejercicio === yr;
+                    const isPeriodClosed = effectivePeriodos.includes(p);
+
+                    return (
+                      <div className="space-y-1 mt-1">
+                        {isYearClosed ? (
+                          <div className="px-2 py-1 bg-rose-50 border border-rose-300 rounded text-[10px] text-rose-950 flex flex-col gap-1">
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1 font-bold text-rose-800">
+                                <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                <span>Ejercicio {yr} CERRADO</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setShowReopenModal(true)}
+                                className="text-rose-700 hover:text-rose-900 font-extrabold underline cursor-pointer text-[10px]"
+                              >
+                                Reapertura Extraordinaria
+                              </button>
+                            </div>
+                            <span className="text-[9px] text-rose-700">
+                              Exige justificación legal fundada y perfil de máxima autoridad.
+                            </span>
+                          </div>
+                        ) : isYearReopened ? (
+                          <div className="px-2 py-0.5 bg-rose-100/80 border border-rose-300 rounded text-[10px] text-rose-900 flex items-center justify-between">
+                            <span className="flex items-center gap-1 font-bold">
+                              <Unlock className="w-3 h-3 text-rose-700 shrink-0" />
+                              <span>Reapertura Extraordinaria Activa ({yr})</span>
+                            </span>
+                            <span className="text-[9px] text-rose-800 font-mono">NIC 8 / SII</span>
+                          </div>
+                        ) : null}
+
+                        {isPeriodClosed ? (
+                          <div className="px-2 py-0.5 bg-amber-50 border border-amber-300 rounded text-[10px] text-amber-900 flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+                              <span>Período {p} cerrado</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = effectivePeriodos.filter((item) => item !== p);
+                                if (onUpdateCompany) onUpdateCompany({ periodosCerrados: updated });
+                                showToast(`Período mensual ${p} reabierto para edición.`, 'info');
+                              }}
+                              className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer text-[10px]"
+                            >
+                              Reabrir
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="px-1.5 py-0.5 text-[10px] text-emerald-700 font-medium flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span>Período {p} abierto</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -4537,17 +5169,56 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">Documento Respaldo</label>
-                  <input
-                    type="text"
-                    value={manualEntry.documentoReferencia}
-                    onChange={(e) => {
-                      setManualEntry({ ...manualEntry, documentoReferencia: e.target.value });
-                      setManualEntryError(null);
-                    }}
-                    placeholder="Ej: Factura #1420 / Comprobante #10"
-                    className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-700">Documento Respaldo</label>
+                    <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-1 rounded">
+                      SII • Contratos • RDG • Bancos
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={manualEntry.tipoDocumentoRef || 'DTE_SII'}
+                      onChange={(e) => {
+                        const newTipo = e.target.value as TipoDocumentoRespaldo;
+                        setManualEntry({
+                          ...manualEntry,
+                          tipoDocumentoRef: newTipo,
+                        });
+                        setManualEntryError(null);
+                      }}
+                      className="w-1/3 text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden font-medium"
+                    >
+                      <option value="DTE_SII">DTE SII (Factura/Boleta)</option>
+                      <option value="CONTRATO">Contrato Mercantil/Arriendo</option>
+                      <option value="RENDICION_GASTOS">Rendición Gastos (RDG)</option>
+                      <option value="COMPROBANTE_BANCARIO">Comprobante Banco (TEF)</option>
+                      <option value="DOCUMENTO_LABORAL">Laboral / Finiquito</option>
+                      <option value="TRIBUTARIO_TGR">Tributario F29 / TGR</option>
+                      <option value="OTRO_RESPALDO">Otro Respaldo</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={manualEntry.documentoReferencia}
+                      onChange={(e) => {
+                        setManualEntry({ ...manualEntry, documentoReferencia: e.target.value });
+                        setManualEntryError(null);
+                      }}
+                      placeholder={
+                        manualEntry.tipoDocumentoRef === 'CONTRATO'
+                          ? 'Ej: Contrato Arriendo #104 Notaría Díaz'
+                          : manualEntry.tipoDocumentoRef === 'RENDICION_GASTOS'
+                          ? 'Ej: RDG-2026-004 Fondo Operacional'
+                          : manualEntry.tipoDocumentoRef === 'COMPROBANTE_BANCARIO'
+                          ? 'Ej: TEF Banco Estado Op #892019'
+                          : manualEntry.tipoDocumentoRef === 'DOCUMENTO_LABORAL'
+                          ? 'Ej: Finiquito Notarial Juan Pérez'
+                          : manualEntry.tipoDocumentoRef === 'TRIBUTARIO_TGR'
+                          ? 'Ej: Folio F29 Declaración #28190'
+                          : 'Ej: Factura #1420 / Comprobante #10'
+                      }
+                      className="flex-1 text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -4600,6 +5271,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                   {manualEntry.lineas.map((line, idx) => {
                     const reqAux = isAccountAuxiliarRequired(line.cuentaCodigo, line.cuentaNombre);
                     const reqCc = isAccountCostCenterRequired(line.cuentaCodigo, line.cuentaNombre);
+                    const reqBank = isAccountBankReconcilable(line.cuentaCodigo, line.cuentaNombre);
+                    const reqDoc = !reqBank && Boolean(chartOfAccounts.find(a => a.codigo === line.cuentaCodigo)?.requiereDocReferencia);
                     const hasConflict = Number(line.debe) > 0 && Number(line.haber) > 0;
                     // Solo se deshabilita si la otra columna tiene saldo Y la columna actual está en cero.
                     // Si ambas tienen saldo (conflicto), AMBAS quedan editables para permitir corrección.
@@ -4612,7 +5285,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                         className={`p-2.5 rounded-xl border transition-all ${
                           hasConflict
                             ? 'bg-rose-50/50 border-rose-300 shadow-sm'
-                            : reqAux || reqCc
+                            : reqAux || reqCc || reqDoc || reqBank
                             ? 'bg-slate-50/90 border-slate-300 shadow-2xs'
                             : 'bg-white border-slate-200 hover:border-slate-300'
                         }`}
@@ -4634,10 +5307,22 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                             />
                             {/* Badges de exigencia normativa */}
                             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                              {reqBank && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <Landmark className="w-3 h-3 text-emerald-600" />
+                                  Conciliable Bancaria (Cartola / TEF)
+                                </span>
+                              )}
                               {reqAux && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
                                   <Users className="w-3 h-3 text-amber-600" />
                                   Exige Auxiliar (RUT / DTE)
+                                </span>
+                              )}
+                              {reqDoc && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-300">
+                                  <FileText className="w-3 h-3 text-indigo-600" />
+                                  Exige Doc. Referencia (DOC)
                                 </span>
                               )}
                               {reqCc && (
@@ -4856,10 +5541,124 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                           </div>
                         )}
 
-                        {/* Sub-panel Analítico de Imputación (Auxiliares y Centros de Costos) */}
-                        {(reqAux || reqCc) && (
+                        {/* Sub-panel Analítico de Imputación (Cuentas Bancarias, Auxiliares, Documentos de Referencia y Centros de Costos) */}
+                        {(reqAux || reqCc || reqDoc || reqBank) && (
                           <div className="mt-2.5 pt-2.5 border-t border-slate-200/80 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
-                            {/* Panel Auxiliar: RUT y Comprobante a Cancelar */}
+                            {/* Panel Cuenta Bancaria: Referencia de Conciliación Bancaria y Cartola */}
+                            {reqBank && (
+                              <div className="bg-emerald-50/70 border border-emerald-300 rounded-lg p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-emerald-950 flex items-center gap-1.5">
+                                    <Landmark className="w-3.5 h-3.5 text-emerald-700" />
+                                    Referencia de Conciliación Bancaria (Obligatorio) *
+                                  </span>
+                                  <span className="text-[9px] uppercase tracking-wider font-semibold text-emerald-800 bg-emerald-200/60 px-1.5 py-0.5 rounded">
+                                    Cartola Bancaria / TEF
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
+                                      Tipo Movimiento Bancario:
+                                    </label>
+                                    <select
+                                      value={line.tipoDocumentoConciliacion || 'TRANSFERENCIA'}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        handleUpdateManualLine(idx, 'tipoDocumentoConciliacion', val);
+                                      }}
+                                      className="w-full text-xs bg-white border border-emerald-300 rounded px-2 py-1 text-slate-800 font-semibold"
+                                    >
+                                      <option value="TRANSFERENCIA">Transferencia Electrónica (TEF)</option>
+                                      <option value="CHEQUE">Cheque Girado / Cobrado</option>
+                                      <option value="DEPOSITO">Depósito en Cuenta Corriente</option>
+                                      <option value="CARGO_CARTOLA">Cargo Directo en Cartola (PAC / Comisión)</option>
+                                      <option value="ABONO_CARTOLA">Abono Directo en Cartola (Intereses / Transbank)</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
+                                      N° Referencia Bancaria / Operación / Cartola *:
+                                    </label>
+                                    <input
+                                      type="text"
+                                      placeholder="Ej: TEF-892019, 80, OP-4412"
+                                      value={line.documentoConciliacion || line.documentoRef || ''}
+                                      onChange={(e) => {
+                                        const refVal = e.target.value;
+                                        const updated = [...manualEntry.lineas];
+                                        updated[idx] = {
+                                          ...updated[idx],
+                                          documentoConciliacion: refVal,
+                                          documentoRef: refVal,
+                                          folioDocumentoRef: refVal,
+                                        };
+                                        setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                      }}
+                                      className="w-full text-xs bg-white border border-emerald-300 rounded px-2 py-1 text-slate-800 font-mono font-bold"
+                                      required
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Fechas de Emisión y Vencimiento para Cheque / TEF (Especialmente en Egresos) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1 border-t border-emerald-200">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
+                                      {line.tipoDocumentoConciliacion === 'CHEQUE'
+                                        ? 'Fecha Emisión Cheque:'
+                                        : 'Fecha Emisión TEF / Transferencia:'}
+                                    </label>
+                                    <input
+                                      type="date"
+                                      value={line.fechaDocumentoRef || manualEntry.fecha || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        const updated = [...manualEntry.lineas];
+                                        const shouldSyncVenc =
+                                          !updated[idx].fechaVencimientoRef ||
+                                          updated[idx].fechaVencimientoRef === updated[idx].fechaDocumentoRef;
+                                        updated[idx] = {
+                                          ...updated[idx],
+                                          fechaDocumentoRef: val,
+                                          ...(shouldSyncVenc ? { fechaVencimientoRef: val } : {}),
+                                        };
+                                        setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                      }}
+                                      className="w-full text-xs bg-white border border-emerald-300 rounded px-2 py-1 text-slate-800 font-mono"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
+                                      {line.tipoDocumentoConciliacion === 'CHEQUE'
+                                        ? 'Fecha Vencimiento / Cobro Cheque (Diferido):'
+                                        : 'Fecha Vencimiento / Ejecución TEF:'}
+                                    </label>
+                                    <input
+                                      type="date"
+                                      value={line.fechaVencimientoRef || line.fechaDocumentoRef || manualEntry.fecha || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        const updated = [...manualEntry.lineas];
+                                        updated[idx] = {
+                                          ...updated[idx],
+                                          fechaVencimientoRef: val,
+                                        };
+                                        setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                      }}
+                                      className="w-full text-xs bg-white border border-emerald-300 rounded px-2 py-1 text-slate-800 font-mono font-bold text-emerald-950"
+                                    />
+                                  </div>
+                                </div>
+
+                                <p className="text-[10px] text-emerald-800">
+                                  Esta referencia y fechas serán utilizadas por el módulo de <strong>Conciliación Bancaria</strong> y el <strong>Flujo de Caja</strong> para cruzar automáticamente el movimiento con la cartola del banco.
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Panel Auxiliar: Búsqueda de Auxiliar e Individualización de Documentos (DTE, Contratos, RDG, TEF) */}
                             {reqAux && (
                               <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-2.5 space-y-2">
                                 <div className="flex items-center justify-between">
@@ -4872,94 +5671,161 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   </span>
                                 </div>
 
-                                {/* Selección o digitación de Auxiliar */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                  <select
-                                    value={line.rutAuxiliar || ''}
-                                    onChange={(e) => {
-                                      handleUpdateManualLine(idx, 'rutAuxiliar', e.target.value);
-                                    }}
-                                    className="w-full text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
-                                  >
-                                    <option value="">-- Padrón de Auxiliares --</option>
-                                    {availableAuxiliaries.map((aux) => (
-                                      <option key={aux.rut} value={aux.rut}>
-                                        {aux.rut} - {aux.razonSocial}
-                                      </option>
-                                    ))}
-                                  </select>
+                                <SearchableAuxiliarySelect
+                                  selectedRut={line.rutAuxiliar || ''}
+                                  selectedDteId={line.dteIdAsociado || ''}
+                                  documentoRef={line.documentoRef || ''}
+                                  tipoDocumentoRef={line.tipoDocumentoRef}
+                                  folioDocumentoRef={line.folioDocumentoRef}
+                                  montoDocumentoRef={line.montoDocumentoRef}
+                                  fechaDocumentoRef={line.fechaDocumentoRef}
+                                  fechaVencimientoRef={line.fechaVencimientoRef}
+                                  documentoOperacion={line.documentoOperacion}
+                                  tipoDocumentoOperacion={line.tipoDocumentoOperacion}
+                                  fechaDocumentoOperacion={line.fechaDocumentoOperacion}
+                                  lineAmount={Number(line.debe) || Number(line.haber) || 0}
+                                  availableAuxiliaries={availableAuxiliaries}
+                                  availableDtes={safeDtes}
+                                  pendingDocuments={getPendingDocsForAuxiliary(line.rutAuxiliar, line.cuentaCodigo)}
+                                  accountCode={line.cuentaCodigo}
+                                  onSelectAuxiliary={(rut, razonSocial) => {
+                                    const updated = [...manualEntry.lineas];
+                                    updated[idx] = {
+                                      ...updated[idx],
+                                      rutAuxiliar: rut,
+                                      nombreAuxiliar: razonSocial || updated[idx].nombreAuxiliar,
+                                      dteIdAsociado: '',
+                                    };
+                                    setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                  }}
+                                  onSelectDocument={(doc) => {
+                                    const updated = [...manualEntry.lineas];
+                                    if (!doc) {
+                                      updated[idx] = {
+                                        ...updated[idx],
+                                        dteIdAsociado: '',
+                                      };
+                                      setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                      return;
+                                    }
+                                    const isSupplier = updated[idx].cuentaCodigo.startsWith('2.1');
+                                    const dteTipoLabel =
+                                      doc.tipoDte === '33'
+                                        ? 'Factura Electrónica'
+                                        : doc.tipoDte === '34'
+                                        ? 'Factura Exenta'
+                                        : doc.tipoDte === '61'
+                                        ? 'Nota de Crédito'
+                                        : doc.tipoDte === '56'
+                                        ? 'Nota de Débito'
+                                        : 'DTE';
+                                    updated[idx] = {
+                                      ...updated[idx],
+                                      dteIdAsociado: doc.id,
+                                      rutAuxiliar: doc.rutContraparte,
+                                      nombreAuxiliar: doc.razonSocialContraparte,
+                                      tipoDocumentoRef: `FACTURA_ELECTRONICA_${doc.tipoDte}` as any,
+                                      folioDocumentoRef: String(doc.folio),
+                                      montoDocumentoRef: doc.montoTotal,
+                                      fechaDocumentoRef: doc.fechaEmision,
+                                      fechaVencimientoRef: doc.fechaVencimiento || doc.fechaEmision,
+                                      documentoRef: `${dteTipoLabel} F.${doc.folio}`,
+                                      debe: isSupplier ? doc.montoTotal : 0,
+                                      haber: !isSupplier ? doc.montoTotal : 0,
+                                    };
+                                    setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                  }}
+                                  onChangeManualDocRef={(ref) => {
+                                    handleUpdateManualLine(idx, 'documentoRef', ref);
+                                  }}
+                                  onChangeDocDetails={(details) => {
+                                    const updated = [...manualEntry.lineas];
+                                    updated[idx] = {
+                                      ...updated[idx],
+                                      ...details,
+                                    };
+                                    setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                  }}
+                                  onAddNewAuxiliary={handleAddNewAuxiliary}
+                                  onApplyDocAmountToLine={(amount) => {
+                                    const updated = [...manualEntry.lineas];
+                                    const isSupplier = updated[idx].cuentaCodigo.startsWith('2.1');
+                                    if (Number(updated[idx].debe) > 0 || isSupplier) {
+                                      updated[idx].debe = amount;
+                                      updated[idx].haber = 0;
+                                    } else {
+                                      updated[idx].haber = amount;
+                                      updated[idx].debe = 0;
+                                    }
+                                    setManualEntry((prev) => ({ ...prev, lineas: updated }));
+                                  }}
+                                />
 
-                                  <input
-                                    type="text"
-                                    placeholder="O ingresar RUT (ej: 76.123.456-7)..."
-                                    value={line.rutAuxiliar || ''}
-                                    onChange={(e) => handleUpdateManualLine(idx, 'rutAuxiliar', e.target.value)}
-                                    className="w-full text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden font-mono"
-                                  />
+                                {line.dteIdAsociado && (
+                                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-800 font-medium bg-emerald-50 border border-emerald-200 p-1.5 rounded">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                    <span>
+                                      Cancelando: <strong>{line.documentoRef}</strong>. El DTE quedará marcado como pagado y el auxiliar saldado.
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Panel Documento de Referencia para cuentas que lo exigen sin requerir Auxiliar (ej: Valores en Tránsito, Arriendos, Contratos) */}
+                            {reqDoc && !reqAux && (
+                              <div className="bg-indigo-50/70 border border-indigo-200 rounded-lg p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-indigo-900 flex items-center gap-1.5">
+                                    <FileText className="w-3.5 h-3.5 text-indigo-700" />
+                                    Documento de Respaldo Obligatorio *
+                                  </span>
+                                  <span className="text-[9px] uppercase tracking-wider font-semibold text-indigo-800 bg-indigo-200/60 px-1.5 py-0.5 rounded">
+                                    Plan de Cuentas ERP
+                                  </span>
                                 </div>
 
-                                {/* Selección de Comprobante / DTE a Cancelar */}
-                                <div>
-                                  <label className="text-[10px] font-bold text-amber-900 block mb-1">
-                                    Comprobante(s) a Cancelar / Documento de Respaldo:
-                                  </label>
-                                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-indigo-900 block mb-0.5">Tipo de Respaldo:</label>
                                     <select
-                                      value={line.dteIdAsociado || ''}
+                                      value={line.tipoDocumentoRef || 'CONTRATO'}
                                       onChange={(e) => {
-                                        const dteId = e.target.value;
-                                        if (!dteId) {
-                                          handleUpdateManualLine(idx, 'dteIdAsociado', '');
-                                          return;
-                                        }
-                                        const doc = safeDtes.find((d) => d.id === dteId);
-                                        if (doc) {
-                                          const updated = [...manualEntry.lineas];
-                                          const isSupplier = updated[idx].cuentaCodigo.startsWith('2.1');
-                                          // Exclusividad contable estricta: si se imputa a una columna, la contraria se salda a 0
-                                          updated[idx] = {
-                                            ...updated[idx],
-                                            dteIdAsociado: doc.id,
-                                            rutAuxiliar: doc.rutContraparte,
-                                            documentoRef: `Factura ${doc.tipoDte === '33' ? 'Electrónica' : ''} F.${doc.folio}`,
-                                            debe: isSupplier ? doc.montoTotal : 0,
-                                            haber: !isSupplier ? doc.montoTotal : 0,
-                                          };
-                                          setManualEntry((prev) => ({ ...prev, lineas: updated }));
-                                        }
+                                        const newTipo = e.target.value as TipoDocumentoRespaldo;
+                                        handleUpdateManualLine(idx, 'tipoDocumentoRef', newTipo);
                                       }}
-                                      className="flex-1 text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
+                                      className="w-full text-xs bg-white border border-indigo-300 rounded px-2 py-1 text-slate-800"
                                     >
-                                      <option value="">-- Seleccionar Factura SII a Cancelar --</option>
-                                      {safeDtes
-                                        .filter((d) =>
-                                          line.cuentaCodigo.startsWith('2.1')
-                                            ? d.tipoOperacion === 'COMPRA'
-                                            : d.tipoOperacion === 'VENTA'
-                                        )
-                                        .map((d) => (
-                                          <option key={d.id} value={d.id}>
-                                            Folio {d.folio} | {d.razonSocialContraparte} | {formatCLP(d.montoTotal)} ({d.estadoPago})
-                                          </option>
-                                        ))}
+                                      <option value="CONTRATO">Contrato (Arriendo / Mutuo / Servicios)</option>
+                                      <option value="RENDICION_GASTOS">Rendición Gastos (RDG / Caja Chica)</option>
+                                      <option value="COMPROBANTE_BANCARIO">Comprobante Banco (TEF / SWIFT)</option>
+                                      <option value="DOCUMENTO_LABORAL">Documento Laboral / Finiquito</option>
+                                      <option value="DTE_SII">DTE Electrónico SII (Factura / NC)</option>
+                                      <option value="TRIBUTARIO_TGR">Tributario Formulario F29 / TGR</option>
+                                      <option value="OTRO_RESPALDO">Otro Respaldo Mercantil</option>
                                     </select>
-
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-indigo-900 block mb-0.5">Folio / Identificador:</label>
                                     <input
                                       type="text"
-                                      placeholder="Ref. documento manual..."
+                                      placeholder="Ej: CTR-2026-44 / RDG-002 / TEF-9901..."
                                       value={line.documentoRef || ''}
                                       onChange={(e) => handleUpdateManualLine(idx, 'documentoRef', e.target.value)}
-                                      className="w-full sm:w-44 text-xs bg-white border border-amber-300 rounded-md p-1.5 text-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-hidden"
+                                      className="w-full text-xs bg-white border border-indigo-300 rounded px-2 py-1 text-slate-800 font-mono font-medium"
                                     />
                                   </div>
-
-                                  {line.dteIdAsociado && (
-                                    <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-800 font-medium bg-emerald-50 border border-emerald-200 p-1.5 rounded">
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                      <span>
-                                        Cancelando: <strong>{line.documentoRef}</strong>. El DTE quedará marcado como pagado y el auxiliar saldado.
-                                      </span>
-                                    </div>
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] text-indigo-700 pt-0.5">
+                                  <span>Válido para respaldar transacciones sin DTE del SII.</span>
+                                  {manualEntry.documentoReferencia && !line.documentoRef && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateManualLine(idx, 'documentoRef', manualEntry.documentoReferencia)}
+                                      className="underline font-bold text-indigo-900 cursor-pointer"
+                                    >
+                                      Heredar del asiento
+                                    </button>
                                   )}
                                 </div>
                               </div>
@@ -5000,6 +5866,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Botón Inferior para Agregar Cuenta (evita scroll al tener muchas partidas) */}
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAddManualLine}
+                    className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer border border-blue-200 shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> + Agregar Cuenta / Partida
+                  </button>
                 </div>
               </div>
 
@@ -5189,6 +6066,30 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             }
             showToast('Asiento de Diferencia de Cambio (NIC 21) registrado y centralizado en el Libro Diario.', 'success');
           }}
+        />
+      )}
+
+      {/* MODAL: REAPERTURA EXTRAORDINARIA DE EJERCICIO CERRADO */}
+      <ExtraordinaryFiscalYearReopenModal
+        isOpen={showReopenModal}
+        onClose={() => setShowReopenModal(false)}
+        company={effectiveCompany}
+        onConfirmReopen={handleConfirmReopenFromModal}
+      />
+
+      {/* MODAL: EDICIÓN INTEGRAL DE ASIENTO CONTABLE */}
+      {editingEntry && (
+        <EditAccountingEntryModal
+          isOpen={isEditEntryModalOpen}
+          entry={editingEntry}
+          accounts={chartOfAccounts}
+          availableAuxiliaries={availableAuxiliaries}
+          availableDtes={safeDtes}
+          onClose={() => {
+            setIsEditEntryModalOpen(false);
+            setEditingEntry(null);
+          }}
+          onSave={handleSaveEditedEntry}
         />
       )}
     </div>

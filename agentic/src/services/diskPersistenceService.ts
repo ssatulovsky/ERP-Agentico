@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { isRealMysqlConnected, db as mysqlDb } from '../db/mysqlClient';
 import {
   accountingEntries,
@@ -15,6 +16,7 @@ import {
   expenseReports,
   expenseItems,
   expenseProjects,
+  bankTransactions,
 } from '../db/mysqlSchema';
 
 export interface DiskDataStore {
@@ -105,8 +107,6 @@ class DiskPersistenceService {
           expenseReports: parsed.expenseReports || [],
           expenseItems: parsed.expenseItems || [],
           expenseProjects: parsed.expenseProjects || [],
-          bankMovements: parsed.bankMovements || [],
-          bankAccounts: parsed.bankAccounts || [],
           ...parsed,
         };
         if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
@@ -567,6 +567,9 @@ class DiskPersistenceService {
             fecha: entry.fecha,
             concepto: entry.concepto,
             documentoRef: entry.documentoRef || null,
+            documentoReferencia: entry.documentoReferencia || entry.documentoRef || null,
+            tipoDocumentoRef: entry.tipoDocumentoRef || null,
+            folioDocumentoRef: entry.folioDocumentoRef || null,
             origenModulo: entry.origenModulo,
             totalDebe: String(entry.totalDebe),
             totalHaber: String(entry.totalHaber),
@@ -587,6 +590,21 @@ class DiskPersistenceService {
               haber: String(line.haber),
               rutAuxiliar: line.rutAuxiliar || null,
               centroCosto: line.centroCosto || null,
+              documentoRef: line.documentoRef || entry.documentoRef || null,
+              dteIdAsociado: line.dteIdAsociado || null,
+              tipoDocumentoRef: line.tipoDocumentoRef || entry.tipoDocumentoRef || null,
+              folioDocumentoRef: line.folioDocumentoRef || entry.folioDocumentoRef || null,
+              montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+              fechaDocumentoRef: line.fechaDocumentoRef || null,
+              fechaVencimientoRef: line.fechaVencimientoRef || null,
+              documentoOperacion: line.documentoOperacion || null,
+              tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+              fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+              documentoConciliacion: line.documentoConciliacion || null,
+              tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+              monedaOriginal: line.monedaOriginal || null,
+              montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+              tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
             });
           }
         } catch (sqlErr: any) {
@@ -594,6 +612,136 @@ class DiskPersistenceService {
         }
       })();
     }
+  }
+
+  public deleteAccountingEntry(entryId: string): boolean {
+    const initialCount = this.store.entries.length;
+    this.store.entries = this.store.entries.filter((e) => e.id !== entryId);
+    this.store.lines = this.store.lines.filter((l) => l.entryId !== entryId);
+    this.scheduleFlush();
+
+    // Purgar también de memoria de proceso si estuviese ahí
+    try {
+      const { inMemoryEntries, inMemoryLines } = require('../db/mysqlClient');
+      if (Array.isArray(inMemoryEntries)) {
+        const idx = inMemoryEntries.findIndex((e: any) => e.id === entryId);
+        if (idx >= 0) inMemoryEntries.splice(idx, 1);
+      }
+      if (Array.isArray(inMemoryLines)) {
+        for (let i = inMemoryLines.length - 1; i >= 0; i--) {
+          if (inMemoryLines[i].entryId === entryId) {
+            inMemoryLines.splice(i, 1);
+          }
+        }
+      }
+    } catch {}
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, entryId));
+          await mysqlDb.delete(accountingEntries).where(eq(accountingEntries.id, entryId));
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al eliminar asiento en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+
+    return this.store.entries.length < initialCount;
+  }
+
+  public updateAccountingEntry(entryId: string, updatedFields: any, newLines?: any[]): boolean {
+    const existingIndex = this.store.entries.findIndex((e) => e.id === entryId);
+    if (existingIndex < 0) return false;
+
+    this.store.entries[existingIndex] = {
+      ...this.store.entries[existingIndex],
+      ...updatedFields,
+    };
+
+    if (Array.isArray(newLines)) {
+      this.store.lines = this.store.lines.filter((l) => l.entryId !== entryId);
+      this.store.lines.push(...newLines);
+    }
+
+    this.scheduleFlush();
+
+    // Sincronizar en memoria de proceso
+    try {
+      const { inMemoryEntries, inMemoryLines } = require('../db/mysqlClient');
+      if (Array.isArray(inMemoryEntries)) {
+        const idx = inMemoryEntries.findIndex((e: any) => e.id === entryId);
+        if (idx >= 0) inMemoryEntries[idx] = { ...inMemoryEntries[idx], ...updatedFields };
+      }
+      if (Array.isArray(newLines) && Array.isArray(inMemoryLines)) {
+        for (let i = inMemoryLines.length - 1; i >= 0; i--) {
+          if (inMemoryLines[i].entryId === entryId) {
+            inMemoryLines.splice(i, 1);
+          }
+        }
+        inMemoryLines.push(...newLines);
+      }
+    } catch {}
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          const entryUpdate: any = {};
+          if (updatedFields.concepto !== undefined) entryUpdate.concepto = updatedFields.concepto;
+          if (updatedFields.fecha !== undefined) entryUpdate.fecha = updatedFields.fecha;
+          if (updatedFields.documentoRef !== undefined) {
+            entryUpdate.documentoRef = updatedFields.documentoRef;
+            entryUpdate.documentoReferencia = updatedFields.documentoReferencia || updatedFields.documentoRef;
+          }
+          if (updatedFields.documentoReferencia !== undefined) entryUpdate.documentoReferencia = updatedFields.documentoReferencia;
+          if (updatedFields.tipoDocumentoRef !== undefined) entryUpdate.tipoDocumentoRef = updatedFields.tipoDocumentoRef;
+          if (updatedFields.folioDocumentoRef !== undefined) entryUpdate.folioDocumentoRef = updatedFields.folioDocumentoRef;
+          if (updatedFields.totalDebe !== undefined) entryUpdate.totalDebe = String(updatedFields.totalDebe);
+          if (updatedFields.totalHaber !== undefined) entryUpdate.totalHaber = String(updatedFields.totalHaber);
+          if (updatedFields.supervisorSignature !== undefined) entryUpdate.supervisorSignature = updatedFields.supervisorSignature;
+
+          if (Object.keys(entryUpdate).length > 0) {
+            await mysqlDb.update(accountingEntries).set(entryUpdate).where(eq(accountingEntries.id, entryId));
+          }
+
+          if (Array.isArray(newLines)) {
+            await mysqlDb.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, entryId));
+            for (const line of newLines) {
+              await mysqlDb.insert(accountingEntryLines).values({
+                id: line.id || crypto.randomUUID(),
+                entryId,
+                lineaNumero: line.lineaNumero || 1,
+                codigoCuenta: line.codigoCuenta,
+                nombreCuenta: line.nombreCuenta,
+                debe: String(line.debe),
+                haber: String(line.haber),
+                rutAuxiliar: line.rutAuxiliar || null,
+                centroCosto: line.centroCosto || null,
+                documentoRef: line.documentoRef || updatedFields.documentoRef || null,
+                dteIdAsociado: line.dteIdAsociado || null,
+                tipoDocumentoRef: line.tipoDocumentoRef || updatedFields.tipoDocumentoRef || null,
+                folioDocumentoRef: line.folioDocumentoRef || updatedFields.folioDocumentoRef || null,
+                montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+                fechaDocumentoRef: line.fechaDocumentoRef || null,
+                fechaVencimientoRef: line.fechaVencimientoRef || null,
+                documentoOperacion: line.documentoOperacion || null,
+                tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+                fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+                documentoConciliacion: line.documentoConciliacion || null,
+                tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+                monedaOriginal: line.monedaOriginal || null,
+                montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+                tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
+              });
+            }
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al actualizar asiento en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+
+    return true;
   }
 
   public addAccountingLines(lines: any[]) {
@@ -622,6 +770,21 @@ class DiskPersistenceService {
               haber: String(line.haber),
               rutAuxiliar: line.rutAuxiliar || null,
               centroCosto: line.centroCosto || null,
+              documentoRef: line.documentoRef || null,
+              dteIdAsociado: line.dteIdAsociado || null,
+              tipoDocumentoRef: line.tipoDocumentoRef || null,
+              folioDocumentoRef: line.folioDocumentoRef || null,
+              montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+              fechaDocumentoRef: line.fechaDocumentoRef || null,
+              fechaVencimientoRef: line.fechaVencimientoRef || null,
+              documentoOperacion: line.documentoOperacion || null,
+              tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+              fechaDocumentoOperacion: line.fechaDocumentoOperacion || null,
+              documentoConciliacion: line.documentoConciliacion || null,
+              tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+              monedaOriginal: line.monedaOriginal || null,
+              montoMonedaOriginal: line.montoMonedaOriginal != null ? String(line.montoMonedaOriginal) : null,
+              tipoCambio: line.tipoCambio != null ? String(line.tipoCambio) : null,
             });
           }
         } catch (sqlErr: any) {
@@ -629,6 +792,78 @@ class DiskPersistenceService {
         }
       })();
     }
+  }
+
+  public saveBankMovements(movements: any[]) {
+    if (!Array.isArray(movements) || movements.length === 0) return;
+    for (const mov of movements) {
+      const idx = this.store.bankMovements.findIndex((m) => m.id === mov.id);
+      if (idx >= 0) {
+        this.store.bankMovements[idx] = { ...this.store.bankMovements[idx], ...mov };
+      } else {
+        this.store.bankMovements.push(mov);
+      }
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          for (const mov of movements) {
+            await mysqlDb
+              .insert(bankTransactions)
+              .values({
+                id: mov.id,
+                accountId: mov.cuentaId || mov.accountId || 'bank-acc-01',
+                fecha: mov.fecha,
+                descripcion: mov.glosaBancaria || mov.descripcion || '',
+                cargo: String(mov.cargo || 0),
+                abono: String(mov.abono || 0),
+                documentoRef: mov.documentoRef || mov.numeroReferencia || null,
+                estadoConciliacion: mov.estado || 'PENDIENTE',
+                matchedDteId: mov.dteFolioAsociado ? String(mov.dteFolioAsociado) : null,
+                moneda: mov.moneda || 'CLP',
+                tipoCambio: mov.tipoCambio != null ? String(mov.tipoCambio) : '1.0000',
+                montoClpEquivalente: mov.montoCLPEquivalente != null ? String(mov.montoCLPEquivalente) : null,
+                matchCerteza: mov.matchCerteza || null,
+                matchSugeridoId: mov.matchSugeridoId || null,
+                matchSugeridoGlosa: mov.matchSugeridoGlosa || null,
+                codigoConciliacion: mov.codigoConciliacion || null,
+                fechaConciliacion: mov.fechaConciliacion ? new Date(mov.fechaConciliacion) : null,
+                matchCriterio: mov.matchCriterio || null,
+                usuarioConciliador: mov.usuarioConciliador || null,
+                asientoGeneradoId: mov.asientoGeneradoId || null,
+                partidaContableDetalle: mov.partidaContableDetalle || null,
+                esAmbiguo: Boolean(mov.esAmbiguo),
+                candidatosMatchesCount: mov.candidatosMatchesCount || 0,
+                origenImportacion: mov.origenImportacion || 'MANUAL',
+              })
+              .onDuplicateKeyUpdate({
+                set: {
+                  estadoConciliacion: mov.estado || 'PENDIENTE',
+                  codigoConciliacion: mov.codigoConciliacion || null,
+                  fechaConciliacion: mov.fechaConciliacion ? new Date(mov.fechaConciliacion) : null,
+                  matchCriterio: mov.matchCriterio || null,
+                  usuarioConciliador: mov.usuarioConciliador || null,
+                  asientoGeneradoId: mov.asientoGeneradoId || null,
+                  partidaContableDetalle: mov.partidaContableDetalle || null,
+                  esAmbiguo: Boolean(mov.esAmbiguo),
+                  candidatosMatchesCount: mov.candidatosMatchesCount || 0,
+                },
+              });
+          }
+        } catch (sqlErr: any) {
+          console.warn(`[DiskPersistence] Error al escribir movimientos bancarios en MySQL: ${sqlErr.message}`);
+        }
+      })();
+    }
+  }
+
+  public getBankMovements(accountId?: string): any[] {
+    if (accountId) {
+      return this.store.bankMovements.filter((m) => m.cuentaId === accountId || m.accountId === accountId);
+    }
+    return this.store.bankMovements || [];
   }
 
   public getAccountingEntries(empresaId?: string, periodo?: string): any[] {
@@ -664,27 +899,6 @@ class DiskPersistenceService {
     this.scheduleFlush();
   }
 
-  public addDtes(dtes: any[]) {
-    if (!dtes || dtes.length === 0) return;
-    for (const dte of dtes) {
-      const existingIndex = this.store.dtes.findIndex(
-        (d) =>
-          (d.id && dte.id && d.id === dte.id) ||
-          (d.empresaId === dte.empresaId &&
-            d.periodo === dte.periodo &&
-            Number(d.tipoDte) === Number(dte.tipoDte) &&
-            Number(d.folio) === Number(dte.folio) &&
-            d.tipoOperacion === dte.tipoOperacion)
-      );
-      if (existingIndex >= 0) {
-        this.store.dtes[existingIndex] = { ...this.store.dtes[existingIndex], ...dte };
-      } else {
-        this.store.dtes.unshift(dte);
-      }
-    }
-    this.scheduleFlush();
-  }
-
   public getDtes(empresaId?: string, periodo?: string): any[] {
     let result = this.store.dtes;
     if (empresaId) {
@@ -698,27 +912,6 @@ class DiskPersistenceService {
       result = result.filter((d) => !d.periodo || d.periodo === periodo);
     }
     return result;
-  }
-
-  public markDtesAsCentralized(empresaId: string, periodo: string, tipoOperacion: string, entryId: string) {
-    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-    let modified = false;
-    for (const d of this.store.dtes) {
-      const dNorm = (d.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-      const matchEmpresa = !dNorm || dNorm === norm;
-      const matchPeriodo = !d.periodo || d.periodo === periodo;
-      const matchTipo = !d.tipoOperacion || d.tipoOperacion === tipoOperacion;
-      if (matchEmpresa && matchPeriodo && matchTipo) {
-        d.estadoContable = 'CENTRALIZADO';
-        d.imputacionEstado = 'CENTRALIZADO';
-        d.entryIdRef = entryId;
-        d.asientoCentralizacionId = entryId;
-        modified = true;
-      }
-    }
-    if (modified) {
-      this.scheduleFlush();
-    }
   }
 
   public addAuditLog(log: any) {
@@ -831,7 +1024,6 @@ class DiskPersistenceService {
     expenseReportsCount: number;
     expenseItemsCount: number;
     expenseProjectsCount: number;
-    bankMovementsCount: number;
     mysqlActive: boolean;
   } {
     let size = 0;
@@ -854,83 +1046,8 @@ class DiskPersistenceService {
       expenseReportsCount: (this.store.expenseReports || []).length,
       expenseItemsCount: (this.store.expenseItems || []).length,
       expenseProjectsCount: (this.store.expenseProjects || []).length,
-      bankMovementsCount: (this.store.bankMovements || []).length,
       mysqlActive: isRealMysqlConnected,
     };
-  }
-
-  // ==========================================================================
-  // MÓDULO TESORERÍA Y CONCILIACIÓN BANCARIA: CRUD CON PERSISTENCIA DUAL
-  // ==========================================================================
-
-  public addBankMovement(movement: any) {
-    if (!this.store.bankMovements) this.store.bankMovements = [];
-    const existingIndex = this.store.bankMovements.findIndex((m) => m.id === movement.id);
-    if (existingIndex >= 0) {
-      this.store.bankMovements[existingIndex] = { ...this.store.bankMovements[existingIndex], ...movement };
-    } else {
-      this.store.bankMovements.unshift(movement);
-    }
-    this.scheduleFlush();
-
-    // Sincronización en segundo plano a MySQL 8.0 si está conectado
-    if (isRealMysqlConnected) {
-      (async () => {
-        try {
-          const { bankTransactions } = await import('../db/schema/erpModulesSchema');
-          await mysqlDb
-            .insert(bankTransactions)
-            .values({
-              id: movement.id || crypto.randomUUID(),
-              accountId: movement.accountId || movement.cuentaId || 'bank-acc-01',
-              fecha: movement.fecha || new Date().toISOString().substring(0, 10),
-              descripcion: movement.descripcion || movement.glosaBancaria || 'Movimiento bancario',
-              cargo: String(movement.cargo || '0.00'),
-              abono: String(movement.abono || '0.00'),
-              documentoRef: movement.documentoRef || movement.numeroReferencia || null,
-              estadoConciliacion: movement.estado || movement.estadoConciliacion || 'CONCILIADO',
-              moneda: movement.moneda || 'CLP',
-              tipoCambio: String(movement.tipoCambio || '1.0000'),
-              montoClpEquivalente: movement.montoCLPEquivalente ? String(movement.montoCLPEquivalente) : null,
-              matchCerteza: movement.matchCerteza || 100,
-              origenImportacion: movement.origenImportacion || 'CONTABILIDAD_AUTO',
-              createdAt: new Date(),
-            })
-            .onDuplicateKeyUpdate({
-              set: {
-                estadoConciliacion: movement.estado || movement.estadoConciliacion || 'CONCILIADO',
-                descripcion: movement.descripcion || movement.glosaBancaria || 'Movimiento bancario',
-              },
-            });
-        } catch (e: any) {
-          console.warn('[DiskPersistence] Aviso al persistir bankTransaction en MySQL:', e?.message);
-        }
-      })();
-    }
-  }
-
-  public getBankMovements(empresaId?: string, accountId?: string): any[] {
-    let result = this.store.bankMovements || [];
-    if (empresaId) {
-      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
-      result = result.filter((m) => {
-        const mNorm = (m.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-        return !m.empresaId || mNorm === norm;
-      });
-    }
-    if (accountId) {
-      result = result.filter((m) => !m.accountId || m.accountId === accountId || m.cuentaId === accountId);
-    }
-    return result;
-  }
-
-  public updateBankMovement(id: string, partial: any): boolean {
-    if (!this.store.bankMovements) return false;
-    const movement = this.store.bankMovements.find((m) => m.id === id);
-    if (!movement) return false;
-    Object.assign(movement, partial);
-    this.scheduleFlush();
-    return true;
   }
 
   // ==========================================================================
@@ -938,18 +1055,20 @@ class DiskPersistenceService {
   // ==========================================================================
 
   public getExpenseReports(empresaId?: string): any[] {
-    const result = this.store.expenseReports || [];
+    let result = this.store.expenseReports || [];
     if (empresaId) {
       const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
       const filtered = result.filter((r) => {
         const rNorm = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
         return (
+          !r.empresaId ||
           r.empresaId === empresaId ||
           rNorm === norm ||
-          (norm === 'CLIENTRETAIL01' && r.empresaId === 'client-retail-01')
+          r.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
         );
       });
-      return filtered;
+      return filtered.length > 0 ? filtered : result;
     }
     return result;
   }
@@ -1085,15 +1204,17 @@ class DiskPersistenceService {
   }
 
   public getExpenseProjects(empresaId?: string): any[] {
-    const result = this.store.expenseProjects || [];
+    let result = this.store.expenseProjects || [];
     if (empresaId) {
       const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
-      return result.filter((p) => {
+      result = result.filter((p) => {
         const pNorm = (p.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
         return (
+          !p.empresaId ||
           p.empresaId === empresaId ||
           pNorm === norm ||
-          (norm === 'CLIENTRETAIL01' && p.empresaId === 'client-retail-01')
+          p.empresaId === 'client-retail-01' ||
+          norm === 'CLIENTRETAIL01'
         );
       });
     }

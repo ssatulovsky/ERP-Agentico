@@ -412,6 +412,82 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
     showToast(`Se aprobaron ${pending.length} requisiciones de reposición automáticamente.`);
   };
 
+  // Receive Purchase Order into Destination Warehouse
+  const handleReceivePurchaseRequisition = (req: ReplenishmentRequisition) => {
+    const today = new Date().toISOString().split('T')[0];
+    const neto = Math.round(req.costoEstimadoCLP);
+    const iva = Math.round(neto * 0.19);
+    const total = neto + iva;
+    const folioFactura = Math.floor(12000 + Math.random() * 80000);
+
+    // 1. Aumentar stock físico del SKU en la bodega destino
+    const updatedItems = clientItems.map(item => {
+      if (item.id !== req.itemId && item.sku !== req.sku) return item;
+
+      const updatedWhStock = item.stockPorBodega.map(ws => {
+        if (ws.bodegaId === req.bodegaDestinoId) {
+          return { ...ws, stockFisico: ws.stockFisico + req.cantidadSugerida, stockDisponible: ws.stockDisponible + req.cantidadSugerida };
+        }
+        return ws;
+      });
+
+      const newGeneral = item.stockGeneral + req.cantidadSugerida;
+      return {
+        ...item,
+        stockGeneral: newGeneral,
+        stockDisponible: newGeneral - item.stockComprometido,
+        stockPorBodega: updatedWhStock,
+        estadoStock: calculateStockStatus(newGeneral, item.stockMinimo, item.stockCritico),
+      };
+    });
+    onUpdateInventoryItems(updatedItems);
+
+    // 2. Actualizar estado de requisición
+    const updatedReqs = clientRequisitions.map(r => r.id === req.id ? { ...r, estado: 'COMPRA_RECEPCIONADA' as any } : r);
+    onUpdateRequisitions(updatedReqs);
+
+    // 3. Generar Asiento Contable de Compra y Existencias
+    if (onAddAccountingEntry) {
+      const purchaseEntry: AccountingEntry = {
+        id: `entry-inv-purchase-${req.id}-${Date.now()}`,
+        fecha: today,
+        concepto: `Recepción Mercaderías OC ${req.ordenCompraFolio || ''} - Factura Compra DTE 33 Folio ${folioFactura} (${req.nombreItem})`,
+        documento: `Factura DTE 33 Folio ${folioFactura}`,
+        lineas: [
+          {
+            cuentaCodigo: '1.1.04.002',
+            cuentaNombre: `Existencias y Mercaderías (${req.nombreItem})`,
+            debe: neto,
+            haber: 0,
+            centroCosto: req.bodegaDestinoNombre || 'BODEGA_DESTINO',
+          },
+          {
+            cuentaCodigo: '1.1.05.001',
+            cuentaNombre: 'IVA Crédito Fiscal (Art. 23 DL 825)',
+            debe: iva,
+            haber: 0,
+          },
+          {
+            cuentaCodigo: '2.1.01.001',
+            cuentaNombre: `Proveedores Nacionales (${req.proveedorSugerido?.razonSocial || 'Proveedor de Insumos'})`,
+            debe: 0,
+            haber: total,
+            rutAuxiliar: req.proveedorSugerido?.rut,
+          },
+        ],
+        totalDebe: total,
+        totalHaber: total,
+        balanceado: true,
+        origen: 'INVENTARIO',
+        creadoEn: new Date().toISOString(),
+        supervisorSignature: 'AGENTE_WMS_RECEPCION',
+      };
+      onAddAccountingEntry(purchaseEntry);
+    }
+
+    showToast(`Compra recepcionada: +${req.cantidadSugerida} unidades ingresadas a ${req.bodegaDestinoNombre}. Stock y asiento contable de proveedores e IVA generados.`);
+  };
+
   // Receive Transfer in Destination Warehouse
   const handleReceiveTransfer = (transfer: WarehouseTransfer) => {
     const today = new Date().toISOString().split('T')[0];
@@ -647,6 +723,40 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
     };
 
     onUpdateInventoryItems([newItem, ...clientItems]);
+
+    // Generar Asiento Contable de Inventario Inicial si se incorporan unidades iniciales
+    if (stockInicial > 0 && newItem.costoUnitarioPMP > 0 && onAddAccountingEntry) {
+      const valorTotal = Math.round(stockInicial * newItem.costoUnitarioPMP);
+      const initialEntry: AccountingEntry = {
+        id: `entry-inv-init-${newItem.id}`,
+        fecha: new Date().toISOString().split('T')[0],
+        concepto: `Inventario Inicial: Alta SKU ${newItem.sku} - ${newItem.nombre} (${stockInicial} ${newItem.unidadMedida} en ${targetWh?.nombre || 'Bodega'})`,
+        documento: `Inventario Físico Inicial SKU ${newItem.sku}`,
+        lineas: [
+          {
+            cuentaCodigo: '1.1.04.002',
+            cuentaNombre: 'Existencias y Mercaderías en Bodega',
+            debe: valorTotal,
+            haber: 0,
+            centroCosto: targetWh?.nombre || 'BODEGA_CENTRAL',
+          },
+          {
+            cuentaCodigo: '3.1.01.001',
+            cuentaNombre: 'Capital Pagado / Existencias Iniciales',
+            debe: 0,
+            haber: valorTotal,
+          },
+        ],
+        totalDebe: valorTotal,
+        totalHaber: valorTotal,
+        balanceado: true,
+        origen: 'INVENTARIO',
+        creadoEn: new Date().toISOString(),
+        supervisorSignature: 'AGENTE_WMS_ALTA',
+      };
+      onAddAccountingEntry(initialEntry);
+    }
+
     setIsNewItemModalOpen(false);
     showToast(`Artículo SKU ${newItem.sku} incorporado exitosamente al catálogo.`);
   };
@@ -1851,6 +1961,22 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>{isTraspaso ? 'Aprobar Traspaso DTE 52' : 'Emitir Orden de Compra'}</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {req.estado === 'ORDEN_COMPRA_GENERADA' && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                      <span className="text-[11px] text-amber-700 font-semibold">
+                        OC N° {req.ordenCompraFolio} en curso. Insumo pendiente de recepción física en {req.bodegaDestinoNombre}.
+                      </span>
+                      <button
+                        onClick={() => handleReceivePurchaseRequisition(req)}
+                        className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs transition-colors shadow-sm cursor-pointer shrink-0"
+                        title="Recepcionar mercaderías en bodega, aumentar stock y generar asiento de compra DTE 33 a proveedores e IVA"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Recepcionar Compra (Factura DTE 33)</span>
                       </button>
                     </div>
                   )}

@@ -3,6 +3,9 @@ import type { AccountingEntry } from '../types';
 import {
   fetchAccountingEntriesApi,
   commitAccountingEntryApi,
+  updateAccountingEntryApi,
+  deleteAccountingEntryApi,
+  reverseAccountingEntryApi,
   transformDomainEntryToCommitPayload,
   transformApiResponseToDomainEntry,
   type CommitEntryPayload,
@@ -30,6 +33,12 @@ export interface UseAccountingLedgerResult {
   ) => Promise<CommitEntryApiResponse>;
   /** Wrapper de conveniencia compatible con (entry: AccountingEntry) => void */
   addEntry: (entry: AccountingEntry) => Promise<AccountingEntry>;
+  /** Actualiza un asiento existente (referencia, concepto, líneas) */
+  updateEntry: (id: string, payload: any) => Promise<any>;
+  /** Elimina un asiento contable con registro de auditoría */
+  deleteEntry: (id: string, motivo?: string) => Promise<void>;
+  /** Genera un contra-asiento de anulación / reversión */
+  reverseEntry: (id: string, motivo?: string, fecha?: string) => Promise<any>;
   /** Último comprobante autorizado por el Agente Supervisor */
   lastCommittedEntry: CommitEntryApiResponse['data'] | null;
 }
@@ -192,6 +201,107 @@ export function useAccountingLedger(
     [commitEntry]
   );
 
+  /**
+   * Modifica un asiento contable existente y actualiza el estado local y backend
+   */
+  const updateEntry = useCallback(
+    async (id: string, payload: any): Promise<any> => {
+      setIsCommitting(true);
+      setError(null);
+      try {
+        const response = await updateAccountingEntryApi(id, payload);
+        // Actualizar asiento en estado local
+        setEntries((prev) =>
+          prev.map((item) => {
+            if (item.id !== id) return item;
+            const updatedDoc = payload.documentoRef !== undefined ? payload.documentoRef : item.documento;
+            const updatedConcepto = payload.concepto !== undefined ? payload.concepto : item.concepto;
+            const updatedFecha = payload.fecha !== undefined ? payload.fecha : item.fecha;
+            let updatedLines = item.lineas;
+            let totalDebe = item.totalDebe;
+            let totalHaber = item.totalHaber;
+
+            if (payload.lineas && Array.isArray(payload.lineas)) {
+              updatedLines = payload.lineas.map((l: any) => ({
+                cuentaCodigo: l.codigoCuenta || l.cuentaCodigo,
+                cuentaNombre: l.nombreCuenta || l.cuentaNombre,
+                debe: Number(l.debe) || 0,
+                haber: Number(l.haber) || 0,
+                rutAuxiliar: l.rutAuxiliar || undefined,
+                centroCosto: l.centroCosto || undefined,
+                documentoRef: l.documentoRef || updatedDoc,
+                tipoDocumentoRef: l.tipoDocumentoRef || undefined,
+                folioDocumentoRef: l.folioDocumentoRef || undefined,
+                montoDocumentoRef: l.montoDocumentoRef != null ? Number(l.montoDocumentoRef) : undefined,
+              }));
+              totalDebe = updatedLines.reduce((acc, curr) => acc + curr.debe, 0);
+              totalHaber = updatedLines.reduce((acc, curr) => acc + curr.haber, 0);
+            }
+
+            return {
+              ...item,
+              fecha: updatedFecha,
+              concepto: updatedConcepto,
+              documento: updatedDoc,
+              lineas: updatedLines,
+              totalDebe,
+              totalHaber,
+              balanceado: Math.abs(totalDebe - totalHaber) < 0.01,
+            };
+          })
+        );
+        return response;
+      } catch (err: any) {
+        setError(err?.message || 'Error al actualizar el asiento contable');
+        throw err;
+      } finally {
+        setIsCommitting(false);
+      }
+    },
+    []
+  );
+
+  /**
+   * Elimina un asiento contable del Libro Diario
+   */
+  const deleteEntry = useCallback(
+    async (id: string, motivo?: string): Promise<void> => {
+      setIsCommitting(true);
+      setError(null);
+      try {
+        await deleteAccountingEntryApi(id, motivo);
+        setEntries((prev) => prev.filter((item) => item.id !== id));
+      } catch (err: any) {
+        setError(err?.message || 'Error al eliminar el asiento contable');
+        throw err;
+      } finally {
+        setIsCommitting(false);
+      }
+    },
+    []
+  );
+
+  /**
+   * Genera un contra-asiento de anulación / reversión
+   */
+  const reverseEntry = useCallback(
+    async (id: string, motivo?: string, fecha?: string): Promise<any> => {
+      setIsCommitting(true);
+      setError(null);
+      try {
+        const response = await reverseAccountingEntryApi(id, motivo, fecha);
+        await loadEntries(false);
+        return response;
+      } catch (err: any) {
+        setError(err?.message || 'Error al revertir el asiento contable');
+        throw err;
+      } finally {
+        setIsCommitting(false);
+      }
+    },
+    [loadEntries]
+  );
+
   return {
     entries,
     isLoading,
@@ -201,6 +311,9 @@ export function useAccountingLedger(
     refetch,
     commitEntry,
     addEntry,
+    updateEntry,
+    deleteEntry,
+    reverseEntry,
     lastCommittedEntry,
   };
 }

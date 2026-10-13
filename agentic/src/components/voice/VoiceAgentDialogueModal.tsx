@@ -93,7 +93,17 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const latestTranscribedTextRef = useRef<string>('');
+  const isListeningRef = useRef<boolean>(false);
   const selectedPersona = personas.find(p => p.id === selectedPersonaId) || personas[0];
+
+  const clearSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
 
   // Auto-scroll al último mensaje
   useEffect(() => {
@@ -116,9 +126,11 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
     if (!isOpen || !selectedPersona) return;
 
     // Detener cualquier audio previo
+    clearSilenceTimer();
     voiceAssistantEngine.stopSpeaking();
     voiceAssistantEngine.stopListening();
     setIsListening(false);
+    isListeningRef.current = false;
 
     // Mensaje de apertura de la persona
     const initialGreeting = selectedPersona.saludoPersonal;
@@ -143,13 +155,23 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
     }
   }, [selectedPersonaId, isOpen]);
 
-  // Cleanup al cerrar el modal
+  // Cleanup al cerrar el modal o desmontar componente
+  useEffect(() => {
+    return () => {
+      clearSilenceTimer();
+      voiceAssistantEngine.stopSpeaking();
+      voiceAssistantEngine.stopListening();
+    };
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
+      clearSilenceTimer();
       voiceAssistantEngine.stopSpeaking();
       voiceAssistantEngine.stopListening();
       setIsSpeaking(false);
       setIsListening(false);
+      isListeningRef.current = false;
     }
   }, [isOpen]);
 
@@ -160,9 +182,12 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
     const trimmed = inputQuery.trim();
     if (!trimmed || isProcessing) return;
 
+    clearSilenceTimer();
     voiceAssistantEngine.stopListening();
     setIsListening(false);
+    isListeningRef.current = false;
     setTranscribedText('');
+    latestTranscribedTextRef.current = '';
     setTextInput('');
 
     // Agregar mensaje del usuario
@@ -183,7 +208,7 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
       const bankNoveltiesPending = bankMovements.filter(m => m.estado !== 'CONCILIADO').length;
       const f29Iva = f29 ? (f29.debitoFiscalIva - f29.creditoFiscalIva) : 0;
 
-      // Procesar intención del diálogo
+      // Procesar intención del diálogo con memoria multi-turno completa
       const result: AgentDialogueTurnResult = await voiceAssistantEngine.processDialogue(
         trimmed,
         selectedPersona,
@@ -199,7 +224,8 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
           employeesCount,
           inventoryItemsCount: inventoryCount,
           pendingExpensesCount: expensesCount,
-        }
+        },
+        [...messages, userMsg]
       );
 
       // Ejecutar acción real en el ERP si aplica
@@ -262,33 +288,68 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
     }
   };
 
-  // Activar o desactivar escucha por micrófono
+  // Activar o desactivar escucha por micrófono con debounce de silencio de 2.8s
   const handleToggleListening = () => {
     if (isListening) {
+      clearSilenceTimer();
       voiceAssistantEngine.stopListening();
       setIsListening(false);
-      if (transcribedText.trim()) {
-        handleUserSubmit(transcribedText);
+      isListeningRef.current = false;
+      const textToSend = latestTranscribedTextRef.current.trim() || transcribedText.trim();
+      if (textToSend) {
+        handleUserSubmit(textToSend);
       }
     } else {
+      clearSilenceTimer();
       voiceAssistantEngine.stopSpeaking();
       setIsSpeaking(false);
       setTranscribedText('');
+      latestTranscribedTextRef.current = '';
       setIsListening(true);
+      isListeningRef.current = true;
 
       voiceAssistantEngine.startListening({
-        onResult: (text, isFinal) => {
+        onResult: (text, _isFinal) => {
+          latestTranscribedTextRef.current = text;
           setTranscribedText(text);
-          if (isFinal) {
-            handleUserSubmit(text);
+
+          clearSilenceTimer();
+
+          // Solo programar auto-envío si hay texto detectado
+          if (text.trim().length > 0) {
+            // Pausa de 2.8 segundos de silencio antes de auto-enviar
+            // Esto permite al usuario pensar 1-2 segundos sin ser interrumpido
+            silenceTimerRef.current = setTimeout(() => {
+              const textToSubmit = latestTranscribedTextRef.current.trim();
+              if (textToSubmit && isListeningRef.current) {
+                clearSilenceTimer();
+                voiceAssistantEngine.stopListening();
+                setIsListening(false);
+                isListeningRef.current = false;
+                handleUserSubmit(textToSubmit);
+              }
+            }, 2800);
           }
         },
         onEnd: () => {
-          setIsListening(false);
+          // Si el micro se desconectó y hay texto pendiente
+          if (isListeningRef.current && latestTranscribedTextRef.current.trim()) {
+            const textToSubmit = latestTranscribedTextRef.current.trim();
+            clearSilenceTimer();
+            setIsListening(false);
+            isListeningRef.current = false;
+            handleUserSubmit(textToSubmit);
+          } else {
+            setIsListening(false);
+            isListeningRef.current = false;
+            clearSilenceTimer();
+          }
         },
         onError: (err) => {
           console.warn('[VoiceAgentDialogueModal] Micrófono error:', err);
           setIsListening(false);
+          isListeningRef.current = false;
+          clearSilenceTimer();
         },
       });
     }
@@ -407,7 +468,7 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
             ) : isListening ? (
               <div className="flex items-center gap-2 text-rose-400 font-bold animate-pulse">
                 <Mic className="w-4 h-4 text-rose-500" />
-                <span>Escuchándote... Habla ahora claramente</span>
+                <span>Escuchándote... (pausa de 2.8s para enviar o pulsa "Enviar ahora")</span>
               </div>
             ) : isProcessing ? (
               <div className="flex items-center gap-2 text-amber-400 font-bold">
@@ -483,14 +544,32 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
             </div>
           ))}
 
-          {/* Transcripción en vivo del micrófono */}
+          {/* Transcripción en vivo del micrófono con botón de envío instantáneo */}
           {transcribedText && (
-            <div className="flex gap-3 max-w-[80%] ml-auto flex-row-reverse animate-in fade-in">
+            <div className="flex gap-3 max-w-[85%] ml-auto flex-row-reverse animate-in fade-in">
               <div className="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center text-xs font-bold shrink-0 animate-pulse">
                 <Mic className="w-4 h-4" />
               </div>
-              <div className="bg-rose-500/20 border border-rose-500/40 rounded-2xl p-3 text-rose-200 text-xs font-mono italic">
-                "{transcribedText}..."
+              <div className="bg-rose-500/20 border border-rose-500/40 rounded-2xl p-3.5 text-rose-200 text-xs font-mono space-y-2">
+                <p className="italic font-sans text-sm">"{transcribedText}..."</p>
+                <div className="flex items-center justify-between gap-3 pt-1 border-t border-rose-500/30 text-[11px]">
+                  <span className="text-rose-300/80">Pausa para enviar o pulsa:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearSilenceTimer();
+                      voiceAssistantEngine.stopListening();
+                      setIsListening(false);
+                      isListeningRef.current = false;
+                      const textToSend = latestTranscribedTextRef.current.trim() || transcribedText.trim();
+                      if (textToSend) handleUserSubmit(textToSend);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold transition-colors cursor-pointer flex items-center gap-1 shadow-sm"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>Enviar ahora</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

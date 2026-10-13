@@ -36,8 +36,10 @@ import {
   downloadFile,
   generateExpenseAccountingEntry,
   auditExpenseReport,
+  ExpenseAccountingConfig,
 } from '../../utils/expenseManagementAgent';
 import { expenseApiService } from '../../services/expenseApiService';
+import { CentralizeExpenseModal } from './CentralizeExpenseModal';
 
 interface ExpenseReportDetailModalProps {
   isOpen: boolean;
@@ -66,6 +68,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
   const [rejectFeedback, setRejectFeedback] = useState('');
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [accountingSuccessToast, setAccountingSuccessToast] = useState(false);
+  const [showCentralizeModal, setShowCentralizeModal] = useState(false);
 
   if (!isOpen) return null;
 
@@ -89,26 +92,30 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
     window.print();
   };
 
-  // Contabilizar en Libro Diario
-  const handleContabilizarDiario = async () => {
-    // 1. Contabilización formal en backend (MySQL 8.0 / Ledger ACID)
+  // Abrir modal de configuración y previsualización contable
+  const handleContabilizarDiario = () => {
+    setShowCentralizeModal(true);
+  };
+
+  // Confirmar contabilización formal en Libro Diario con configuración elegida
+  const handleConfirmCentralize = async (config: ExpenseAccountingConfig) => {
     try {
-      await expenseApiService.contabilizarReport(report.id);
+      await expenseApiService.contabilizarReport(report.id, config);
     } catch (e) {
       console.warn('[Modal] Aviso al llamar API de contabilización:', e);
     }
 
-    // 2. Notificar al estado central de la aplicación si se proporcionó callback
     if (onCommitAccountingEntry) {
       const entry = generateExpenseAccountingEntry(
         { ...report, montoTotalRendidoClp: totalRendido, saldoReembolsarClp: saldoReembolsar, saldoReintegrarClp: saldoReintegrar },
         comprobantes,
-        chartOfAccounts
+        chartOfAccounts,
+        config
       );
       onCommitAccountingEntry(entry);
     }
 
-    onUpdateReportStatus(report.id, 'CONTABILIZADA_PAGADA', `Contabilizado automáticamente en Libro Diario con comprobante RDG ${report.folio}`);
+    onUpdateReportStatus(report.id, 'CONTABILIZADA_PAGADA', `Contabilizado formalmente en Libro Diario con comprobante RDG ${report.folio}`);
     setAccountingSuccessToast(true);
     setTimeout(() => setAccountingSuccessToast(false), 3000);
   };
@@ -498,14 +505,14 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                     </>
                   )}
 
-                  {report.estado === 'APROBADA' && (
+                  {report.estado !== 'CONTABILIZADA_PAGADA' && report.estado !== 'OBJETADA_RECHAZADA' && (
                     <button
                       type="button"
                       onClick={handleContabilizarDiario}
                       className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-800 hover:from-indigo-500 hover:to-indigo-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <Scale className="w-4 h-4 text-indigo-200" />
-                      Centralizar en Libro Diario & Pagar Reembolso
+                      {report.estado === 'APROBADA' ? 'Centralizar en Libro Diario & Pagar Reembolso' : 'Aprobar & Centralizar en Libro Diario'}
                     </button>
                   )}
 
@@ -595,6 +602,18 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
               </div>
             </div>
           </div>
+        )}
+
+        {/* Modal de Configuración y Previsualización Contable */}
+        {showCentralizeModal && (
+          <CentralizeExpenseModal
+            isOpen={showCentralizeModal}
+            onClose={() => setShowCentralizeModal(false)}
+            report={report}
+            comprobantes={comprobantes}
+            chartOfAccounts={chartOfAccounts}
+            onConfirm={handleConfirmCentralize}
+          />
         )}
 
       </div>

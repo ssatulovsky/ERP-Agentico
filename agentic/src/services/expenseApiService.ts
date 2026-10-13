@@ -199,14 +199,33 @@ export const expenseApiService = {
    */
   async contabilizarReport(
     reportId: string,
-    periodo?: string,
-    fechaContabilizacion?: string
+    optionsOrPeriod?: {
+      periodo?: string;
+      fechaContabilizacion?: string;
+      cuentaAnticipoCodigo?: string;
+      cuentaAnticipoNombre?: string;
+      cuentaReembolsoCodigo?: string;
+      cuentaReembolsoNombre?: string;
+      cuentaReintegroCodigo?: string;
+      cuentaReintegroNombre?: string;
+    } | string,
+    fechaContabilizacionLegacy?: string
   ): Promise<{ success: boolean; asientoContableId?: string; error?: string }> {
     try {
+      let bodyData: any = {};
+      if (typeof optionsOrPeriod === 'object' && optionsOrPeriod !== null) {
+        bodyData = optionsOrPeriod;
+      } else if (typeof optionsOrPeriod === 'string') {
+        bodyData = {
+          periodo: optionsOrPeriod,
+          fechaContabilizacion: fechaContabilizacionLegacy,
+        };
+      }
+
       const res = await fetch(`/api/expenses/reports/${encodeURIComponent(reportId)}/contabilizar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ periodo, fechaContabilizacion }),
+        body: JSON.stringify(bodyData),
       });
       const json = await res.json();
       return json;

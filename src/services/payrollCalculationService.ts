@@ -167,15 +167,7 @@ export class PayrollCalculationService {
   public static async getOrSeedEmployees(empresaId: string): Promise<EmployeeRecord[]> {
     const cleanEmpresaId = empresaId.replace(/\./g, '').trim().toUpperCase();
 
-    // InnovAgile y empresas sin nómina precargada inician estrictamente limpias sin empleados mock
-    const isCleanCompany =
-      cleanEmpresaId.includes('77798901') ||
-      cleanEmpresaId.includes('76892410') ||
-      cleanEmpresaId === 'CLIENT-INNOVAGILE';
-
-    if (isCleanCompany) {
-      return [];
-    }
+    const isDemoCompany = cleanEmpresaId === 'DEMO' || cleanEmpresaId === 'CLIENT-RETAIL-01';
 
     const db = getMysqlDb();
 
@@ -189,52 +181,61 @@ export class PayrollCalculationService {
         return records;
       }
 
-      // Sembrar colaboradores iniciales solo para empresas demo
-      console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa demo: ${cleanEmpresaId}`);
-      for (const emp of SEED_EMPLOYEES_DATA) {
-        const id = crypto.randomUUID();
-        await db.insert(employees).values({
-          id,
-          empresaId: cleanEmpresaId,
-          ...emp,
-        }).onDuplicateKeyUpdate({
-          set: {
-            sueldoBase: emp.sueldoBase,
-            activo: true,
-          }
-        });
+      // Sembrar colaboradores iniciales ÚNICAMENTE si es la empresa demo configurada
+      if (isDemoCompany) {
+        console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa demo: ${cleanEmpresaId}`);
+        for (const emp of SEED_EMPLOYEES_DATA) {
+          const id = crypto.randomUUID();
+          await db.insert(employees).values({
+            id,
+            empresaId: cleanEmpresaId,
+            ...emp,
+          }).onDuplicateKeyUpdate({
+            set: {
+              sueldoBase: emp.sueldoBase,
+              activo: true,
+            }
+          });
+        }
+
+        return await db
+          .select()
+          .from(employees)
+          .where(and(eq(employees.empresaId, cleanEmpresaId), eq(employees.activo, true)));
       }
 
-      return await db
-        .select()
-        .from(employees)
-        .where(and(eq(employees.empresaId, cleanEmpresaId), eq(employees.activo, true)));
+      // Para cualquier cliente real que no tenga colaboradores aún, retornar lista vacía (cero datos mock)
+      return [];
     }
 
-    // Si está en modo contingencia y no es InnovAgile
-    return SEED_EMPLOYEES_DATA.map((e, idx) => ({
-      id: `emp-local-${idx + 1}`,
-      empresaId: cleanEmpresaId,
-      rut: e.rut,
-      nombreCompleto: e.nombreCompleto,
-      cargo: e.cargo,
-      departamento: e.departamento,
-      fechaIngreso: e.fechaIngreso,
-      tipoContrato: e.tipoContrato,
-      sueldoBase: e.sueldoBase,
-      gratificacionModalidad: e.gratificacionModalidad,
-      horasExtrasCantidad: e.horasExtrasCantidad,
-      comisionesBonosImponibles: e.comisionesBonosImponibles,
-      asignacionColacion: e.asignacionColacion,
-      asignacionMovilizacion: e.asignacionMovilizacion,
-      viaticosAsignacionFamiliar: e.viaticosAsignacionFamiliar,
-      afpNombre: e.afpNombre,
-      saludTipo: e.saludTipo,
-      saludPlanUf: e.saludPlanUf,
-      otrosDescuentos: e.otrosDescuentos,
-      activo: e.activo,
-      createdAt: new Date(),
-    }));
+    // Si está en modo contingencia en memoria: retornar empleados solo si es empresa demo
+    if (isDemoCompany) {
+      return SEED_EMPLOYEES_DATA.map((e, idx) => ({
+        id: `emp-local-${idx + 1}`,
+        empresaId: cleanEmpresaId,
+        rut: e.rut,
+        nombreCompleto: e.nombreCompleto,
+        cargo: e.cargo,
+        departamento: e.departamento,
+        fechaIngreso: e.fechaIngreso,
+        tipoContrato: e.tipoContrato,
+        sueldoBase: e.sueldoBase,
+        gratificacionModalidad: e.gratificacionModalidad,
+        horasExtrasCantidad: e.horasExtrasCantidad,
+        comisionesBonosImponibles: e.comisionesBonosImponibles,
+        asignacionColacion: e.asignacionColacion,
+        asignacionMovilizacion: e.asignacionMovilizacion,
+        viaticosAsignacionFamiliar: e.viaticosAsignacionFamiliar,
+        afpNombre: e.afpNombre,
+        saludTipo: e.saludTipo,
+        saludPlanUf: e.saludPlanUf,
+        seguroCesantiaActivo: e.seguroCesantiaActivo,
+        activo: e.activo,
+        createdAt: new Date(),
+      }));
+    }
+
+    return [];
   }
 
   /**

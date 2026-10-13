@@ -61,6 +61,7 @@ interface ProductionCostingAgentModuleProps {
   onApproveBudgetAndGenerateOp?: (budget: ProductionBudget) => void;
   inventoryItems?: InventoryItem[];
   warehouses?: Warehouse[];
+  onUpdateInventoryItems?: (items: InventoryItem[]) => void;
 }
 
 export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModuleProps> = ({
@@ -78,6 +79,7 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
   onApproveBudgetAndGenerateOp,
   inventoryItems = [],
   warehouses = [],
+  onUpdateInventoryItems,
 }) => {
   const safeOrders = useMemo(() => Array.isArray(productionOrders) ? productionOrders : [], [productionOrders]);
   const safeCif = useMemo(() => Array.isArray(cifPoolItems) ? cifPoolItems : [], [cifPoolItems]);
@@ -368,6 +370,92 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     );
   };
 
+  // Sincronizar producto terminado con el catálogo de inventario y stock físico
+  const syncFinishedProductToInventory = (op: ProductionOrder, cantProducida: number, costUnit: number) => {
+    if (!onUpdateInventoryItems || !Array.isArray(inventoryItems)) return;
+
+    const existingIndex = inventoryItems.findIndex(
+      i => i.nombre.toLowerCase().trim() === op.productoNombre.toLowerCase().trim() ||
+           (op.productoCodigo && i.sku.toLowerCase() === op.productoCodigo.toLowerCase())
+    );
+
+    if (existingIndex >= 0) {
+      const updated = inventoryItems.map((item, idx) => {
+        if (idx !== existingIndex) return item;
+        const newGeneral = item.stockGeneral + cantProducida;
+        const updatedWh = item.stockPorBodega.map(wh => {
+          if (wh.bodegaNombre === op.bodegaDestinoNombre || (!op.bodegaDestinoNombre && idx === 0)) {
+            return { ...wh, stockFisico: wh.stockFisico + cantProducida, stockDisponible: wh.stockDisponible + cantProducida };
+          }
+          return wh;
+        });
+        return {
+          ...item,
+          stockGeneral: newGeneral,
+          stockDisponible: newGeneral - item.stockComprometido,
+          costoUnitarioPMP: costUnit > 0 ? costUnit : item.costoUnitarioPMP,
+          stockPorBodega: updatedWh,
+        };
+      });
+      onUpdateInventoryItems(updated);
+    } else {
+      const targetWh = warehouses.find(w => w.nombre === op.bodegaDestinoNombre) || warehouses[0];
+      const newItem: InventoryItem = {
+        id: `item-pt-${Date.now()}`,
+        empresaId: currentClient.id,
+        sku: op.productoCodigo || `PT-${op.folioOP.replace(/[^0-9]/g, '')}`,
+        nombre: op.productoNombre,
+        categoria: 'PRODUCTO_TERMINADO',
+        unidadMedida: op.unidadMedida || 'UN',
+        costoUnitarioPMP: costUnit,
+        ultimoPrecioCompra: costUnit,
+        precioVentaSugerido: Math.round(costUnit * 1.35),
+        stockGeneral: cantProducida,
+        stockEnTransito: 0,
+        stockComprometido: 0,
+        stockDisponible: cantProducida,
+        stockMinimo: 10,
+        stockCritico: 5,
+        loteOptimoReposicion: 50,
+        consumoMensualPromedio: 15,
+        diasCoberturaEstimados: 30,
+        estadoStock: 'OPTIMO',
+        stockPorBodega: warehouses.map(w => ({
+          bodegaId: w.id,
+          bodegaNombre: w.nombre,
+          stockFisico: (targetWh && w.id === targetWh.id) ? cantProducida : 0,
+          stockComprometido: 0,
+          stockDisponible: (targetWh && w.id === targetWh.id) ? cantProducida : 0,
+        })),
+      };
+      onUpdateInventoryItems([newItem, ...inventoryItems]);
+    }
+  };
+
+  // Rebajar producto terminado al imputar costo de ventas
+  const deductSoldProductFromInventory = (op: ProductionOrder, cantVendida: number) => {
+    if (!onUpdateInventoryItems || !Array.isArray(inventoryItems)) return;
+    const updated = inventoryItems.map(item => {
+      if (item.nombre.toLowerCase().trim() === op.productoNombre.toLowerCase().trim() ||
+          (op.productoCodigo && item.sku.toLowerCase() === op.productoCodigo.toLowerCase())) {
+        const newGeneral = Math.max(0, item.stockGeneral - cantVendida);
+        const updatedWh = item.stockPorBodega.map(wh => ({
+          ...wh,
+          stockFisico: Math.max(0, wh.stockFisico - cantVendida),
+          stockDisponible: Math.max(0, wh.stockDisponible - cantVendida),
+        }));
+        return {
+          ...item,
+          stockGeneral: newGeneral,
+          stockDisponible: Math.max(0, newGeneral - item.stockComprometido),
+          stockPorBodega: updatedWh,
+        };
+      }
+      return item;
+    });
+    onUpdateInventoryItems(updated);
+  };
+
   // Handler: Liquidar OP a Productos Terminados (Cierre)
   const handleLiquidateOpToPt = (op: ProductionOrder) => {
     const cantProducida = op.cantidadProducidaReal > 0 ? op.cantidadProducidaReal : op.cantidadObjetivo;
@@ -389,11 +477,12 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
 
     onAddAccountingEntry(liqEntry);
     onUpdateProductionOrder(updatedOp);
+    syncFinishedProductToInventory(updatedOp, cantProducida, costUnit);
 
     triggerSuccess(
       `Orden ${op.folioOP} liquidada a Productos Terminados (Costo total: ${formatCLP(
         op.costoTotalProduccion
-      )}). Asiento de traspaso WIP -> PT contabilizado.`
+      )}). Asiento WIP -> PT contabilizado y stock físico actualizado.`
     );
   };
 
@@ -422,10 +511,11 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
 
     onAddAccountingEntry(liqEntry);
     onUpdateProductionOrder(updatedOp);
+    syncFinishedProductToInventory(updatedOp, cantProducida, costUnit);
     setClosureModalOp(null);
 
     triggerSuccess(
-      `Orden ${op.folioOP} liquidada a Productos Terminados con éxito. Diagnóstico de Eficiencia: ${analysis.diagnosticoEficiencia}. Asiento WIP -> PT contabilizado.`
+      `Orden ${op.folioOP} liquidada a Productos Terminados con éxito. Diagnóstico de Eficiencia: ${analysis.diagnosticoEficiencia}. Asiento WIP -> PT contabilizado y stock físico ingresado.`
     );
   };
 
@@ -438,12 +528,13 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     const cantVendida = Number(cogsForm.cantidadVendida) || 1;
     const cogsEntry = createProductionCogsEntry(op, cantVendida, cogsForm.dteFolioFactura);
     onAddAccountingEntry(cogsEntry);
+    deductSoldProductFromInventory(op, cantVendida);
 
     setShowCogsModalForOp(null);
     triggerSuccess(
       `Costo de Ventas (CMV) por entrega de ${cantVendida} ${op.unidadMedida} de ${op.productoNombre} asentado en Libro Diario (${formatCLP(
         cogsEntry.totalDebe
-      )}).`
+      )}) y stock rebajado.`
     );
   };
 

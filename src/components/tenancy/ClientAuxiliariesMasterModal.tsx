@@ -38,24 +38,24 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // Form State matching Page 11
-  const [rutCompleto, setRutCompleto] = useState<string>('77.798.901-4');
-  const [codAuxiliar, setCodAuxiliar] = useState<string>('777989014');
-  const [razonSocial, setRazonSocial] = useState<string>('InnovAgile Group SpA');
-  const [nombreFantasia, setNombreFantasia] = useState<string>('InnovAgile');
-  const [giroComercial, setGiroComercial] = useState<string>('CONSULTORÍA DE INFORMÁTICA Y SOFTWARE');
+  // Form State
+  const [rutCompleto, setRutCompleto] = useState<string>('');
+  const [codAuxiliar, setCodAuxiliar] = useState<string>('');
+  const [razonSocial, setRazonSocial] = useState<string>('');
+  const [nombreFantasia, setNombreFantasia] = useState<string>('');
+  const [giroComercial, setGiroComercial] = useState<string>('');
   const [inactivo, setInactivo] = useState<boolean>(false);
 
-  const [telefonoPrincipal, setTelefonoPrincipal] = useState<string>('+56 9 8451 9022');
-  const [emailContacto, setEmailContacto] = useState<string>('finanzas@innovagile.cl');
-  const [nombreContacto, setNombreContacto] = useState<string>('Mauricio Larraín Echenique');
-  const [emailDte, setEmailDte] = useState<string>('dte@innovagile.cl');
+  const [telefonoPrincipal, setTelefonoPrincipal] = useState<string>('');
+  const [emailContacto, setEmailContacto] = useState<string>('');
+  const [nombreContacto, setNombreContacto] = useState<string>('');
+  const [emailDte, setEmailDte] = useState<string>('');
 
   // Ubicación
-  const [direccion, setDireccion] = useState<string>('Av. Andrés Bello 2457, Of. 1402');
-  const [region, setRegion] = useState<string>('Región Metropolitana de Santiago');
-  const [ciudad, setCiudad] = useState<string>('Santiago');
-  const [comuna, setComuna] = useState<string>('Providencia');
+  const [direccion, setDireccion] = useState<string>('');
+  const [region, setRegion] = useState<string>('');
+  const [ciudad, setCiudad] = useState<string>('');
+  const [comuna, setComuna] = useState<string>('');
 
   // Tipo
   const [tipoAuxiliar, setTipoAuxiliar] = useState<'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'EMPLEADO' | 'HONORARIO'>('CLIENTE');

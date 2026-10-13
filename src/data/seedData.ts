@@ -106,6 +106,13 @@ export const INITIAL_CLIENTS: ClientCompany[] = [
       alertaStockCritico: false,
       controlGuiasDespacho52: false,
     },
+    ejercicioActivo: 2026,
+    mesCierreEjercicio: 12,
+    diaCierreEjercicio: 31,
+    fechaInicioEjercicio: '2026-01-01',
+    fechaFinEjercicio: '2026-12-31',
+    periodosCerrados: ['2026-01', '2026-02'],
+    bloqueoPeriodoCerrado: true,
   },
   {
     id: 'client-retail-logistics',
@@ -242,6 +249,13 @@ export const INITIAL_COMPANY: CompanyProfile = {
   afpMutualTasa: INITIAL_CLIENTS[0].afpMutualTasa,
   bancoPrincipal: INITIAL_CLIENTS[0].bancoPrincipal,
   numeroCuenta: INITIAL_CLIENTS[0].numeroCuenta,
+  ejercicioActivo: 2026,
+  mesCierreEjercicio: 12,
+  diaCierreEjercicio: 31,
+  fechaInicioEjercicio: '2026-01-01',
+  fechaFinEjercicio: '2026-12-31',
+  periodosCerrados: ['2026-01', '2026-02'],
+  bloqueoPeriodoCerrado: true,
 };
 
 export const INITIAL_DTES: DteDocument[] = [];

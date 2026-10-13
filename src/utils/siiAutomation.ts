@@ -876,6 +876,8 @@ export function generateMonthlyCentralizationEntry(
     balanceado: finalTotalDebe === finalTotalHaber,
     origen: tipo === 'COMPRA' ? 'RCV_COMPRA' : 'RCV_VENTA',
     creadoEn: new Date().toISOString(),
+    empresaId: company?.rut,
+    periodo,
     lineas: lines
   };
 

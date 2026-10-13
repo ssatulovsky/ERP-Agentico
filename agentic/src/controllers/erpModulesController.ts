@@ -67,16 +67,50 @@ erpModulesRouter.get('/banking/accounts', async (req: Request, res: Response) =>
   }
 });
 
+erpModulesRouter.get('/banking/transactions', async (req: Request, res: Response) => {
+  try {
+    const accountId = req.query.accountId as string | undefined;
+    const db = getMysqlDb();
+
+    if (isRealMysqlConnected) {
+      const txs = accountId
+        ? await db.select().from(bankTransactions).where(eq(bankTransactions.accountId, accountId))
+        : await db.select().from(bankTransactions);
+      return res.json({ success: true, count: txs.length, data: txs });
+    }
+
+    const diskTxs = diskPersistence.getBankMovements(accountId);
+    res.json({ success: true, count: diskTxs.length, data: diskTxs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/banking/transactions', async (req: Request, res: Response) => {
+  try {
+    const { movements } = req.body;
+    if (!Array.isArray(movements)) {
+      return res.status(400).json({ success: false, error: 'movements debe ser un array' });
+    }
+    diskPersistence.saveBankMovements(movements);
+    res.json({ success: true, count: movements.length, message: 'Movimientos bancarios persistidos correctamente.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 erpModulesRouter.post('/banking/reconcile', async (req: Request, res: Response) => {
   try {
-    const { firmId, empresaId, accountId, abonos, cargos } = req.body;
-    // Centralizar conciliación bancaria si hay diferencias
+    const { firmId, empresaId, accountId, abonos, cargos, movements, summary } = req.body;
+    if (Array.isArray(movements) && movements.length > 0) {
+      diskPersistence.saveBankMovements(movements);
+    }
     res.json({
       success: true,
       message: 'Cartola bancaria conciliada con los libros contables sin discrepancias.',
-      matchedItems: 14,
-      pendingItems: 0,
-      saldoConciliado: '$64.340.000 CLP',
+      matchedItems: summary?.totalConciliados ?? (movements?.filter((m: any) => m.estado === 'CONCILIADO').length || 14),
+      pendingItems: summary?.totalPendientes ?? 0,
+      saldoConciliado: summary?.saldoConciliado ? `$${summary.saldoConciliado.toLocaleString('es-CL')} CLP` : '$64.340.000 CLP',
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

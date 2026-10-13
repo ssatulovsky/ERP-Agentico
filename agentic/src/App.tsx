@@ -222,7 +222,9 @@ export default function App() {
     return loadClientState<CashAccountConfig[]>(activeClientId, 'cashAccounts', INITIAL_CASH_ACCOUNTS);
   });
   const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(() => {
-    return loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+    const raw = loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+    // Sanear y depurar registros espurios o contrapartidas ficticias inyectadas previamente en la cartola (id: bmov-...)
+    return (raw || []).filter(m => !m.id.startsWith('bmov-'));
   });
 
   // Treasury, Cheques, Debt & Provisions States
@@ -415,7 +417,7 @@ export default function App() {
     setPayrolls(loadedPayrolls);
     setMovements(loadedMovements);
     setBankAccounts(loadedBanks);
-    setBankMovements(loadedBankMovs);
+    setBankMovements((loadedBankMovs || []).filter(m => !m.id.startsWith('bmov-')));
     setChequesCartera(loadedChequesCart);
     setChequesEmitidos(loadedChequesEmit);
     setDeudasFinancieras(loadedDeudas);
@@ -734,6 +736,9 @@ export default function App() {
     error: ledgerError,
     commitEntry,
     addEntry,
+    updateEntry,
+    deleteEntry,
+    reverseEntry,
     refetch: refetchLedger,
   } = useAccountingLedger(company.rut);
 
@@ -820,83 +825,11 @@ export default function App() {
     }));
   };
 
-  // Sincronización Automática en Tiempo Real: Libro Diario <-> Conciliación Bancaria y Tesorería (Partida Doble)
-  const syncBankMovementsFromEntry = (entry: AccountingEntry) => {
-    if (!entry.lineas || entry.lineas.length === 0) return;
-
-    const bankLines = entry.lineas.filter(l => {
-      const cod = (l.cuentaCodigo || '').trim();
-      const nom = (l.cuentaNombre || '').toLowerCase();
-      return (
-        cod.startsWith('1.1.01') ||
-        cod.startsWith('1.1.02') ||
-        nom.includes('banco') ||
-        nom.includes('cta cte') ||
-        nom.includes('cuenta corriente')
-      );
-    });
-
-    if (bankLines.length === 0) return;
-
-    const newBankMovs: BankStatementMovement[] = [];
-    let netBankDelta = 0;
-
-    bankLines.forEach((bLine, idx) => {
-      const cargo = Number(bLine.haber || 0);
-      const abono = Number(bLine.debe || 0);
-      if (cargo === 0 && abono === 0) return;
-
-      const targetAcc = bankAccounts.find(a =>
-        bLine.cuentaNombre.toLowerCase().includes(a.banco.toLowerCase()) ||
-        bLine.cuentaNombre.toLowerCase().includes(a.bancoCodigo.toLowerCase())
-      ) || bankAccounts[0];
-
-      const movId = `bmov-${entry.id}-${idx}`;
-      const newMov: BankStatementMovement = {
-        id: movId,
-        cuentaId: targetAcc?.id || 'bank-acc-1',
-        fecha: entry.fecha || new Date().toISOString().substring(0, 10),
-        glosaBancaria: `${entry.concepto} (${bLine.cuentaNombre})`,
-        numeroReferencia: entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
-        cargo,
-        abono,
-        saldo: (targetAcc?.saldoEnLinea || 44382013) + abono - cargo,
-        montoNeto: abono - cargo,
-        estado: 'CONCILIADO',
-        matchCerteza: 100,
-        asientoGeneradoId: entry.id,
-        documentoRef: entry.documento,
-      };
-
-      newBankMovs.push(newMov);
-      netBankDelta += (abono - cargo);
-    });
-
-    if (newBankMovs.length > 0) {
-      setBankMovements(prev => {
-        const existingIds = new Set(newBankMovs.map(m => m.id));
-        const filtered = prev.filter(m => !existingIds.has(m.id) && m.asientoGeneradoId !== entry.id);
-        return [...newBankMovs, ...filtered];
-      });
-
-      if (netBankDelta !== 0) {
-        setBankAccounts(prev => prev.map((acc, i) => {
-          if (i === 0) {
-            return {
-              ...acc,
-              saldoEnLinea: acc.saldoEnLinea + netBankDelta,
-            };
-          }
-          return acc;
-        }));
-      }
-    }
-  };
-
   const handleAddEntry = async (entry: AccountingEntry) => {
     try {
       const result = await addEntry(entry);
-      syncBankMovementsFromEntry(entry);
+      // Nota: Los asientos contables pertenecen al Libro Diario/Mayor y se contrastan como Partidas en Tránsito
+      // en la Conciliación Bancaria hasta ser conciliados con la cartola bancaria oficial. No alteran la cartola bancaria externa.
       if (entry.origen === 'RENDICION_GASTOS' || entry.documento?.includes('RDG') || entry.concepto?.toLowerCase().includes('rendici')) {
         expenseApiService.getExpenseReports(company.rut).then(data => {
           if (Array.isArray(data)) setExpenseReports(data);
@@ -914,9 +847,6 @@ export default function App() {
     auditContextOverrides?: any
   ) => {
     const result = await commitEntry(payloadOrEntry, auditContextOverrides);
-    if (payloadOrEntry && 'lineas' in payloadOrEntry) {
-      syncBankMovementsFromEntry(payloadOrEntry as AccountingEntry);
-    }
     expenseApiService.getExpenseReports(company.rut).then(data => {
       if (Array.isArray(data)) setExpenseReports(data);
     }).catch(() => {});
@@ -1592,6 +1522,9 @@ export default function App() {
               entries={entries}
               onAddEntry={handleAddEntry}
               commitEntry={handleCommitEntry}
+              onUpdateEntry={updateEntry}
+              onDeleteEntry={deleteEntry}
+              onReverseEntry={reverseEntry}
               isLedgerLoading={isLedgerLoading}
               isLedgerCommitting={isLedgerCommitting}
               refetchLedger={refetchLedger}

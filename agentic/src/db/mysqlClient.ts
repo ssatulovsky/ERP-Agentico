@@ -701,20 +701,41 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
       await initializeMysqlDatabase();
     }
 
-    // Auto-verificación preventiva de compatibilidad con Agente SII (dtes_rcv.periodo) y auditoría agéntica (agent_audit_logs.accion, firm_id)
+    // Auto-verificación preventiva de compatibilidad con Agente SII (dtes_rcv.periodo), auditoría agéntica, auxiliares, firm_id y multimoneda
     try {
       const [colRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `dtes_rcv` LIKE 'periodo';");
       const [auditColRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `agent_audit_logs` LIKE 'accion';");
       const [auditFirmRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `agent_audit_logs` LIKE 'firm_id';");
+      const [entryFirmRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entries` LIKE 'firm_id';");
+      const [entriesDocRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entries` LIKE 'documento_referencia';");
+      const [linesNumRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'linea_numero';");
+      const [linesMontoRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'monto_documento_ref';");
+      const [linesOpRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'documento_operacion';");
       if (
         !colRows || colRows.length === 0 ||
         !auditColRows || auditColRows.length === 0 ||
-        !auditFirmRows || auditFirmRows.length === 0
+        !auditFirmRows || auditFirmRows.length === 0 ||
+        !entryFirmRows || entryFirmRows.length === 0 ||
+        !entriesDocRows || entriesDocRows.length === 0 ||
+        !linesNumRows || linesNumRows.length === 0 ||
+        !linesMontoRows || linesMontoRows.length === 0 ||
+        !linesOpRows || linesOpRows.length === 0
       ) {
-        console.log('[MySQL 8.0] Discrepancia de esquemas detectada (dtes_rcv / agent_audit_logs). Ejecutando actualización incremental de esquemas...');
+        console.log('[MySQL 8.0] Discrepancia de esquemas detectada (faltan columnas de comprobantes, firm_id, auxiliares o multimoneda). Ejecutando actualización incremental de esquemas...');
         const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
         await updateMysqlDatabase();
       }
+
+      // Asegurar liberación de índices únicos restrictivos en accounting_entries
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_origen_doc`;");
+      } catch {}
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_doc`;");
+      } catch {}
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` ADD KEY `idx_entries_empresa_origen_doc` (`empresa_id`, `periodo`, `origen_modulo`, `documento_ref`);");
+      } catch {}
     } catch (colErr: any) {
       console.warn(`[MySQL 8.0] Aviso al verificar columnas (${colErr.message}). Ejecutando actualización preventiva...`);
       try {

@@ -18,6 +18,7 @@ import {
   ChequeEmitido,
   DeudaFinanciera,
   ProvisionEgreso,
+  AccountingEntry,
 } from '../types';
 
 /**
@@ -209,6 +210,7 @@ export function scanErpCommitments({
   deudasFinancieras = [],
   provisionesEgresos = [],
   existingMovements = [],
+  accountingEntries = [],
   params = DEFAULT_CASH_FLOW_PARAMETERS,
 }: {
   payrolls?: EmployeePayroll[];
@@ -223,12 +225,14 @@ export function scanErpCommitments({
   deudasFinancieras?: DeudaFinanciera[];
   provisionesEgresos?: ProvisionEgreso[];
   existingMovements?: CashFlowMovement[];
+  accountingEntries?: AccountingEntry[];
   params?: CashFlowInclusionParameters;
 }): {
   scanResult: ErpCommitmentsScanResult;
   projectedMovements: CashFlowMovement[];
 } {
   const safeExisting = Array.isArray(existingMovements) ? existingMovements : [];
+  const safeEntries = Array.isArray(accountingEntries) ? accountingEntries : [];
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const safeBudgets = Array.isArray(productionBudgets) ? productionBudgets : [];
   const safeOrders = Array.isArray(productionOrders) ? productionOrders : [];
@@ -589,12 +593,13 @@ export function scanErpCommitments({
       );
 
       if (!isAlreadyIn) {
+        const fechaRealDte = d.fechaVencimiento || d.fechaEmision || new Date().toISOString().split('T')[0];
         if (d.tipoOperacion === 'VENTA') {
           ventasPorCobrarCount++;
           ventasPorCobrarTotal += d.montoTotal;
           newMovements.push({
             id: `mov-${refDte}`,
-            fechaEstimada: d.fechaVencimiento || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+            fechaEstimada: fechaRealDte,
             concepto: `Cobro Factura Venta N° ${d.folio} - ${d.razonSocialContraparte}`,
             contraparte: d.razonSocialContraparte,
             rutContraparte: d.rutContraparte,
@@ -615,7 +620,7 @@ export function scanErpCommitments({
           comprasPorPagarTotal += d.montoTotal;
           newMovements.push({
             id: `mov-${refDte}`,
-            fechaEstimada: d.fechaVencimiento || new Date(Date.now() + 20 * 86400000).toISOString().split('T')[0],
+            fechaEstimada: fechaRealDte,
             concepto: `Pago Factura Proveedor N° ${d.folio} - ${d.razonSocialContraparte}`,
             contraparte: d.razonSocialContraparte,
             rutContraparte: d.rutContraparte,
@@ -634,6 +639,112 @@ export function scanErpCommitments({
         }
       }
     }
+  });
+
+  // 6.b COMPROMISOS DE ASIENTOS CONTABLES AUXILIARES (CxC 1.1.03 Y CxP 2.1.01)
+  let cxcPendientesCount = 0;
+  let cxcPendientesTotal = 0;
+  let cxpPendientesCount = 0;
+  let cxpPendientesTotal = 0;
+  const partidasAsientos: {
+    cuentaCodigo: string;
+    cuentaNombre: string;
+    rutAuxiliar?: string;
+    documentoRef?: string;
+    fechaVencimiento: string;
+    monto: number;
+    tipo: 'INGRESO' | 'EGRESO';
+  }[] = [];
+
+  safeEntries.forEach(entry => {
+    (entry.lineas || []).forEach(line => {
+      const cod = (line.cuentaCodigo || '').trim();
+      const debe = Number(line.debe || 0);
+      const haber = Number(line.haber || 0);
+      const docRef = (line.documentoRef || entry.documento || (entry as any).documentoReferencia || '').trim();
+      const folioRef = line.folioDocumentoRef || (entry as any).folioDocumentoRef;
+
+      // Evitar duplicar si coincide con un DTE ya mapeado
+      const isLinkedToDte = safeDtes.some(d =>
+        (folioRef && String(d.folio) === String(folioRef)) ||
+        (docRef && docRef.includes(String(d.folio)))
+      );
+      if (isLinkedToDte) return;
+
+      // Cuentas por Cobrar / Clientes (1.1.03)
+      if (cod.startsWith('1.1.03') && debe > haber) {
+        const saldoCxc = debe - haber;
+        const refEntry = `asiento-cxc-${entry.id}-${line.id || Math.random().toString(36).substring(2, 7)}`;
+        if (!existsMovementWithRef(refEntry) && (!docRef || !existsMovementWithRef(docRef))) {
+          cxcPendientesCount++;
+          cxcPendientesTotal += saldoCxc;
+          const fechaVencReal = line.fechaVencimientoRef || line.fechaDocumentoRef || entry.fecha || new Date().toISOString().split('T')[0];
+          newMovements.push({
+            id: `mov-${refEntry}`,
+            fechaEstimada: fechaVencReal,
+            concepto: `Cobro Auxiliar ${line.cuentaNombre || 'Clientes'} - Doc: ${docRef || entry.concepto}`,
+            contraparte: line.rutAuxiliar || entry.concepto,
+            rutContraparte: line.rutAuxiliar,
+            montoNeto: Math.round(saldoCxc / 1.19),
+            montoIva: Math.round(saldoCxc - (saldoCxc / 1.19)),
+            montoTotal: saldoCxc,
+            moneda: 'CLP',
+            tipo: 'INGRESO',
+            categoria: 'VENTAS_OPERACIONALES',
+            estado: 'PENDIENTE',
+            origenModulo: 'CONTABILIDAD',
+            documentoReferencia: docRef || refEntry,
+            probabilidadCobroPct: 90,
+          });
+          partidasAsientos.push({
+            cuentaCodigo: cod,
+            cuentaNombre: line.cuentaNombre || 'Clientes / Cuentas por Cobrar',
+            rutAuxiliar: line.rutAuxiliar,
+            documentoRef: docRef,
+            fechaVencimiento: fechaVencReal,
+            monto: saldoCxc,
+            tipo: 'INGRESO',
+          });
+        }
+      }
+
+      // Cuentas por Pagar / Proveedores (2.1.01)
+      if (cod.startsWith('2.1.01') && haber > debe) {
+        const saldoCxp = haber - debe;
+        const refEntry = `asiento-cxp-${entry.id}-${line.id || Math.random().toString(36).substring(2, 7)}`;
+        if (!existsMovementWithRef(refEntry) && (!docRef || !existsMovementWithRef(docRef))) {
+          cxpPendientesCount++;
+          cxpPendientesTotal += saldoCxp;
+          const fechaVencReal = line.fechaVencimientoRef || line.fechaDocumentoRef || entry.fecha || new Date().toISOString().split('T')[0];
+          newMovements.push({
+            id: `mov-${refEntry}`,
+            fechaEstimada: fechaVencReal,
+            concepto: `Pago Auxiliar ${line.cuentaNombre || 'Proveedores'} - Doc: ${docRef || entry.concepto}`,
+            contraparte: line.rutAuxiliar || entry.concepto,
+            rutContraparte: line.rutAuxiliar,
+            montoNeto: Math.round(saldoCxp / 1.19),
+            montoIva: Math.round(saldoCxp - (saldoCxp / 1.19)),
+            montoTotal: saldoCxp,
+            moneda: 'CLP',
+            tipo: 'EGRESO',
+            categoria: 'PROVEEDORES',
+            estado: 'PENDIENTE',
+            origenModulo: 'CONTABILIDAD',
+            documentoReferencia: docRef || refEntry,
+            probabilidadCobroPct: 100,
+          });
+          partidasAsientos.push({
+            cuentaCodigo: cod,
+            cuentaNombre: line.cuentaNombre || 'Proveedores / Cuentas por Pagar',
+            rutAuxiliar: line.rutAuxiliar,
+            documentoRef: docRef,
+            fechaVencimiento: fechaVencReal,
+            monto: saldoCxp,
+            tipo: 'EGRESO',
+          });
+        }
+      }
+    });
   });
 
   // 7. ARRIENDOS Y CONTRATOS IFRS 16
@@ -986,6 +1097,13 @@ export function scanErpCommitments({
       totalProvisiones: partidasProvisiones.length,
       montoTotalEstimado: totalProvisionesMonto,
       partidas: partidasProvisiones,
+    },
+    asientosAuxiliares: {
+      cxcPendientesCount,
+      cxcPendientesTotal,
+      cxpPendientesCount,
+      cxpPendientesTotal,
+      partidas: partidasAsientos,
     },
     totalCompromisosIdentificados: newMovements.length,
   };

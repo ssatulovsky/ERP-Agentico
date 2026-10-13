@@ -302,13 +302,24 @@ export function auditExpenseReport(
   };
 }
 
+export interface ExpenseAccountingConfig {
+  cuentaAnticipoCodigo?: string;
+  cuentaAnticipoNombre?: string;
+  cuentaReembolsoCodigo?: string;
+  cuentaReembolsoNombre?: string;
+  cuentaReintegroCodigo?: string;
+  cuentaReintegroNombre?: string;
+  fechaContable?: string;
+}
+
 /**
  * Genera el Asiento Contable Automático en el Libro Diario para la Rendición de Gastos
  */
 export function generateExpenseAccountingEntry(
   report: ExpenseReport,
   comprobantes: ExpenseItem[],
-  chartOfAccounts: HierarchicalAccountItem[]
+  chartOfAccounts: HierarchicalAccountItem[],
+  config?: ExpenseAccountingConfig
 ): AccountingEntry {
   const lineas: {
     cuentaCodigo: string;
@@ -316,9 +327,11 @@ export function generateExpenseAccountingEntry(
     debe: number;
     haber: number;
     rutAuxiliar?: string;
+    documentoRef?: string;
+    fechaDocumentoRef?: string;
     centroCosto?: string;
   }[] = [];
-  const fechaAsiento = report.fechaCierre || new Date().toISOString().substring(0, 10);
+  const fechaAsiento = config?.fechaContable || report.fechaCierre || new Date().toISOString().substring(0, 10);
 
   // 1. Agrupar gastos por cuenta contable y centro de costo
   const mapaGastos: Record<
@@ -338,8 +351,35 @@ export function generateExpenseAccountingEntry(
   let totalIvaCredito = 0;
   let totalGastosMonto = 0;
 
-  comprobantes.forEach((item) => {
-    // Si es Factura con IVA, el gasto es el Neto y el IVA va a la cuenta 1.1.05.001
+  const itemsToProcess = (comprobantes && comprobantes.length > 0)
+    ? comprobantes
+    : (report.montoTotalRendidoClp > 0)
+      ? [{
+          id: `synth-${report.id}`,
+          expenseReportId: report.id,
+          empresaId: report.empresaId,
+          fecha: report.fechaCierre || report.fechaInicio || new Date().toISOString().substring(0, 10),
+          tipoDocumento: 'BOLETA_ELECTRONICA' as const,
+          folioDocumento: `RDG-${report.folio}`,
+          proveedorRut: report.rendidorRut || 'SIN_RUT',
+          proveedorRazonSocial: report.rendidorNombre || 'Gastos Operacionales Terreno',
+          categoria: 'ALIMENTACION' as const,
+          descripcionGlosa: report.titulo || `Gastos Operacionales ${report.folio}`,
+          montoNeto: Math.round(report.montoTotalRendidoClp / 1.19),
+          montoIva: report.montoTotalRendidoClp - Math.round(report.montoTotalRendidoClp / 1.19),
+          montoExento: 0,
+          montoTotalClp: report.montoTotalRendidoClp,
+          cuentaContableCodigo: '6.1.04.007',
+          cuentaContableNombre: 'Gastos de Alimentación, Viáticos y Terreno',
+          centroCostoId: report.centroCostoId,
+          centroCostoCodigo: report.centroCostoCodigo,
+          proyectoId: report.proyectoId,
+          proyectoCodigo: report.proyectoCodigo,
+        }]
+      : [];
+
+  itemsToProcess.forEach((item) => {
+    // Si es Factura con IVA, el gasto es el Neto y el IVA va a la cuenta 1.1.04.001 / 1.1.05.001
     const gastoAfecto = item.tipoDocumento === 'FACTURA_ELECTRONICA_33' && item.montoNeto > 0 ? item.montoNeto : item.montoTotalClp;
 
     totalGastosMonto += item.montoTotalClp;
@@ -347,12 +387,13 @@ export function generateExpenseAccountingEntry(
       totalIvaCredito += item.montoIva;
     }
 
-    const key = `${item.cuentaContableCodigo}_${item.centroCostoId || report.centroCostoId || ''}_${item.proyectoId || report.proyectoId || ''}`;
+    const ctaCodigo = item.cuentaContableCodigo || '6.1.04.007';
+    const key = `${ctaCodigo}_${item.centroCostoId || report.centroCostoId || ''}_${item.proyectoId || report.proyectoId || ''}`;
     if (!mapaGastos[key]) {
       // Buscar nombre oficial en el plan de cuentas
-      const acc = chartOfAccounts.find((a) => a.codigo === item.cuentaContableCodigo);
+      const acc = chartOfAccounts.find((a) => a.codigo === ctaCodigo);
       mapaGastos[key] = {
-        cuentaCodigo: item.cuentaContableCodigo,
+        cuentaCodigo: ctaCodigo,
         cuentaNombre: acc?.nombre || item.cuentaContableNombre || `Gasto ${item.categoria}`,
         montoNeto: 0,
         centroCostoId: item.centroCostoId || report.centroCostoId,
@@ -372,7 +413,9 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: gasto.cuentaNombre,
       debe: Math.round(gasto.montoNeto),
       haber: 0,
-      rutAuxiliar: report.rendidorRut,
+      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
+      documentoRef: report.folio,
+      fechaDocumentoRef: fechaAsiento,
       centroCosto: gasto.centroCostoCodigo,
     });
   });
@@ -380,55 +423,67 @@ export function generateExpenseAccountingEntry(
   // 3. Línea de Cargo (DEBE): IVA Crédito Fiscal si hubo facturas
   if (totalIvaCredito > 0) {
     lineas.push({
-      cuentaCodigo: '1.1.05.001',
-      cuentaNombre: 'IVA Crédito Fiscal',
+      cuentaCodigo: '1.1.04.001',
+      cuentaNombre: 'IVA Crédito Fiscal (DL 825)',
       debe: Math.round(totalIvaCredito),
       haber: 0,
-      rutAuxiliar: report.rendidorRut,
+      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
+      documentoRef: report.folio,
+      fechaDocumentoRef: fechaAsiento,
     });
   }
 
+  // Cuentas de contrapartida según configuración o Plan de Cuentas oficial
+  const ctaAnticipoCod = config?.cuentaAnticipoCodigo || '1.1.03.002';
+  const ctaAnticipoNom = config?.cuentaAnticipoNombre || chartOfAccounts.find(a => a.codigo === ctaAnticipoCod)?.nombre || 'Gastos por Rendir / Anticipos al Personal';
+
+  const ctaReembolsoCod = config?.cuentaReembolsoCodigo || '2.1.02.001';
+  const ctaReembolsoNom = config?.cuentaReembolsoNombre || chartOfAccounts.find(a => a.codigo === ctaReembolsoCod)?.nombre || 'Cuentas por Pagar al Personal (Reembolso de Gastos)';
+
+  const ctaReintegroCod = config?.cuentaReintegroCodigo || '1.1.02.001';
+  const ctaReintegroNom = config?.cuentaReintegroNombre || chartOfAccounts.find(a => a.codigo === ctaReintegroCod)?.nombre || 'Banco Santander Chile - Reintegro Sobrante de Fondo';
+
   // 4. Línea de Abono (HABER): Fondos por Rendir (Anticipo previo)
-  const anticipoAplicado = Math.min(report.fondoAsignadoClp, totalGastosMonto);
-  if (anticipoAplicado > 0) {
+  const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+  if (fondoAnticipo > 0) {
+    const anticipoLiquidado = Math.min(fondoAnticipo, totalGastosMonto);
     lineas.push({
-      cuentaCodigo: '1.1.01.004',
-      cuentaNombre: 'Fondos por Rendir Empleados',
+      cuentaCodigo: ctaAnticipoCod,
+      cuentaNombre: ctaAnticipoNom,
       debe: 0,
-      haber: Math.round(anticipoAplicado),
-      rutAuxiliar: report.rendidorRut,
+      haber: Math.round(anticipoLiquidado),
+      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
+      documentoRef: report.folio,
+      fechaDocumentoRef: fechaAsiento,
     });
   }
 
   // 5. Línea de Abono (HABER): Reembolso por Pagar al Empleado (si gastó más de lo anticipado)
-  const saldoReembolsar = Math.max(0, totalGastosMonto - report.fondoAsignadoClp);
+  const saldoReembolsar = Math.max(0, totalGastosMonto - fondoAnticipo);
   if (saldoReembolsar > 0) {
     lineas.push({
-      cuentaCodigo: '2.1.05.002',
-      cuentaNombre: 'Cuentas por Pagar Reembolso Gastos Empleados',
+      cuentaCodigo: ctaReembolsoCod,
+      cuentaNombre: ctaReembolsoNom,
       debe: 0,
       haber: Math.round(saldoReembolsar),
-      rutAuxiliar: report.rendidorRut,
+      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
+      documentoRef: report.folio,
+      fechaDocumentoRef: fechaAsiento,
+      centroCosto: report.centroCostoCodigo || undefined,
     });
   }
 
-  // 6. Si sobró anticipo y el colaborador reintegra en efectivo/banco:
-  const saldoReintegrar = Math.max(0, report.fondoAsignadoClp - totalGastosMonto);
+  // 6. Si sobró anticipo y el colaborador reintegra a Banco/Caja:
+  const saldoReintegrar = Math.max(0, fondoAnticipo - totalGastosMonto);
   if (saldoReintegrar > 0) {
-    lineas.push({
-      cuentaCodigo: '1.1.01.001',
-      cuentaNombre: 'Caja Central / Reintegro de Fondos',
+    lineas.unshift({
+      cuentaCodigo: ctaReintegroCod,
+      cuentaNombre: ctaReintegroNom,
       debe: Math.round(saldoReintegrar),
       haber: 0,
-      rutAuxiliar: report.rendidorRut,
-    });
-
-    lineas.push({
-      cuentaCodigo: '1.1.01.004',
-      cuentaNombre: 'Fondos por Rendir Empleados',
-      debe: 0,
-      haber: Math.round(saldoReintegrar),
-      rutAuxiliar: report.rendidorRut,
+      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
+      documentoRef: report.folio,
+      fechaDocumentoRef: fechaAsiento,
     });
   }
 

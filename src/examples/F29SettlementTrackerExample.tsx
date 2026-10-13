@@ -43,7 +43,7 @@ export const F29SettlementTrackerExample: React.FC<F29SettlementTrackerExamplePr
   periodo: initialPeriodo,
 }) => {
   // Parámetros del formulario de liquidación F29 sincronizados con la empresa activa
-  const [empresaId, setEmpresaId] = useState<string>(company?.rut || '77.798.901-4');
+  const [empresaId, setEmpresaId] = useState<string>(company?.rut || '');
   const [periodo, setPeriodo] = useState<string>(initialPeriodo || '2026-09');
   const [aplicarPostergacionIva, setAplicarPostergacionIva] = useState<boolean>(false);
   const [forceRecompute, setForceRecompute] = useState<boolean>(true);

@@ -205,6 +205,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
       deudasFinancieras,
       provisionesEgresos,
       existingMovements: safeMovements,
+      accountingEntries: entries,
       params: parameters,
     });
   }, [
@@ -220,6 +221,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
     deudasFinancieras,
     provisionesEgresos,
     safeMovements,
+    entries,
     parameters,
   ]);
 
@@ -3049,6 +3051,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
           deudasFinancieras={deudasFinancieras}
           provisionesEgresos={provisionesEgresos}
           existingMovements={safeMovements}
+          accountingEntries={entries}
           onClose={() => setShowAgentScannerModal(false)}
           onSyncMovements={handleSyncCommitments}
         />

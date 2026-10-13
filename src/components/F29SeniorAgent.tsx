@@ -42,7 +42,9 @@ import {
   formatCLP,
   formatNumberCL,
   formatNormalizedAccountingEntry,
-  DEFAULT_INDICATORS
+  DEFAULT_INDICATORS,
+  createF29PaymentEntry,
+  createF29TgrPaymentEntry
 } from '../utils/chileanAccounting';
 import { downloadF29Pdf, downloadF29Csv } from '../utils/reportGenerators';
 import {
@@ -254,6 +256,17 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
     setShowEntrySuccessModal(entry);
   };
 
+  // Pagar F29 en TGR con cargo bancario automático
+  const handlePayF29Tgr = () => {
+    if (totalAPagarDisplay <= 0) {
+      alert('El Formulario 29 de este período no registra impuesto determinado a pagar.');
+      return;
+    }
+    const payEntry = createF29TgrPaymentEntry(selectedPeriod, totalAPagarDisplay, '1.1.02.001', 'Banco Santander');
+    onAddEntry(payEntry);
+    setShowEntrySuccessModal(payEntry);
+  };
+
   // Copiar JSON
   const handleCopyJson = (payload: any) => {
     navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -350,10 +363,22 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
             <button
               onClick={handleAddF29AccountingEntry}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-xs cursor-pointer"
+              title="Genera el comprobante de devengo y compensación de IVA y retenciones en Libro Diario"
             >
               <FileCode className="w-3.5 h-3.5" />
               <span>Asentar Liquidación al Libro Diario</span>
             </button>
+
+            {totalAPagarDisplay > 0 && (
+              <button
+                onClick={handlePayF29Tgr}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-xs cursor-pointer"
+                title="Pagar F29 a Tesorería General (TGR) vía cargo en Banco Santander y registrar egreso"
+              >
+                <Landmark className="w-3.5 h-3.5" />
+                <span>Pagar F29 en TGR (Banco)</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -685,9 +710,20 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                 </div>
 
                 {/* Total Final */}
-                <div className="p-3 rounded-lg bg-slate-900 text-white flex justify-between items-center font-bold">
-                  <span className="text-sm">[c091] TOTAL A PAGAR EN ARCAS FISCALES</span>
-                  <span className="font-mono text-base text-emerald-400">{formatCLP(totalAPagarDisplay)}</span>
+                <div className="p-3 rounded-lg bg-slate-900 text-white space-y-2">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-sm">[c091] TOTAL A PAGAR EN ARCAS FISCALES</span>
+                    <span className="font-mono text-base text-emerald-400">{formatCLP(totalAPagarDisplay)}</span>
+                  </div>
+                  {totalAPagarDisplay > 0 && (
+                    <button
+                      onClick={handlePayF29Tgr}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white rounded px-3 py-2 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                    >
+                      <Landmark className="w-3.5 h-3.5" />
+                      <span>Ejecutar Pago Electrónico TGR vía Banco Santander</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

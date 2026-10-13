@@ -17,7 +17,8 @@ import {
   formatCLP, 
   formatNormalizedAccountingEntry,
   createLeaseIfrs16Entry,
-  createSimpleLeaseExpenseEntry
+  createSimpleLeaseExpenseEntry,
+  createLeaseInitialRecognitionEntry
 } from '../utils/chileanAccounting';
 import { downloadLeasesPdf, downloadLeasesExcel } from '../utils/reportGenerators';
 
@@ -113,6 +114,12 @@ export const LeaseManager: React.FC<LeaseManagerProps> = ({
 
   const handleGenerateSimpleEntry = (lease: LeaseContract) => {
     const entry = createSimpleLeaseExpenseEntry(lease);
+    onAddEntry(entry);
+    setViewEntryModal(entry);
+  };
+
+  const handleGenerateInitialEntry = (lease: LeaseContract) => {
+    const entry = createLeaseInitialRecognitionEntry(lease, indicators);
     onAddEntry(entry);
     setViewEntryModal(entry);
   };
@@ -299,19 +306,29 @@ export const LeaseManager: React.FC<LeaseManagerProps> = ({
                     <td className="px-4 py-3 text-right font-sans">
                       <div className="flex items-center justify-end gap-1.5">
                         {lease.esIfrs16 && (
-                          <button
-                            onClick={() => handleGenerateIfrs16Entry(lease)}
-                            className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-[#2563eb] border border-blue-200 px-2.5 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
-                            title="Generar Asiento Mensual IFRS 16 (Amortización + Interés)"
-                          >
-                            <FileCode className="w-3 h-3 text-[#2563eb]" />
-                            <span>Asiento IFRS 16</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleGenerateInitialEntry(lease)}
+                              className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                              title="Generar Asiento Inicial IFRS 16: Reconocimiento de Activo por Derecho de Uso (ADU) vs Pasivo Financiero"
+                            >
+                              <FileCode className="w-3 h-3 text-indigo-600" />
+                              <span>Alta ADU</span>
+                            </button>
+                            <button
+                              onClick={() => handleGenerateIfrs16Entry(lease)}
+                              className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-[#2563eb] border border-blue-200 px-2.5 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                              title="Generar Asiento Mensual IFRS 16 (Amortización + Interés con cargo a Banco)"
+                            >
+                              <FileCode className="w-3 h-3 text-[#2563eb]" />
+                              <span>Cuota IFRS 16</span>
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => handleGenerateSimpleEntry(lease)}
                           className="inline-flex items-center gap-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer shadow-xs"
-                          title="Generar Asiento Devengo / Pago Simple de Gasto de Arriendo"
+                          title="Generar Asiento Devengo / Pago Simple de Gasto de Arriendo con cargo a Banco"
                         >
                           <FileCode className="w-3 h-3 text-emerald-600" />
                           <span>Asiento Gasto</span>

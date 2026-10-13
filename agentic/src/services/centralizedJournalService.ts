@@ -17,6 +17,9 @@ export interface PostModuleTransactionParams {
   fecha: string; // 'AAAA-MM-DD'
   origenModulo: ModuleSource;
   documentoRef: string;
+  documentoReferencia?: string;
+  tipoDocumentoRef?: string;
+  folioDocumentoRef?: string;
   glosa: string;
   agenteNombre: string;
   lineas: Array<{
@@ -24,8 +27,22 @@ export interface PostModuleTransactionParams {
     nombreCuenta: string;
     debe: number;
     haber: number;
+    glosa?: string;
     rutAuxiliar?: string;
+    nombreAuxiliar?: string;
     centroCosto?: string;
+    documentoRef?: string;
+    dteIdAsociado?: string;
+    tipoDocumentoRef?: string;
+    folioDocumentoRef?: string;
+    montoDocumentoRef?: number;
+    documentoOperacion?: string;
+    tipoDocumentoOperacion?: string;
+    documentoConciliacion?: string;
+    tipoDocumentoConciliacion?: string;
+    monedaOriginal?: string;
+    montoMonedaOriginal?: number;
+    tipoCambio?: number;
   }>;
   traceId: string;
 }
@@ -68,23 +85,31 @@ export async function postModuleTransaction(
   }
 
   // 2. Separación y Normalización Canónica (Bloque Debe > 0, luego Bloque Haber > 0)
-  const debeLines: Array<{
+  interface CanonicalLineItem {
     codigoCuenta: string;
     nombreCuenta: string;
     debe: number;
     haber: number;
+    glosa?: string;
     rutAuxiliar?: string;
+    nombreAuxiliar?: string;
     centroCosto?: string;
-  }> = [];
+    documentoRef?: string;
+    dteIdAsociado?: string;
+    tipoDocumentoRef?: string;
+    folioDocumentoRef?: string;
+    montoDocumentoRef?: number;
+    documentoOperacion?: string;
+    tipoDocumentoOperacion?: string;
+    documentoConciliacion?: string;
+    tipoDocumentoConciliacion?: string;
+    monedaOriginal?: string;
+    montoMonedaOriginal?: number;
+    tipoCambio?: number;
+  }
 
-  const haberLines: Array<{
-    codigoCuenta: string;
-    nombreCuenta: string;
-    debe: number;
-    haber: number;
-    rutAuxiliar?: string;
-    centroCosto?: string;
-  }> = [];
+  const debeLines: CanonicalLineItem[] = [];
+  const haberLines: CanonicalLineItem[] = [];
 
   let totalDebe = 0;
   let totalHaber = 0;
@@ -110,25 +135,34 @@ export async function postModuleTransaction(
       continue; // Ignorar partidas vacías neutras
     }
 
+    const item: CanonicalLineItem = {
+      codigoCuenta: l.codigoCuenta.trim(),
+      nombreCuenta: l.nombreCuenta.trim(),
+      debe: debeVal > 0 ? debeVal : 0,
+      haber: haberVal > 0 ? haberVal : 0,
+      glosa: l.glosa?.trim() || undefined,
+      rutAuxiliar: l.rutAuxiliar?.trim() || undefined,
+      nombreAuxiliar: l.nombreAuxiliar?.trim() || undefined,
+      centroCosto: l.centroCosto?.trim() || undefined,
+      documentoRef: l.documentoRef?.trim() || params.documentoRef?.trim() || undefined,
+      dteIdAsociado: l.dteIdAsociado?.trim() || undefined,
+      tipoDocumentoRef: l.tipoDocumentoRef?.trim() || params.tipoDocumentoRef?.trim() || undefined,
+      folioDocumentoRef: l.folioDocumentoRef?.trim() || params.folioDocumentoRef?.trim() || undefined,
+      montoDocumentoRef: l.montoDocumentoRef !== undefined && l.montoDocumentoRef !== null ? Number(l.montoDocumentoRef) : undefined,
+      documentoOperacion: l.documentoOperacion?.trim() || undefined,
+      tipoDocumentoOperacion: l.tipoDocumentoOperacion?.trim() || undefined,
+      documentoConciliacion: l.documentoConciliacion?.trim() || undefined,
+      tipoDocumentoConciliacion: l.tipoDocumentoConciliacion?.trim() || undefined,
+      monedaOriginal: l.monedaOriginal?.trim() || undefined,
+      montoMonedaOriginal: l.montoMonedaOriginal !== undefined && l.montoMonedaOriginal !== null ? Number(l.montoMonedaOriginal) : undefined,
+      tipoCambio: l.tipoCambio !== undefined && l.tipoCambio !== null ? Number(l.tipoCambio) : undefined,
+    };
+
     if (debeVal > 0) {
-      debeLines.push({
-        codigoCuenta: l.codigoCuenta.trim(),
-        nombreCuenta: l.nombreCuenta.trim(),
-        debe: debeVal,
-        haber: 0,
-        rutAuxiliar: l.rutAuxiliar?.trim() || undefined,
-        centroCosto: l.centroCosto?.trim() || undefined,
-      });
+      debeLines.push(item);
       totalDebe += debeVal;
     } else {
-      haberLines.push({
-        codigoCuenta: l.codigoCuenta.trim(),
-        nombreCuenta: l.nombreCuenta.trim(),
-        debe: 0,
-        haber: haberVal,
-        rutAuxiliar: l.rutAuxiliar?.trim() || undefined,
-        centroCosto: l.centroCosto?.trim() || undefined,
-      });
+      haberLines.push(item);
       totalHaber += haberVal;
     }
   }
@@ -176,7 +210,7 @@ export async function postModuleTransaction(
   // 6. Ejecución Transaccional Atómica (ACID)
   await db.transaction(async (tx: any) => {
     // 6.1 Cabecera del Asiento
-    await tx.insert(accountingEntries).values({
+    const headerPayload = {
       id: entryId,
       firmId: params.firmId,
       empresaId: params.empresaId,
@@ -184,13 +218,49 @@ export async function postModuleTransaction(
       fecha: params.fecha,
       concepto: params.glosa.trim(),
       documentoRef: params.documentoRef?.trim() || null,
+      documentoReferencia: params.documentoReferencia?.trim() || params.documentoRef?.trim() || null,
+      tipoDocumentoRef: params.tipoDocumentoRef?.trim() || null,
+      folioDocumentoRef: params.folioDocumentoRef?.trim() || null,
       origenModulo: params.origenModulo,
       totalDebe: totalDebe.toFixed(2),
       totalHaber: totalHaber.toFixed(2),
       creadoPorAgente: params.agenteNombre,
       supervisorSignature: signature,
       createdAt: new Date(),
-    });
+    };
+
+    try {
+      await tx.insert(accountingEntries).values(headerPayload);
+    } catch (headerErr: any) {
+      const sqlMsg = (headerErr as any)?.cause?.message || (headerErr as any)?.sqlMessage || headerErr?.message || String(headerErr);
+      if (sqlMsg.includes('Unknown column') || headerErr?.errno === 1054) {
+        try {
+          const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+          await updateMysqlDatabase();
+          await tx.insert(accountingEntries).values(headerPayload);
+        } catch {
+          await tx.execute(sql`
+            INSERT INTO \`accounting_entries\` (
+              \`id\`, \`empresa_id\`, \`periodo\`, \`fecha\`, \`concepto\`, \`documento_ref\`,
+              \`total_debe\`, \`total_haber\`, \`origen_modulo\`, \`creado_por_agente\`,
+              \`autorizado_por_supervisor\`, \`supervisor_signature\`
+            ) VALUES (
+              ${headerPayload.id}, ${headerPayload.empresaId}, ${headerPayload.periodo},
+              ${headerPayload.fecha}, ${headerPayload.concepto}, ${headerPayload.documentoRef},
+              ${headerPayload.totalDebe}, ${headerPayload.totalHaber}, ${headerPayload.origenModulo},
+              ${headerPayload.creadoPorAgente}, 1, ${headerPayload.supervisorSignature}
+            )
+          `);
+        }
+      } else if (sqlMsg.includes('Duplicate entry') || headerErr?.errno === 1062) {
+        const disambiguated = `${headerPayload.documentoRef || 'DOC'}-${Date.now().toString().slice(-4)}`;
+        headerPayload.documentoRef = disambiguated;
+        headerPayload.documentoReferencia = disambiguated;
+        await tx.insert(accountingEntries).values(headerPayload);
+      } else {
+        throw headerErr;
+      }
+    }
 
     // 6.2 Líneas de Partida Doble
     const lineInserts = canonicalLines.map((line, idx) => ({
@@ -201,14 +271,53 @@ export async function postModuleTransaction(
       nombreCuenta: line.nombreCuenta,
       debe: line.debe.toFixed(2),
       haber: line.haber.toFixed(2),
+      glosa: line.glosa || null,
       rutAuxiliar: line.rutAuxiliar || null,
+      nombreAuxiliar: line.nombreAuxiliar || null,
       centroCosto: line.centroCosto || null,
+      documentoRef: line.documentoRef || params.documentoRef?.trim() || null,
+      dteIdAsociado: line.dteIdAsociado || null,
+      tipoDocumentoRef: line.tipoDocumentoRef || params.tipoDocumentoRef?.trim() || null,
+      folioDocumentoRef: line.folioDocumentoRef || params.folioDocumentoRef?.trim() || null,
+      montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+      documentoOperacion: line.documentoOperacion || null,
+      tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+      documentoConciliacion: line.documentoConciliacion || null,
+      tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
+      monedaOriginal: line.monedaOriginal || null,
+      montoMonedaOriginal: line.montoMonedaOriginal != null ? line.montoMonedaOriginal.toFixed(2) : null,
+      tipoCambio: line.tipoCambio != null ? line.tipoCambio.toFixed(4) : null,
     }));
 
-    await tx.insert(accountingEntryLines).values(lineInserts);
+    try {
+      await tx.insert(accountingEntryLines).values(lineInserts);
+    } catch (linesErr: any) {
+      const sqlMsg = (linesErr as any)?.cause?.message || (linesErr as any)?.sqlMessage || linesErr?.message || String(linesErr);
+      if (sqlMsg.includes('Unknown column') || linesErr?.errno === 1054) {
+        try {
+          const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+          await updateMysqlDatabase();
+          await tx.insert(accountingEntryLines).values(lineInserts);
+        } catch {
+          for (const l of lineInserts) {
+            await tx.execute(sql`
+              INSERT INTO \`accounting_entry_lines\` (
+                \`id\`, \`entry_id\`, \`codigo_cuenta\`, \`nombre_cuenta\`,
+                \`debe\`, \`haber\`, \`rut_auxiliar\`, \`centro_costo\`
+              ) VALUES (
+                ${l.id}, ${l.entryId}, ${l.codigoCuenta}, ${l.nombreCuenta},
+                ${l.debe}, ${l.haber}, ${l.rutAuxiliar || null}, ${l.centroCosto || null}
+              )
+            `);
+          }
+        }
+      } else {
+        throw linesErr;
+      }
+    }
 
     // 6.3 Log de Auditoría Pericial Inmutable
-    const auditPayload = {
+    await tx.insert(agentAuditLogs).values({
       id: crypto.randomUUID(),
       traceId: params.traceId || crypto.randomUUID(),
       firmId: params.firmId,
@@ -233,119 +342,7 @@ export async function postModuleTransaction(
       supervisorSignature: signature,
       tiempoEjecucionMs: Math.max(1, Date.now() - startTime),
       createdAt: new Date(),
-    };
-
-    try {
-      await tx.insert(agentAuditLogs).values(auditPayload);
-    } catch (auditErr: any) {
-      console.warn('[CentralizedJournalService] Aviso al registrar agent_audit_logs en MySQL:', auditErr?.message);
-      if (
-        auditErr?.message &&
-        (auditErr.message.includes('Unknown column') ||
-          auditErr.message.includes('no such column') ||
-          auditErr.errno === 1054)
-      ) {
-        try {
-          const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
-          await updateMysqlDatabase();
-          await tx.insert(agentAuditLogs).values(auditPayload);
-        } catch {}
-      }
-    }
-
-    // 6.4 Sincronización automática de Tesorería y Conciliación Bancaria
-    for (const line of canonicalLines) {
-      const cod = (line.codigoCuenta || '').trim();
-      const nom = (line.nombreCuenta || '').toLowerCase();
-      const isBankLine = cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco') || nom.includes('cta cte') || nom.includes('cuenta corriente');
-      if (isBankLine) {
-        const cargoVal = line.haber > 0 ? line.haber : 0;
-        const abonoVal = line.debe > 0 ? line.debe : 0;
-        if (cargoVal > 0 || abonoVal > 0) {
-          const movId = crypto.randomUUID();
-          try {
-            const { bankAccounts, bankTransactions } = await import('../db/schema/erpModulesSchema');
-            let existingAcc = await tx.select().from(bankAccounts).where(eq(bankAccounts.empresaId, params.empresaId.trim())).limit(1);
-            let targetAccId = existingAcc[0]?.id;
-            if (!targetAccId) {
-              targetAccId = crypto.randomUUID();
-              await tx.insert(bankAccounts).values({
-                id: targetAccId,
-                empresaId: params.empresaId.trim(),
-                bancoCodigo: nom.includes('chile') ? 'BANCO_DE_CHILE' : nom.includes('bci') ? 'BCI' : 'BANCO_SANTANDER',
-                numeroCuenta: '00-0839210-4',
-                tipoCuenta: 'CORRIENTE',
-                moneda: 'CLP',
-                saldoContable: '0.00',
-                saldoCartola: '0.00',
-                esPrincipal: true,
-              });
-            }
-
-            await tx.insert(bankTransactions).values({
-              id: movId,
-              accountId: targetAccId,
-              fecha: params.fecha.trim(),
-              descripcion: `${params.glosa.trim()} (${line.nombreCuenta})`,
-              cargo: cargoVal.toFixed(2),
-              abono: abonoVal.toFixed(2),
-              documentoRef: params.documentoRef ? params.documentoRef.trim() : `ASIENTO ${entryId.substring(0, 8)}`,
-              estadoConciliacion: 'CONCILIADO',
-              matchedDteId: null,
-              moneda: 'CLP',
-              tipoCambio: '1.0000',
-              montoClpEquivalente: (cargoVal > 0 ? cargoVal : abonoVal).toFixed(2),
-              matchCerteza: 100,
-              origenImportacion: 'CONTABILIDAD_AUTO',
-              createdAt: new Date(),
-            });
-          } catch (bankErr: any) {
-            console.warn('[CentralizedJournalService] Advertencia al sincronizar bankTransactions en MySQL:', bankErr?.message);
-          }
-
-          try {
-            diskPersistence.addBankMovement({
-              id: movId,
-              cuentaId: 'bank-acc-01',
-              empresaId: params.empresaId.trim(),
-              fecha: params.fecha.trim(),
-              glosaBancaria: `${params.glosa.trim()} (${line.nombreCuenta})`,
-              numeroReferencia: params.documentoRef ? params.documentoRef.trim() : `ASIENTO ${entryId.substring(0, 8)}`,
-              cargo: cargoVal,
-              abono: abonoVal,
-              montoNeto: abonoVal - cargoVal,
-              estado: 'CONCILIADO',
-              matchCerteza: 100,
-              asientoGeneradoId: entryId,
-              documentoRef: params.documentoRef || null,
-            });
-          } catch {}
-        }
-      }
-    }
-
-    // Respaldo en disco
-    try {
-      diskPersistence.addAccountingEntry(
-        {
-          id: entryId,
-          firmId: params.firmId,
-          empresaId: params.empresaId,
-          periodo: params.periodo,
-          fecha: params.fecha,
-          concepto: params.glosa.trim(),
-          documentoRef: params.documentoRef?.trim() || null,
-          origenModulo: params.origenModulo,
-          totalDebe: totalDebe.toFixed(2),
-          totalHaber: totalHaber.toFixed(2),
-          creadoPorAgente: params.agenteNombre,
-          supervisorSignature: signature,
-          createdAt: new Date(),
-        },
-        lineInserts
-      );
-      diskPersistence.addAuditLog(auditPayload);
-    } catch {}
+    });
   });
 
   console.log(

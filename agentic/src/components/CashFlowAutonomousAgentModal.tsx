@@ -31,6 +31,7 @@ import {
   ChequeEmitido,
   DeudaFinanciera,
   ProvisionEgreso,
+  AccountingEntry,
 } from '../types';
 import { scanErpCommitments } from '../utils/cashFlowProjectionEngine';
 
@@ -46,6 +47,7 @@ interface CashFlowAutonomousAgentModalProps {
   deudasFinancieras?: DeudaFinanciera[];
   provisionesEgresos?: ProvisionEgreso[];
   existingMovements: CashFlowMovement[];
+  accountingEntries?: AccountingEntry[];
   onClose: () => void;
   onSyncMovements: (movementsToSync: CashFlowMovement[]) => void;
 }
@@ -62,6 +64,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
   deudasFinancieras = [],
   provisionesEgresos = [],
   existingMovements = [],
+  accountingEntries = [],
   onClose,
   onSyncMovements,
 }) => {
@@ -77,6 +80,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
     deudasFinancieras,
     provisionesEgresos,
     existingMovements,
+    accountingEntries,
   });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(

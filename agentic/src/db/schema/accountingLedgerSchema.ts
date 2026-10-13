@@ -52,10 +52,12 @@ export const chartOfAccounts = mysqlTable(
     ]).notNull(),
     aceptaAuxiliar: boolean('acepta_auxiliar').notNull().default(false),
     manejaMultimoneda: boolean('maneja_multimoneda').notNull().default(false),
+    monedaCodigo: varchar('moneda_codigo', { length: 10 }).default('CLP'),
     requiereDocReferencia: boolean('requiere_doc_ref').notNull().default(false),
     esEfectivoEquivalente: boolean('es_efectivo_equivalente').notNull().default(false),
     esContracuentaEfectivo: boolean('es_contracuenta_efectivo').notNull().default(false),
     requiereProyecto: boolean('requiere_proyecto').notNull().default(false),
+    notasExplicativas: json('notas_explicativas').$type<number[]>(),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({
@@ -77,6 +79,9 @@ export const accountingEntries = mysqlTable(
     fecha: date('fecha', { mode: 'string' }).notNull(), // Formato: 'AAAA-MM-DD'
     concepto: text('concepto').notNull(),
     documentoRef: varchar('documento_ref', { length: 100 }),
+    documentoReferencia: varchar('documento_referencia', { length: 150 }),
+    tipoDocumentoRef: varchar('tipo_documento_ref', { length: 50 }),
+    folioDocumentoRef: varchar('folio_documento_ref', { length: 100 }),
     origenModulo: varchar('origen_modulo', { length: 50 }).notNull(),
     totalDebe: decimal('total_debe', { precision: 15, scale: 2 }).notNull(),
     totalHaber: decimal('total_haber', { precision: 15, scale: 2 }).notNull(),
@@ -86,7 +91,7 @@ export const accountingEntries = mysqlTable(
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({
-    uqEntriesEmpresaOrigenDoc: uniqueIndex('uq_entries_empresa_origen_doc').on(
+    idxEntriesEmpresaOrigenDoc: index('idx_entries_empresa_origen_doc').on(
       table.empresaId,
       table.periodo,
       table.origenModulo,
@@ -115,6 +120,21 @@ export const accountingEntryLines = mysqlTable(
     haber: decimal('haber', { precision: 15, scale: 2 }).notNull().default('0.00'),
     rutAuxiliar: varchar('rut_auxiliar', { length: 20 }),
     centroCosto: varchar('centro_costo', { length: 100 }),
+    documentoRef: varchar('documento_ref', { length: 150 }),
+    dteIdAsociado: varchar('dte_id_asociado', { length: 36 }),
+    tipoDocumentoRef: varchar('tipo_documento_ref', { length: 50 }),
+    folioDocumentoRef: varchar('folio_documento_ref', { length: 100 }),
+    montoDocumentoRef: decimal('monto_documento_ref', { precision: 15, scale: 2 }),
+    fechaDocumentoRef: date('fecha_documento_ref', { mode: 'string' }),
+    fechaVencimientoRef: date('fecha_vencimiento_ref', { mode: 'string' }),
+    documentoOperacion: varchar('documento_operacion', { length: 100 }),
+    tipoDocumentoOperacion: varchar('tipo_documento_operacion', { length: 50 }),
+    fechaDocumentoOperacion: date('fecha_documento_operacion', { mode: 'string' }),
+    documentoConciliacion: varchar('documento_conciliacion', { length: 100 }),
+    tipoDocumentoConciliacion: varchar('tipo_documento_conciliacion', { length: 50 }),
+    monedaOriginal: varchar('moneda_original', { length: 10 }),
+    montoMonedaOriginal: decimal('monto_moneda_original', { precision: 15, scale: 2 }),
+    tipoCambio: decimal('tipo_cambio', { precision: 12, scale: 4 }),
   },
   (table) => ({
     idxLinesEntryId: index('idx_lines_entry_id').on(table.entryId),

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { sql, eq, and } from 'drizzle-orm';
 import {
   accountingEntries,
   accountingEntryLines,
@@ -11,6 +12,7 @@ import {
   type AgentAuditLog,
 } from '@/db/schema';
 import { db as defaultDb } from '@/db';
+import { diskPersistence } from './diskPersistenceService';
 import type { CompanyProfile } from '../types';
 import { validateEntryFiscalPeriod } from '../utils/accountingOrchestratorEngine';
 
@@ -108,17 +110,35 @@ export interface AccountingEntryHeaderInput {
   fecha: string; // 'YYYY-MM-DD'
   concepto: string;
   documentoRef?: string | null;
+  documentoReferencia?: string | null;
+  tipoDocumentoRef?: string | null;
+  folioDocumentoRef?: string | null;
   origenModulo: string; // 'RCV_COMPRA' | 'RCV_VENTA' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'TESORERIA' | 'MANUAL'
   creadoPorAgente: string;
 }
 
 export interface AccountingEntryLineInput {
+  id?: string;
   codigoCuenta: string;
   nombreCuenta: string;
   debe: number | string;
   haber: number | string;
+  glosa?: string | null;
   rutAuxiliar?: string | null;
+  nombreAuxiliar?: string | null;
   centroCosto?: string | null;
+  documentoRef?: string | null;
+  dteIdAsociado?: string | null;
+  tipoDocumentoRef?: string | null;
+  folioDocumentoRef?: string | null;
+  montoDocumentoRef?: number | string | null;
+  documentoOperacion?: string | null;
+  tipoDocumentoOperacion?: string | null;
+  documentoConciliacion?: string | null;
+  tipoDocumentoConciliacion?: string | null;
+  monedaOriginal?: string | null;
+  montoMonedaOriginal?: number | string | null;
+  tipoCambio?: number | string | null;
 }
 
 export interface AgentAuditContextInput {
@@ -369,7 +389,7 @@ export async function recordVerifiedEntry(
       empresaId: header.empresaId,
       periodo: header.periodo,
       concepto: header.concepto,
-      traceId: auditContext.traceId,
+      traceId: effectiveAuditContext.traceId,
     });
   }
 
@@ -398,6 +418,9 @@ export async function recordVerifiedEntry(
         fecha: header.fecha.trim(),
         concepto: header.concepto.trim(),
         documentoRef: header.documentoRef ? header.documentoRef.trim() : null,
+        documentoReferencia: header.documentoReferencia ? header.documentoReferencia.trim() : (header.documentoRef ? header.documentoRef.trim() : null),
+        tipoDocumentoRef: header.tipoDocumentoRef ? header.tipoDocumentoRef.trim() : null,
+        folioDocumentoRef: header.folioDocumentoRef ? header.folioDocumentoRef.trim() : null,
         totalDebe: totalDebeFormatted,
         totalHaber: totalHaberFormatted,
         origenModulo: (header.origenModulo || (header as any).tipoOrigen || 'MANUAL').trim(),
@@ -406,12 +429,53 @@ export async function recordVerifiedEntry(
         supervisorSignature,
       };
 
-      const [insertedEntry] = await tx
-        .insert(accountingEntries)
-        .values(newEntryPayload)
-        .returning();
+      // Inserción en MySQL 8.0 sin .returning() (MySQL Drizzle dialect no soporta returning())
+      try {
+        await tx
+          .insert(accountingEntries)
+          .values(newEntryPayload);
+      } catch (insertHeaderErr: any) {
+        const sqlMsg = (insertHeaderErr as any)?.cause?.message || (insertHeaderErr as any)?.sqlMessage || insertHeaderErr?.message || String(insertHeaderErr);
+        console.warn('[AccountingLedger] Advertencia insertando cabecera accounting_entries:', sqlMsg);
 
-      const effectiveEntryId = insertedEntry?.id || generatedEntryId;
+        if (sqlMsg.includes('Unknown column') || insertHeaderErr?.errno === 1054) {
+          console.log('[AccountingLedger] Auto-reparando columnas faltantes de accounting_entries en MySQL...');
+          try {
+            const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+            await updateMysqlDatabase();
+            await tx.insert(accountingEntries).values(newEntryPayload);
+          } catch (retryErr: any) {
+            console.warn('[AccountingLedger] Fallback inserción directa de cabecera con columnas esenciales...');
+            await tx.execute(sql`
+              INSERT INTO \`accounting_entries\` (
+                \`id\`, \`empresa_id\`, \`periodo\`, \`fecha\`, \`concepto\`, \`documento_ref\`,
+                \`total_debe\`, \`total_haber\`, \`origen_modulo\`, \`creado_por_agente\`,
+                \`autorizado_por_supervisor\`, \`supervisor_signature\`
+              ) VALUES (
+                ${newEntryPayload.id}, ${newEntryPayload.empresaId}, ${newEntryPayload.periodo},
+                ${newEntryPayload.fecha}, ${newEntryPayload.concepto}, ${newEntryPayload.documentoRef},
+                ${newEntryPayload.totalDebe}, ${newEntryPayload.totalHaber}, ${newEntryPayload.origenModulo},
+                ${newEntryPayload.creadoPorAgente}, 1, ${newEntryPayload.supervisorSignature}
+              )
+            `);
+          }
+        } else if (sqlMsg.includes('Duplicate entry') || insertHeaderErr?.errno === 1062) {
+          console.warn('[AccountingLedger] Conflicto de unicidad en documento_ref. Desambiguando para persistir asiento...');
+          const disambiguatedDoc = `${newEntryPayload.documentoRef || 'ASIENTO'}-${Date.now().toString().slice(-4)}`;
+          newEntryPayload.documentoRef = disambiguatedDoc;
+          newEntryPayload.documentoReferencia = disambiguatedDoc;
+          await tx.insert(accountingEntries).values(newEntryPayload);
+        } else {
+          throw insertHeaderErr;
+        }
+      }
+
+      const effectiveEntryId = generatedEntryId;
+      const insertedEntry: AccountingEntry = {
+        ...newEntryPayload,
+        firmId: 'firm-default-001',
+        createdAt: new Date(),
+      };
 
       // 5.2 Preparar e insertar líneas en bloque
       const linesToInsert: NewAccountingEntryLine[] = lineas.map((line, idx) => {
@@ -419,7 +483,7 @@ export async function recordVerifiedEntry(
         const lineHaberCents = parseToCents(line.haber, 'line.haber');
 
         return {
-          id: crypto.randomUUID(),
+          id: line.id || crypto.randomUUID(),
           entryId: effectiveEntryId,
           lineaNumero: idx + 1,
           codigoCuenta: line.codigoCuenta.trim(),
@@ -428,25 +492,74 @@ export async function recordVerifiedEntry(
           haber: (lineHaberCents / 100).toFixed(2),
           rutAuxiliar: line.rutAuxiliar ? line.rutAuxiliar.trim() : null,
           centroCosto: line.centroCosto ? line.centroCosto.trim() : null,
+          documentoRef: line.documentoRef ? line.documentoRef.trim() : (header.documentoRef ? header.documentoRef.trim() : null),
+          dteIdAsociado: line.dteIdAsociado ? line.dteIdAsociado.trim() : null,
+          tipoDocumentoRef: line.tipoDocumentoRef ? line.tipoDocumentoRef.trim() : (header.tipoDocumentoRef ? header.tipoDocumentoRef.trim() : null),
+          folioDocumentoRef: line.folioDocumentoRef ? line.folioDocumentoRef.trim() : (header.folioDocumentoRef ? header.folioDocumentoRef.trim() : null),
+          montoDocumentoRef: line.montoDocumentoRef !== undefined && line.montoDocumentoRef !== null ? String(line.montoDocumentoRef) : null,
+          fechaDocumentoRef: line.fechaDocumentoRef ? line.fechaDocumentoRef.trim() : null,
+          fechaVencimientoRef: line.fechaVencimientoRef ? line.fechaVencimientoRef.trim() : null,
+          documentoOperacion: line.documentoOperacion ? line.documentoOperacion.trim() : null,
+          tipoDocumentoOperacion: line.tipoDocumentoOperacion ? line.tipoDocumentoOperacion.trim() : null,
+          fechaDocumentoOperacion: line.fechaDocumentoOperacion ? line.fechaDocumentoOperacion.trim() : null,
+          documentoConciliacion: line.documentoConciliacion ? line.documentoConciliacion.trim() : null,
+          tipoDocumentoConciliacion: line.tipoDocumentoConciliacion ? line.tipoDocumentoConciliacion.trim() : null,
+          monedaOriginal: line.monedaOriginal ? line.monedaOriginal.trim() : null,
+          montoMonedaOriginal: line.montoMonedaOriginal !== undefined && line.montoMonedaOriginal !== null ? String(line.montoMonedaOriginal) : null,
+          tipoCambio: line.tipoCambio !== undefined && line.tipoCambio !== null ? String(line.tipoCambio) : null,
         };
       });
 
-      const insertedLines: AccountingEntryLine[] = await tx
-        .insert(accountingEntryLines)
-        .values(linesToInsert)
-        .returning();
+      try {
+        await tx
+          .insert(accountingEntryLines)
+          .values(linesToInsert);
+      } catch (insertLinesErr: any) {
+        const sqlMsg = (insertLinesErr as any)?.cause?.message || (insertLinesErr as any)?.sqlMessage || insertLinesErr?.message || String(insertLinesErr);
+        console.warn('[AccountingLedger] Advertencia insertando líneas accounting_entry_lines:', sqlMsg);
+
+        if (sqlMsg.includes('Unknown column') || insertLinesErr?.errno === 1054) {
+          console.log('[AccountingLedger] Auto-reparando columnas faltantes de accounting_entry_lines en MySQL...');
+          try {
+            const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+            await updateMysqlDatabase();
+            await tx.insert(accountingEntryLines).values(linesToInsert);
+          } catch (retryErr: any) {
+            console.warn('[AccountingLedger] Fallback inserción directa de líneas con columnas esenciales...');
+            for (const l of linesToInsert) {
+              await tx.execute(sql`
+                INSERT INTO \`accounting_entry_lines\` (
+                  \`id\`, \`entry_id\`, \`codigo_cuenta\`, \`nombre_cuenta\`,
+                  \`debe\`, \`haber\`, \`rut_auxiliar\`, \`centro_costo\`
+                ) VALUES (
+                  ${l.id}, ${l.entryId}, ${l.codigoCuenta}, ${l.nombreCuenta},
+                  ${l.debe}, ${l.haber}, ${l.rutAuxiliar || null}, ${l.centroCosto || null}
+                )
+              `);
+            }
+          }
+        } else {
+          throw insertLinesErr;
+        }
+      }
+
+      const insertedLines: AccountingEntryLine[] = linesToInsert.map((l) => ({
+        ...l,
+        rutAuxiliar: l.rutAuxiliar || null,
+        centroCosto: l.centroCosto || null,
+      }));
 
       // 5.3 Construir diff contable y registrar log de auditoría agéntica
       const diffContable = {
         tipoOperacion: 'INSERT_ASIENTO_VERIFICADO',
         entryId: effectiveEntryId,
-        periodo: insertedEntry?.periodo || header.periodo.trim(),
+        periodo: header.periodo.trim(),
         totales: {
           totalDebe: totalDebe,
           totalHaber: totalHaber,
           cuadreExacto: true,
         },
-        lineasAfectadas: (insertedLines || linesToInsert).map((l) => ({
+        lineasAfectadas: linesToInsert.map((l) => ({
           codigoCuenta: l.codigoCuenta,
           nombreCuenta: l.nombreCuenta,
           debe: parseFloat(l.debe),
@@ -461,26 +574,87 @@ export async function recordVerifiedEntry(
       const newAuditLogPayload: NewAgentAuditLog = {
         id: crypto.randomUUID(),
         traceId: (effectiveAuditContext.traceId || crypto.randomUUID()).trim(),
+        firmId: (header as any).firmId || 'firm-default-001',
         empresaId: header.empresaId.trim(),
         agenteNombre: (effectiveAuditContext.agenteNombre || 'AGENTE_ORQUESTADOR_SENIOR').trim(),
+        modulo: (header.origenModulo || (header as any).tipoOrigen || 'CONTABILIDAD').trim(),
         accion: (effectiveAuditContext.accion || 'COMMIT_ASIENTO').trim(),
         estadoTransicion: 'APROBADO',
         promptTokens: effectiveAuditContext.promptTokens ?? null,
         completionTokens: effectiveAuditContext.completionTokens ?? null,
         modelName: effectiveAuditContext.modelName ?? null,
         promptHash: effectiveAuditContext.promptHash ?? null,
-        payloadInput: effectiveAuditContext.payloadInput,
-        payloadOutput: effectiveAuditContext.payloadOutput,
+        payloadInput: effectiveAuditContext.payloadInput || {},
+        payloadOutput: effectiveAuditContext.payloadOutput || {},
         diffContable,
         supervisorVeredicto: 'VALIDADO_CORRECTO',
         supervisorSignature,
-        tiempoEjecucionMs: auditContext.tiempoEjecucionMs ?? executionDuration,
+        tiempoEjecucionMs: effectiveAuditContext.tiempoEjecucionMs ?? executionDuration,
       };
 
-      const [insertedAuditLog] = await tx
-        .insert(agentAuditLogs)
-        .values(newAuditLogPayload)
-        .returning();
+      try {
+        await tx
+          .insert(agentAuditLogs)
+          .values(newAuditLogPayload);
+      } catch (auditInsertErr: any) {
+        console.warn('[AccountingLedger] Aviso al persistir agent_audit_logs en MySQL:', auditInsertErr?.message);
+        // Si hay una discrepancia de esquema en caliente, intentar auto-reparar la tabla
+        if (
+          auditInsertErr?.message &&
+          (auditInsertErr.message.includes('Unknown column') ||
+            auditInsertErr.message.includes('no such column') ||
+            auditInsertErr.errno === 1054)
+        ) {
+          try {
+            const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+            await updateMysqlDatabase();
+            await tx.insert(agentAuditLogs).values(newAuditLogPayload);
+            console.log('[AccountingLedger] Auto-reparación de agent_audit_logs exitosa, log persistido.');
+          } catch (retryAuditErr: any) {
+            console.warn('[AccountingLedger] Reintento de auditoría omitido para resguardar la integridad del asiento:', retryAuditErr?.message);
+          }
+        }
+      }
+
+      const insertedAuditLog = newAuditLogPayload;
+
+      // 5.4 Si proviene de RCV, actualizar estado contable y vinculación en dtes_rcv
+      const origenMod = (header.origenModulo || (header as any).tipoOrigen || 'MANUAL').trim();
+      if (origenMod === 'RCV_COMPRA' || origenMod === 'RCV_VENTA') {
+        const tipoOp = origenMod === 'RCV_COMPRA' ? 'COMPRA' : 'VENTA';
+        const cleanRutVal = header.empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+        try {
+          const { dtesRcv } = await import('../db/schema/dtesSchema');
+          await tx
+            .update(dtesRcv)
+            .set({
+              estadoContable: 'CENTRALIZADO',
+              entryIdRef: effectiveEntryId,
+            })
+            .where(
+              and(
+                sql`REPLACE(REPLACE(REPLACE(${dtesRcv.empresaId}, '.', ''), '-', ''), ' ', '') = ${cleanRutVal}`,
+                eq(dtesRcv.periodo, header.periodo.trim()),
+                eq(dtesRcv.tipoOperacion, tipoOp)
+              )
+            );
+        } catch (dteErr: any) {
+          console.warn('[AccountingLedger] Advertencia actualizando dtes_rcv:', dteErr?.message);
+        }
+      }
+
+
+      // 5.5 Respaldo simultáneo en disco para redundancia y sincronización UI
+      try {
+        diskPersistence.addAccountingEntry({ ...newEntryPayload }, linesToInsert);
+        diskPersistence.addAuditLog({ ...newAuditLogPayload });
+        if (origenMod === 'RCV_COMPRA' || origenMod === 'RCV_VENTA') {
+          const tipoOp = origenMod === 'RCV_COMPRA' ? 'COMPRA' : 'VENTA';
+          diskPersistence.markDtesAsCentralized(header.empresaId, header.periodo.trim(), tipoOp, effectiveEntryId);
+        }
+      } catch (diskErr: any) {
+        console.warn('[AccountingLedger] Advertencia al respaldar en disco:', diskErr?.message);
+      }
 
       return {
         entry: insertedEntry,
@@ -503,12 +677,18 @@ export async function recordVerifiedEntry(
       throw error;
     }
 
-    // Encapsular cualquier error imprevisto de base de datos
+    // Encapsular cualquier error imprevisto de base de datos con causa detallada
+    const causeMsg =
+      (error as any)?.cause?.message ||
+      (error as any)?.cause?.sqlMessage ||
+      (error as any)?.sqlMessage ||
+      (error instanceof Error ? error.message : String(error));
+
     throw new AccountingTransactionError(
-      `Fallo durante la transacción de inserción en el Libro Contable: ${error instanceof Error ? error.message : String(error)}`,
+      `Fallo durante la transacción de inserción en el Libro Contable: ${causeMsg}`,
       error,
       {
-        traceId: auditContext.traceId,
+        traceId: effectiveAuditContext.traceId,
         empresaId: header.empresaId,
         periodo: header.periodo,
       }

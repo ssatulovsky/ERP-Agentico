@@ -4,6 +4,7 @@ import { sql, eq, and } from 'drizzle-orm';
 import { dtesRcv, type NewDteRcv } from '../db/schema/dtesSchema';
 import { agentAuditLogs } from '../db/mysqlSchema';
 import { pool, getMysqlDb, isRealMysqlConnected, inMemoryDtesRcv } from '../db/mysqlClient';
+import { diskPersistence } from './diskPersistenceService';
 
 // ============================================================================
 // ESQUEMA DE VALIDACIÓN ZOD PARA FILA OFICIAL DEL RCV DEL SII
@@ -392,51 +393,104 @@ export class RcvIngestionService {
       .digest('hex');
 
     // Preparar registros para inserción en Drizzle
-    const newRecords: NewDteRcv[] = dtes.map((d) => ({
-      id: crypto.randomUUID(),
-      empresaId: cleanEmpresaRut,
-      periodo: d.periodo,
-      tipoOperacion: d.tipoOperacion,
-      tipoDte: d.tipoDte,
-      folio: d.folio,
-      rutContraparte: d.rutContraparte,
-      razonSocialContraparte: d.razonSocialContraparte,
-      fechaEmision: d.fechaEmision,
-      montoExento: d.montoExento.toFixed(2),
-      montoNeto: d.montoNeto.toFixed(2),
-      montoIvaRecuperable: d.montoIvaRecuperable.toFixed(2),
-      montoIvaNoRecuperable: d.montoIvaNoRecuperable.toFixed(2),
-      montoTotal: d.montoTotal.toFixed(2),
-      estadoAcuse: d.estadoAcuse || null,
-    }));
+    const newRecords: NewDteRcv[] = dtes.map((d) => {
+      const ivaRecup = Number(d.montoIvaRecuperable || 0);
+      const ivaNoRecup = Number(d.montoIvaNoRecuperable || 0);
+      const totalIva = ivaRecup + ivaNoRecup;
+      return {
+        id: crypto.randomUUID(),
+        empresaId: cleanEmpresaRut,
+        periodo: d.periodo,
+        tipoOperacion: d.tipoOperacion,
+        tipoDte: d.tipoDte,
+        folio: d.folio,
+        rutContraparte: d.rutContraparte,
+        razonSocialContraparte: d.razonSocialContraparte,
+        fechaEmision: d.fechaEmision,
+        montoExento: d.montoExento.toFixed(2),
+        montoNeto: d.montoNeto.toFixed(2),
+        montoIva: totalIva.toFixed(2),
+        montoIvaRecuperable: d.montoIvaRecuperable.toFixed(2),
+        montoIvaNoRecuperable: d.montoIvaNoRecuperable.toFixed(2),
+        montoTotal: d.montoTotal.toFixed(2),
+        estadoAcuse: d.estadoAcuse || null,
+        estadoContable: 'PENDIENTE',
+      };
+    });
 
     const activeDb = getMysqlDb();
 
-    // Inserción atómica con onDuplicateKeyUpdate
+    // Inserción atómica con onDuplicateKeyUpdate y resiliencia de auto-reparación DDL
     if (isRealMysqlConnected) {
-      // Chunking para no superar límites de parámetros SQL en lotes grandes (500 por lote)
+      // Chunking para no superar límites de parámetros SQL en lotes grandes (250 por lote)
       const CHUNK_SIZE = 250;
       for (let i = 0; i < newRecords.length; i += CHUNK_SIZE) {
         const chunk = newRecords.slice(i, i + CHUNK_SIZE);
-        await activeDb
-          .insert(dtesRcv)
-          .values(chunk)
-          .onDuplicateKeyUpdate({
-            set: {
-              razonSocialContraparte: sql`VALUES(razon_social_contraparte)`,
-              fechaEmision: sql`VALUES(fecha_emision)`,
-              montoExento: sql`VALUES(monto_exento)`,
-              montoNeto: sql`VALUES(monto_neto)`,
-              montoIvaRecuperable: sql`VALUES(monto_iva_recuperable)`,
-              montoIvaNoRecuperable: sql`VALUES(monto_iva_no_recuperable)`,
-              montoTotal: sql`VALUES(monto_total)`,
-              estadoAcuse: sql`VALUES(estado_acuse)`,
-            },
-          });
+        try {
+          await activeDb
+            .insert(dtesRcv)
+            .values(chunk)
+            .onDuplicateKeyUpdate({
+              set: {
+                razonSocialContraparte: sql`VALUES(razon_social_contraparte)`,
+                fechaEmision: sql`VALUES(fecha_emision)`,
+                montoExento: sql`VALUES(monto_exento)`,
+                montoNeto: sql`VALUES(monto_neto)`,
+                montoIva: sql`VALUES(monto_iva)`,
+                montoIvaRecuperable: sql`VALUES(monto_iva_recuperable)`,
+                montoIvaNoRecuperable: sql`VALUES(monto_iva_no_recuperable)`,
+                montoTotal: sql`VALUES(monto_total)`,
+                estadoAcuse: sql`VALUES(estado_acuse)`,
+              },
+            });
+        } catch (insertErr: any) {
+          // Si falta alguna columna como 'periodo' o 'monto_iva_recuperable', reparar en caliente y reintentar
+          if (
+            insertErr.message &&
+            (insertErr.message.includes("Unknown column") ||
+              insertErr.message.includes("no such column") ||
+              insertErr.errno === 1054)
+          ) {
+            console.warn(`[RcvIngestion] Detectada discrepancia de esquema en dtes_rcv (${insertErr.message}). Ejecutando auto-reparación DDL...`);
+            try {
+              const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+              await updateMysqlDatabase();
+              // Reintentar inserción del chunk tras actualización
+              await activeDb
+                .insert(dtesRcv)
+                .values(chunk)
+                .onDuplicateKeyUpdate({
+                  set: {
+                    razonSocialContraparte: sql`VALUES(razon_social_contraparte)`,
+                    fechaEmision: sql`VALUES(fecha_emision)`,
+                    montoExento: sql`VALUES(monto_exento)`,
+                    montoNeto: sql`VALUES(monto_neto)`,
+                    montoIva: sql`VALUES(monto_iva)`,
+                    montoIvaRecuperable: sql`VALUES(monto_iva_recuperable)`,
+                    montoIvaNoRecuperable: sql`VALUES(monto_iva_no_recuperable)`,
+                    montoTotal: sql`VALUES(monto_total)`,
+                    estadoAcuse: sql`VALUES(estado_acuse)`,
+                  },
+                });
+            } catch (retryErr: any) {
+              console.error(`[RcvIngestion] Falló reintento tras auto-reparación: ${retryErr.message}`);
+              throw retryErr;
+            }
+          } else {
+            throw insertErr;
+          }
+        }
       }
     } else {
       // Modo contingencia en memoria
       await activeDb.insert(dtesRcv).values(newRecords).execute();
+    }
+
+    // Respaldo simultáneo en disco para tolerancia a caídas
+    try {
+      diskPersistence.addDtes(newRecords);
+    } catch (diskErr: any) {
+      console.warn(`[RcvIngestion] Aviso al persistir respaldo en disco: ${diskErr.message}`);
     }
 
     // Consulta de agregación SQL real sobre la tabla dtes_rcv

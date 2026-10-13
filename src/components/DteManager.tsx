@@ -207,12 +207,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
   };
 
   // Verificación de condición tributaria: No Afecta a IVA (Art. 12 Letra E / DL 825)
-  const isCompanyExento = Boolean(
-    (company as any)?.exentoIvaGiro ||
-    company.id === 'client-innovagile' ||
-    company.rut?.includes('77.798.901') ||
-    company.rut?.includes('76.892.410')
-  );
+  const isCompanyExento = Boolean((company as any)?.exentoIvaGiro);
   const [isConnectingSii, setIsConnectingSii] = useState(false);
 
   // Consulta directa y verídica al Servicio de Impuestos Internos

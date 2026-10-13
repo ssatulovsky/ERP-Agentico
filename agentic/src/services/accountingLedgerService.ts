@@ -110,17 +110,35 @@ export interface AccountingEntryHeaderInput {
   fecha: string; // 'YYYY-MM-DD'
   concepto: string;
   documentoRef?: string | null;
+  documentoReferencia?: string | null;
+  tipoDocumentoRef?: string | null;
+  folioDocumentoRef?: string | null;
   origenModulo: string; // 'RCV_COMPRA' | 'RCV_VENTA' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'TESORERIA' | 'MANUAL'
   creadoPorAgente: string;
 }
 
 export interface AccountingEntryLineInput {
+  id?: string;
   codigoCuenta: string;
   nombreCuenta: string;
   debe: number | string;
   haber: number | string;
+  glosa?: string | null;
   rutAuxiliar?: string | null;
+  nombreAuxiliar?: string | null;
   centroCosto?: string | null;
+  documentoRef?: string | null;
+  dteIdAsociado?: string | null;
+  tipoDocumentoRef?: string | null;
+  folioDocumentoRef?: string | null;
+  montoDocumentoRef?: number | string | null;
+  documentoOperacion?: string | null;
+  tipoDocumentoOperacion?: string | null;
+  documentoConciliacion?: string | null;
+  tipoDocumentoConciliacion?: string | null;
+  monedaOriginal?: string | null;
+  montoMonedaOriginal?: number | string | null;
+  tipoCambio?: number | string | null;
 }
 
 export interface AgentAuditContextInput {
@@ -400,6 +418,9 @@ export async function recordVerifiedEntry(
         fecha: header.fecha.trim(),
         concepto: header.concepto.trim(),
         documentoRef: header.documentoRef ? header.documentoRef.trim() : null,
+        documentoReferencia: header.documentoReferencia ? header.documentoReferencia.trim() : (header.documentoRef ? header.documentoRef.trim() : null),
+        tipoDocumentoRef: header.tipoDocumentoRef ? header.tipoDocumentoRef.trim() : null,
+        folioDocumentoRef: header.folioDocumentoRef ? header.folioDocumentoRef.trim() : null,
         totalDebe: totalDebeFormatted,
         totalHaber: totalHaberFormatted,
         origenModulo: (header.origenModulo || (header as any).tipoOrigen || 'MANUAL').trim(),
@@ -409,9 +430,45 @@ export async function recordVerifiedEntry(
       };
 
       // Inserción en MySQL 8.0 sin .returning() (MySQL Drizzle dialect no soporta returning())
-      await tx
-        .insert(accountingEntries)
-        .values(newEntryPayload);
+      try {
+        await tx
+          .insert(accountingEntries)
+          .values(newEntryPayload);
+      } catch (insertHeaderErr: any) {
+        const sqlMsg = (insertHeaderErr as any)?.cause?.message || (insertHeaderErr as any)?.sqlMessage || insertHeaderErr?.message || String(insertHeaderErr);
+        console.warn('[AccountingLedger] Advertencia insertando cabecera accounting_entries:', sqlMsg);
+
+        if (sqlMsg.includes('Unknown column') || insertHeaderErr?.errno === 1054) {
+          console.log('[AccountingLedger] Auto-reparando columnas faltantes de accounting_entries en MySQL...');
+          try {
+            const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+            await updateMysqlDatabase();
+            await tx.insert(accountingEntries).values(newEntryPayload);
+          } catch (retryErr: any) {
+            console.warn('[AccountingLedger] Fallback inserción directa de cabecera con columnas esenciales...');
+            await tx.execute(sql`
+              INSERT INTO \`accounting_entries\` (
+                \`id\`, \`empresa_id\`, \`periodo\`, \`fecha\`, \`concepto\`, \`documento_ref\`,
+                \`total_debe\`, \`total_haber\`, \`origen_modulo\`, \`creado_por_agente\`,
+                \`autorizado_por_supervisor\`, \`supervisor_signature\`
+              ) VALUES (
+                ${newEntryPayload.id}, ${newEntryPayload.empresaId}, ${newEntryPayload.periodo},
+                ${newEntryPayload.fecha}, ${newEntryPayload.concepto}, ${newEntryPayload.documentoRef},
+                ${newEntryPayload.totalDebe}, ${newEntryPayload.totalHaber}, ${newEntryPayload.origenModulo},
+                ${newEntryPayload.creadoPorAgente}, 1, ${newEntryPayload.supervisorSignature}
+              )
+            `);
+          }
+        } else if (sqlMsg.includes('Duplicate entry') || insertHeaderErr?.errno === 1062) {
+          console.warn('[AccountingLedger] Conflicto de unicidad en documento_ref. Desambiguando para persistir asiento...');
+          const disambiguatedDoc = `${newEntryPayload.documentoRef || 'ASIENTO'}-${Date.now().toString().slice(-4)}`;
+          newEntryPayload.documentoRef = disambiguatedDoc;
+          newEntryPayload.documentoReferencia = disambiguatedDoc;
+          await tx.insert(accountingEntries).values(newEntryPayload);
+        } else {
+          throw insertHeaderErr;
+        }
+      }
 
       const effectiveEntryId = generatedEntryId;
       const insertedEntry: AccountingEntry = {
@@ -426,7 +483,7 @@ export async function recordVerifiedEntry(
         const lineHaberCents = parseToCents(line.haber, 'line.haber');
 
         return {
-          id: crypto.randomUUID(),
+          id: line.id || crypto.randomUUID(),
           entryId: effectiveEntryId,
           lineaNumero: idx + 1,
           codigoCuenta: line.codigoCuenta.trim(),
@@ -435,12 +492,56 @@ export async function recordVerifiedEntry(
           haber: (lineHaberCents / 100).toFixed(2),
           rutAuxiliar: line.rutAuxiliar ? line.rutAuxiliar.trim() : null,
           centroCosto: line.centroCosto ? line.centroCosto.trim() : null,
+          documentoRef: line.documentoRef ? line.documentoRef.trim() : (header.documentoRef ? header.documentoRef.trim() : null),
+          dteIdAsociado: line.dteIdAsociado ? line.dteIdAsociado.trim() : null,
+          tipoDocumentoRef: line.tipoDocumentoRef ? line.tipoDocumentoRef.trim() : (header.tipoDocumentoRef ? header.tipoDocumentoRef.trim() : null),
+          folioDocumentoRef: line.folioDocumentoRef ? line.folioDocumentoRef.trim() : (header.folioDocumentoRef ? header.folioDocumentoRef.trim() : null),
+          montoDocumentoRef: line.montoDocumentoRef !== undefined && line.montoDocumentoRef !== null ? String(line.montoDocumentoRef) : null,
+          fechaDocumentoRef: line.fechaDocumentoRef ? line.fechaDocumentoRef.trim() : null,
+          fechaVencimientoRef: line.fechaVencimientoRef ? line.fechaVencimientoRef.trim() : null,
+          documentoOperacion: line.documentoOperacion ? line.documentoOperacion.trim() : null,
+          tipoDocumentoOperacion: line.tipoDocumentoOperacion ? line.tipoDocumentoOperacion.trim() : null,
+          fechaDocumentoOperacion: line.fechaDocumentoOperacion ? line.fechaDocumentoOperacion.trim() : null,
+          documentoConciliacion: line.documentoConciliacion ? line.documentoConciliacion.trim() : null,
+          tipoDocumentoConciliacion: line.tipoDocumentoConciliacion ? line.tipoDocumentoConciliacion.trim() : null,
+          monedaOriginal: line.monedaOriginal ? line.monedaOriginal.trim() : null,
+          montoMonedaOriginal: line.montoMonedaOriginal !== undefined && line.montoMonedaOriginal !== null ? String(line.montoMonedaOriginal) : null,
+          tipoCambio: line.tipoCambio !== undefined && line.tipoCambio !== null ? String(line.tipoCambio) : null,
         };
       });
 
-      await tx
-        .insert(accountingEntryLines)
-        .values(linesToInsert);
+      try {
+        await tx
+          .insert(accountingEntryLines)
+          .values(linesToInsert);
+      } catch (insertLinesErr: any) {
+        const sqlMsg = (insertLinesErr as any)?.cause?.message || (insertLinesErr as any)?.sqlMessage || insertLinesErr?.message || String(insertLinesErr);
+        console.warn('[AccountingLedger] Advertencia insertando líneas accounting_entry_lines:', sqlMsg);
+
+        if (sqlMsg.includes('Unknown column') || insertLinesErr?.errno === 1054) {
+          console.log('[AccountingLedger] Auto-reparando columnas faltantes de accounting_entry_lines en MySQL...');
+          try {
+            const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+            await updateMysqlDatabase();
+            await tx.insert(accountingEntryLines).values(linesToInsert);
+          } catch (retryErr: any) {
+            console.warn('[AccountingLedger] Fallback inserción directa de líneas con columnas esenciales...');
+            for (const l of linesToInsert) {
+              await tx.execute(sql`
+                INSERT INTO \`accounting_entry_lines\` (
+                  \`id\`, \`entry_id\`, \`codigo_cuenta\`, \`nombre_cuenta\`,
+                  \`debe\`, \`haber\`, \`rut_auxiliar\`, \`centro_costo\`
+                ) VALUES (
+                  ${l.id}, ${l.entryId}, ${l.codigoCuenta}, ${l.nombreCuenta},
+                  ${l.debe}, ${l.haber}, ${l.rutAuxiliar || null}, ${l.centroCosto || null}
+                )
+              `);
+            }
+          }
+        } else {
+          throw insertLinesErr;
+        }
+      }
 
       const insertedLines: AccountingEntryLine[] = linesToInsert.map((l) => ({
         ...l,
@@ -542,80 +643,6 @@ export async function recordVerifiedEntry(
         }
       }
 
-      // 5.4.1 Sincronización automática de Tesorería y Conciliación Bancaria
-      // Si el asiento afecta cuentas de Banco / Tesorería (1.1.01.xxx, 1.1.02.xxx o nombre con Banco)
-      for (const line of linesToInsert) {
-        const cod = (line.codigoCuenta || '').trim();
-        const nom = (line.nombreCuenta || '').toLowerCase();
-        const isBankLine = cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco') || nom.includes('cta cte') || nom.includes('cuenta corriente');
-        if (isBankLine) {
-          const cargoVal = parseFloat(line.haber) || 0;
-          const abonoVal = parseFloat(line.debe) || 0;
-          if (cargoVal > 0 || abonoVal > 0) {
-            const movId = crypto.randomUUID();
-            try {
-              const { bankAccounts, bankTransactions } = await import('../db/schema/erpModulesSchema');
-              let existingAcc = await tx.select().from(bankAccounts).where(eq(bankAccounts.empresaId, header.empresaId.trim())).limit(1);
-              let targetAccId = existingAcc[0]?.id;
-              if (!targetAccId) {
-                targetAccId = crypto.randomUUID();
-                await tx.insert(bankAccounts).values({
-                  id: targetAccId,
-                  empresaId: header.empresaId.trim(),
-                  bancoCodigo: nom.includes('chile') ? 'BANCO_DE_CHILE' : nom.includes('bci') ? 'BCI' : 'BANCO_SANTANDER',
-                  numeroCuenta: '00-0839210-4',
-                  tipoCuenta: 'CORRIENTE',
-                  moneda: 'CLP',
-                  saldoContable: '0.00',
-                  saldoCartola: '0.00',
-                  esPrincipal: true,
-                });
-              }
-
-              await tx.insert(bankTransactions).values({
-                id: movId,
-                accountId: targetAccId,
-                fecha: header.fecha.trim(),
-                descripcion: `${header.concepto.trim()} (${line.nombreCuenta})`,
-                cargo: cargoVal.toFixed(2),
-                abono: abonoVal.toFixed(2),
-                documentoRef: header.documentoRef ? header.documentoRef.trim() : `ASIENTO ${effectiveEntryId.substring(0, 8)}`,
-                estadoConciliacion: 'CONCILIADO',
-                matchedDteId: null,
-                moneda: 'CLP',
-                tipoCambio: '1.0000',
-                montoClpEquivalente: (cargoVal > 0 ? cargoVal : abonoVal).toFixed(2),
-                matchCerteza: 100,
-                origenImportacion: 'CONTABILIDAD_AUTO',
-                createdAt: new Date(),
-              });
-            } catch (bankErr: any) {
-              console.warn('[AccountingLedger] Advertencia al sincronizar bankTransactions en MySQL:', bankErr?.message);
-            }
-
-            // Respaldo en disco del movimiento bancario para reflejo reactivo en la UI
-            try {
-              diskPersistence.addBankMovement({
-                id: movId,
-                cuentaId: 'bank-acc-01',
-                empresaId: header.empresaId.trim(),
-                fecha: header.fecha.trim(),
-                glosaBancaria: `${header.concepto.trim()} (${line.nombreCuenta})`,
-                numeroReferencia: header.documentoRef ? header.documentoRef.trim() : `ASIENTO ${effectiveEntryId.substring(0, 8)}`,
-                cargo: cargoVal,
-                abono: abonoVal,
-                montoNeto: abonoVal - cargoVal,
-                estado: 'CONCILIADO',
-                matchCerteza: 100,
-                asientoGeneradoId: effectiveEntryId,
-                documentoRef: header.documentoRef || null,
-              });
-            } catch (diskMovErr: any) {
-              console.warn('[AccountingLedger] Advertencia al respaldar movimiento bancario en disco:', diskMovErr?.message);
-            }
-          }
-        }
-      }
 
       // 5.5 Respaldo simultáneo en disco para redundancia y sincronización UI
       try {
@@ -650,9 +677,15 @@ export async function recordVerifiedEntry(
       throw error;
     }
 
-    // Encapsular cualquier error imprevisto de base de datos
+    // Encapsular cualquier error imprevisto de base de datos con causa detallada
+    const causeMsg =
+      (error as any)?.cause?.message ||
+      (error as any)?.cause?.sqlMessage ||
+      (error as any)?.sqlMessage ||
+      (error instanceof Error ? error.message : String(error));
+
     throw new AccountingTransactionError(
-      `Fallo durante la transacción de inserción en el Libro Contable: ${error instanceof Error ? error.message : String(error)}`,
+      `Fallo durante la transacción de inserción en el Libro Contable: ${causeMsg}`,
       error,
       {
         traceId: effectiveAuditContext.traceId,

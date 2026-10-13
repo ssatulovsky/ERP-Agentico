@@ -109,11 +109,16 @@ app.get("/api/indicators/current", async (req, res) => {
 // Gemini Chat & Accounting Consultation
 app.post("/api/gemini/chat", async (req, res) => {
   try {
-    const { messages, companyContext, firmContext, userRole } = req.body;
+    const { messages, companyContext, firmContext, userRole, personaContext } = req.body;
     const ai = getAIClient();
 
     const systemInstruction = `Eres un Agente Contable y Financiero Senior experto en la legislación chilena (SII, Dirección del Trabajo, Tesorería General de la República - TGR, Código del Trabajo, Ley de la Renta LIR, DL 825 de IVA e IFRS/NIIF 16).
 Tu objetivo es gestionar de manera integral la contabilidad, el flujo de caja, las proyecciones financieras y el cumplimiento tributario/laboral de la empresa en Chile, actuando bajo las directrices del Estudio Contable gestor.
+
+${personaContext ? `ESTÁS ACTUANDO ESPECÍFICAMENTE COMO: ${personaContext.nombre}, ${personaContext.cargo} (${personaContext.area}) de la empresa ${companyContext?.nombre || companyContext?.razonSocial || 'la empresa'}.
+DIRECTRICES CLAVE DE DIÁLOGO:
+1. Mantén estricta continuidad del diálogo multi-turno. Si el usuario te responde a una pregunta previa (por ejemplo entregando márgenes, recetas de insumos, plazos de entrega, montos netos, condición de pago o confirmaciones), UNE los datos previos con los nuevos, formula la cotización, factura o cálculo concreto con cifras numéricas realistas en pesos chilenos ($ CLP), y solicita confirmación para emitir o registrar.
+2. NUNCA respondas con frases vacías o genéricas como 'los registros se encuentran al día'. Sé un profesional proactivo, resolutivo, empático y experto.` : ''}
 
 REGLAS ESTRICTAS DE RESPUESTA:
 1. Utiliza siempre la moneda Peso Chileno ($ CLP) o UF según el contexto, indicando la conversión si aplica.
@@ -244,30 +249,106 @@ app.post("/api/sii/detect-pending", (req, res) => {
   }
 });
 
+// Función auxiliar para resolver dinámicamente cualquier empresa cliente por ID o RUT
+async function findCompanyByIdOrRut(idOrRut?: string): Promise<any | null> {
+  if (!idOrRut) return null;
+  const cleanParam = idOrRut.replace(/[^0-9kK]/g, "").toUpperCase();
+
+  // 1. Buscar en INITIAL_CLIENTS
+  let found = INITIAL_CLIENTS.find(
+    c => c.id === idOrRut || c.rut.replace(/[^0-9kK]/g, "").toUpperCase() === cleanParam
+  );
+  if (found) return found;
+
+  // 2. Buscar en disco (diskPersistence)
+  try {
+    const diskClients = (diskPersistence as any).getClients ? (diskPersistence as any).getClients() : (diskPersistence as any).store?.clients;
+    if (Array.isArray(diskClients)) {
+      found = diskClients.find(
+        (c: any) => c.id === idOrRut || (c.rut && c.rut.replace(/[^0-9kK]/g, "").toUpperCase() === cleanParam)
+      );
+      if (found) return found;
+    }
+  } catch {}
+
+  // 3. Buscar en base de datos MySQL (companies)
+  if (isRealMysqlConnected) {
+    try {
+      const { getMysqlDb } = await import("./src/db/mysqlClient");
+      const mysqlDb = getMysqlDb();
+      const { companies } = await import("./src/db/schema/tenancySchema");
+      const { or, eq } = await import("drizzle-orm");
+      const rows = await mysqlDb.select().from(companies).where(
+        or(eq(companies.id, idOrRut), eq(companies.rut, idOrRut))
+      );
+      if (rows && rows.length > 0) {
+        return rows[0];
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
 // Endpoints de Gestión Multi-Empresa & Credenciales SII por Empresa
-app.get("/api/companies", (_req, res) => {
-  const list = INITIAL_CLIENTS.map(c => ({
-    id: c.id,
-    rut: c.rut,
-    razonSocial: c.razonSocial,
-    nombreCorto: c.nombreCorto,
-    rutAutenticacion: c.rutAutenticacion || c.rut,
-    tipoAutenticacionSii: c.tipoAutenticacionSii,
-    hasClaveSii: Boolean(c.claveSii && c.claveSii.length > 0),
-    estadoConexionSii: c.estadoConexionSii,
-    descargaAutomaticaRcv: c.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
-    activa: c.activa
-  }));
-  res.json({ success: true, count: list.length, companies: list });
+app.get("/api/companies", async (_req, res) => {
+  try {
+    const companyMap = new Map<string, any>();
+
+    // Cargar empresas de semillas iniciales
+    INITIAL_CLIENTS.forEach(c => {
+      companyMap.set(c.rut.replace(/[^0-9kK]/g, "").toUpperCase(), {
+        id: c.id,
+        rut: c.rut,
+        razonSocial: c.razonSocial,
+        nombreCorto: c.nombreCorto,
+        rutAutenticacion: c.rutAutenticacion || c.rut,
+        tipoAutenticacionSii: c.tipoAutenticacionSii,
+        hasClaveSii: Boolean(c.claveSii && c.claveSii.length > 0),
+        estadoConexionSii: c.estadoConexionSii,
+        descargaAutomaticaRcv: c.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
+        activa: c.activa,
+        exentoIvaGiro: Boolean(c.exentoIvaGiro)
+      });
+    });
+
+    // Cargar empresas reales de MySQL si está conectado
+    if (isRealMysqlConnected) {
+      try {
+        const { getMysqlDb } = await import("./src/db/mysqlClient");
+        const mysqlDb = getMysqlDb();
+        const { companies } = await import("./src/db/schema/tenancySchema");
+        const dbCompanies = await mysqlDb.select().from(companies);
+        dbCompanies.forEach((c: any) => {
+          const key = (c.rut || c.id).replace(/[^0-9kK]/g, "").toUpperCase();
+          companyMap.set(key, {
+            id: c.id,
+            rut: c.rut,
+            razonSocial: c.razonSocial,
+            nombreCorto: c.razonSocial,
+            rutAutenticacion: c.rut,
+            tipoAutenticacionSii: 'CLAVE_TRIBUTARIA',
+            hasClaveSii: true,
+            estadoConexionSii: 'CONECTADO',
+            descargaAutomaticaRcv: true,
+            activa: true,
+            exentoIvaGiro: Boolean(c.exentoIvaGiro)
+          });
+        });
+      } catch {}
+    }
+
+    const list = Array.from(companyMap.values());
+    res.json({ success: true, count: list.length, companies: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Endpoint seguro para consultar la configuración SII de una empresa específica (utilizado por el script RPA / Worker)
-app.get("/api/companies/:idOrRut/sii-config", (req, res) => {
+app.get("/api/companies/:idOrRut/sii-config", async (req, res) => {
   const { idOrRut } = req.params;
-  const cleanParam = idOrRut.replace(/\./g, "").trim().toUpperCase();
-  const company = INITIAL_CLIENTS.find(
-    c => c.id === idOrRut || c.rut.replace(/\./g, "").trim().toUpperCase() === cleanParam
-  );
+  const company = await findCompanyByIdOrRut(idOrRut);
 
   if (!company) {
     return res.status(404).json({ success: false, error: `Empresa con ID o RUT '${idOrRut}' no encontrada en el ERP.` });
@@ -279,11 +360,11 @@ app.get("/api/companies/:idOrRut/sii-config", (req, res) => {
       id: company.id,
       rut: company.rut,
       razonSocial: company.razonSocial,
-      nombreCorto: company.nombreCorto,
+      nombreCorto: company.nombreCorto || company.razonSocial,
       rutAutenticacion: company.rutAutenticacion || company.rut,
       claveSii: company.claveSii,
-      tipoAutenticacionSii: company.tipoAutenticacionSii,
-      exentoIvaGiro: company.exentoIvaGiro,
+      tipoAutenticacionSii: company.tipoAutenticacionSii || 'CLAVE_TRIBUTARIA',
+      exentoIvaGiro: Boolean(company.exentoIvaGiro),
       descargaAutomaticaRcv: company.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
     }
   });
@@ -301,7 +382,7 @@ app.get("/api/companies/active-sii", (_req, res) => {
     rutAutenticacion: c.rutAutenticacion || c.rut,
     claveSii: c.claveSii,
     tipoAutenticacionSii: c.tipoAutenticacionSii,
-    exentoIvaGiro: c.exentoIvaGiro
+    exentoIvaGiro: Boolean(c.exentoIvaGiro)
   }));
 
   res.json({
@@ -319,15 +400,8 @@ app.post("/api/sii/download-rcv", async (req, res) => {
       return res.status(400).json({ error: "Faltan parámetros tipo o período (AAAAMM o YYYY-MM)." });
     }
 
-    // Resolver la empresa específica desde la configuración multi-empresa
-    let targetCompany = null;
-    if (empresaId) {
-      targetCompany = INITIAL_CLIENTS.find(c => c.id === empresaId);
-    }
-    if (!targetCompany && rut) {
-      const cleanParam = String(rut).replace(/[^0-9kK]/g, "").toUpperCase();
-      targetCompany = INITIAL_CLIENTS.find(c => c.rut.replace(/[^0-9kK]/g, "").toUpperCase() === cleanParam);
-    }
+    // Resolver la empresa específica dinámicamente
+    const targetCompany = await findCompanyByIdOrRut(empresaId || rut);
 
     const cleanRut = targetCompany 
       ? targetCompany.rut.replace(/\./g, "").trim().toUpperCase()
@@ -344,12 +418,8 @@ app.post("/api/sii/download-rcv", async (req, res) => {
 
     console.log(`[SII Gateway Multi-Empresa] Conectando a Portal RCV para Empresa: ${targetCompany?.razonSocial || cleanRut} (RUT Autenticación: ${rutAutenticacion}), Periodo: ${formattedPeriodo}, Tipo: ${tipo}`);
 
-    const isExentoIva = Boolean(
-      targetCompany?.exentoIvaGiro ||
-      targetCompany?.id === "client-innovagile" ||
-      cleanRut.includes("77798901") ||
-      cleanRut.includes("76892410")
-    );
+    // Detección dinámica de giro no afecto / exento de IVA según la ficha de la empresa cliente
+    const isExentoIva = Boolean(targetCompany?.exentoIvaGiro);
     const tipoNormalized = String(tipo).toUpperCase();
 
     const fetchTipos: ("COMPRA" | "VENTA")[] = [];
@@ -514,9 +584,7 @@ app.post("/api/sii/run-playwright", async (req, res) => {
 
     let claveTributaria = password;
     if (!claveTributaria) {
-      const matched = INITIAL_CLIENTS.find(
-        c => c.rut.replace(/\./g, "").trim().toUpperCase() === cleanRut || c.id === rut
-      );
+      const matched = await findCompanyByIdOrRut(cleanRut || rut);
       if (matched && matched.claveSii) {
         claveTributaria = matched.claveSii;
       }
@@ -530,26 +598,85 @@ app.post("/api/sii/run-playwright", async (req, res) => {
       headless,
     });
 
-    // Si obtuvo documentos reales, opcionalmente persistir en MySQL RCV
+    // Si obtuvo documentos reales, persistir de forma resiliente en MySQL RCV y disco
     if (result.success && result.documentos.length > 0) {
-      const parsedRows = result.documentos.map((d: any) => ({
-        empresaId: cleanRut,
-        periodo: periodo.includes("-") ? periodo : `${periodo.slice(0, 4)}-${periodo.slice(4, 6)}`,
-        tipoOperacion: d.tipoOperacion as "COMPRA" | "VENTA",
-        tipoDte: Number(d.tipoDte) || 33,
-        folio: Number(d.folio),
-        rutContraparte: d.rutContraparte,
-        razonSocialContraparte: d.razonSocialContraparte,
-        fechaEmision: d.fechaEmision,
-        montoExento: d.montoExento || 0,
-        montoNeto: d.montoNeto || 0,
-        montoIvaRecuperable: d.montoIva || 0,
-        montoIvaNoRecuperable: 0,
-        montoTotal: d.montoTotal,
-        estadoAcuse: null,
-      }));
+      const formattedPeriodo = periodo.includes("-") ? periodo : `${periodo.slice(0, 4)}-${periodo.slice(4, 6)}`;
+      
+      // Separar DTEs estándar (COMPRA / VENTA) de Boletas de Honorarios (HONORARIOS)
+      const dteDocs = result.documentos.filter((d: any) => d.tipoOperacion === "COMPRA" || d.tipoOperacion === "VENTA");
+      const bheDocs = result.documentos.filter((d: any) => d.tipoOperacion === "HONORARIOS");
 
-      await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-playwright-${Date.now()}`);
+      if (dteDocs.length > 0) {
+        const parsedRows = dteDocs.map((d: any) => ({
+          empresaId: cleanRut,
+          periodo: formattedPeriodo,
+          tipoOperacion: d.tipoOperacion as "COMPRA" | "VENTA",
+          tipoDte: Number(d.tipoDte) || 33,
+          folio: Number(d.folio),
+          rutContraparte: d.rutContraparte,
+          razonSocialContraparte: d.razonSocialContraparte,
+          fechaEmision: d.fechaEmision,
+          montoExento: d.montoExento || 0,
+          montoNeto: d.montoNeto || 0,
+          montoIvaRecuperable: d.montoIva || 0,
+          montoIvaNoRecuperable: 0,
+          montoTotal: d.montoTotal,
+          estadoAcuse: null,
+        }));
+
+        try {
+          const ingestRes = await RcvIngestionService.ingestDteBatch(cleanRut, parsedRows, `trace-playwright-${Date.now()}`);
+          result.logs.push(`[Persistencia MySQL] ${ingestRes.insertedCount} DTEs sincronizados en tabla dtes_rcv.`);
+        } catch (dbErr: any) {
+          console.error("[Playwright MySQL Ingest Warning]:", dbErr);
+          result.logs.push(`[Aviso Persistencia MySQL] ${dbErr.message}. Los datos fueron resguardados en almacenamiento de contingencia.`);
+        }
+      }
+
+      if (bheDocs.length > 0) {
+        try {
+          const { db: mysqlDbInstance, isRealMysqlConnected: isDbConnected } = await import("./src/db/mysqlClient");
+          const { boletasHonorarios } = await import("./src/db/schema/erpModulesSchema");
+          const { sql: drizzleSql } = await import("drizzle-orm");
+          const crypto = await import("node:crypto");
+          if (isDbConnected) {
+            for (const bhe of bheDocs) {
+              const retencion = Number(bhe.retencionMonto || 0);
+              const bruto = Number(bhe.montoTotal || bhe.montoNeto || 0);
+              const liquido = bruto - retencion;
+              await mysqlDbInstance.insert(boletasHonorarios).values({
+                id: crypto.randomUUID(),
+                empresaId: cleanRut,
+                folio: Number(bhe.folio),
+                rutEmisor: bhe.rutContraparte,
+                nombreEmisor: bhe.razonSocialContraparte,
+                fechaEmision: bhe.fechaEmision,
+                periodo: formattedPeriodo,
+                montoBruto: bruto.toFixed(2),
+                tasaRetencion: (bhe.retencionTasa ? (bhe.retencionTasa / 100) : 0.1450).toFixed(4),
+                retencionMonto: retencion.toFixed(2),
+                liquidoPagado: liquido.toFixed(2),
+                descripcionServicio: bhe.glosa || 'Honorarios profesionales',
+                estadoContable: 'PENDIENTE',
+              }).onDuplicateKeyUpdate({
+                set: {
+                  montoBruto: drizzleSql`VALUES(monto_bruto)`,
+                  retencionMonto: drizzleSql`VALUES(retencion_monto)`,
+                  liquidoPagado: drizzleSql`VALUES(liquido_pagado)`,
+                }
+              });
+            }
+            result.logs.push(`[Persistencia MySQL] ${bheDocs.length} Boletas de Honorarios guardadas en boletas_honorarios.`);
+          }
+        } catch (bheErr: any) {
+          console.warn("[Playwright BHE Ingest Warning]:", bheErr);
+        }
+      }
+
+      // Respaldo simultáneo en disco
+      try {
+        diskPersistence.addDtes(result.documentos);
+      } catch {}
     }
 
     res.json(result);
@@ -633,8 +760,12 @@ app.post("/api/f29/senior-agent", async (req, res) => {
   try {
     let { empresa, dtes, payrolls, indicators, query, options } = req.body;
     if (!empresa) {
-      const empId = req.body.empresaId || '77.798.901-4';
-      empresa = INITIAL_CLIENTS.find(c => c.rut === empId) || INITIAL_CLIENTS[0];
+      if (req.body.empresaId) {
+        empresa = await findCompanyByIdOrRut(req.body.empresaId);
+      }
+      if (!empresa) {
+        empresa = INITIAL_CLIENTS[0];
+      }
     }
     if (dtes === undefined || !Array.isArray(dtes)) {
       dtes = [];
@@ -765,7 +896,7 @@ app.post("/api/f29/senior-agent", async (req, res) => {
     ].filter(l => l.debe > 0 || l.haber > 0);
 
     const normalizedF29Entry = normalizeAndValidateJournalEntry({
-      empresaId: empresa?.rut || '77.798.901-4',
+      empresaId: empresa?.rut || empresa?.id || 'EMPRESA_CLIENTE',
       periodo,
       fecha: `${periodo}-20`,
       glosaGeneral: `Liquidación y Centralización F29 Período ${periodo} - ${empresa?.razonSocial || 'Empresa'}`,
@@ -834,7 +965,7 @@ Debes responder SIEMPRE en dos capas:
    - Bloque de código JSON con los códigos exactos del F29 y el asiento contable de centralización de impuestos con la siguiente estructura:
 \`\`\`json
 {
-  "empresa_id": "${empresa?.rut || '77.798.901-4'}",
+  "empresa_id": "${empresa?.rut || empresa?.id || ''}",
   "periodo_tributario": "${periodo}",
   "estado_liquidacion": "PRE_DECLARACION",
   "f29_mapeo": {
@@ -915,7 +1046,7 @@ app.post("/api/accounting/senior-orchestrator", async (req, res) => {
 Eres la máxima autoridad técnica sobre el Libro Mayor, Libro Diario, Plan de Cuentas (Clases 1 a 7) y Estados Financieros (Balance 8 Columnas e IFRS / NIIF) de la empresa seleccionada.
 
 DATOS DE LA EMPRESA ACTIVA:
-- RUT: ${empresa?.rut || "77.798.901-4"}
+- RUT: ${empresa?.rut || "Sin especificar"}
 - Razón Social: ${empresa?.razonSocial || "Empresa Corporativa SpA"}
 - Régimen Tributario: ${empresa?.regimenTributario || "14D3_PROPYME_GENERAL"}
 - Moneda: Peso Chileno ($ CLP) con soporte multimoneda (UF: $${activeUf}, Dólar: $${activeDolar})
@@ -939,7 +1070,7 @@ Entrega:
 2. Capa Transaccional en formato JSON ERP:
 \`\`\`json
 {
-  "empresa_id": "${empresa?.rut || "77.798.901-4"}",
+  "empresa_id": "${empresa?.rut || empresa?.id || ""}",
   "accion": "propuesta_asiento",
   "origen_modulo": "MANUAL",
   "periodo": "2026-09",
@@ -1010,7 +1141,7 @@ app.post("/api/accounting/assistant-dialogue", async (req, res) => {
       .join("\n\n");
 
     const activeUf = indicators?.uf || (await IndicatorSyncService.getDailyIndicator("UF"));
-    const companyRut = empresa?.rut || "77.798.901-4";
+    const companyRut = empresa?.rut || "Sin especificar";
     const companyName = empresa?.razonSocial || "Empresa Cliente SpA";
 
     let aiResult: any = null;
@@ -1365,7 +1496,7 @@ app.get("/api/persistence/status", async (_req, res) => {
       connected: isRealMysqlConnected,
       host: process.env.MYSQL_HOST || "127.0.0.1",
       port: Number(process.env.MYSQL_PORT) || 3306,
-      database: process.env.MYSQL_DATABASE || "chile_erp",
+      database: process.env.MYSQL_DATABASE || "erp_contable",
       tableCount: 25,
     },
     redis: {

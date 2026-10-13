@@ -41,6 +41,24 @@ export interface CompanyProfile {
   periodosCerrados?: string[]; // ej: ["2026-01", "2026-02"]
   bloqueoPeriodoCerrado?: boolean; // Si true, prohíbe asientos en períodos cerrados o fuera de fecha
   resolucionSiiCierreEspecial?: string; // Resolución exenta del Director Regional SII en caso de cierre distinto al 31/12
+  // Ejercicios Históricos Cerrados y Auditoría de Reaperturas Extraordinarias (NIC 8 / Art. 16 Cód. Tributario)
+  ejerciciosCerrados?: number[];
+  auditoriaReaperturas?: Array<{
+    id: string;
+    fecha: string;
+    ejercicio: number;
+    usuario: string;
+    motivoLegal: string;
+    resolucionSii?: string;
+    timestamp: string;
+  }>;
+  reaperturaExtraordinariaActiva?: {
+    ejercicio: number;
+    fechaReapertura: string;
+    motivoLegal: string;
+    usuario: string;
+    resolucionSii?: string;
+  };
 }
 
 export interface PeriodLockValidationResult {
@@ -264,12 +282,27 @@ export interface BankStatementMovement {
   tipoCambio?: number; // TCO del día oficial Banco Central
   montoCLPEquivalente?: number; // Monto convertido a CLP según TCO
   
-  // Datos de conciliación
+  // Datos de conciliación y Documento de Referencia de Conciliación
   movimientoIdConciliado?: string; // ID de CashFlowMovement o AccountingEntry
   dteFolioAsociado?: number;
   matchSugeridoId?: string;
   matchSugeridoGlosa?: string;
   matchCerteza?: number; // 0 a 100%
+  codigoConciliacion?: string; // Documento de Referencia de Conciliación formal: ej. CONC-SAN-202609-0012
+  fechaConciliacion?: string; // Timestamp ISO de la conciliación
+  matchCriterio?: string; // Detalle de la desambiguación o scoring aplicado (ej: "Monto + N° TEF + RUT")
+  usuarioConciliador?: string; // Operador o 'Agente Autónomo de Conciliación'
+  partidaContableDetalle?: {
+    entryId: string;
+    fecha: string;
+    concepto: string;
+    documento: string;
+    rutAuxiliar?: string;
+    monto: number;
+  };
+  esAmbiguo?: boolean; // True si hay múltiples partidas candidatas con idéntico monto
+  candidatosMatchesCount?: number; // Cantidad de partidas encontradas con el mismo monto
+  documentoRef?: string;
   
   // Datos de Novedad Bancaria (partidas no registradas previamente en contabilidad)
   tipoNovedad?: BankNovedadType;
@@ -1017,6 +1050,21 @@ export interface ErpCommitmentsScanResult {
     montoTotalEstimado: number;
     partidas: { concepto: string; tipo: TipoProvisionEgreso; fechaEstimadaPago: string; montoEstimado: number }[];
   };
+  asientosAuxiliares?: {
+    cxcPendientesCount: number;
+    cxcPendientesTotal: number;
+    cxpPendientesCount: number;
+    cxpPendientesTotal: number;
+    partidas: {
+      cuentaCodigo: string;
+      cuentaNombre: string;
+      rutAuxiliar?: string;
+      documentoRef?: string;
+      fechaVencimiento: string;
+      monto: number;
+      tipo: 'INGRESO' | 'EGRESO';
+    }[];
+  };
   totalCompromisosIdentificados: number;
 }
 
@@ -1067,16 +1115,37 @@ export interface CashFlowExcelThemeConfig {
   autoColumnWidths: boolean;
 }
 
+export type TipoDocumentoRespaldo = 
+  | 'DTE_SII'
+  | 'CONTRATO'
+  | 'RENDICION_GASTOS'
+  | 'COMPROBANTE_BANCARIO'
+  | 'DOCUMENTO_LABORAL'
+  | 'TRIBUTARIO_TGR'
+  | 'OTRO_RESPALDO';
+
 export interface AccountingEntryLine {
   id?: string;
   cuentaCodigo: string;
   cuentaNombre: string;
   debe: number;
   haber: number;
+  glosa?: string;
   rutAuxiliar?: string;
+  nombreAuxiliar?: string;
   centroCosto?: string;
   documentoRef?: string;
   dteIdAsociado?: string;
+  tipoDocumentoRef?: TipoDocumentoRespaldo | string;
+  folioDocumentoRef?: string;
+  montoDocumentoRef?: number; // Importe total del documento relacionado (ej: Factura $119.000)
+  fechaDocumentoRef?: string; // Fecha de emisión del documento de respaldo (YYYY-MM-DD)
+  fechaVencimientoRef?: string; // Fecha de vencimiento del documento de respaldo (YYYY-MM-DD)
+  documentoOperacion?: string; // N° Documento de Operación (ej: "22", "60", "80")
+  tipoDocumentoOperacion?: string; // Tipo Doc Operación (ej: "CANJE FACTURA", "PAGO EN EFECTIVO", "TRANSFERENCIA")
+  fechaDocumentoOperacion?: string; // Fecha del documento de operación (YYYY-MM-DD)
+  documentoConciliacion?: string; // N° Documento de Conciliación (ej: "80")
+  tipoDocumentoConciliacion?: string; // Tipo Doc Conciliación (ej: "TRANSFERENCIA", "CARTOLA BANCARIA")
   // Campos Multimoneda (NIC 21 / Divisas Extranjeras)
   monedaOriginal?: string; // ej: 'USD', 'EUR', 'UF'
   montoMonedaOriginal?: number; // Monto en la divisa original (ej: 1500.00)
@@ -1088,6 +1157,9 @@ export interface AccountingEntry {
   fecha: string;
   concepto: string;
   documento: string; // ej: "Factura N° 1240", "F29 Periodo 2026-08", "Liquidación Juan Pérez", "Contrato Arriendo #102"
+  documentoReferencia?: string;
+  tipoDocumentoRef?: TipoDocumentoRespaldo;
+  folioDocumentoRef?: string;
   lineas: AccountingEntryLine[];
   totalDebe: number;
   totalHaber: number;

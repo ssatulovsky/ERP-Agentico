@@ -32,7 +32,23 @@ export const EditClosingAdjustmentModal: React.FC<EditClosingAdjustmentModalProp
     setError(null);
     setLineas(prev => {
       const copy = [...prev];
-      copy[index] = { ...copy[index], [field]: val };
+      if (field === 'debe') {
+        const num = Math.max(0, Number(val) || 0);
+        copy[index] = {
+          ...copy[index],
+          debe: num,
+          ...(num > 0 ? { haber: 0 } : {}),
+        };
+      } else if (field === 'haber') {
+        const num = Math.max(0, Number(val) || 0);
+        copy[index] = {
+          ...copy[index],
+          haber: num,
+          ...(num > 0 ? { debe: 0 } : {}),
+        };
+      } else {
+        copy[index] = { ...copy[index], [field]: val };
+      }
       return copy;
     });
   };
@@ -65,6 +81,22 @@ export const EditClosingAdjustmentModal: React.FC<EditClosingAdjustmentModalProp
       setError('La glosa general del asiento es obligatoria.');
       return;
     }
+
+    // Validación rigurosa de exclusividad Debe/Haber por cada partida
+    for (let i = 0; i < lineas.length; i++) {
+      const l = lineas[i];
+      const d = Number(l.debe) || 0;
+      const h = Number(l.haber) || 0;
+      if (d > 0 && h > 0) {
+        setError(`Línea #${i + 1} (${l.nombre_cuenta || l.codigo_cuenta}): No puede tener montos simultáneos en el Debe y en el Haber.`);
+        return;
+      }
+      if (d <= 0 && h <= 0) {
+        setError(`Línea #${i + 1} (${l.nombre_cuenta || l.codigo_cuenta}): Ingrese un monto mayor a cero en el Debe o en el Haber.`);
+        return;
+      }
+    }
+
     if (!isCuadrado) {
       setError(`El asiento no está cuadrado: Debe ($${totalDebe.toLocaleString('es-CL')}) vs Haber ($${totalHaber.toLocaleString('es-CL')}). La diferencia es de $${Math.abs(totalDebe - totalHaber).toLocaleString('es-CL')}.`);
       return;
@@ -200,10 +232,22 @@ export const EditClosingAdjustmentModal: React.FC<EditClosingAdjustmentModalProp
                           type="number"
                           min="0"
                           step="1000"
+                          disabled={Number(line.haber) > 0}
                           value={line.debe || ''}
                           onChange={(e) => handleUpdateLine(idx, 'debe', Number(e.target.value) || 0)}
-                          placeholder="0"
-                          className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-right font-mono font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                          placeholder={Number(line.haber) > 0 ? '—' : '0'}
+                          title={
+                            Number(line.haber) > 0
+                              ? 'No editable: esta partida ya tiene saldo en el Haber. Deje el Haber en 0 para habilitar el Debe.'
+                              : 'Monto al Debe'
+                          }
+                          className={`w-full rounded px-2 py-1 text-xs text-right font-mono transition-colors ${
+                            Number(line.haber) > 0
+                              ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
+                              : Number(line.debe) > 0
+                              ? 'bg-blue-50/80 border-2 border-blue-400 font-bold text-blue-900 focus:outline-none'
+                              : 'bg-slate-50 border border-slate-200 font-medium text-slate-900 focus:outline-none focus:border-blue-500'
+                          }`}
                         />
                       </td>
                       <td className="py-2 px-2 w-32">
@@ -211,10 +255,22 @@ export const EditClosingAdjustmentModal: React.FC<EditClosingAdjustmentModalProp
                           type="number"
                           min="0"
                           step="1000"
+                          disabled={Number(line.debe) > 0}
                           value={line.haber || ''}
                           onChange={(e) => handleUpdateLine(idx, 'haber', Number(e.target.value) || 0)}
-                          placeholder="0"
-                          className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-right font-mono font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                          placeholder={Number(line.debe) > 0 ? '—' : '0'}
+                          title={
+                            Number(line.debe) > 0
+                              ? 'No editable: esta partida ya tiene saldo en el Debe. Deje el Debe en 0 para habilitar el Haber.'
+                              : 'Monto al Haber'
+                          }
+                          className={`w-full rounded px-2 py-1 text-xs text-right font-mono transition-colors ${
+                            Number(line.debe) > 0
+                              ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed select-none opacity-60'
+                              : Number(line.haber) > 0
+                              ? 'bg-emerald-50/80 border-2 border-emerald-400 font-bold text-emerald-900 focus:outline-none'
+                              : 'bg-slate-50 border border-slate-200 font-medium text-slate-900 focus:outline-none focus:border-emerald-500'
+                          }`}
                         />
                       </td>
                       <td className="py-2 px-2 text-center">

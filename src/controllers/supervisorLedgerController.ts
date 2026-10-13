@@ -2,8 +2,9 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import { db, getDb, queryEntriesWithLines } from '@/db';
-import { agentAuditLogs, accountingEntries } from '@/db/schema';
+import { agentAuditLogs, accountingEntries, accountingEntryLines } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { diskPersistence } from '../services/diskPersistenceService';
 import {
   recordVerifiedEntry,
   DoubleEntryImbalanceError,
@@ -50,18 +51,35 @@ export const accountingEntryLineSchema = z.object({
       },
       { message: 'El campo "haber" debe ser un número positivo o cero' }
     ),
+  glosa: z.string().trim().max(500).optional().nullable(),
   rutAuxiliar: z
     .string()
     .trim()
     .max(20, 'El RUT auxiliar no puede exceder 20 caracteres')
     .optional()
     .nullable(),
+  nombreAuxiliar: z.string().trim().max(200).optional().nullable(),
   centroCosto: z
     .string()
     .trim()
     .max(100, 'El centro de costo no puede exceder 100 caracteres')
     .optional()
     .nullable(),
+  documentoRef: z.string().trim().max(150).optional().nullable(),
+  dteIdAsociado: z.string().trim().max(36).optional().nullable(),
+  tipoDocumentoRef: z.string().trim().max(50).optional().nullable(),
+  folioDocumentoRef: z.string().trim().max(100).optional().nullable(),
+  montoDocumentoRef: z.union([z.number(), z.string()]).optional().nullable(),
+  fechaDocumentoRef: z.string().trim().max(20).optional().nullable(),
+  fechaVencimientoRef: z.string().trim().max(20).optional().nullable(),
+  documentoOperacion: z.string().trim().max(100).optional().nullable(),
+  tipoDocumentoOperacion: z.string().trim().max(50).optional().nullable(),
+  fechaDocumentoOperacion: z.string().trim().max(20).optional().nullable(),
+  documentoConciliacion: z.string().trim().max(100).optional().nullable(),
+  tipoDocumentoConciliacion: z.string().trim().max(50).optional().nullable(),
+  monedaOriginal: z.string().trim().max(10).optional().nullable(),
+  montoMonedaOriginal: z.union([z.number(), z.string()]).optional().nullable(),
+  tipoCambio: z.union([z.number(), z.string()]).optional().nullable(),
 });
 
 /**
@@ -97,6 +115,24 @@ export const accountingEntryHeaderSchema = z.object({
     .string()
     .trim()
     .max(100, 'El documento de referencia no puede superar los 100 caracteres')
+    .optional()
+    .nullable(),
+  documentoReferencia: z
+    .string()
+    .trim()
+    .max(150, 'El documento de referencia extendido no puede superar los 150 caracteres')
+    .optional()
+    .nullable(),
+  tipoDocumentoRef: z
+    .string()
+    .trim()
+    .max(50)
+    .optional()
+    .nullable(),
+  folioDocumentoRef: z
+    .string()
+    .trim()
+    .max(100)
     .optional()
     .nullable(),
   origenModulo: z
@@ -263,8 +299,11 @@ export async function commitEntryHandler(req: Request, res: Response): Promise<v
       // Persistir log de auditoría del intento rechazado
       try {
         await db.insert(agentAuditLogs).values({
+          id: crypto.randomUUID(),
           traceId,
+          firmId: 'firm-default-001',
           empresaId: header.empresaId,
+          modulo: header.origenModulo || 'CONTABILIDAD',
           agenteNombre: auditContext.agenteNombre,
           accion: auditContext.accion || 'COMMIT_ASIENTO',
           estadoTransicion: 'RECHAZADO',
@@ -316,8 +355,11 @@ export async function commitEntryHandler(req: Request, res: Response): Promise<v
 
       try {
         await db.insert(agentAuditLogs).values({
+          id: crypto.randomUUID(),
           traceId,
+          firmId: 'firm-default-001',
           empresaId: header.empresaId,
+          modulo: header.origenModulo || 'CONTABILIDAD',
           agenteNombre: auditContext.agenteNombre,
           accion: auditContext.accion || 'COMMIT_ASIENTO',
           estadoTransicion: 'RECHAZADO',
@@ -453,6 +495,250 @@ supervisorLedgerRouter.put('/entries/:id/status', async (req: Request, res: Resp
     });
   } catch (error: any) {
     console.error('[SUPERVISOR-LEDGER] Error al actualizar estado del asiento:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * PUT /entries/:id - Modifica un asiento contable existente (glosa, referencias de documento, líneas)
+ */
+supervisorLedgerRouter.put('/entries/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { concepto, documentoRef, documentoReferencia, tipoDocumentoRef, folioDocumentoRef, fecha, lineas, motivoModificacion } = req.body;
+    const dbInstance = getDb();
+
+    // 1. Obtener asiento actual
+    const existing = await queryEntriesWithLines();
+    const currentEntry = existing.find((e: any) => e.id === id);
+    if (!currentEntry) {
+      return res.status(404).json({ success: false, error: 'ASIENTO_NO_ENCONTRADO', message: `No se encontró el asiento con ID ${id}.` });
+    }
+
+    const updateFields: any = {};
+    if (concepto !== undefined) updateFields.concepto = String(concepto).trim();
+    if (documentoRef !== undefined) {
+      updateFields.documentoRef = String(documentoRef).trim();
+      updateFields.documentoReferencia = documentoReferencia ? String(documentoReferencia).trim() : String(documentoRef).trim();
+    }
+    if (documentoReferencia !== undefined) updateFields.documentoReferencia = String(documentoReferencia).trim();
+    if (tipoDocumentoRef !== undefined) updateFields.tipoDocumentoRef = String(tipoDocumentoRef).trim();
+    if (folioDocumentoRef !== undefined) updateFields.folioDocumentoRef = String(folioDocumentoRef).trim();
+    if (fecha !== undefined) {
+      updateFields.fecha = String(fecha).trim();
+      if (/^\d{4}-\d{2}/.test(updateFields.fecha)) {
+        updateFields.periodo = updateFields.fecha.substring(0, 7);
+      }
+    }
+
+    let processedLines: any[] | undefined = undefined;
+    if (lineas && Array.isArray(lineas)) {
+      if (lineas.length < 2) {
+        return res.status(400).json({ success: false, error: 'PARTIDA_DOBLE_INSUFICIENTE', message: 'Se requieren al menos 2 líneas para el asiento contable.' });
+      }
+
+      let sumDebe = 0;
+      let sumHaber = 0;
+      processedLines = lineas.map((l: any, idx: number) => {
+        const d = typeof l.debe === 'number' ? l.debe : parseFloat(String(l.debe).replace(',', '.')) || 0;
+        const h = typeof l.haber === 'number' ? l.haber : parseFloat(String(l.haber).replace(',', '.')) || 0;
+        sumDebe += Math.round(d * 100);
+        sumHaber += Math.round(h * 100);
+        return {
+          id: l.id || crypto.randomUUID(),
+          entryId: id,
+          lineaNumero: idx + 1,
+          codigoCuenta: l.codigoCuenta || l.cuentaCodigo || '1.1.01.001',
+          nombreCuenta: l.nombreCuenta || l.cuentaNombre || 'Cuenta Contable',
+          debe: (d).toFixed(2),
+          haber: (h).toFixed(2),
+          rutAuxiliar: l.rutAuxiliar?.trim() || null,
+          centroCosto: l.centroCosto?.trim() || null,
+          documentoRef: l.documentoRef || updateFields.documentoRef || currentEntry.documentoRef || null,
+          dteIdAsociado: l.dteIdAsociado || null,
+          tipoDocumentoRef: l.tipoDocumentoRef || updateFields.tipoDocumentoRef || null,
+          folioDocumentoRef: l.folioDocumentoRef || updateFields.folioDocumentoRef || null,
+          montoDocumentoRef: l.montoDocumentoRef != null ? Number(l.montoDocumentoRef).toFixed(2) : null,
+          fechaDocumentoRef: l.fechaDocumentoRef || null,
+          fechaVencimientoRef: l.fechaVencimientoRef || null,
+          documentoOperacion: l.documentoOperacion?.trim() || null,
+          tipoDocumentoOperacion: l.tipoDocumentoOperacion?.trim() || null,
+          fechaDocumentoOperacion: l.fechaDocumentoOperacion || null,
+          documentoConciliacion: l.documentoConciliacion?.trim() || null,
+          tipoDocumentoConciliacion: l.tipoDocumentoConciliacion?.trim() || null,
+          monedaOriginal: l.monedaOriginal || null,
+          montoMonedaOriginal: l.montoMonedaOriginal != null ? Number(l.montoMonedaOriginal).toFixed(2) : null,
+          tipoCambio: l.tipoCambio != null ? Number(l.tipoCambio).toFixed(4) : null,
+        };
+      });
+
+      if (Math.abs(sumDebe - sumHaber) > 1) {
+        return res.status(400).json({
+          success: false,
+          error: 'DESCUADRE_PARTIDA_DOBLE',
+          message: `El asiento está descuadrado: Debe ($${(sumDebe/100).toFixed(2)}) != Haber ($${(sumHaber/100).toFixed(2)}).`,
+        });
+      }
+
+      updateFields.totalDebe = (sumDebe / 100).toFixed(2);
+      updateFields.totalHaber = (sumHaber / 100).toFixed(2);
+    }
+
+    // Actualizar en DB
+    if (Object.keys(updateFields).length > 0) {
+      await dbInstance.update(accountingEntries).set(updateFields).where(eq(accountingEntries.id, id));
+    }
+    if (processedLines && processedLines.length > 0) {
+      await dbInstance.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, id));
+      for (const pl of processedLines) {
+        await dbInstance.insert(accountingEntryLines).values(pl);
+      }
+    }
+
+    // Actualizar en diskPersistence y memoria
+    diskPersistence.updateAccountingEntry(id, updateFields, processedLines);
+
+    // Registro de Auditoría
+    try {
+      await dbInstance.insert(agentAuditLogs).values({
+        id: crypto.randomUUID(),
+        traceId: `trace-update-${Date.now()}`,
+        firmId: currentEntry.firmId || 'firm-001-audicon',
+        empresaId: currentEntry.empresaId,
+        agenteNombre: 'OPERADOR_AUDITOR',
+        modulo: 'CONTABILIDAD',
+        accion: 'UPDATE_ASIENTO',
+        estadoTransicion: 'MODIFICADO',
+        payloadInput: { id, updateFields, motivoModificacion },
+        payloadOutput: { id, status: 'MODIFICADO_EXITOSO' },
+        supervisorVeredicto: 'MODIFICACION_AUTORIZADA',
+        supervisorSignature: currentEntry.supervisorSignature || 'FIRMA_MODIFICADA',
+        tiempoEjecucionMs: 15,
+      });
+    } catch {}
+
+    res.json({
+      success: true,
+      message: 'Asiento contable actualizado exitosamente con respaldo de auditoría.',
+      data: { id, ...updateFields, lineas: processedLines || currentEntry.lineas },
+    });
+  } catch (error: any) {
+    console.error('[SUPERVISOR-LEDGER] Error al actualizar asiento contable:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /entries/:id - Elimina un asiento contable con respaldo de auditoría
+ */
+supervisorLedgerRouter.delete('/entries/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const motivo = (req.body?.motivo || req.query?.motivo || 'Eliminación manual por corrección de usuario') as string;
+    const dbInstance = getDb();
+
+    // 1. Obtener asiento actual para respaldar en el log de auditoría
+    const existing = await queryEntriesWithLines();
+    const currentEntry = existing.find((e: any) => e.id === id);
+    if (!currentEntry) {
+      return res.status(404).json({ success: false, error: 'ASIENTO_NO_ENCONTRADO', message: `No se encontró el asiento con ID ${id}.` });
+    }
+
+    // 2. Eliminar líneas y encabezado en DB
+    await dbInstance.delete(accountingEntryLines).where(eq(accountingEntryLines.entryId, id));
+    await dbInstance.delete(accountingEntries).where(eq(accountingEntries.id, id));
+
+    // 3. Eliminar en persistencia en disco y memoria
+    diskPersistence.deleteAccountingEntry(id);
+
+    // 4. Registro de Auditoría forense inmutable
+    try {
+      await dbInstance.insert(agentAuditLogs).values({
+        id: crypto.randomUUID(),
+        traceId: `trace-delete-${Date.now()}`,
+        firmId: currentEntry.firmId || 'firm-001-audicon',
+        empresaId: currentEntry.empresaId,
+        agenteNombre: 'OPERADOR_AUDITOR',
+        modulo: 'CONTABILIDAD',
+        accion: 'DELETE_ASIENTO',
+        estadoTransicion: 'ELIMINADO',
+        payloadInput: { id, motivo, snapshotAsientoEliminado: currentEntry },
+        payloadOutput: { id, status: 'ELIMINADO_CON_EXITO' },
+        supervisorVeredicto: 'ELIMINACION_AUDITADA',
+        supervisorSignature: 'ELIMINADO_CONFORME',
+        tiempoEjecucionMs: 10,
+      });
+    } catch {}
+
+    res.json({
+      success: true,
+      message: `Asiento contable [${currentEntry.documentoRef || id}] eliminado exitosamente.`,
+      data: { id, eliminado: true },
+    });
+  } catch (error: any) {
+    console.error('[SUPERVISOR-LEDGER] Error al eliminar asiento contable:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /entries/:id/reverse - Genera un contra-asiento de anulación / reversión contable
+ */
+supervisorLedgerRouter.post('/entries/:id/reverse', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const motivo = (req.body?.motivo || 'Anulación / Reversión de comprobante') as string;
+    const fechaReversion = req.body?.fecha || new Date().toISOString().split('T')[0];
+    const periodoReversion = fechaReversion.substring(0, 7);
+    const dbInstance = getDb();
+
+    // 1. Obtener asiento original
+    const existing = await queryEntriesWithLines();
+    const currentEntry = existing.find((e: any) => e.id === id);
+    if (!currentEntry) {
+      return res.status(404).json({ success: false, error: 'ASIENTO_NO_ENCONTRADO', message: `No se encontró el asiento con ID ${id}.` });
+    }
+
+    // 2. Invertir las líneas: Debe -> Haber, Haber -> Debe
+    const reverseLines = currentEntry.lineas.map((line: any) => ({
+      codigoCuenta: line.codigoCuenta || line.cuentaCodigo,
+      nombreCuenta: line.nombreCuenta || line.cuentaNombre,
+      debe: Number(line.haber) || 0,
+      haber: Number(line.debe) || 0,
+      rutAuxiliar: line.rutAuxiliar || null,
+      centroCosto: line.centroCosto || null,
+      documentoRef: `REV-${currentEntry.documentoRef || currentEntry.id}`,
+    }));
+
+    // 3. Crear el contra-asiento formal mediante recordVerifiedEntry
+    const reversePayload = {
+      header: {
+        empresaId: currentEntry.empresaId,
+        periodo: periodoReversion,
+        fecha: fechaReversion,
+        concepto: `Reversión / Anulación de Asiento [${currentEntry.documentoRef || currentEntry.id}]: ${motivo}`,
+        documentoRef: `REV-${currentEntry.documentoRef || currentEntry.id}`,
+        origenModulo: 'MANUAL',
+        creadoPorAgente: 'OPERADOR_REVERSION',
+      },
+      lineas: reverseLines,
+      auditContext: {
+        traceId: `trace-rev-${Date.now()}`,
+        agenteNombre: 'OPERADOR_REVERSION',
+        accion: 'REVERSION_ASIENTO',
+        payloadInput: { originalEntryId: id, motivo },
+      },
+    };
+
+    const result = await recordVerifiedEntry(reversePayload as any, dbInstance);
+
+    res.status(201).json({
+      success: true,
+      message: `Contra-asiento de anulación registrado con éxito.`,
+      data: result,
+    });
+  } catch (error: any) {
+    console.error('[SUPERVISOR-LEDGER] Error al revertir asiento contable:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

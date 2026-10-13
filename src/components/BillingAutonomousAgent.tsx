@@ -98,7 +98,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
   const [activeTab, setActiveTab] = useState<'EMISION' | 'HTTP_DTE_ENGINE' | 'COBRANZA' | 'HONORARIOS_BOLETAS' | 'DISENADOR_FORMATO'>('EMISION');
 
   // Estado del borrador actual de emisión
-  const isExentoDefault = Boolean((company as any)?.exentoIvaGiro || company.id === 'client-innovagile');
+  const isExentoDefault = Boolean((company as any)?.exentoIvaGiro);
   const [draft, setDraft] = useState<BillingEmissionDraft>({
     id: `draft-${Date.now()}`,
     tipoDte: isExentoDefault ? '34' : '33',

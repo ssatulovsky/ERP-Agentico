@@ -79,6 +79,165 @@ export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'E
   return formatCLP(amount);
 }
 
+/**
+ * Genera el Documento / Código de Referencia de Conciliación formal unívoco
+ * Estructura: CONC-[BANCO]-[YYYYMM]-[SECUENCIA_4_DIGITOS]
+ * Ej: CONC-SAN-202609-0142, CONC-CHL-202609-0018
+ */
+export function generateConciliationCode(banco: string, fecha?: string, seq?: number): string {
+  const bLower = (banco || '').toLowerCase();
+  let bCode = 'BCO';
+  if (bLower.includes('santander')) bCode = 'SAN';
+  else if (bLower.includes('chile')) bCode = 'CHL';
+  else if (bLower.includes('estado')) bCode = 'EST';
+  else if (bLower.includes('bci')) bCode = 'BCI';
+  else if (bLower.includes('scotia')) bCode = 'SCO';
+  else if (bLower.includes('itau')) bCode = 'ITA';
+  else if (bLower.includes('security')) bCode = 'SEC';
+  else if (bLower.includes('bice')) bCode = 'BIC';
+  else if (bLower.includes('falabella')) bCode = 'FAL';
+  else if (bLower.includes('internacional')) bCode = 'INT';
+
+  const dateObj = fecha ? new Date(fecha) : new Date();
+  const yyyy = dateObj.getFullYear();
+  const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const numSeq = seq !== undefined 
+    ? String(seq).padStart(4, '0') 
+    : String(Math.floor(Math.random() * 9000) + 1000);
+
+  return `CONC-${bCode}-${yyyy}${mm}-${numSeq}`;
+}
+
+export interface CandidateMatchResult {
+  entry: AccountingEntry;
+  matchingLine?: any;
+  score: number; // 0 a 100
+  scoreDetails: {
+    montoExacto: boolean;
+    referenciaCoincide: boolean;
+    rutCoincide: boolean;
+    proximidadDias: number;
+  };
+  reasons: string[];
+}
+
+/**
+ * Evalúa las partidas del Libro Diario contable candidatas a calzar con un movimiento de cartola,
+ * aplicando scoring ponderado multicriterio (Monto exacto, N° TEF/Operación, RUT en glosa, ventana de fechas).
+ */
+export function evaluateCandidateEntries(
+  m: BankStatementMovement,
+  entries: AccountingEntry[],
+  currentAccount: BankAccountConfig,
+  alreadyReconciledEntryIds: Set<string>
+): CandidateMatchResult[] {
+  const targetAmount = m.abono > 0 ? m.abono : m.cargo;
+  const isAbono = m.abono > 0;
+  if (targetAmount <= 0) return [];
+
+  const norm = (s?: string) => (s || '').replace(/[\.\-\s]/g, '').toLowerCase().trim();
+  const mRef = norm(m.numeroReferencia);
+  const mGlosa = norm(m.glosaBancaria);
+
+  const results: CandidateMatchResult[] = [];
+
+  for (const entry of entries) {
+    if (alreadyReconciledEntryIds.has(entry.id)) continue;
+
+    // Buscar una línea bancaria en el asiento contable
+    const bankLine = (entry.lineas || []).find((l: any) => {
+      const cod = (l.cuentaCodigo || '').trim();
+      const nom = (l.cuentaNombre || '').toLowerCase();
+      // Descartar expresamente caja chica y efectivo (1.1.01)
+      if (cod.startsWith('1.1.01') || (nom.includes('caja') && !nom.includes('banco'))) return false;
+
+      const isBank = cod.startsWith('1.1.02') || nom.includes('banco') || nom.includes('cta cte');
+      if (!isBank) return false;
+
+      // Para abono en banco -> debe en contabilidad; para cargo en banco -> haber en contabilidad
+      const lineAmt = isAbono ? Number(l.debe || 0) : Number(l.haber || 0);
+      return Math.abs(lineAmt - targetAmount) < 10;
+    });
+
+    if (!bankLine) continue;
+
+    let score = 40; // 40 pts base por coincidencia exacta de monto
+    const reasons: string[] = ['Monto exacto coincide'];
+
+    // Criterio 2: N° Operación / Referencia / TEF / Cheque / Documento Conciliación (hasta 40 pts)
+    const entryDoc = norm(entry.documento);
+    const entryDocRef = norm((entry as any).documentoReferencia || (entry as any).documento_referencia);
+    const entryFolio = norm((entry as any).folioDocumentoRef || (entry as any).folio_documento_ref);
+    const lineDoc = norm(bankLine.documentoRef);
+    const lineDocConcil = norm(bankLine.documentoConciliacion);
+    const lineDocOp = norm(bankLine.documentoOperacion);
+    const lineFolio = norm(bankLine.folioDocumentoRef);
+
+    let refCoincide = false;
+    if (mRef && mRef.length >= 2 && lineDocConcil && (lineDocConcil === mRef || lineDocConcil.includes(mRef) || mRef.includes(lineDocConcil))) {
+      score += 40;
+      refCoincide = true;
+      reasons.push(`Referencia de Conciliación Bancaria coincide exactamente (${bankLine.documentoConciliacion})`);
+    } else if (mRef && mRef.length >= 3 && (
+      entryDoc.includes(mRef) || lineDoc.includes(mRef) || mRef.includes(entryDoc) ||
+      (entryDocRef && (entryDocRef.includes(mRef) || mRef.includes(entryDocRef))) ||
+      (entryFolio && (entryFolio.includes(mRef) || mRef.includes(entryFolio))) ||
+      (lineDocOp && (lineDocOp.includes(mRef) || mRef.includes(lineDocOp))) ||
+      (lineFolio && (lineFolio.includes(mRef) || mRef.includes(lineFolio)))
+    )) {
+      score += 35;
+      refCoincide = true;
+      reasons.push(`N° Operación / TEF / Documento coincide (${m.numeroReferencia})`);
+    } else if (lineDocConcil && lineDocConcil.length >= 3 && mGlosa.includes(lineDocConcil)) {
+      score += 30;
+      refCoincide = true;
+      reasons.push(`Ref. Conciliación (${bankLine.documentoConciliacion}) presente en glosa bancaria`);
+    }
+
+    // Criterio 3: RUT o Contraparte en Glosa Bancaria (15 pts)
+    let rutCoincide = false;
+    const rutAux = norm(bankLine.rutAuxiliar);
+    if (rutAux && rutAux.length >= 6 && mGlosa.includes(rutAux)) {
+      score += 15;
+      rutCoincide = true;
+      reasons.push(`RUT Auxiliar (${bankLine.rutAuxiliar}) presente en glosa bancaria`);
+    }
+
+    // Criterio 4: Proximidad de fechas (hasta 10 pts)
+    let diffDays = 999;
+    if (m.fecha && entry.fecha) {
+      const tM = new Date(m.fecha).getTime();
+      const tE = new Date(entry.fecha).getTime();
+      diffDays = Math.round(Math.abs(tM - tE) / (1000 * 3600 * 24));
+      if (diffDays === 0) {
+        score += 10;
+        reasons.push('Misma fecha contable');
+      } else if (diffDays <= 2) {
+        score += 7;
+        reasons.push(`Fecha cercana (${diffDays} día${diffDays > 1 ? 's' : ''} de diferencia)`);
+      } else if (diffDays <= 5) {
+        score += 4;
+        reasons.push(`Clearing bancario (${diffDays} días)`);
+      }
+    }
+
+    results.push({
+      entry,
+      matchingLine: bankLine,
+      score: Math.min(100, score),
+      scoreDetails: {
+        montoExacto: true,
+        referenciaCoincide: refCoincide,
+        rutCoincide,
+        proximidadDias: diffDays,
+      },
+      reasons,
+    });
+  }
+
+  return results.sort((a, b) => b.score - a.score);
+}
+
 interface BankReconciliationProps {
   company: CompanyProfile;
   firm: AccountingFirmProfile;
@@ -184,8 +343,10 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   const [showAgentExplanation, setShowAgentExplanation] = useState(false);
   const [autoReconciledSuccess, setAutoReconciledSuccess] = useState<string | null>(null);
 
-  // Manual Matching Selection
+  // Manual Matching Selection & Desambiguación
   const [matchingMovement, setMatchingMovement] = useState<BankStatementMovement | null>(null);
+  const [viewingActaMovement, setViewingActaMovement] = useState<BankStatementMovement | null>(null);
+  const [desambiguarMovement, setDesambiguarMovement] = useState<BankStatementMovement | null>(null);
 
   // Filter movements strictly for the current account
   const accountMovements = useMemo(() => {
@@ -254,16 +415,55 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       }
     ];
 
+    const isMatchingAccountLine = (l: any, isCredit: boolean) => {
+      const cod = (l.cuentaCodigo || '').trim();
+      const nom = (l.cuentaNombre || '').toLowerCase();
+      const amount = isCredit ? Number(l.haber || 0) : Number(l.debe || 0);
+      if (amount <= 0) return false;
+
+      // Descartar terminantemente Caja Chica y Caja Central (1.1.01)
+      if (cod.startsWith('1.1.01') || (nom.includes('caja') && !nom.includes('banco'))) {
+        return false;
+      }
+
+      // Verificar cuenta bancaria (1.1.02 o mención de banco/cta cte)
+      const isBankCode = cod.startsWith('1.1.02');
+      const isBankName = nom.includes('banco') || nom.includes('cta cte') || nom.includes('cuenta corriente');
+      if (!isBankCode && !isBankName) return false;
+
+      // Afinidad con la divisa y banco activo
+      if (currentAccount.moneda === 'USD' || currentAccount.moneda === 'EUR') {
+        return cod.includes('03') || nom.includes('usd') || nom.includes('eur') || nom.includes('extranjera');
+      }
+      const bName = (currentAccount.banco || '').toLowerCase();
+      if (bName.includes('santander') && (nom.includes('santander') || cod === '1.1.02.001')) return true;
+      if (bName.includes('chile') && (nom.includes('chile') || cod === '1.1.02.002')) return true;
+
+      return true;
+    };
+
     // Partidas reales de contabilidad no debitadas aún en la cartola
     const ledgerTransits: any[] = [];
+    const normStr = (s?: string) => (s || '').replace(/[\.\-\s]/g, '').toLowerCase().trim();
+
     safeAccountingEntries.forEach(entry => {
-      const bankLine = (entry.lineas || []).find(l => {
-        const cod = (l.cuentaCodigo || '').trim();
-        const nom = (l.cuentaNombre || '').toLowerCase();
-        return (cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco')) && (l.haber || 0) > 0;
-      });
+      const bankLine = (entry.lineas || []).find(l => isMatchingAccountLine(l, true));
       if (bankLine && Number(bankLine.haber) > 0) {
-        const inCartola = accountMovements.some(m => m.asientoGeneradoId === entry.id || m.documentoRef === entry.documento);
+        const inCartola = accountMovements.some(m => {
+          if (m.asientoGeneradoId === entry.id) return true;
+          const mNumRef = normStr(m.numeroReferencia);
+          const mDocRef = normStr(m.documentoRef);
+          const eDoc = normStr(entry.documento);
+          const lConcil = normStr(bankLine.documentoConciliacion);
+          const lDoc = normStr(bankLine.documentoRef);
+          const lOp = normStr(bankLine.documentoOperacion);
+          if (eDoc && (mDocRef === eDoc || mNumRef === eDoc)) return true;
+          if (lConcil && (mNumRef === lConcil || mDocRef === lConcil)) return true;
+          if (lDoc && (mNumRef === lDoc || mDocRef === lDoc)) return true;
+          if (lOp && (mNumRef === lOp || mDocRef === lOp)) return true;
+          return false;
+        });
+
         if (!inCartola) {
           ledgerTransits.push({
             id: `trans-entry-${entry.id}`,
@@ -272,14 +472,14 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             beneficiario: bankLine.rutAuxiliar || 'Beneficiario según Comprobante',
             monto: Number(bankLine.haber),
             tipo: 'EGRESO',
-            referencia: entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
+            referencia: bankLine.documentoConciliacion || bankLine.documentoOperacion || entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
           });
         }
       }
     });
 
     return [...base, ...ledgerTransits];
-  }, [currentAccount.moneda, safeAccountingEntries, accountMovements]);
+  }, [currentAccount.moneda, currentAccount.banco, safeAccountingEntries, accountMovements]);
 
   // 2. Depósitos en tránsito (cobros en contabilidad no acreditados aún en banco)
   const transitDeposits = useMemo(() => {
@@ -318,15 +518,54 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       }
     ];
 
+    const isMatchingAccountLine = (l: any, isCredit: boolean) => {
+      const cod = (l.cuentaCodigo || '').trim();
+      const nom = (l.cuentaNombre || '').toLowerCase();
+      const amount = isCredit ? Number(l.haber || 0) : Number(l.debe || 0);
+      if (amount <= 0) return false;
+
+      // Descartar terminantemente Caja Chica y Caja Central (1.1.01)
+      if (cod.startsWith('1.1.01') || (nom.includes('caja') && !nom.includes('banco'))) {
+        return false;
+      }
+
+      // Verificar cuenta bancaria (1.1.02 o mención de banco/cta cte)
+      const isBankCode = cod.startsWith('1.1.02');
+      const isBankName = nom.includes('banco') || nom.includes('cta cte') || nom.includes('cuenta corriente');
+      if (!isBankCode && !isBankName) return false;
+
+      // Afinidad con la divisa y banco activo
+      if (currentAccount.moneda === 'USD' || currentAccount.moneda === 'EUR') {
+        return cod.includes('03') || nom.includes('usd') || nom.includes('eur') || nom.includes('extranjera');
+      }
+      const bName = (currentAccount.banco || '').toLowerCase();
+      if (bName.includes('santander') && (nom.includes('santander') || cod === '1.1.02.001')) return true;
+      if (bName.includes('chile') && (nom.includes('chile') || cod === '1.1.02.002')) return true;
+
+      return true;
+    };
+
     const ledgerDepTransits: any[] = [];
+    const normDepStr = (s?: string) => (s || '').replace(/[\.\-\s]/g, '').toLowerCase().trim();
+
     safeAccountingEntries.forEach(entry => {
-      const bankLine = (entry.lineas || []).find(l => {
-        const cod = (l.cuentaCodigo || '').trim();
-        const nom = (l.cuentaNombre || '').toLowerCase();
-        return (cod.startsWith('1.1.01') || cod.startsWith('1.1.02') || nom.includes('banco')) && (l.debe || 0) > 0;
-      });
+      const bankLine = (entry.lineas || []).find(l => isMatchingAccountLine(l, false));
       if (bankLine && Number(bankLine.debe) > 0) {
-        const inCartola = accountMovements.some(m => m.asientoGeneradoId === entry.id || m.documentoRef === entry.documento);
+        const inCartola = accountMovements.some(m => {
+          if (m.asientoGeneradoId === entry.id) return true;
+          const mNumRef = normDepStr(m.numeroReferencia);
+          const mDocRef = normDepStr(m.documentoRef);
+          const eDoc = normDepStr(entry.documento);
+          const lConcil = normDepStr(bankLine.documentoConciliacion);
+          const lDoc = normDepStr(bankLine.documentoRef);
+          const lOp = normDepStr(bankLine.documentoOperacion);
+          if (eDoc && (mDocRef === eDoc || mNumRef === eDoc)) return true;
+          if (lConcil && (mNumRef === lConcil || mDocRef === lConcil)) return true;
+          if (lDoc && (mNumRef === lDoc || mDocRef === lDoc)) return true;
+          if (lOp && (mNumRef === lOp || mDocRef === lOp)) return true;
+          return false;
+        });
+
         if (!inCartola) {
           ledgerDepTransits.push({
             id: `trans-dep-entry-${entry.id}`,
@@ -334,14 +573,14 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             concepto: entry.concepto,
             monto: Number(bankLine.debe),
             tipo: 'INGRESO',
-            referencia: entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
+            referencia: bankLine.documentoConciliacion || bankLine.documentoOperacion || entry.documento || `ASIENTO-${entry.id.substring(0, 8)}`,
           });
         }
       }
     });
 
     return [...baseDep, ...ledgerDepTransits];
-  }, [currentAccount.moneda, safeAccountingEntries, accountMovements]);
+  }, [currentAccount.moneda, currentAccount.banco, safeAccountingEntries, accountMovements]);
 
   const totalTransitCheques = useMemo(() => {
     return transitCheques.reduce((sum, item) => sum + item.monto, 0);
@@ -427,7 +666,68 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     resolvedNovedades.length
   ]);
 
-  // Automated Smart Reconciliation Engine in Real Time
+  // Manual Reconciliation Handler with Accounting Entry (Emits Official Conciliation Code)
+  const handleManualReconcileWithEntry = (movement: BankStatementMovement, candidate: CandidateMatchResult) => {
+    const code = movement.codigoConciliacion || generateConciliationCode(currentAccount.banco, movement.fecha);
+    const targetAmount = movement.abono > 0 ? movement.abono : movement.cargo;
+    const entry = candidate.entry;
+    const bankLine = candidate.matchingLine;
+
+    const updated = accountMovements.map(item => {
+      if (item.id === movement.id) {
+        return {
+          ...item,
+          estado: 'CONCILIADO' as const,
+          asientoGeneradoId: entry.id,
+          movimientoIdConciliado: entry.id,
+          codigoConciliacion: code,
+          fechaConciliacion: new Date().toISOString(),
+          matchCerteza: candidate.score,
+          matchCriterio: candidate.reasons.join(', ') || 'Individualización manual por el Contador Auditor',
+          usuarioConciliador: activeClient?.contactoNombre || 'Contador Auditor',
+          esAmbiguo: false,
+          candidatosMatchesCount: undefined,
+          partidaContableDetalle: {
+            entryId: entry.id,
+            fecha: entry.fecha,
+            concepto: entry.concepto,
+            documento: entry.documento,
+            rutAuxiliar: bankLine?.rutAuxiliar,
+            monto: targetAmount,
+          },
+        };
+      }
+      return item;
+    });
+
+    onUpdateBankMovements(updated);
+    setDesambiguarMovement(null);
+    setAutoReconciledSuccess(`Partida bancaria individualizada e imputada al asiento #${entry.id.substring(0, 8)}. Documento de Referencia emitido: ${code}`);
+    setTimeout(() => setAutoReconciledSuccess(null), 5000);
+  };
+
+  // Unreconcile movement handler
+  const handleUnreconcileMovement = (m: BankStatementMovement) => {
+    const updated = accountMovements.map(item =>
+      item.id === m.id
+        ? {
+            ...item,
+            estado: 'PENDIENTE' as const,
+            movimientoIdConciliado: undefined,
+            asientoGeneradoId: undefined,
+            codigoConciliacion: undefined,
+            fechaConciliacion: undefined,
+            matchCriterio: undefined,
+            partidaContableDetalle: undefined,
+            esAmbiguo: false,
+            candidatosMatchesCount: undefined,
+          }
+        : item
+    );
+    onUpdateBankMovements(updated);
+  };
+
+  // Automated Smart Reconciliation Engine in Real Time (Multi-Criteria & Ambiguity Safe)
   const handleTriggerRealTimeAgentReconcile = () => {
     if (pendingNovedades.length === 0 && accountMovements.every(m => m.estado === 'CONCILIADO')) {
       setAutoReconciledSuccess(`El banco ${currentAccount.banco} ya se encuentra 100% cuadrado y conciliado ($0 diferencia).`);
@@ -439,46 +739,148 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     setReconcileProgressStep('Iniciando Agente IA de Conciliación Bancaria en Tiempo Real...');
 
     setTimeout(() => {
-      setReconcileProgressStep(`Auditando cartola de ${currentAccount.banco}: cruzando movimientos con DTEs y contratos...`);
+      setReconcileProgressStep(`Auditando cartola de ${currentAccount.banco}: cruzando movimientos con Libro Diario (Monto, TEF, RUT, Fecha)...`);
     }, 700);
 
     setTimeout(() => {
-      setReconcileProgressStep('Clasificando novedades bancarias (Comisiones, PAC Enel y abono anticipo)...');
+      setReconcileProgressStep('Clasificando novedades bancarias y detectando posibles ambigüedades de montos idénticos...');
     }, 1400);
 
     setTimeout(() => {
-      setReconcileProgressStep('Generando asientos contables automáticos en Libro Diario (Partida Doble DL 825 / CMF)...');
+      setReconcileProgressStep('Generando asientos contables automáticos y asignando Documentos de Referencia CONC-...');
       // If there are pending novedades, register all of them into the accounting ledger
       if (pendingNovedades.length > 0) {
         onRegisterAllNovedades(pendingNovedades);
       }
       
-      // Reconcile any remaining pending movements
+      // Conjunto de comprobantes contables ya conciliados para evitar dobles imputaciones
+      const reconciledEntryIds = new Set<string>();
+      accountMovements.forEach(m => {
+        if (m.estado === 'CONCILIADO' && (m.asientoGeneradoId || m.movimientoIdConciliado)) {
+          reconciledEntryIds.add(m.asientoGeneradoId || m.movimientoIdConciliado!);
+        }
+      });
+
+      let seqIndex = 1;
+      let reconciledCount = 0;
+      let ambiguousCount = 0;
+
+      // Reconciliar aplicando scoring multicriterio
       const updated = accountMovements.map(m => {
         if (m.estado === 'PENDIENTE') {
-          const matchingCf = safeCashFlowMovements.find(
-            cf => Math.abs(cf.montoTotal - (m.abono || m.cargo)) < 10
-          );
-          if (matchingCf) {
+          const candidates = evaluateCandidateEntries(m, safeAccountingEntries, currentAccount, reconciledEntryIds);
+          const targetAmount = m.abono > 0 ? m.abono : m.cargo;
+
+          if (candidates.length === 1) {
+            // Candidato único: Calce seguro
+            const best = candidates[0];
+            reconciledEntryIds.add(best.entry.id);
+            reconciledCount++;
+            const code = m.codigoConciliacion || generateConciliationCode(currentAccount.banco, m.fecha, seqIndex++);
+
             return {
               ...m,
               estado: 'CONCILIADO' as const,
-              movimientoIdConciliado: matchingCf.id,
-              matchCerteza: 100,
+              asientoGeneradoId: best.entry.id,
+              movimientoIdConciliado: best.entry.id,
+              matchCerteza: best.score,
+              matchCriterio: best.reasons.join(', '),
+              codigoConciliacion: code,
+              fechaConciliacion: new Date().toISOString(),
+              usuarioConciliador: 'Agente Autónomo de Conciliación',
+              esAmbiguo: false,
+              candidatosMatchesCount: undefined,
+              partidaContableDetalle: {
+                entryId: best.entry.id,
+                fecha: best.entry.fecha,
+                concepto: best.entry.concepto,
+                documento: best.entry.documento,
+                rutAuxiliar: best.matchingLine?.rutAuxiliar,
+                monto: targetAmount,
+              },
             };
+          } else if (candidates.length > 1) {
+            // Múltiples candidatos: Analizar si uno destaca claramente por TEF o RUT (diferencia > 20 pts)
+            const topCand = candidates[0];
+            const secondCand = candidates[1];
+
+            if (topCand.score >= 85 && topCand.score >= secondCand.score + 20) {
+              // Calce claro por referencia unívoca
+              reconciledEntryIds.add(topCand.entry.id);
+              reconciledCount++;
+              const code = m.codigoConciliacion || generateConciliationCode(currentAccount.banco, m.fecha, seqIndex++);
+
+              return {
+                ...m,
+                estado: 'CONCILIADO' as const,
+                asientoGeneradoId: topCand.entry.id,
+                movimientoIdConciliado: topCand.entry.id,
+                matchCerteza: topCand.score,
+                matchCriterio: topCand.reasons.join(', '),
+                codigoConciliacion: code,
+                fechaConciliacion: new Date().toISOString(),
+                usuarioConciliador: 'Agente Autónomo de Conciliación',
+                esAmbiguo: false,
+                candidatosMatchesCount: undefined,
+                partidaContableDetalle: {
+                  entryId: topCand.entry.id,
+                  fecha: topCand.entry.fecha,
+                  concepto: topCand.entry.concepto,
+                  documento: topCand.entry.documento,
+                  rutAuxiliar: topCand.matchingLine?.rutAuxiliar,
+                  monto: targetAmount,
+                },
+              };
+            } else {
+              // AMBIGÜEDAD DETECTADA: Ej. 3 depósitos de $1.000 con igual score o sin TEF en cartola
+              // El agente NO calza al azar: marca para desambiguación manual asistida
+              ambiguousCount++;
+              return {
+                ...m,
+                esAmbiguo: true,
+                candidatosMatchesCount: candidates.length,
+                matchSugeridoId: topCand.entry.id,
+                matchCerteza: topCand.score,
+                matchCriterio: `Ambigüedad: ${candidates.length} comprobantes contables con idéntico monto ($${targetAmount.toLocaleString('es-CL')}). Requiere individualización manual.`,
+              };
+            }
+          } else {
+            // Fallback a CashFlowMovements si existiera
+            const matchingCf = safeCashFlowMovements.find(
+              cf => Math.abs(cf.montoTotal - (m.abono || m.cargo)) < 10
+            );
+            if (matchingCf) {
+              const code = m.codigoConciliacion || generateConciliationCode(currentAccount.banco, m.fecha, seqIndex++);
+              reconciledCount++;
+              return {
+                ...m,
+                estado: 'CONCILIADO' as const,
+                movimientoIdConciliado: matchingCf.id,
+                codigoConciliacion: code,
+                fechaConciliacion: new Date().toISOString(),
+                matchCerteza: 90,
+                matchCriterio: 'Calce con movimiento de flujo de caja de tesorería',
+                usuarioConciliador: 'Agente Autónomo de Conciliación',
+              };
+            }
           }
         }
         return m;
       });
-      onUpdateBankMovements(updated);
-    }, 2200);
 
-    setTimeout(() => {
-      setIsAutoReconciling(false);
-      setReconcileProgressStep('');
-      setAutoReconciledSuccess(`¡Conciliación en tiempo real completada con éxito! Se registraron los asientos en Libro Diario. ${currentAccount.banco} 100% Cuadrado (Diferencia: $0).`);
-      setTimeout(() => setAutoReconciledSuccess(null), 6000);
-    }, 2900);
+      onUpdateBankMovements(updated);
+
+      setTimeout(() => {
+        setIsAutoReconciling(false);
+        setReconcileProgressStep('');
+        if (ambiguousCount > 0) {
+          setAutoReconciledSuccess(`Se conciliaron ${reconciledCount} partidas con referencia CONC. Se detectaron ${ambiguousCount} movimientos con montos idénticos que requieren individualización del contador para evitar calces erróneos.`);
+        } else {
+          setAutoReconciledSuccess(`¡Conciliación en tiempo real completada con éxito! Se emitieron las Referencias CONC-... y el banco ${currentAccount.banco} se encuentra 100% Cuadrado.`);
+        }
+        setTimeout(() => setAutoReconciledSuccess(null), 6000);
+      }, 700);
+    }, 2200);
   };
 
   // Simulate Live Bank API Sync with Real-Time Auto-Reconcile
@@ -1966,7 +2368,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                       const isNovedad = m.estado === 'NOVEDAD';
 
                       return (
-                        <tr key={m.id} className="hover:bg-slate-50/70 transition-colors">
+                        <tr key={m.id} className={`transition-colors ${m.esAmbiguo ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/70'}`}>
                           <td className="py-3 px-4 font-mono text-slate-600 whitespace-nowrap">
                             {m.fecha}
                           </td>
@@ -1974,7 +2376,24 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                             <div className="font-semibold text-slate-800 line-clamp-1">
                               {m.glosaBancaria}
                             </div>
-                            {m.movimientoIdConciliado && (
+                            {isConciliado && m.codigoConciliacion && (
+                              <button
+                                type="button"
+                                onClick={() => setViewingActaMovement(m)}
+                                className="mt-1 text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded font-mono font-bold inline-flex items-center gap-1 hover:bg-emerald-100 cursor-pointer shadow-2xs"
+                                title="Haga clic para ver el Acta Oficial de Conciliación"
+                              >
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Ref: {m.codigoConciliacion}</span>
+                              </button>
+                            )}
+                            {!isConciliado && m.esAmbiguo && (
+                              <div className="mt-1 text-[10px] text-amber-900 bg-amber-100/70 border border-amber-300 px-2 py-0.5 rounded font-medium inline-flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>Coincidencia múltiple ({m.candidatosMatchesCount || 2} partidas con este monto). Requiere desambiguación.</span>
+                              </div>
+                            )}
+                            {m.movimientoIdConciliado && !m.codigoConciliacion && (
                               <div className="text-[10px] text-blue-600 font-mono mt-0.5 flex items-center gap-1">
                                 <Check className="w-3 h-3" />
                                 <span>Asociado a Flujo: {m.movimientoIdConciliado}</span>
@@ -1982,7 +2401,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                             )}
                           </td>
                           <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-                            {m.numeroReferencia}
+                            {m.numeroReferencia || '—'}
                           </td>
                           <td className="py-3 px-4 text-right font-mono font-semibold text-rose-600">
                             {m.cargo > 0 ? (
@@ -2019,27 +2438,36 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                             </div>
                           </td>
                           <td className="py-3 px-4 text-center whitespace-nowrap">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              isConciliado
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : isNovedad
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}>
-                              {isConciliado ? (
-                                <>
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>Conciliado</span>
-                                </>
-                              ) : isNovedad ? (
-                                <>
-                                  <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                  <span>Novedad</span>
-                                </>
-                              ) : (
+                            {isConciliado ? (
+                              <button
+                                type="button"
+                                onClick={() => setViewingActaMovement(m)}
+                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition-colors cursor-pointer"
+                                title="Ver Acta Oficial de Conciliación"
+                              >
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Conciliado</span>
+                              </button>
+                            ) : isNovedad ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                <span>Novedad</span>
+                              </span>
+                            ) : m.esAmbiguo ? (
+                              <button
+                                type="button"
+                                onClick={() => setDesambiguarMovement(m)}
+                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-200/80 text-amber-900 border border-amber-300 hover:bg-amber-300 transition-colors cursor-pointer"
+                                title="Haga clic para desambiguar entre las partidas encontradas"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-700" />
+                                <span>Ambiguo ({m.candidatosMatchesCount || 2})</span>
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
                                 <span>Pendiente</span>
-                              )}
-                            </span>
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
                             {isNovedad ? (
@@ -2050,81 +2478,43 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                                 Registrar Asiento
                               </button>
                             ) : isConciliado ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setViewingActaMovement(m)}
+                                  className="px-2 py-1 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 rounded text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1"
+                                  title="Ver Documento de Referencia y Acta de Conciliación"
+                                >
+                                  <FileText className="w-3 h-3 text-emerald-600" />
+                                  <span>Acta</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUnreconcileMovement(m)}
+                                  className="text-[11px] text-slate-400 hover:text-rose-600 cursor-pointer px-1 py-1"
+                                  title="Desconciliar movimiento"
+                                >
+                                  Desconciliar
+                                </button>
+                              </div>
+                            ) : m.esAmbiguo ? (
                               <button
-                                onClick={() => {
-                                  // Toggle back to pending if needed
-                                  const updated = accountMovements.map(item => 
-                                    item.id === m.id ? { ...item, estado: 'PENDIENTE' as const, movimientoIdConciliado: undefined } : item
-                                  );
-                                  onUpdateBankMovements(updated);
-                                }}
-                                className="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                                type="button"
+                                onClick={() => setDesambiguarMovement(m)}
+                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[11px] font-bold cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                title="Seleccionar con cuál de los comprobantes contables calza este movimiento"
                               >
-                                Desconciliar
+                                <span>Individualizar ({m.candidatosMatchesCount})</span>
+                                <ArrowRight className="w-3 h-3" />
                               </button>
                             ) : (
                               <button
-                                onClick={() => {
-                                  let genEntryId = m.asientoGeneradoId;
-                                  if (!genEntryId && onAddEntry) {
-                                    genEntryId = `entry-bank-${m.id}-${Date.now()}`;
-                                    const amount = m.cargo > 0 ? m.cargo : m.abono;
-                                    const isCargo = m.cargo > 0;
-                                    const entry: AccountingEntry = {
-                                      id: genEntryId,
-                                      fecha: m.fecha || new Date().toISOString().substring(0, 10),
-                                      concepto: `Conciliación Cartola ${currentAccount.banco}: ${m.glosaBancaria}`,
-                                      documento: m.numeroReferencia || `CARTOLA-${m.id.substring(0, 8)}`,
-                                      totalDebe: amount,
-                                      totalHaber: amount,
-                                      balanceado: true,
-                                      origen: 'CAJA_BANCO',
-                                      creadoEn: new Date().toISOString(),
-                                      lineas: isCargo
-                                        ? [
-                                            {
-                                              cuentaCodigo: '7.2.01.001',
-                                              cuentaNombre: 'Gastos Financieros e Intereses Bancarios',
-                                              debe: amount,
-                                              haber: 0,
-                                            },
-                                            {
-                                              cuentaCodigo: '1.1.02.001',
-                                              cuentaNombre: currentAccount.banco,
-                                              debe: 0,
-                                              haber: amount,
-                                            },
-                                          ]
-                                        : [
-                                            {
-                                              cuentaCodigo: '1.1.02.001',
-                                              cuentaNombre: currentAccount.banco,
-                                              debe: amount,
-                                              haber: 0,
-                                            },
-                                            {
-                                              cuentaCodigo: '1.1.03.001',
-                                              cuentaNombre: 'Clientes Nacionales / Cobranzas en Cuenta',
-                                              debe: 0,
-                                              haber: amount,
-                                            },
-                                          ],
-                                    };
-                                    try {
-                                      onAddEntry(entry);
-                                    } catch (e) {
-                                      console.warn('[BankReconciliation] Error al despachar asiento:', e);
-                                    }
-                                  }
-
-                                  const updated = accountMovements.map(item => 
-                                    item.id === m.id ? { ...item, estado: 'CONCILIADO' as const, asientoGeneradoId: genEntryId, matchCerteza: 100 } : item
-                                  );
-                                  onUpdateBankMovements(updated);
-                                }}
-                                className="px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded text-[11px] font-semibold cursor-pointer"
+                                type="button"
+                                onClick={() => setDesambiguarMovement(m)}
+                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1"
                               >
-                                Conciliar Manual
+                                <span>Conciliar</span>
+                                <ArrowRight className="w-3 h-3" />
                               </button>
                             )}
                           </td>
@@ -3163,6 +3553,345 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           }}
         />
       )}
+
+      {/* MODAL 5: ACTA OFICIAL / DOCUMENTO DE REFERENCIA DE CONCILIACIÓN INDIVIDUAL */}
+      {viewingActaMovement && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-6 space-y-5 my-8 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Documento de Referencia de Conciliación Bancaria
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Certificado Oficial de Calce Contable-Financiero • Norma CMF & IFRS
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setViewingActaMovement(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Ficha Formal de Conciliación */}
+            <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-4 text-xs">
+              {/* Código de Conciliación y Timestamp */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white rounded-lg border border-emerald-300 shadow-2xs">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 block">
+                    Código de Referencia de Conciliación:
+                  </span>
+                  <div className="text-base font-mono font-extrabold text-emerald-950 flex items-center gap-2">
+                    <span>{viewingActaMovement.codigoConciliacion || 'CONC-OFICIAL'}</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-sans font-bold">
+                      VERIFICADO
+                    </span>
+                  </div>
+                </div>
+                <div className="sm:text-right text-[11px] font-mono text-slate-600">
+                  <div><strong>Emisión:</strong> {viewingActaMovement.fechaConciliacion ? new Date(viewingActaMovement.fechaConciliacion).toLocaleString('es-CL') : 'Automática'}</div>
+                  <div className="text-[10px] text-slate-500">Auditor: {viewingActaMovement.usuarioConciliador || 'Agente Autónomo CMF'}</div>
+                </div>
+              </div>
+
+              {/* Comparación Técnica: Cartola vs Libro Diario */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Lado Banco */}
+                <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                    <span className="font-bold text-blue-900 text-xs flex items-center gap-1.5">
+                      <Landmark className="w-3.5 h-3.5 text-blue-600" />
+                      Partida en Cartola Bancaria
+                    </span>
+                    <span className="text-[10px] font-mono font-semibold text-slate-500">
+                      ID #{viewingActaMovement.id.substring(0, 8)}
+                    </span>
+                  </div>
+                  <div className="space-y-1 text-[11px]">
+                    <div><strong>Banco:</strong> {currentAccount.banco} ({currentAccount.numeroCuenta})</div>
+                    <div><strong>Fecha Operación:</strong> {viewingActaMovement.fecha}</div>
+                    <div><strong>N° Operación / TEF:</strong> <span className="font-mono font-bold text-slate-800">{viewingActaMovement.numeroReferencia || '—'}</span></div>
+                    <div><strong>Glosa Bancaria:</strong> <span className="text-slate-700 italic">"{viewingActaMovement.glosaBancaria}"</span></div>
+                    <div className="pt-1 flex justify-between border-t border-slate-100 font-bold">
+                      <span>Monto Liquidado:</span>
+                      <span className={viewingActaMovement.abono > 0 ? 'text-emerald-700 font-mono' : 'text-rose-700 font-mono'}>
+                        {viewingActaMovement.abono > 0 ? `+${formatCurr(viewingActaMovement.abono)} (Abono)` : `-${formatCurr(viewingActaMovement.cargo)} (Cargo)`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Lado Contabilidad */}
+                <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                    <span className="font-bold text-indigo-900 text-xs flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      Comprobante en Libro Diario
+                    </span>
+                    <span className="text-[10px] font-mono font-semibold text-slate-500">
+                      Asiento #{viewingActaMovement.asientoGeneradoId ? viewingActaMovement.asientoGeneradoId.substring(0, 8) : 'AUTO'}
+                    </span>
+                  </div>
+                  <div className="space-y-1 text-[11px]">
+                    <div><strong>Fecha Contable:</strong> {viewingActaMovement.partidaContableDetalle?.fecha || viewingActaMovement.fecha}</div>
+                    <div><strong>Concepto:</strong> {viewingActaMovement.partidaContableDetalle?.concepto || 'Conciliación Cartola en Libro Diario'}</div>
+                    <div><strong>Doc. Respaldo:</strong> <span className="font-mono text-slate-800">{viewingActaMovement.partidaContableDetalle?.documento || viewingActaMovement.numeroReferencia || 'Comprobante Interno'}</span></div>
+                    {viewingActaMovement.partidaContableDetalle?.rutAuxiliar && (
+                      <div><strong>Auxiliar Imputado:</strong> <span className="font-mono font-bold">{viewingActaMovement.partidaContableDetalle.rutAuxiliar}</span></div>
+                    )}
+                    <div className="pt-1 flex justify-between border-t border-slate-100 font-bold">
+                      <span>Monto en Libro Mayor:</span>
+                      <span className="font-mono text-blue-900">
+                        {formatCurr(viewingActaMovement.abono > 0 ? viewingActaMovement.abono : viewingActaMovement.cargo)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Auditoría de Calce y Cuadratura */}
+              <div className="p-3 bg-emerald-50/70 border border-emerald-300 rounded-lg flex items-center justify-between gap-3 text-[11px] text-emerald-950">
+                <div className="space-y-0.5">
+                  <div className="font-bold flex items-center gap-1">
+                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                    <span>Criterio de Matching Aplicado ({viewingActaMovement.matchCerteza || 100}% Certeza):</span>
+                  </div>
+                  <p className="text-[10px] text-emerald-800">
+                    {viewingActaMovement.matchCriterio || 'Monto exacto verificado, N° Operación bancaria y consistencia cronológica en Libro Diario.'}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[10px] uppercase font-bold text-emerald-800">Diferencia:</div>
+                  <div className="text-sm font-mono font-extrabold text-emerald-950">$0 CLP</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Acciones */}
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  handleUnreconcileMovement(viewingActaMovement);
+                  setViewingActaMovement(null);
+                  setAutoReconciledSuccess('Movimiento desconciliado y retornado a partidas pendientes.');
+                  setTimeout(() => setAutoReconciledSuccess(null), 4000);
+                }}
+                className="text-xs text-rose-600 hover:text-rose-800 font-semibold cursor-pointer underline"
+              >
+                Deshacer Conciliación
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewingActaMovement(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs cursor-pointer flex items-center gap-1.5 shadow-xs transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Imprimir Acta de Conciliación</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: DESAMBIGUACIÓN E INDIVIDUALIZACIÓN DE PARTIDAS CON MONTOS IDÉNTICOS */}
+      {desambiguarMovement && (() => {
+        const targetAmount = desambiguarMovement.abono > 0 ? desambiguarMovement.abono : desambiguarMovement.cargo;
+        const candidates = evaluateCandidateEntries(desambiguarMovement, safeAccountingEntries, currentAccount, new Set());
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full p-6 space-y-4 my-8 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                    <AlertTriangle className="w-5 h-5 text-amber-700" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base">
+                      Individualización y Calce de Partida Bancaria
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Resolución de ambigüedad cuando existen múltiples asientos con idéntico monto
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setDesambiguarMovement(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Ficha del Movimiento Bancario a Calzar */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">
+                    Movimiento de Cartola a Conciliar:
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-500">
+                    Fecha Cartola: <strong>{desambiguarMovement.fecha}</strong>
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2.5 bg-white rounded-lg border border-slate-200 font-mono text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-sans block">Monto a Conciliar:</span>
+                    <span className={`text-sm font-extrabold ${desambiguarMovement.abono > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {desambiguarMovement.abono > 0 ? `+${formatCurr(targetAmount)}` : `-${formatCurr(targetAmount)}`}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-sans ml-1">({desambiguarMovement.abono > 0 ? 'Abono / Depósito' : 'Cargo / Giro'})</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-sans block">N° Operación / TEF:</span>
+                    <span className="font-bold text-slate-900">{desambiguarMovement.numeroReferencia || 'Sin N° especificado'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-sans block">Glosa del Banco:</span>
+                    <span className="font-sans text-[11px] text-slate-700 font-medium truncate block" title={desambiguarMovement.glosaBancaria}>
+                      {desambiguarMovement.glosaBancaria}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de Partidas Candidatas en Contabilidad */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                    <span>Comprobantes Contables Candidatos ({candidates.length} encontrados con ${formatCLP(targetAmount)})</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Ordenados por afinidad de datos (TEF, RUT, Fecha)
+                  </span>
+                </div>
+
+                {candidates.length > 0 ? (
+                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                    {candidates.map((cand, idx) => {
+                      const entry = cand.entry;
+                      const bankLine = cand.matchingLine;
+                      const isTopMatch = idx === 0 && cand.score >= 80;
+
+                      return (
+                        <div
+                          key={entry.id}
+                          className={`p-3 rounded-xl border transition-all text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                            isTopMatch
+                              ? 'bg-blue-50/70 border-blue-400 shadow-2xs'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-slate-900">
+                                Asiento #{entry.id.substring(0, 8)}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                Fecha: {entry.fecha}
+                              </span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                cand.score >= 80
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : cand.score >= 60
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}>
+                                {cand.score}% Afinidad
+                              </span>
+                              {entry.documento && (
+                                <span className="text-[10px] font-mono bg-slate-100 text-slate-800 px-1.5 py-0.2 rounded">
+                                  Doc: {entry.documento}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="font-medium text-slate-800 text-[11px]">
+                              {entry.concepto}
+                            </div>
+
+                            {bankLine?.rutAuxiliar && (
+                              <div className="text-[10px] text-slate-600 font-mono">
+                                Auxiliar Imputado: <strong>{bankLine.rutAuxiliar}</strong>
+                              </div>
+                            )}
+
+                            {/* Desglose de razones de matching */}
+                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                              {cand.reasons.map((r, rIdx) => (
+                                <span key={rIdx} className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
+                                  ✓ {r}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleManualReconcileWithEntry(desambiguarMovement, cand)}
+                              className="w-full sm:w-auto px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Imputar y Emitir Ref. CONC</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-2 text-xs text-slate-600">
+                    <p>No se encontraron asientos contables en Libro Diario con el monto exacto de ${formatCLP(targetAmount)} en la cuenta corriente del banco.</p>
+                    <p className="text-[11px] text-slate-500">
+                      Si este movimiento corresponde a una comisión bancaria, cargo PAC o abono directo no registrado previamente:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRegisterNovedad(desambiguarMovement);
+                        setDesambiguarMovement(null);
+                      }}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <span>Registrar Asiento Contable Automático (Novedad Bancaria)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Botonera de Cierre */}
+              <div className="flex items-center justify-end pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setDesambiguarMovement(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

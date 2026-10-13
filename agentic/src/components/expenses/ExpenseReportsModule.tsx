@@ -48,11 +48,13 @@ import {
   downloadFile,
   auditExpenseReport,
   generateExpenseAccountingEntry,
+  ExpenseAccountingConfig,
 } from '../../utils/expenseManagementAgent';
 import { expenseApiService, ExpenseDbStatus } from '../../services/expenseApiService';
 import { CreateExpenseReportModal } from './CreateExpenseReportModal';
 import { AddExpenseItemModal } from './AddExpenseItemModal';
 import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
+import { CentralizeExpenseModal } from './CentralizeExpenseModal';
 import { CollaboratorExpenseMobileApp } from './mobile/CollaboratorExpenseMobileApp';
 
 interface ExpenseReportsModuleProps {
@@ -94,6 +96,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [showCreateReportModal, setShowCreateReportModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [selectedReportDetail, setSelectedReportDetail] = useState<ExpenseReport | null>(null);
+  const [reportToCentralize, setReportToCentralize] = useState<ExpenseReport | null>(null);
   const [showArchitectureModal, setShowArchitectureModal] = useState(false);
   const [showMobileApp, setShowMobileApp] = useState(false);
 
@@ -188,16 +191,23 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
     });
   }, [reports, searchTerm, statusFilter, ccFilter, projectFilter]);
 
-  // Acción: Centralizar Rendición directamente en Libro Diario y generar Asiento
-  const handleQuickCentralize = async (report: ExpenseReport) => {
+  // Acción: Abrir modal de previsualización y configuración contable previa
+  const handleQuickCentralize = (report: ExpenseReport) => {
+    setReportToCentralize(report);
+  };
+
+  // Acción: Confirmar Centralización de Rendición en Libro Diario con configuración elegida
+  const handleConfirmCentralize = async (config: ExpenseAccountingConfig) => {
+    if (!reportToCentralize) return;
+    const report = reportToCentralize;
     try {
       const reportComprobantes = items.filter((i) => i.expenseReportId === report.id);
-      const entry = generateExpenseAccountingEntry(report, reportComprobantes, chartOfAccounts);
+      const entry = generateExpenseAccountingEntry(report, reportComprobantes, chartOfAccounts, config);
       if (onAddEntry) {
         await onAddEntry(entry);
       }
       try {
-        await expenseApiService.contabilizarReport(report.id);
+        await expenseApiService.contabilizarReport(report.id, config);
       } catch (e) {
         console.warn('[ExpenseReportsModule] Aviso al actualizar estado en API:', e);
       }
@@ -1137,6 +1147,17 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
           report={selectedReportDetail}
           costCenters={costCenters}
           projects={projects}
+        />
+      )}
+
+      {reportToCentralize && (
+        <CentralizeExpenseModal
+          isOpen={!!reportToCentralize}
+          onClose={() => setReportToCentralize(null)}
+          report={reportToCentralize}
+          comprobantes={items.filter((i) => i.expenseReportId === reportToCentralize.id)}
+          chartOfAccounts={chartOfAccounts}
+          onConfirm={handleConfirmCentralize}
         />
       )}
 

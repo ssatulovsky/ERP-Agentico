@@ -104,6 +104,14 @@ export const bankTransactions = mysqlTable(
     matchCerteza: int('match_certeza'),
     matchSugeridoId: varchar('match_sugerido_id', { length: 36 }),
     matchSugeridoGlosa: varchar('match_sugerido_glosa', { length: 255 }),
+    codigoConciliacion: varchar('codigo_conciliacion', { length: 50 }),
+    fechaConciliacion: datetime('fecha_conciliacion', { fsp: 3 }),
+    matchCriterio: varchar('match_criterio', { length: 255 }),
+    usuarioConciliador: varchar('usuario_conciliador', { length: 100 }),
+    asientoGeneradoId: varchar('asiento_generado_id', { length: 36 }),
+    partidaContableDetalle: json('partida_contable_detalle'),
+    esAmbiguo: boolean('es_ambiguo').notNull().default(false),
+    candidatosMatchesCount: int('candidatos_matches_count').default(0),
     origenImportacion: varchar('origen_importacion', { length: 50 }).default('MANUAL'),
     rawHashTransaction: varchar('raw_hash_transaction', { length: 64 }),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
@@ -111,6 +119,7 @@ export const bankTransactions = mysqlTable(
   (table) => ({
     idxTxAccountFecha: index('idx_tx_account_fecha').on(table.accountId, table.fecha),
     idxTxEstado: index('idx_tx_estado').on(table.accountId, table.estadoConciliacion),
+    idxTxCodigoConc: index('idx_tx_codigo_conc').on(table.codigoConciliacion),
   })
 );
 

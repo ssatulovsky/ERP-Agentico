@@ -85,149 +85,60 @@ export async function updateMysqlDatabase(): Promise<{
       // Si la tabla no existe aún, se creará correctamente en el script
     }
 
-    // Paso defensivo: asegurar las columnas de los 5 conceptos contables avanzados y DTEs/RCV
+    // Paso defensivo: asegurar las columnas de los 5 conceptos contables avanzados
     const defensiveColumns = [
       { table: 'chart_of_accounts', col: 'maneja_multimoneda', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
       { table: 'chart_of_accounts', col: 'requiere_doc_ref', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
       { table: 'chart_of_accounts', col: 'es_efectivo_equivalente', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
       { table: 'chart_of_accounts', col: 'es_contracuenta_efectivo', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
       { table: 'chart_of_accounts', col: 'requiere_proyecto', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'chart_of_accounts', col: 'moneda_codigo', type: "VARCHAR(10) NULL DEFAULT 'CLP'" },
+      { table: 'chart_of_accounts', col: 'notas_explicativas', type: 'JSON NULL' },
       { table: 'chart_of_accounts_master', col: 'es_efectivo_equivalente', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
       { table: 'chart_of_accounts_master', col: 'es_contracuenta_efectivo', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
-      // Columnas críticas de dtes_rcv para agente SII RPA y Drizzle
-      { table: 'dtes_rcv', col: 'periodo', type: "VARCHAR(7) NOT NULL DEFAULT '2026-08'" },
-      { table: 'dtes_rcv', col: 'monto_iva_recuperable', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'dtes_rcv', col: 'monto_iva_no_recuperable', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'dtes_rcv', col: 'estado_acuse', type: 'VARCHAR(50) NULL' },
-      { table: 'dtes_rcv', col: 'estado_contable', type: "ENUM('PENDIENTE', 'CENTRALIZADO') NOT NULL DEFAULT 'PENDIENTE'" },
-      { table: 'dtes_rcv', col: 'entry_id_ref', type: 'VARCHAR(36) NULL' },
-      { table: 'dtes_rcv', col: 'track_id', type: 'VARCHAR(100) NULL' },
-      { table: 'dtes_rcv', col: 'ted_xml', type: 'TEXT NULL' },
-      { table: 'dtes_rcv', col: 'xml_timbrado', type: 'MEDIUMTEXT NULL' },
-      { table: 'dtes_rcv', col: 'pdf_url', type: 'VARCHAR(500) NULL' },
-      { table: 'dtes_rcv', col: 'ambiente_sii', type: 'INT NOT NULL DEFAULT 1' },
-      // Columnas críticas de boletas_honorarios
-      { table: 'boletas_honorarios', col: 'rut_emisor', type: "VARCHAR(20) NOT NULL DEFAULT ''" },
-      { table: 'boletas_honorarios', col: 'nombre_emisor', type: "VARCHAR(255) NOT NULL DEFAULT ''" },
-      { table: 'boletas_honorarios', col: 'periodo', type: "VARCHAR(7) NOT NULL DEFAULT '2026-08'" },
-      { table: 'boletas_honorarios', col: 'monto_bruto', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'boletas_honorarios', col: 'tasa_retencion', type: 'DECIMAL(5, 4) NOT NULL DEFAULT 0.1450' },
-      { table: 'boletas_honorarios', col: 'retencion_monto', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'boletas_honorarios', col: 'liquido_pagado', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'boletas_honorarios', col: 'descripcion_servicio', type: 'TEXT NULL' },
-      { table: 'boletas_honorarios', col: 'bhe_estado_contable', type: "ENUM('PENDIENTE', 'CENTRALIZADO') NOT NULL DEFAULT 'PENDIENTE'" },
-      { table: 'boletas_honorarios', col: 'entry_id_ref', type: 'VARCHAR(36) NULL' },
-      // Columnas críticas de f29_declarations
-      { table: 'f29_declarations', col: 'total_iva_debito', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'f29_declarations', col: 'total_iva_credito', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'f29_declarations', col: 'remanente_siguiente_mes', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'f29_declarations', col: 'ppm_determinado', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'f29_declarations', col: 'retenciones_segunda_cat', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'f29_declarations', col: 'estado_declaracion', type: "ENUM('PROPUESTA', 'DECLARADO', 'PAGADO') NOT NULL DEFAULT 'PROPUESTA'" },
-      { table: 'f29_declarations', col: 'json_casillas', type: 'JSON NULL' },
-      // Columnas críticas de payroll_periods
-      { table: 'payroll_periods', col: 'uf_fin_mes', type: 'DECIMAL(10, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'utm_mes', type: 'DECIMAL(10, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'total_haberes', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'total_descuentos', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'liquido_a_pagar', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'total_leyes_sociales', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
-      { table: 'payroll_periods', col: 'payroll_estado', type: "ENUM('BORRADOR', 'CERRADO', 'PAGADO', 'PREVIRED_GENERADO') NOT NULL DEFAULT 'BORRADOR'" },
-      { table: 'payroll_periods', col: 'entry_id_ref', type: 'VARCHAR(36) NULL' },
-      // Columnas críticas de agent_audit_logs (Bitácora Forense de Agentes IA)
-      { table: 'agent_audit_logs', col: 'firm_id', type: "VARCHAR(36) NOT NULL DEFAULT 'firm-default-001'" },
-      { table: 'agent_audit_logs', col: 'modulo', type: "VARCHAR(60) NOT NULL DEFAULT 'CONTABILIDAD'" },
-      { table: 'agent_audit_logs', col: 'accion', type: "VARCHAR(100) NOT NULL DEFAULT 'COMMIT_ASIENTO'" },
-      { table: 'agent_audit_logs', col: 'estado_transicion', type: "VARCHAR(50) NOT NULL DEFAULT 'APROBADO'" },
-      { table: 'agent_audit_logs', col: 'prompt_tokens', type: "INT NULL" },
-      { table: 'agent_audit_logs', col: 'completion_tokens', type: "INT NULL" },
-      { table: 'agent_audit_logs', col: 'model_name', type: "VARCHAR(50) NULL" },
-      { table: 'agent_audit_logs', col: 'prompt_hash', type: "VARCHAR(64) NULL" },
-      { table: 'agent_audit_logs', col: 'payload_input', type: "JSON NULL" },
-      { table: 'agent_audit_logs', col: 'payload_output', type: "JSON NULL" },
-      { table: 'agent_audit_logs', col: 'diff_contable', type: "JSON NULL" },
-      { table: 'agent_audit_logs', col: 'supervisor_veredicto', type: "VARCHAR(50) NULL" },
-      { table: 'agent_audit_logs', col: 'supervisor_signature', type: "VARCHAR(128) NULL" },
-      { table: 'agent_audit_logs', col: 'tiempo_ejecucion_ms', type: "INT NOT NULL DEFAULT 0" },
+      // companies: Gobernanza y multimoneda
+      { table: 'companies', col: 'ejercicios_cerrados', type: 'JSON NULL' },
+      { table: 'companies', col: 'reapertura_extraordinaria_activa', type: 'JSON NULL' },
+      { table: 'companies', col: 'auditoria_reaperturas', type: 'JSON NULL' },
+      { table: 'companies', col: 'moneda_defecto', type: "VARCHAR(10) NOT NULL DEFAULT 'CLP'" },
+      { table: 'companies', col: 'monedas_habilitadas', type: 'JSON NULL' },
+      { table: 'companies', col: 'cuenta_dif_cambio_ganancia_id', type: "VARCHAR(30) NULL DEFAULT '7.1.01.002'" },
+      { table: 'companies', col: 'cuenta_dif_cambio_perdida_id', type: "VARCHAR(30) NULL DEFAULT '7.2.01.002'" },
+      // accounting_entries: Multi-Estudio y Referencia formal extendida
+      { table: 'accounting_entries', col: 'firm_id', type: "VARCHAR(36) NOT NULL DEFAULT 'firm-default-001'" },
+      { table: 'accounting_entries', col: 'documento_referencia', type: 'VARCHAR(150) NULL' },
+      { table: 'accounting_entries', col: 'tipo_documento_ref', type: 'VARCHAR(50) NULL' },
+      { table: 'accounting_entries', col: 'folio_documento_ref', type: 'VARCHAR(100) NULL' },
+      // accounting_entry_lines: Correlativo, documentos no-SII y multimoneda
+      { table: 'accounting_entry_lines', col: 'linea_numero', type: 'INT NOT NULL DEFAULT 1' },
+      { table: 'accounting_entry_lines', col: 'documento_ref', type: 'VARCHAR(150) NULL' },
+      { table: 'accounting_entry_lines', col: 'dte_id_asociado', type: 'VARCHAR(36) NULL' },
+      { table: 'accounting_entry_lines', col: 'tipo_documento_ref', type: 'VARCHAR(50) NULL' },
+      { table: 'accounting_entry_lines', col: 'folio_documento_ref', type: 'VARCHAR(100) NULL' },
+      { table: 'accounting_entry_lines', col: 'monto_documento_ref', type: 'DECIMAL(15, 2) NULL' },
+      { table: 'accounting_entry_lines', col: 'fecha_documento_ref', type: 'DATE NULL' },
+      { table: 'accounting_entry_lines', col: 'fecha_vencimiento_ref', type: 'DATE NULL' },
+      { table: 'accounting_entry_lines', col: 'documento_operacion', type: 'VARCHAR(100) NULL' },
+      { table: 'accounting_entry_lines', col: 'tipo_documento_operacion', type: 'VARCHAR(50) NULL' },
+      { table: 'accounting_entry_lines', col: 'fecha_documento_operacion', type: 'DATE NULL' },
+      { table: 'accounting_entry_lines', col: 'documento_conciliacion', type: 'VARCHAR(100) NULL' },
+      { table: 'accounting_entry_lines', col: 'tipo_documento_conciliacion', type: 'VARCHAR(50) NULL' },
+      { table: 'accounting_entry_lines', col: 'moneda_original', type: 'VARCHAR(10) NULL' },
+      { table: 'accounting_entry_lines', col: 'monto_moneda_original', type: 'DECIMAL(15, 2) NULL' },
+      { table: 'accounting_entry_lines', col: 'tipo_cambio', type: 'DECIMAL(12, 4) NULL' },
+      // bank_transactions: Conciliación, criterios y desambiguación
+      { table: 'bank_transactions', col: 'cargo', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
+      { table: 'bank_transactions', col: 'abono', type: 'DECIMAL(15, 2) NOT NULL DEFAULT 0.00' },
+      { table: 'bank_transactions', col: 'documento_ref', type: 'VARCHAR(100) NULL' },
+      { table: 'bank_transactions', col: 'codigo_conciliacion', type: 'VARCHAR(50) NULL' },
+      { table: 'bank_transactions', col: 'fecha_conciliacion', type: 'DATETIME(3) NULL' },
+      { table: 'bank_transactions', col: 'match_criterio', type: 'VARCHAR(255) NULL' },
+      { table: 'bank_transactions', col: 'usuario_conciliador', type: 'VARCHAR(100) NULL' },
+      { table: 'bank_transactions', col: 'asiento_generado_id', type: 'VARCHAR(36) NULL' },
+      { table: 'bank_transactions', col: 'partida_contable_detalle', type: 'JSON NULL' },
+      { table: 'bank_transactions', col: 'es_ambiguo', type: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+      { table: 'bank_transactions', col: 'candidatos_matches_count', type: 'INT NULL DEFAULT 0' },
     ];
-
-    // Asegurar estructura base de agent_audit_logs si no existe
-    try {
-      await connection.query(`
-        CREATE TABLE IF NOT EXISTS \`agent_audit_logs\` (
-          \`id\` VARCHAR(36) NOT NULL,
-          \`trace_id\` VARCHAR(64) NOT NULL,
-          \`firm_id\` VARCHAR(36) NOT NULL DEFAULT 'firm-default-001',
-          \`empresa_id\` VARCHAR(36) NOT NULL,
-          \`agente_nombre\` VARCHAR(60) NOT NULL,
-          \`modulo\` VARCHAR(60) NOT NULL DEFAULT 'CONTABILIDAD',
-          \`accion\` VARCHAR(100) NOT NULL DEFAULT 'COMMIT_ASIENTO',
-          \`estado_transicion\` VARCHAR(50) NOT NULL DEFAULT 'APROBADO',
-          \`prompt_tokens\` INT NULL,
-          \`completion_tokens\` INT NULL,
-          \`model_name\` VARCHAR(50) NULL,
-          \`prompt_hash\` VARCHAR(64) NULL,
-          \`payload_input\` JSON NULL,
-          \`payload_output\` JSON NULL,
-          \`diff_contable\` JSON NULL,
-          \`supervisor_veredicto\` VARCHAR(50) NULL,
-          \`supervisor_signature\` VARCHAR(128) NULL,
-          \`tiempo_ejecucion_ms\` INT NOT NULL DEFAULT 0,
-          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-          PRIMARY KEY (\`id\`),
-          KEY \`idx_audit_trace\` (\`trace_id\`),
-          KEY \`idx_audit_empresa_created\` (\`empresa_id\`, \`created_at\`),
-          KEY \`idx_audit_firm\` (\`firm_id\`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
-      console.log('[✓] Tabla agent_audit_logs verificada / creada preventivamente.');
-    } catch {}
-
-    // Ajustar columnas legacy si la tabla fue creada con esquemas anteriores restrictivos
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `tipo_evento` VARCHAR(50) NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `payload_entrada` JSON NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `resultado_validacion` JSON NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `tiempo_inferencia_ms` INT NULL DEFAULT 0;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `trace_id` VARCHAR(64) NOT NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `empresa_id` VARCHAR(36) NOT NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `payload_input` JSON NULL;");
-    } catch {}
-    try {
-      await connection.query("ALTER TABLE `agent_audit_logs` MODIFY COLUMN `payload_output` JSON NULL;");
-    } catch {}
-
-    // Ajustes defensivos para tablas de Rendición de Gastos (RindeGastos) VARCHAR(64)
-    try {
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `empresa_id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `rendidor_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `centro_costo_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `proyecto_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_reports` MODIFY COLUMN `asiento_contable_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_items` MODIFY COLUMN `id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_items` MODIFY COLUMN `expense_report_id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_items` MODIFY COLUMN `empresa_id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_items` MODIFY COLUMN `centro_costo_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_items` MODIFY COLUMN `proyecto_id` VARCHAR(64) NULL;");
-      await connection.query("ALTER TABLE `expense_projects` MODIFY COLUMN `id` VARCHAR(64) NOT NULL;");
-      await connection.query("ALTER TABLE `expense_projects` MODIFY COLUMN `empresa_id` VARCHAR(64) NOT NULL;");
-      console.log('[✓] Columnas de Rendición de Gastos (expense_*) verificadas/ampliadas preventivamente a VARCHAR(64).');
-    } catch (expErr: any) {
-      // Ignorar si las tablas aún no existen
-    }
 
     for (const def of defensiveColumns) {
       try {
@@ -237,6 +148,19 @@ export async function updateMysqlDatabase(): Promise<{
         // Ignorar si la columna ya existe (1060 / ER_DUP_FIELDNAME) o si la tabla no existe aún (1146)
       }
     }
+
+    // Paso defensivo: eliminar índices únicos restrictivos que bloquean múltiples comprobantes válidos
+    try {
+      await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_origen_doc`;");
+      console.log(`[✓] Índice único uq_entries_empresa_origen_doc liberado a índice ordinario.`);
+    } catch {}
+    try {
+      await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_doc`;");
+      console.log(`[✓] Índice único uq_entries_empresa_doc liberado a índice ordinario.`);
+    } catch {}
+    try {
+      await connection.query("ALTER TABLE `accounting_entries` ADD KEY `idx_entries_empresa_origen_doc` (`empresa_id`, `periodo`, `origen_modulo`, `documento_ref`);");
+    } catch {}
     
     // Función auxiliar para dividir el script SQL respetando strings entre comillas
     const statements = splitSqlStatements(sqlScript);
@@ -263,16 +187,24 @@ export async function updateMysqlDatabase(): Promise<{
           }
         }
 
-        // Tolerancia a idempotencia: columna ya existe (1060), índice ya existe (1061), tabla ya existe (1050)
-        if (
+        // Tolerancia a idempotencia: columna ya existe (1060), índice ya existe (1061), tabla ya existe (1050), objeto a dropear no existe (1091)
+        const isIdempotencyError =
           stmtErr.errno === 1060 ||
           stmtErr.code === 'ER_DUP_FIELDNAME' ||
           stmtErr.errno === 1061 ||
           stmtErr.code === 'ER_DUP_KEYNAME' ||
           stmtErr.errno === 1050 ||
           stmtErr.code === 'ER_TABLE_EXISTS_ERROR' ||
-          (stmtErr.message && stmtErr.message.includes('Duplicate column name'))
-        ) {
+          stmtErr.errno === 1091 ||
+          stmtErr.code === 'ER_CANT_DROP_FIELD_OR_KEY' ||
+          (stmtErr.message &&
+            (stmtErr.message.includes('Duplicate column name') ||
+              stmtErr.message.includes('Duplicate key name') ||
+              stmtErr.message.includes("Can't DROP") ||
+              stmtErr.message.includes('check that column/key exists') ||
+              stmtErr.message.includes('already exists')));
+
+        if (isIdempotencyError) {
           skippedCount++;
         } else {
           console.error(`\n[!] Error ejecutando sentencia DDL:`);

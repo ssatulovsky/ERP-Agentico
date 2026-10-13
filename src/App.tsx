@@ -101,7 +101,9 @@ import {
   MedicalLeave,
   VacationRecord,
   AbsenteeismRecord,
+  ExpenseReport,
 } from './types';
+import { expenseApiService } from './services/expenseApiService';
 import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from './data/erpMasterConfig';
 import {
   INITIAL_MEDICAL_LEAVES,
@@ -109,6 +111,8 @@ import {
   INITIAL_ABSENTEEISM,
 } from './data/seedHrData';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
+import { VoiceAgentDialogueModal } from './components/voice/VoiceAgentDialogueModal';
+import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -138,6 +142,8 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('executive_dashboard');
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
+  const [isVoiceDialogueOpen, setIsVoiceDialogueOpen] = useState<boolean>(false);
+  const [voiceDialoguePersonaId, setVoiceDialoguePersonaId] = useState<string>('CONTABILIDAD_SENIOR');
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
@@ -146,15 +152,32 @@ export default function App() {
 
   // Active Client derived object (backward-compatible with company)
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
-  const [company, setCompany] = useState(activeClient);
+  const [company, setCompany] = useState<ClientCompany>(() => {
+    const savedPeriodos = loadClientState<string[]>(
+      activeClient.id, 
+      'periodosCerrados', 
+      activeClient.periodosCerrados || ['2026-01', '2026-02']
+    );
+    return {
+      ...activeClient,
+      ejercicioActivo: activeClient.ejercicioActivo || 2026,
+      mesCierreEjercicio: activeClient.mesCierreEjercicio || 12,
+      diaCierreEjercicio: activeClient.diaCierreEjercicio || 31,
+      fechaInicioEjercicio: activeClient.fechaInicioEjercicio || '2026-01-01',
+      fechaFinEjercicio: activeClient.fechaFinEjercicio || '2026-12-31',
+      periodosCerrados: savedPeriodos,
+      bloqueoPeriodoCerrado: activeClient.bloqueoPeriodoCerrado !== false,
+    };
+  });
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
   // Core Data States with Multi-Tenant Local Persistence (Sin datos fijos, almacenamiento real segregado)
   const [dtes, setDtes] = useState<DteDocument[]>(() => {
-    return loadClientState<DteDocument[]>(activeClientId, 'dtes', activeClient.id === 'client-innovagile' ? [] : seedDtes);
+    const isDemo = activeClient.id === 'client-retail-01' || (activeClient as any)?.isDemo;
+    return loadClientState<DteDocument[]>(activeClientId, 'dtes', isDemo ? seedDtes : []);
   });
   const [f29, setF29] = useState<F29Declaration>(() => {
-    const isExento = Boolean((activeClient as any)?.exentoIvaGiro || activeClient.id === 'client-innovagile');
+    const isExento = Boolean((activeClient as any)?.exentoIvaGiro);
     if (isExento) {
       return {
         ...seedF29,
@@ -181,7 +204,8 @@ export default function App() {
     };
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
-    return loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', activeClient.id === 'client-innovagile' ? [] : seedPayrolls);
+    const isDemo = activeClient.id === 'client-retail-01' || (activeClient as any)?.isDemo;
+    return loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', isDemo ? seedPayrolls : []);
   });
   const [leases, setLeases] = useState<LeaseContract[]>(() => {
     return loadClientState<LeaseContract[]>(activeClientId, 'leases', seedLeases);
@@ -198,7 +222,9 @@ export default function App() {
     return loadClientState<CashAccountConfig[]>(activeClientId, 'cashAccounts', INITIAL_CASH_ACCOUNTS);
   });
   const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(() => {
-    return loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+    const raw = loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+    // Sanear y depurar registros espurios o contrapartidas ficticias inyectadas previamente en la cartola (id: bmov-...)
+    return (raw || []).filter(m => !m.id.startsWith('bmov-'));
   });
 
   // Treasury, Cheques, Debt & Provisions States
@@ -366,11 +392,16 @@ export default function App() {
     const selected = clients.find(c => c.id === clientId);
     if (!selected) return;
     setActiveClientId(clientId);
-    setCompany(selected);
-    const isExento = Boolean((selected as any)?.exentoIvaGiro || selected.id === 'client-innovagile');
+    const loadedPeriodos = loadClientState<string[]>(clientId, 'periodosCerrados', selected.periodosCerrados || ['2026-01', '2026-02']);
+    setCompany({
+      ...selected,
+      periodosCerrados: loadedPeriodos,
+    });
+    const isExento = Boolean((selected as any)?.exentoIvaGiro);
+    const isDemo = selected.id === 'client-retail-01' || (selected as any)?.isDemo;
 
-    const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', isExento ? [] : seedDtes);
-    const loadedPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', isExento ? [] : seedPayrolls);
+    const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', isDemo ? seedDtes : []);
+    const loadedPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', isDemo ? seedPayrolls : []);
     const loadedMovements = loadClientState<CashFlowMovement[]>(clientId, 'movements', seedMovements);
     const loadedBanks = loadClientState<BankAccountConfig[]>(clientId, 'bankAccounts', seedBankAccounts);
     const loadedBankMovs = loadClientState<BankStatementMovement[]>(clientId, 'bankMovements', seedBankMovements);
@@ -386,7 +417,7 @@ export default function App() {
     setPayrolls(loadedPayrolls);
     setMovements(loadedMovements);
     setBankAccounts(loadedBanks);
-    setBankMovements(loadedBankMovs);
+    setBankMovements((loadedBankMovs || []).filter(m => !m.id.startsWith('bmov-')));
     setChequesCartera(loadedChequesCart);
     setChequesEmitidos(loadedChequesEmit);
     setDeudasFinancieras(loadedDeudas);
@@ -705,8 +736,32 @@ export default function App() {
     error: ledgerError,
     commitEntry,
     addEntry,
+    updateEntry,
+    deleteEntry,
+    reverseEntry,
     refetch: refetchLedger,
   } = useAccountingLedger(company.rut);
+
+  // Rendiciones de Gastos Corporativas sincronizadas en tiempo real
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[]>([]);
+
+  useEffect(() => {
+    let isSubscribed = true;
+    const loadExpenses = async () => {
+      try {
+        const data = await expenseApiService.getExpenseReports(company.rut);
+        if (isSubscribed && Array.isArray(data)) {
+          setExpenseReports(data);
+        }
+      } catch (e) {
+        console.warn('[App] Error al precargar rendiciones de gastos:', e);
+      }
+    };
+    loadExpenses();
+    return () => {
+      isSubscribed = false;
+    };
+  }, [company.rut]);
 
   // Modals
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -772,10 +827,30 @@ export default function App() {
 
   const handleAddEntry = async (entry: AccountingEntry) => {
     try {
-      await addEntry(entry);
+      const result = await addEntry(entry);
+      // Nota: Los asientos contables pertenecen al Libro Diario/Mayor y se contrastan como Partidas en Tránsito
+      // en la Conciliación Bancaria hasta ser conciliados con la cartola bancaria oficial. No alteran la cartola bancaria externa.
+      if (entry.origen === 'RENDICION_GASTOS' || entry.documento?.includes('RDG') || entry.concepto?.toLowerCase().includes('rendici')) {
+        expenseApiService.getExpenseReports(company.rut).then(data => {
+          if (Array.isArray(data)) setExpenseReports(data);
+        }).catch(() => {});
+      }
+      return result;
     } catch (err: any) {
       console.error('[App] Error al autorizar y persistir comprobante contable:', err);
+      throw err;
     }
+  };
+
+  const handleCommitEntry = async (
+    payloadOrEntry: any,
+    auditContextOverrides?: any
+  ) => {
+    const result = await commitEntry(payloadOrEntry, auditContextOverrides);
+    expenseApiService.getExpenseReports(company.rut).then(data => {
+      if (Array.isArray(data)) setExpenseReports(data);
+    }).catch(() => {});
+    return result;
   };
 
   const handleAddEmployee = (emp: EmployeePayroll) => {
@@ -964,6 +1039,79 @@ export default function App() {
   if (Math.abs(f29.debitoFiscalIva - rcvDebito) > 10) discrepanciesCount++;
   if (Math.abs(f29.creditoFiscalIva - rcvCredito) > 10) discrepanciesCount++;
 
+  // Voice Agent Action Handlers (Ejecución real y responsable de los agentes por voz)
+  const handleVoiceCentralizePurchases = async () => {
+    try {
+      const periodo = '2026-09';
+      const compras = dtes.filter(d => d.tipoOperacion === 'COMPRA');
+      if (compras.length === 0) return;
+      const { asiento } = generateMonthlyCentralizationEntry(
+        periodo,
+        'COMPRA',
+        dtes,
+        undefined,
+        company
+      );
+      await handleAddEntry(asiento);
+      setDtes(prev => prev.map(d => d.tipoOperacion === 'COMPRA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+    } catch (e) {
+      console.warn('[VoiceAgent] Error al centralizar compras:', e);
+      throw e;
+    }
+  };
+
+  const handleVoiceCentralizeSales = async () => {
+    try {
+      const periodo = '2026-09';
+      const ventas = dtes.filter(d => d.tipoOperacion === 'VENTA');
+      if (ventas.length === 0) return;
+      const { asiento } = generateMonthlyCentralizationEntry(
+        periodo,
+        'VENTA',
+        dtes,
+        undefined,
+        company
+      );
+      await handleAddEntry(asiento);
+      setDtes(prev => prev.map(d => d.tipoOperacion === 'VENTA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+    } catch (e) {
+      console.warn('[VoiceAgent] Error al centralizar ventas:', e);
+      throw e;
+    }
+  };
+
+  const handleVoiceReconcileBank = async () => {
+    const pendientes = bankMovements.filter(m => m.estado !== 'CONCILIADO');
+    if (pendientes.length > 0) {
+      handleRegisterAllBankNovedades(pendientes);
+    }
+  };
+
+  const handleVoiceCalculateF29 = async () => {
+    const rcvDebito = dtes.filter(d => d.tipoOperacion === 'VENTA').reduce((s, d) => s + (d.tipoDte === '61' ? -d.montoIva : d.montoIva), 0);
+    const rcvCredito = dtes.filter(d => d.tipoOperacion === 'COMPRA').reduce((s, d) => s + d.montoIva, 0);
+    setF29(prev => ({
+      ...prev,
+      debitoFiscalIva: rcvDebito,
+      creditoFiscalIva: rcvCredito,
+      impuestoDeterminadoIva: Math.max(0, rcvDebito - rcvCredito),
+      totalAPagar: Math.max(0, rcvDebito - rcvCredito) + prev.montoPpm,
+    }));
+  };
+
+  const handleVoiceCentralizeExpenses = async () => {
+    try {
+      const pending = expenseReports.filter(r => r.estado !== 'PAGADO' && r.estado !== 'RECHAZADO');
+      for (const rep of pending) {
+        await expenseApiService.updateReportStatus(rep.id, 'APROBADO', 'Aprobado y centralizado por Agente Paula Carvallo');
+      }
+      const data = await expenseApiService.getExpenseReports(company.rut);
+      if (Array.isArray(data)) setExpenseReports(data);
+    } catch (e) {
+      console.warn('[VoiceAgent] Error centralizando gastos:', e);
+    }
+  };
+
   const navLinks = [
     { id: 'executive_dashboard', label: 'Dashboard Ejecutivo', subtitle: 'Evolución de Agentes & KPIs 360°', icon: LayoutDashboard },
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
@@ -1000,6 +1148,10 @@ export default function App() {
         openAiChat={() => setIsAiModalOpen(true)}
         openAuditor={() => setIsAiModalOpen(true)}
         openManual={() => setIsManualOpen(true)}
+        openVoiceDialogue={() => {
+          setVoiceDialoguePersonaId('CONTABILIDAD_SENIOR');
+          setIsVoiceDialogueOpen(true);
+        }}
       />
 
       {/* Main Two-Column Layout */}
@@ -1117,6 +1269,10 @@ export default function App() {
               onDownloadClientDtes={handleDownloadClientDtes}
               systemParams={systemParams}
               onUpdateSystemParams={handleUpdateSystemParams}
+              onOpenVoiceDialogue={(personaId) => {
+                if (personaId) setVoiceDialoguePersonaId(personaId);
+                setIsVoiceDialogueOpen(true);
+              }}
             />
           )}
 
@@ -1279,6 +1435,7 @@ export default function App() {
               onApproveBudgetAndGenerateOp={handleApproveBudgetAndGenerateOp}
               inventoryItems={inventoryItems}
               warehouses={warehouses}
+              onUpdateInventoryItems={setInventoryItems}
             />
           )}
 
@@ -1299,6 +1456,7 @@ export default function App() {
               company={company}
               costCenters={costCenters}
               onAddEntry={handleAddEntry}
+              onReportsChange={setExpenseReports}
             />
           )}
 
@@ -1350,12 +1508,23 @@ export default function App() {
           {activeTab === 'ledger' && (
             <SeniorAccountingOrchestrator
               company={company}
-              onUpdateCompany={(updated) => setCompany(prev => ({ ...prev, ...updated }))}
+              onUpdateCompany={(updated) => {
+                setCompany(prev => {
+                  const next = { ...prev, ...updated };
+                  if (updated.periodosCerrados) {
+                    saveClientState(activeClientId, 'periodosCerrados', updated.periodosCerrados);
+                  }
+                  return next;
+                });
+              }}
               firm={firm}
               indicators={indicators}
               entries={entries}
               onAddEntry={handleAddEntry}
-              commitEntry={commitEntry}
+              commitEntry={handleCommitEntry}
+              onUpdateEntry={updateEntry}
+              onDeleteEntry={deleteEntry}
+              onReverseEntry={reverseEntry}
               isLedgerLoading={isLedgerLoading}
               isLedgerCommitting={isLedgerCommitting}
               refetchLedger={refetchLedger}
@@ -1367,6 +1536,7 @@ export default function App() {
               bankStatements={bankMovements}
               systemParams={systemParams}
               onUpdateSystemParams={handleUpdateSystemParams}
+              expenseReports={expenseReports}
             />
           )}
         </main>
@@ -1393,6 +1563,28 @@ export default function App() {
         isOpen={isManualOpen}
         onClose={() => setIsManualOpen(false)}
         onNavigateToTab={(tabId) => setActiveTab(tabId)}
+      />
+
+      {/* Voice Agent Dialogue Modal - Personas a Cargo con Interfaz de Voz */}
+      <VoiceAgentDialogueModal
+        isOpen={isVoiceDialogueOpen}
+        onClose={() => setIsVoiceDialogueOpen(false)}
+        activeClientId={activeClientId}
+        company={company}
+        initialPersonaId={voiceDialoguePersonaId}
+        onOpenConfig={() => setActiveTab('agents')}
+        onCentralizePurchases={handleVoiceCentralizePurchases}
+        onCentralizeSales={handleVoiceCentralizeSales}
+        onReconcileBank={handleVoiceReconcileBank}
+        onCalculateF29={handleVoiceCalculateF29}
+        onCentralizeExpenses={handleVoiceCentralizeExpenses}
+        onNavigateToTab={(tabId) => setActiveTab(tabId)}
+        dtes={dtes}
+        bankMovements={bankMovements}
+        f29={f29}
+        employeesCount={payrolls.length}
+        inventoryCount={inventoryItems.length}
+        expensesCount={expenseReports.length}
       />
     </div>
   );

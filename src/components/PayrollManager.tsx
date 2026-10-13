@@ -24,7 +24,9 @@ import {
   Palmtree,
   ArrowRight,
   ShieldAlert,
-  FileWarning
+  FileWarning,
+  CreditCard,
+  Send
 } from 'lucide-react';
 import { 
   EmployeePayroll, 
@@ -42,7 +44,9 @@ import {
   formatNumberCL, 
   formatNormalizedAccountingEntry,
   calculatePayroll,
-  createPayrollCentralizationEntry
+  createPayrollCentralizationEntry,
+  createPayrollDisbursementEntry,
+  createPreviredPaymentEntry
 } from '../utils/chileanAccounting';
 import { downloadPayrollPdf, downloadPayrollExcel, downloadPreviredCsv } from '../utils/reportGenerators';
 import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
@@ -179,6 +183,31 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
     const entry = createPayrollCentralizationEntry(payrolls, currentPeriod);
     onAddEntry(entry);
     setViewEntryModal(entry);
+    setSyncStatusToast(`Centralización contable de remuneraciones del período ${currentPeriod} generada exitosamente en el Libro Diario.`);
+  };
+
+  const handleDisbursePayroll = () => {
+    if (payrolls.length === 0) {
+      alert('No hay nóminas registradas para dispersar.');
+      return;
+    }
+    const currentPeriod = new Date().toISOString().substring(0, 7);
+    const entry = createPayrollDisbursementEntry(payrolls, currentPeriod, '1.1.02.001', 'Banco Santander');
+    onAddEntry(entry);
+    setViewEntryModal(entry);
+    setSyncStatusToast(`Nómina ${currentPeriod} pagada y dispersada exitosamente vía Banco Santander (${formatCLP(totalSueldosLiquidos)}). Asiento y movimiento bancario sincronizados.`);
+  };
+
+  const handlePayPrevired = () => {
+    if (payrolls.length === 0) {
+      alert('No hay nóminas registradas para pagar PreviRed.');
+      return;
+    }
+    const currentPeriod = new Date().toISOString().substring(0, 7);
+    const entry = createPreviredPaymentEntry(payrolls, currentPeriod, '1.1.02.001', 'Banco Santander');
+    onAddEntry(entry);
+    setViewEntryModal(entry);
+    setSyncStatusToast(`Imposiciones PreviRed ${currentPeriod} pagadas vía Banco Santander. Asiento y cargo bancario registrados en tiempo real.`);
   };
 
   const copyNormalizedText = (entry: AccountingEntry) => {
@@ -241,10 +270,26 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
             <button
               onClick={handleGenerateCentralizationEntry}
               className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
-              title="Genera el comprobante contable para revisión del Agente Contable Senior"
+              title="Genera el comprobante contable para devengo de remuneraciones en el Libro Diario"
             >
               <FileCode className="w-3.5 h-3.5" />
               <span>Centralizar a Contabilidad</span>
+            </button>
+            <button
+              onClick={handleDisbursePayroll}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+              title="Pagar sueldos líquidos a colaboradores vía Banco y reflejar egreso en Tesorería"
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>Pagar Nómina (Banco)</span>
+            </button>
+            <button
+              onClick={handlePayPrevired}
+              className="bg-purple-600 hover:bg-purple-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+              title="Pagar imposiciones PreviRed vía Banco y reflejar egreso en Tesorería"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Pagar PreviRed (Banco)</span>
             </button>
           </div>
         </div>
@@ -300,17 +345,26 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
       {/* Top 4 Geometric Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Sueldos Líquidos a Pagar */}
-        <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Líquido a Pagar (Colaboradores)</span>
-            <div className="p-1.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200">
-              <DollarSign className="w-4 h-4" />
+        <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-[0_1px_3px_rgba(0,0,0,0.05)] flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Líquido a Pagar (Colaboradores)</span>
+              <div className="p-1.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200">
+                <DollarSign className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-2 text-2xl font-bold text-[#0f172a]">{formatCLP(totalSueldosLiquidos)}</div>
+            <div className="mt-1 text-xs text-slate-500">
+              {safePayrolls.length} colaboradores activos en nómina
             </div>
           </div>
-          <div className="mt-2 text-2xl font-bold text-[#0f172a]">{formatCLP(totalSueldosLiquidos)}</div>
-          <div className="mt-1 text-xs text-slate-500">
-            {safePayrolls.length} colaboradores activos en nómina
-          </div>
+          <button
+            onClick={handleDisbursePayroll}
+            className="mt-3 w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded px-2.5 py-1.5 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <CreditCard className="w-3.5 h-3.5" />
+            <span>Pagar Nómina por Banco</span>
+          </button>
         </div>
 
         {/* Total Imponible */}
@@ -328,20 +382,29 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
         </div>
 
         {/* Previred & Retenciones F29 */}
-        <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Leyes Sociales + Retención</span>
-            <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200">
-              <Shield className="w-4 h-4" />
+        <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-[0_1px_3px_rgba(0,0,0,0.05)] flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Leyes Sociales + Retención</span>
+              <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200">
+                <Shield className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-2 text-2xl font-bold text-[#0f172a]">
+              {formatCLP(totalDescuentosPrevisionales + totalAportesPatronales + totalImpuestoUnico)}
+            </div>
+            <div className="mt-1 text-xs text-slate-500 flex justify-between font-mono">
+              <span>Imp. Único (F29):</span>
+              <span className="text-purple-700 font-bold">{formatCLP(totalImpuestoUnico)}</span>
             </div>
           </div>
-          <div className="mt-2 text-2xl font-bold text-[#0f172a]">
-            {formatCLP(totalDescuentosPrevisionales + totalAportesPatronales + totalImpuestoUnico)}
-          </div>
-          <div className="mt-1 text-xs text-slate-500 flex justify-between font-mono">
-            <span>Imp. Único (F29):</span>
-            <span className="text-purple-700 font-bold">{formatCLP(totalImpuestoUnico)}</span>
-          </div>
+          <button
+            onClick={handlePayPrevired}
+            className="mt-3 w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded px-2.5 py-1.5 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>Pagar PreviRed por Banco</span>
+          </button>
         </div>
 
         {/* Costo Total Empleador */}

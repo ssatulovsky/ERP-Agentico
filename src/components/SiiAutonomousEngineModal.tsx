@@ -77,7 +77,7 @@ interface SiiAutonomousEngineModalProps {
   dtes: DteDocument[];
   onAddMultipleDtes: (dtes: DteDocument[], autoSyncCashFlow: boolean) => void;
   onUpdateDte: (dte: DteDocument) => void;
-  onAddAccountingEntry: (entry: AccountingEntry) => void;
+  onAddAccountingEntry: (entry: AccountingEntry) => void | Promise<any>;
   onClearAllDtes?: () => void;
   costCenters?: CostCenterMaster[];
 }
@@ -112,11 +112,20 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
   const [copiedLogs, setCopiedLogs] = useState<boolean>(false);
 
-  // Credenciales SII activas (tomadas de la configuración del cliente o por defecto)
+  // Credenciales SII activas (tomadas de la configuración del cliente activo)
   const clientData = company && 'claveSii' in company ? (company as ClientCompany) : null;
-  const [siiRut, setSiiRut] = useState(clientData?.rutAutenticacion || company?.rut || '77.798.901-4');
-  const [siiClave, setSiiClave] = useState(clientData?.claveSii || 'SiexChile#2026');
+  const [siiRut, setSiiRut] = useState(clientData?.rutAutenticacion || company?.rut || '');
+  const [siiClave, setSiiClave] = useState(clientData?.claveSii || '');
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (company?.rut) {
+      setSiiRut(clientData?.rutAutenticacion || company.rut);
+    }
+    if (clientData?.claveSii) {
+      setSiiClave(clientData.claveSii);
+    }
+  }, [company, clientData]);
 
   // Período de trabajo
   const [selectedPeriod, setSelectedPeriod] = useState<string>('2026-08');
@@ -500,7 +509,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   };
 
   // Ejecución de Centralización Mensual de Compras
-  const handleGenerateCentralization = (tipo: 'COMPRA' | 'VENTA') => {
+  const handleGenerateCentralization = async (tipo: 'COMPRA' | 'VENTA') => {
     try {
       const result = generateMonthlyCentralizationEntry(
         selectedPeriod,
@@ -511,7 +520,8 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
         supplierRules
       );
 
-      onAddAccountingEntry(result.asiento);
+      // Esperar persistencia atómica en el backend / MySQL
+      await Promise.resolve(onAddAccountingEntry(result.asiento));
 
       // Marcar los DTEs involucrados como centralizados
       result.dtesAfectadosIds.forEach(id => {
@@ -527,76 +537,87 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
 
       showToast(`¡Asiento de Centralización de ${tipo === 'COMPRA' ? 'Compras' : 'Ventas'} (${selectedPeriod}) generado e incorporado al Libro Diario!`);
     } catch (err: any) {
-      alert(`Error al generar centralización: ${err.message}`);
+      console.error('[SiiAutonomousEngineModal] Error al centralizar:', err);
+      alert(`Error al generar centralización: ${err?.message || String(err)}`);
     }
   };
 
   // Ejecutar Pago Masivo / Individual de Compras
-  const handleExecutePayment = () => {
+  const handleExecutePayment = async () => {
     if (selectedDtesForPayment.length === 0) {
       alert('Seleccione al menos una factura de compra para generar el pago.');
       return;
     }
 
-    const docsToPay = safeDtes.filter(d => selectedDtesForPayment.includes(d.id));
-    const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
-      codigo: '1.1.01',
-      nombre: 'Banco Santander - Cta Cte'
-    };
+    try {
+      const docsToPay = safeDtes.filter(d => selectedDtesForPayment.includes(d.id));
+      const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
+        codigo: '1.1.01',
+        nombre: 'Banco Santander - Cta Cte'
+      };
 
-    const asientoPago = generatePaymentEntry(
-      docsToPay,
-      cuentaBanco,
-      centralizationConfig.cuentaComprasPasivo,
-      new Date().toISOString().split('T')[0]
-    );
+      const asientoPago = generatePaymentEntry(
+        docsToPay,
+        cuentaBanco,
+        centralizationConfig.cuentaComprasPasivo,
+        new Date().toISOString().split('T')[0]
+      );
 
-    onAddAccountingEntry(asientoPago);
+      await Promise.resolve(onAddAccountingEntry(asientoPago));
 
-    // Actualizar estado a PAGADO
-    docsToPay.forEach(d => {
-      onUpdateDte({
-        ...d,
-        estadoPago: 'PAGADO'
+      // Actualizar estado a PAGADO
+      docsToPay.forEach(d => {
+        onUpdateDte({
+          ...d,
+          estadoPago: 'PAGADO'
+        });
       });
-    });
 
-    setSelectedDtesForPayment([]);
-    showToast(`¡Comprobante de pago a proveedores registrado exitosamente en contabilidad por ${formatCLP(asientoPago.totalDebe)}!`);
+      setSelectedDtesForPayment([]);
+      showToast(`¡Comprobante de pago a proveedores registrado exitosamente en contabilidad por ${formatCLP(asientoPago.totalDebe)}!`);
+    } catch (err: any) {
+      console.error('[SiiAutonomousEngineModal] Error al registrar pago:', err);
+      alert(`Error al registrar pago: ${err?.message || String(err)}`);
+    }
   };
 
   // Ejecutar Cobro Masivo / Individual de Ventas
-  const handleExecuteCollection = () => {
+  const handleExecuteCollection = async () => {
     if (selectedDtesForCollection.length === 0) {
       alert('Seleccione al menos una factura de venta para registrar su cobro.');
       return;
     }
 
-    const docsToCollect = safeDtes.filter(d => selectedDtesForCollection.includes(d.id));
-    const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
-      codigo: '1.1.01',
-      nombre: 'Banco Santander - Cta Cte'
-    };
+    try {
+      const docsToCollect = safeDtes.filter(d => selectedDtesForCollection.includes(d.id));
+      const cuentaBanco = ACCESSIBLE_ACCOUNTS.find(a => a.codigo === selectedBankAccountId) || {
+        codigo: '1.1.01',
+        nombre: 'Banco Santander - Cta Cte'
+      };
 
-    const asientoCobro = generateCollectionEntry(
-      docsToCollect,
-      cuentaBanco,
-      centralizationConfig.cuentaVentasActivo,
-      new Date().toISOString().split('T')[0]
-    );
+      const asientoCobro = generateCollectionEntry(
+        docsToCollect,
+        cuentaBanco,
+        centralizationConfig.cuentaVentasActivo,
+        new Date().toISOString().split('T')[0]
+      );
 
-    onAddAccountingEntry(asientoCobro);
+      await Promise.resolve(onAddAccountingEntry(asientoCobro));
 
-    // Actualizar estado a COBRADO
-    docsToCollect.forEach(d => {
-      onUpdateDte({
-        ...d,
-        estadoPago: 'COBRADO'
+      // Actualizar estado a COBRADO
+      docsToCollect.forEach(d => {
+        onUpdateDte({
+          ...d,
+          estadoPago: 'COBRADO'
+        });
       });
-    });
 
-    setSelectedDtesForCollection([]);
-    showToast(`¡Cobro de clientes registrado en Libro Diario y Cartola por ${formatCLP(asientoCobro.totalDebe)}!`);
+      setSelectedDtesForCollection([]);
+      showToast(`¡Cobro de clientes registrado en Libro Diario y Cartola por ${formatCLP(asientoCobro.totalDebe)}!`);
+    } catch (err: any) {
+      console.error('[SiiAutonomousEngineModal] Error al registrar cobro:', err);
+      alert(`Error al registrar cobro: ${err?.message || String(err)}`);
+    }
   };
 
   // Libros Auxiliares Calculados para el período seleccionado

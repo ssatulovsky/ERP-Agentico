@@ -456,6 +456,119 @@ export function createPayrollCentralizationEntry(
 }
 
 /**
+ * Generate Accounting Entry for Payroll Disbursement (Payment of Net Salaries via Bank)
+ */
+export function createPayrollDisbursementEntry(
+  payrolls: EmployeePayroll[],
+  periodo: string,
+  bancoCuentaCodigo: string = '1.1.02.001',
+  bancoNombre: string = 'Banco Santander',
+  fechaCustom?: string
+): AccountingEntry {
+  const totalSueldosLiquidos = payrolls.reduce((sum, p) => sum + p.sueldoLiquido, 0);
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '2.1.07',
+      cuentaNombre: 'Sueldos Líquidos por Pagar',
+      debe: totalSueldosLiquidos,
+      haber: 0,
+    },
+    {
+      cuentaCodigo: bancoCuentaCodigo,
+      cuentaNombre: `${bancoNombre} (Dispersión Nómina ${payrolls.length} Colaboradores)`,
+      debe: 0,
+      haber: totalSueldosLiquidos,
+    },
+  ];
+
+  return {
+    id: `entry-payroll-pay-${Date.now()}`,
+    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    concepto: `Pago y Dispersión de Nómina Bancaria Mes de ${periodo} (${payrolls.length} colaboradores)`,
+    documento: `Nómina Transferencia ${periodo}`,
+    lineas,
+    totalDebe: totalSueldosLiquidos,
+    totalHaber: totalSueldosLiquidos,
+    balanceado: true,
+    origen: 'REMUNERACIONES',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Generate Accounting Entry for PreviRed & Social Laws Payment via Bank
+ */
+export function createPreviredPaymentEntry(
+  payrolls: EmployeePayroll[],
+  periodo: string,
+  bancoCuentaCodigo: string = '1.1.02.001',
+  bancoNombre: string = 'Banco Santander',
+  fechaCustom?: string
+): AccountingEntry {
+  const totalAfp = payrolls.reduce((sum, p) => sum + p.afpMonto, 0);
+  const totalSalud = payrolls.reduce((sum, p) => sum + p.saludMonto, 0);
+  const totalAfc = payrolls.reduce((sum, p) => sum + (p.afcTrabajadorMonto + p.afcEmpleadorMonto), 0);
+  const totalMutualSis = payrolls.reduce((sum, p) => sum + (p.mutualEmpleadorMonto + p.sisEmpleadorMonto), 0);
+  const totalPreviRed = totalAfp + totalSalud + totalAfc + totalMutualSis;
+
+  const lineas: AccountingEntryLine[] = [];
+
+  if (totalAfp > 0) {
+    lineas.push({
+      cuentaCodigo: '2.1.08',
+      cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar',
+      debe: totalAfp,
+      haber: 0,
+    });
+  }
+  if (totalSalud > 0) {
+    lineas.push({
+      cuentaCodigo: '2.1.09',
+      cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar',
+      debe: totalSalud,
+      haber: 0,
+    });
+  }
+  if (totalAfc > 0) {
+    lineas.push({
+      cuentaCodigo: '2.1.10',
+      cuentaNombre: 'AFC Seguro de Cesantía por Pagar',
+      debe: totalAfc,
+      haber: 0,
+    });
+  }
+  if (totalMutualSis > 0) {
+    lineas.push({
+      cuentaCodigo: '2.1.11',
+      cuentaNombre: 'Mutual de Seguridad / SIS por Pagar',
+      debe: totalMutualSis,
+      haber: 0,
+    });
+  }
+
+  lineas.push({
+    cuentaCodigo: bancoCuentaCodigo,
+    cuentaNombre: `${bancoNombre} (Pago Electrónico PreviRed ${periodo})`,
+    debe: 0,
+    haber: totalPreviRed,
+  });
+
+  return {
+    id: `entry-previred-pay-${Date.now()}`,
+    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    concepto: `Pago Leyes Sociales e Imposiciones PreviRed Período ${periodo}`,
+    documento: `Planilla PreviRed Folio ${periodo}`,
+    lineas,
+    totalDebe: totalPreviRed,
+    totalHaber: totalPreviRed,
+    balanceado: true,
+    origen: 'REMUNERACIONES',
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
  * Generate Accounting Entry for Sales Documents (DTE 33, 34, 39, 41, 56, 61, 110)
  */
 export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
@@ -955,7 +1068,17 @@ export function createHonorariosEntry(bhe: DteDocument): AccountingEntry {
 /**
  * Generate Accounting Entry for Formulario 29 Declaration and Payment
  */
-export function createF29PaymentEntry(f29: F29Declaration): AccountingEntry {
+export function createF29PaymentEntry(
+  f29OrPeriodo: F29Declaration | string,
+  montoAPagar?: number,
+  bancoCuentaCodigo: string = '1.1.02.001',
+  bancoNombre: string = 'Banco Santander',
+  fechaCustom?: string
+): AccountingEntry {
+  if (typeof f29OrPeriodo === 'string') {
+    return createF29TgrPaymentEntry(f29OrPeriodo, montoAPagar || 0, bancoCuentaCodigo, bancoNombre, fechaCustom);
+  }
+  const f29 = f29OrPeriodo;
   const lineas: AccountingEntryLine[] = [];
 
   // Saldar IVA Débito Fiscal
@@ -1144,6 +1267,93 @@ export const createLeaseIfrs16Entry = createLeaseEntry;
 export const createSimpleLeaseExpenseEntry = (contract: any, indicators: ChileIndicators = DEFAULT_INDICATORS) => {
   return createLeaseEntry({ ...contract, tratamientoContable: 'GASTO_SIMPLE', esIfrs16: false }, indicators);
 };
+
+/**
+ * Asiento de Reconocimiento Inicial IFRS 16 (Alta de Activo por Derecho de Uso vs Pasivo Financiero)
+ */
+export function createLeaseInitialRecognitionEntry(
+  lease: any,
+  indicators: ChileIndicators = DEFAULT_INDICATORS,
+  fechaCustom?: string
+): AccountingEntry {
+  const moneda = lease.moneda || lease.montoMensualMoneda || 'CLP';
+  const canonMonto = lease.montoCanonMensual || lease.montoMensualValor || lease.montoMensualClp || 0;
+  const canonCLP = moneda === 'UF' ? Math.round(canonMonto * indicators.uf) : canonMonto;
+  const plazoMeses = lease.plazoMeses || 36;
+  const valorPresente = lease.valorPresenteContrato || lease.valorActivoDerechoUso || Math.round(canonCLP * plazoMeses * 0.88);
+  const nombreBien = lease.nombreBien || lease.inmuebleDescripcion || 'Inmueble Arrendado';
+  const arrendadorNombre = lease.arrendadorNombre || 'Arrendador';
+  const codigoContrato = lease.codigoContrato || lease.id || 'ARR-01';
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '1.2.01',
+      cuentaNombre: `Activo por Derecho de Uso - ${nombreBien} (IFRS 16)`,
+      debe: valorPresente,
+      haber: 0,
+    },
+    {
+      cuentaCodigo: '2.2.01',
+      cuentaNombre: `Pasivo por Arrendamiento Financiero (IFRS 16 - ${arrendadorNombre})`,
+      debe: 0,
+      haber: valorPresente,
+    },
+  ];
+
+  return {
+    id: `entry-lease-initial-${lease.id || Date.now()}`,
+    fecha: fechaCustom || lease.fechaInicio || new Date().toISOString().split('T')[0],
+    concepto: `Reconocimiento Inicial IFRS 16: Alta Activo por Derecho de Uso (${nombreBien}) - ${arrendadorNombre}`,
+    documento: `Contrato Arriendo N° ${codigoContrato}`,
+    lineas,
+    totalDebe: valorPresente,
+    totalHaber: valorPresente,
+    balanceado: true,
+    origen: 'ARRIENDOS_IFRS16' as any,
+    creadoEn: new Date().toISOString(),
+  };
+}
+
+/**
+ * Asiento de Pago F29 en Tesorería General de la República (TGR) con cargo a Banco
+ */
+export function createF29TgrPaymentEntry(
+  periodo: string,
+  montoAPagar: number,
+  bancoCuentaCodigo: string = '1.1.02.001',
+  bancoNombre: string = 'Banco Santander',
+  fechaCustom?: string
+): AccountingEntry {
+  const monto = Math.round(montoAPagar);
+
+  const lineas: AccountingEntryLine[] = [
+    {
+      cuentaCodigo: '2.1.08',
+      cuentaNombre: `Impuestos por Pagar (F29 TGR Período ${periodo})`,
+      debe: monto,
+      haber: 0,
+    },
+    {
+      cuentaCodigo: bancoCuentaCodigo,
+      cuentaNombre: `${bancoNombre} (Pago F29 en Tesorería General de la República)`,
+      debe: 0,
+      haber: monto,
+    },
+  ];
+
+  return {
+    id: `entry-f29-pay-${periodo}-${Date.now()}`,
+    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    concepto: `Pago Electrónico F29 a Tesorería General (TGR) - Período ${periodo}`,
+    documento: `Comprobante Pago PAC / TGR F29 ${periodo}`,
+    lineas,
+    totalDebe: monto,
+    totalHaber: monto,
+    balanceado: true,
+    origen: 'F29_CENTRALIZACION' as any,
+    creadoEn: new Date().toISOString(),
+  };
+}
 
 /**
  * Validador oficial de RUT Chileno (Algoritmo Módulo 11)
@@ -1544,15 +1754,28 @@ export function createFixedAssetDepreciationEntry(
     haber: totalDepAcum,
   });
 
+  // Ajuste fino de centavos para garantizar partida doble matemática exacta
+  const sumDebe = lineas.filter(l => l.debe > 0).reduce((s, l) => s + l.debe, 0);
+  const diff = totalDepAcum - sumDebe;
+  if (diff !== 0) {
+    const firstDebe = lineas.find(l => l.debe > 0);
+    if (firstDebe) {
+      firstDebe.debe += diff;
+    }
+  }
+
+  const realTotalDebe = lineas.reduce((s, l) => s + l.debe, 0);
+  const realTotalHaber = lineas.reduce((s, l) => s + l.haber, 0);
+
   return {
     id: `entry-af-dep-${periodo}-${Date.now()}`,
     fecha,
     concepto: `Depreciación Activo Fijo Período ${periodo} (${depreciaciones.length} activos procesados)`,
     documento: `Cuadro AF Periodo ${periodo}`,
     lineas,
-    totalDebe: totalDepAcum,
-    totalHaber: totalDepAcum,
-    balanceado: true,
+    totalDebe: realTotalDebe,
+    totalHaber: realTotalHaber,
+    balanceado: Math.abs(realTotalDebe - realTotalHaber) < 1,
     origen: 'ACTIVO_FIJO',
     creadoEn: new Date().toISOString(),
     supervisorSignature: `DEP-AUTO-${periodo}`,

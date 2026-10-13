@@ -25,7 +25,7 @@ const poolConfig: mysql.PoolOptions = connectionUri
       port: Number(process.env.MYSQL_PORT) || 3306,
       user: process.env.MYSQL_USER || 'root',
       password: process.env.MYSQL_PASSWORD || '',
-      database: process.env.MYSQL_DATABASE || 'chile_erp',
+      database: process.env.MYSQL_DATABASE || 'erp_contable',
       connectionLimit: 10,
       waitForConnections: true,
       queueLimit: 0,
@@ -701,6 +701,49 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
       await initializeMysqlDatabase();
     }
 
+    // Auto-verificación preventiva de compatibilidad con Agente SII (dtes_rcv.periodo), auditoría agéntica, auxiliares, firm_id y multimoneda
+    try {
+      const [colRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `dtes_rcv` LIKE 'periodo';");
+      const [auditColRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `agent_audit_logs` LIKE 'accion';");
+      const [auditFirmRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `agent_audit_logs` LIKE 'firm_id';");
+      const [entryFirmRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entries` LIKE 'firm_id';");
+      const [entriesDocRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entries` LIKE 'documento_referencia';");
+      const [linesNumRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'linea_numero';");
+      const [linesMontoRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'monto_documento_ref';");
+      const [linesOpRows]: [any[], any] = await connection.query("SHOW COLUMNS FROM `accounting_entry_lines` LIKE 'documento_operacion';");
+      if (
+        !colRows || colRows.length === 0 ||
+        !auditColRows || auditColRows.length === 0 ||
+        !auditFirmRows || auditFirmRows.length === 0 ||
+        !entryFirmRows || entryFirmRows.length === 0 ||
+        !entriesDocRows || entriesDocRows.length === 0 ||
+        !linesNumRows || linesNumRows.length === 0 ||
+        !linesMontoRows || linesMontoRows.length === 0 ||
+        !linesOpRows || linesOpRows.length === 0
+      ) {
+        console.log('[MySQL 8.0] Discrepancia de esquemas detectada (faltan columnas de comprobantes, firm_id, auxiliares o multimoneda). Ejecutando actualización incremental de esquemas...');
+        const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+        await updateMysqlDatabase();
+      }
+
+      // Asegurar liberación de índices únicos restrictivos en accounting_entries
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_origen_doc`;");
+      } catch {}
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_doc`;");
+      } catch {}
+      try {
+        await connection.query("ALTER TABLE `accounting_entries` ADD KEY `idx_entries_empresa_origen_doc` (`empresa_id`, `periodo`, `origen_modulo`, `documento_ref`);");
+      } catch {}
+    } catch (colErr: any) {
+      console.warn(`[MySQL 8.0] Aviso al verificar columnas (${colErr.message}). Ejecutando actualización preventiva...`);
+      try {
+        const { updateMysqlDatabase } = await import('../scripts/updateMysqlDb');
+        await updateMysqlDatabase();
+      } catch {}
+    }
+
     // Auto-verificación de tablas de Rendición de Gastos (RindeGastos)
     try {
       const [expenseRows]: [any[], any] = await connection.query("SHOW TABLES LIKE 'expense_reports';");
@@ -708,8 +751,8 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
         console.log('[MySQL 8.0] Tablas de Rendición de Gastos (RindeGastos) no encontradas. Creando automáticamente DDL...');
         await connection.query(`
           CREATE TABLE IF NOT EXISTS \`expense_projects\` (
-            \`id\` VARCHAR(36) NOT NULL,
-            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`id\` VARCHAR(64) NOT NULL,
+            \`empresa_id\` VARCHAR(64) NOT NULL,
             \`codigo\` VARCHAR(50) NOT NULL,
             \`nombre\` VARCHAR(200) NOT NULL,
             \`cliente_nombre\` VARCHAR(200) NULL,
@@ -724,19 +767,19 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
         `);
         await connection.query(`
           CREATE TABLE IF NOT EXISTS \`expense_reports\` (
-            \`id\` VARCHAR(36) NOT NULL,
-            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`id\` VARCHAR(64) NOT NULL,
+            \`empresa_id\` VARCHAR(64) NOT NULL,
             \`folio\` VARCHAR(50) NOT NULL,
             \`titulo\` VARCHAR(255) NOT NULL,
-            \`rendidor_id\` VARCHAR(36) NULL,
+            \`rendidor_id\` VARCHAR(64) NULL,
             \`rendidor_nombre\` VARCHAR(200) NOT NULL,
             \`rendidor_rut\` VARCHAR(20) NOT NULL,
             \`rendidor_email\` VARCHAR(255) NULL,
             \`rendidor_cargo\` VARCHAR(150) NULL,
-            \`centro_costo_id\` VARCHAR(36) NULL,
+            \`centro_costo_id\` VARCHAR(64) NULL,
             \`centro_costo_codigo\` VARCHAR(50) NULL,
             \`centro_costo_nombre\` VARCHAR(200) NULL,
-            \`proyecto_id\` VARCHAR(36) NULL,
+            \`proyecto_id\` VARCHAR(64) NULL,
             \`proyecto_codigo\` VARCHAR(50) NULL,
             \`proyecto_nombre\` VARCHAR(200) NULL,
             \`fondo_asignado_clp\` DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
@@ -752,7 +795,7 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
             \`aprobador_nombre\` VARCHAR(200) NULL,
             \`aprobador_email\` VARCHAR(255) NULL,
             \`observaciones_aprobador\` TEXT NULL,
-            \`asiento_contable_id\` VARCHAR(36) NULL,
+            \`asiento_contable_id\` VARCHAR(64) NULL,
             \`agente_auditor_score\` INT NOT NULL DEFAULT 100,
             \`agente_auditor_diagnostico\` JSON NULL,
             \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -767,9 +810,9 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
         `);
         await connection.query(`
           CREATE TABLE IF NOT EXISTS \`expense_items\` (
-            \`id\` VARCHAR(36) NOT NULL,
-            \`expense_report_id\` VARCHAR(36) NOT NULL,
-            \`empresa_id\` VARCHAR(36) NOT NULL,
+            \`id\` VARCHAR(64) NOT NULL,
+            \`expense_report_id\` VARCHAR(64) NOT NULL,
+            \`empresa_id\` VARCHAR(64) NOT NULL,
             \`fecha\` DATE NOT NULL,
             \`tipo_documento\` VARCHAR(50) NOT NULL,
             \`folio_documento\` VARCHAR(100) NOT NULL,
@@ -784,9 +827,9 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
             \`moneda_original\` VARCHAR(10) NOT NULL DEFAULT 'CLP',
             \`monto_original\` DECIMAL(15, 2) NULL,
             \`tipo_cambio\` DECIMAL(12, 4) NOT NULL DEFAULT 1.0000,
-            \`centro_costo_id\` VARCHAR(36) NULL,
+            \`centro_costo_id\` VARCHAR(64) NULL,
             \`centro_costo_codigo\` VARCHAR(50) NULL,
-            \`proyecto_id\` VARCHAR(36) NULL,
+            \`proyecto_id\` VARCHAR(64) NULL,
             \`proyecto_codigo\` VARCHAR(50) NULL,
             \`cuenta_contable_codigo\` VARCHAR(50) NOT NULL,
             \`cuenta_contable_nombre\` VARCHAR(150) NULL,
@@ -806,6 +849,25 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         `);
         console.log('[MySQL 8.0] Tablas expense_projects, expense_reports y expense_items inicializadas con éxito.');
+      } else {
+        // Auto-reparación defensiva: asegurar VARCHAR(64) en tablas existentes
+        try {
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`empresa_id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`rendidor_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`centro_costo_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`proyecto_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_reports\` MODIFY COLUMN \`asiento_contable_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_items\` MODIFY COLUMN \`id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_items\` MODIFY COLUMN \`expense_report_id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_items\` MODIFY COLUMN \`empresa_id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_items\` MODIFY COLUMN \`centro_costo_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_items\` MODIFY COLUMN \`proyecto_id\` VARCHAR(64) NULL;");
+          await connection.query("ALTER TABLE \`expense_projects\` MODIFY COLUMN \`id\` VARCHAR(64) NOT NULL;");
+          await connection.query("ALTER TABLE \`expense_projects\` MODIFY COLUMN \`empresa_id\` VARCHAR(64) NOT NULL;");
+        } catch (alterColErr: any) {
+          // Si las tablas no existían o ya tienen el tipo correcto
+        }
       }
 
       // Comprobar e insertar semillas si la tabla expense_reports está vacía

@@ -30,6 +30,7 @@ import {
   Server,
   Smartphone,
   X,
+  Scale,
 } from 'lucide-react';
 import {
   ExpenseReport,
@@ -46,11 +47,14 @@ import {
   exportExpenseSummaryByCostCenterCSV,
   downloadFile,
   auditExpenseReport,
+  generateExpenseAccountingEntry,
+  ExpenseAccountingConfig,
 } from '../../utils/expenseManagementAgent';
 import { expenseApiService, ExpenseDbStatus } from '../../services/expenseApiService';
 import { CreateExpenseReportModal } from './CreateExpenseReportModal';
 import { AddExpenseItemModal } from './AddExpenseItemModal';
 import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
+import { CentralizeExpenseModal } from './CentralizeExpenseModal';
 import { CollaboratorExpenseMobileApp } from './mobile/CollaboratorExpenseMobileApp';
 
 interface ExpenseReportsModuleProps {
@@ -58,6 +62,7 @@ interface ExpenseReportsModuleProps {
   costCenters: CostCenterMaster[];
   onAddEntry?: (entry: AccountingEntry) => void;
   chartOfAccounts?: HierarchicalAccountItem[];
+  onReportsChange?: (reports: ExpenseReport[]) => void;
 }
 
 export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
@@ -65,6 +70,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   costCenters = [],
   onAddEntry,
   chartOfAccounts = [],
+  onReportsChange,
 }) => {
   const empresaId = company?.rut || (company as any)?.id || 'client-retail-01';
 
@@ -90,6 +96,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [showCreateReportModal, setShowCreateReportModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [selectedReportDetail, setSelectedReportDetail] = useState<ExpenseReport | null>(null);
+  const [reportToCentralize, setReportToCentralize] = useState<ExpenseReport | null>(null);
   const [showArchitectureModal, setShowArchitectureModal] = useState(false);
   const [showMobileApp, setShowMobileApp] = useState(false);
 
@@ -115,6 +122,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
 
       setDbStatus(status);
       setReports(fetchedReports);
+      onReportsChange?.(fetchedReports);
       setProjects(fetchedProjects);
 
       // Aplanar comprobantes vinculados
@@ -183,6 +191,46 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
     });
   }, [reports, searchTerm, statusFilter, ccFilter, projectFilter]);
 
+  // Acción: Abrir modal de previsualización y configuración contable previa
+  const handleQuickCentralize = (report: ExpenseReport) => {
+    setReportToCentralize(report);
+  };
+
+  // Acción: Confirmar Centralización de Rendición en Libro Diario con configuración elegida
+  const handleConfirmCentralize = async (config: ExpenseAccountingConfig) => {
+    if (!reportToCentralize) return;
+    const report = reportToCentralize;
+    try {
+      const reportComprobantes = items.filter((i) => i.expenseReportId === report.id);
+      const entry = generateExpenseAccountingEntry(report, reportComprobantes, chartOfAccounts, config);
+      if (onAddEntry) {
+        await onAddEntry(entry);
+      }
+      try {
+        await expenseApiService.contabilizarReport(report.id, config);
+      } catch (e) {
+        console.warn('[ExpenseReportsModule] Aviso al actualizar estado en API:', e);
+      }
+      setReports((prev) => {
+        const updated = prev.map((r) =>
+          r.id === report.id
+            ? { ...r, estado: 'CONTABILIZADA_PAGADA' as const, asientoContableId: entry.id }
+            : r
+        );
+        onReportsChange?.(updated);
+        return updated;
+      });
+      setCreatedNotification(
+        `✓ Rendición ${report.folio} ("${report.titulo}") centralizada exitosamente en el Libro Diario (Asiento #${entry.id}, Total: ${formatCLP(entry.totalDebe)}).`
+      );
+      setTimeout(() => setCreatedNotification(null), 6000);
+      await fetchRealData();
+    } catch (err: any) {
+      console.error('[ExpenseReportsModule] Error al centralizar rendición:', err);
+      alert('Error al centralizar rendición en Libro Diario: ' + (err?.message || 'Error desconocido'));
+    }
+  };
+
   // Acción: Crear Rendición en MySQL 8.0 / Disco Persistente con refresco reactivo instantáneo en pantalla
   const handleCreateReport = async (newRepData: Omit<ExpenseReport, 'id' | 'createdAt' | 'updatedAt' | 'comprobantes'>) => {
     try {
@@ -205,25 +253,74 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
         setActiveTab('BANDEJA_RENDICIONES');
 
         // 3. Notificación de éxito en pantalla
-        setCreatedNotification(`✓ Rendición ${created.folio} ("${created.titulo}") creada y registrada exitosamente.`);
+        setCreatedNotification(
+          created.fondoAsignadoClp > 0
+            ? `✓ Rendición ${created.folio} creada y anticipo de $${Number(created.fondoAsignadoClp).toLocaleString('es-CL')} contabilizado automáticamente en Libro Diario y Banco.`
+            : `✓ Rendición ${created.folio} ("${created.titulo}") creada y registrada exitosamente.`
+        );
         setTimeout(() => setCreatedNotification(null), 6000);
+
+        // 3.1 Notificar al Libro Diario y Tesorería si la rendición contempla un anticipo entregado
+        if (onAddEntry && Number(created.fondoAsignadoClp) > 0) {
+          const advAmount = Number(created.fondoAsignadoClp);
+          const advEntry: AccountingEntry = {
+            id: (created as any).asientoAnticipoId || `entry-adv-${created.id}`,
+            fecha: created.fechaInicio || new Date().toISOString().substring(0, 10),
+            concepto: `Entrega Anticipo de Fondos por Rendir Folio ${created.folio} a ${created.rendidorNombre} - ${created.titulo}`,
+            documento: `ANTICIPO ${created.folio}`,
+            totalDebe: advAmount,
+            totalHaber: advAmount,
+            balanceado: true,
+            origen: 'RENDICION_GASTOS',
+            creadoEn: new Date().toISOString(),
+            lineas: [
+              {
+                cuentaCodigo: '1.1.03.002',
+                cuentaNombre: 'Gastos por Rendir / Anticipos al Personal',
+                debe: advAmount,
+                haber: 0,
+                rutAuxiliar: created.rendidorRut !== 'SIN_RUT' ? created.rendidorRut : undefined,
+                centroCosto: created.centroCostoCodigo || undefined,
+              },
+              {
+                cuentaCodigo: '1.1.02.001',
+                cuentaNombre: 'Banco Santander Chile',
+                debe: 0,
+                haber: advAmount,
+                rutAuxiliar: created.rendidorRut !== 'SIN_RUT' ? created.rendidorRut : undefined,
+                centroCosto: created.centroCostoCodigo || undefined,
+              },
+            ],
+          };
+          try {
+            onAddEntry(advEntry);
+          } catch (e) {
+            console.warn('[ExpenseReportsModule] Aviso al notificar asiento de anticipo:', e);
+          }
+        }
 
         // 4. Sincronizar en segundo plano con la base de datos
         await fetchRealData();
       }
     } catch (err) {
       console.error('[ExpenseReportsModule] Error al crear rendición:', err);
+      throw err;
     }
   };
 
   // Acción: Agregar Comprobante a MySQL 8.0
   const handleAddExpenseItem = async (newItemData: Omit<ExpenseItem, 'id' | 'createdAt'>) => {
-    const createdItem = await expenseApiService.addExpenseItem(newItemData.expenseReportId, {
-      ...newItemData,
-      empresaId,
-    });
-    if (createdItem) {
-      await fetchRealData();
+    try {
+      const createdItem = await expenseApiService.addExpenseItem(newItemData.expenseReportId, {
+        ...newItemData,
+        empresaId,
+      });
+      if (createdItem) {
+        await fetchRealData();
+      }
+    } catch (err) {
+      console.error('[ExpenseReportsModule] Error al agregar comprobante:', err);
+      throw err;
     }
   };
 
@@ -736,14 +833,33 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                           ) : null}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => setSelectedReportDetail(report)}
-                          className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Eye className="w-4 h-4" />
-                          <span>Ver Detalle</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {report.estado !== 'CONTABILIZADA_PAGADA' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleQuickCentralize(report)}
+                              className="px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                              title="Centralizar automáticamente esta rendición en el Libro Diario"
+                            >
+                              <Scale className="w-4 h-4 text-blue-200" />
+                              <span>Centralizar Asiento</span>
+                            </button>
+                          ) : (
+                            <span className="text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Asentado</span>
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedReportDetail(report)}
+                            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span>Ver Detalle</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1031,6 +1147,17 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
           report={selectedReportDetail}
           costCenters={costCenters}
           projects={projects}
+        />
+      )}
+
+      {reportToCentralize && (
+        <CentralizeExpenseModal
+          isOpen={!!reportToCentralize}
+          onClose={() => setReportToCentralize(null)}
+          report={reportToCentralize}
+          comprobantes={items.filter((i) => i.expenseReportId === reportToCentralize.id)}
+          chartOfAccounts={chartOfAccounts}
+          onConfirm={handleConfirmCentralize}
         />
       )}
 
