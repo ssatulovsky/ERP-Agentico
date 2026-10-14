@@ -96,6 +96,7 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
   lineAmount = 0,
   availableAuxiliaries = [],
   availableDtes = [],
+  pendingDocuments = [],
   accountCode = '',
   onSelectAuxiliary,
   onSelectDocument,
