@@ -66,7 +66,8 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     nombre: string;
     debe: number;
     haber: number;
-    auxiliar?: string | null;
+    rutAuxiliar?: string | null;
+    centroCosto?: string | null;
   }> = [];
 
   const creditLines: Array<{
@@ -74,7 +75,8 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     nombre: string;
     debe: number;
     haber: number;
-    auxiliar?: string | null;
+    rutAuxiliar?: string | null;
+    centroCosto?: string | null;
   }> = [];
 
   rawLines.forEach((l) => {
@@ -93,15 +95,16 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
 
     const codigo = l.codigoCuenta || l.cuentaCodigo || '9.9.99';
     const nombre = l.nombreCuenta || l.cuentaNombre || l.cuenta || 'Cuenta Contable';
-    const auxiliar = l.rutAuxiliar || l.centroCosto;
+    const rutAuxiliar = l.rutAuxiliar || null;
+    const centroCosto = l.centroCosto || null;
 
     if (d > 0) {
-      debitLines.push({ codigo, nombre, debe: d, haber: 0, auxiliar });
+      debitLines.push({ codigo, nombre, debe: d, haber: 0, rutAuxiliar, centroCosto });
     } else if (h > 0) {
-      creditLines.push({ codigo, nombre, debe: 0, haber: h, auxiliar });
+      creditLines.push({ codigo, nombre, debe: 0, haber: h, rutAuxiliar, centroCosto });
     } else {
       // Línea neutra o con cero
-      debitLines.push({ codigo, nombre, debe: 0, haber: 0, auxiliar });
+      debitLines.push({ codigo, nombre, debe: 0, haber: 0, rutAuxiliar, centroCosto });
     }
   });
 
@@ -119,7 +122,9 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     debitLines.forEach((l) => {
       const idxStr = String(idx++).padStart(2, ' ');
       const codStr = l.codigo.padEnd(9, ' ');
-      const nomStr = (l.nombre.length > 36 ? l.nombre.slice(0, 33) + '...' : l.nombre).padEnd(38, ' ');
+      const extra = [l.centroCosto ? `[CC: ${l.centroCosto}]` : '', l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : ''].filter(Boolean).join(' ');
+      const fullNom = extra ? `${l.nombre} ${extra}` : l.nombre;
+      const nomStr = (fullNom.length > 36 ? fullNom.slice(0, 33) + '...' : fullNom).padEnd(38, ' ');
       const dStr = formatNumberCL(l.debe).padStart(13, ' ');
       const hStr = ''.padStart(13, ' ');
       linesText.push(`${idxStr}  ${codStr} ${nomStr} ${dStr} ${hStr}`);
@@ -128,7 +133,9 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     creditLines.forEach((l) => {
       const idxStr = String(idx++).padStart(2, ' ');
       const codStr = l.codigo.padEnd(9, ' ');
-      const nomStr = (`  a ${l.nombre}`.length > 36 ? `  a ${l.nombre}`.slice(0, 33) + '...' : `  a ${l.nombre}`).padEnd(38, ' ');
+      const extra = [l.centroCosto ? `[CC: ${l.centroCosto}]` : '', l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : ''].filter(Boolean).join(' ');
+      const fullNom = extra ? `  a ${l.nombre} ${extra}` : `  a ${l.nombre}`;
+      const nomStr = (fullNom.length > 36 ? fullNom.slice(0, 33) + '...' : fullNom).padEnd(38, ' ');
       const dStr = ''.padStart(13, ' ');
       const hStr = formatNumberCL(l.haber).padStart(13, ' ');
       linesText.push(`${idxStr}  ${codStr} ${nomStr} ${dStr} ${hStr}`);
@@ -297,11 +304,18 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
                       <span className="font-semibold text-slate-900">
                         {line.nombre}
                       </span>
-                      {line.auxiliar && (
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          Auxiliar: {line.auxiliar}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        {line.rutAuxiliar && (
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            RUT: {line.rutAuxiliar}
+                          </span>
+                        )}
+                        {line.centroCosto && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
+                            CC: {line.centroCosto}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-3.5 py-2 text-right font-bold text-slate-900">
@@ -328,11 +342,18 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
                         <span className="text-slate-400 italic text-[11px]">a</span>
                         <span>{line.nombre}</span>
                       </span>
-                      {line.auxiliar && (
-                        <span className="text-[10px] text-slate-400 font-mono pl-3">
-                          Auxiliar: {line.auxiliar}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5 pl-3">
+                        {line.rutAuxiliar && (
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            RUT: {line.rutAuxiliar}
+                          </span>
+                        )}
+                        {line.centroCosto && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
+                            CC: {line.centroCosto}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-3.5 py-2 text-right text-slate-300">

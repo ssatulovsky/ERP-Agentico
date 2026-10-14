@@ -1263,6 +1263,74 @@ export function isResultadoAccount(clase: number): boolean {
 }
 
 /**
+ * Determina si una cuenta exige o maneja Centro de Costos según la normativa contable chilena:
+ * 1. Si la cuenta tiene la marca explícita en su definición (requiereCentroCosto === true, atributos.centroCosto === true).
+ * 2. Si la cuenta es de RESULTADOS (Clases 4, 5, 6, 7; Ingresos, Costos, Gastos) salvo que esté expresamente excluida.
+ * 3. Si por semántica de su código o glosa corresponde a gastos operativos, administrativos, costos o insumos.
+ */
+export function isAccountCostCenterRequired(
+  accountOrCode?: HierarchicalAccountItem | string,
+  accountName?: string,
+  chartOfAccounts?: HierarchicalAccountItem[]
+): boolean {
+  let acc: HierarchicalAccountItem | undefined;
+  let code = '';
+  let name = accountName || '';
+
+  if (typeof accountOrCode === 'object' && accountOrCode !== null) {
+    acc = accountOrCode;
+    code = acc.codigo || '';
+    name = name || acc.nombre || '';
+  } else if (typeof accountOrCode === 'string') {
+    code = accountOrCode.trim();
+  }
+
+  // 1. Buscar en el plan de cuentas provisto o en el catálogo estándar
+  if (!acc && code) {
+    acc = chartOfAccounts?.find(
+      (a) =>
+        a.codigo.trim().toLowerCase() === code.toLowerCase() ||
+        (name && a.nombre.trim().toLowerCase() === name.trim().toLowerCase())
+    ) || findAccountInChart(code) || (name ? findAccountInChart(name) : undefined);
+  }
+
+  // 2. Marca explícita en el Plan de Cuentas (la "marca de Centro de Costos")
+  if (acc?.requiereCentroCosto === true) return true;
+  if ((acc as any)?.atributos?.centroCosto === true) return true;
+  if ((acc as any)?.centroCosto === true) return true;
+
+  // 3. Verificación de Cuenta de Resultados (Clases 4, 5, 6, 7 o tipo INGRESO/COSTO/GASTO)
+  const cClean = code.trim();
+  const firstDigit = parseInt(cClean.charAt(0), 10);
+  const isResultadoClass = !isNaN(firstDigit) && firstDigit >= 4 && firstDigit <= 7;
+  const isResultadoType =
+    acc?.tipo === 'INGRESO' ||
+    acc?.tipo === 'COSTO' ||
+    acc?.tipo === 'GASTO' ||
+    (acc as any)?.clasificacion === 'RESULTADO' ||
+    (acc?.clase !== undefined && acc.clase >= 4);
+
+  if (isResultadoClass || isResultadoType) {
+    // Si la cuenta no está expresamente configurada con requiereCentroCosto en false, se activa por ser de resultados
+    if (acc?.requiereCentroCosto !== false) return true;
+  }
+
+  // 4. Semántica de código o nombre de cuenta
+  if (
+    cClean.startsWith('4.') ||
+    cClean.startsWith('5.') ||
+    cClean.startsWith('6.') ||
+    cClean.startsWith('7.')
+  ) {
+    return true;
+  }
+
+  return /costo|gasto|remuneraci|sueldo|gratificaci|honorario|servicio|arriendo|mantenci|operaci|fabricaci|depreciaci|amortizaci|seguro|combustible|viatico|patente|contribucion|publicidad|suministro|interes|diferencia de cambio/i.test(
+    name
+  );
+}
+
+/**
  * =========================================================================
  * MOTOR MATEMÁTICO DEL BALANCE GENERAL TRIBUTARIO DE 8 COLUMNAS (SII CHILE)
  * =========================================================================

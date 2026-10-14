@@ -261,7 +261,7 @@ export const SearchableAccountSelect: React.FC<SearchableAccountSelectProps> = (
                           Auxiliar
                         </span>
                       )}
-                      {account.requiereCentroCosto && (
+                      {(account.requiereCentroCosto || (account as any)?.atributos?.centroCosto) && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                           C. Costo
                         </span>

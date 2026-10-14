@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import type { AccountingEntry, AccountingEntryLine, DteDocument, HierarchicalAccountItem, TipoDocumentoRespaldo } from '../../types';
 import { formatCLP } from '../../utils/chileanAccounting';
+import { isAccountCostCenterRequired } from '../../utils/accountingOrchestratorEngine';
+import { SEED_COST_CENTERS } from '../../data/seedCostCenters';
 import { SearchableAccountSelect } from './SearchableAccountSelect';
 import { SearchableAuxiliarySelect, type AuxiliaryOption } from './SearchableAuxiliarySelect';
 
@@ -203,10 +205,12 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
   const handleAccountChange = (index: number, acc: HierarchicalAccountItem) => {
     setLines((prev) => {
       const copy = [...prev];
+      const isCc = isAccountCostCenterRequired(acc, acc.nombre, accounts);
       copy[index] = {
         ...copy[index],
         cuentaCodigo: acc.codigo,
         cuentaNombre: acc.nombre,
+        centroCosto: isCc && !copy[index].centroCosto ? 'CC-ADM-01' : copy[index].centroCosto,
       };
       return copy;
     });
@@ -488,10 +492,14 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
                           {/* Cuenta Contable */}
                           <td className="py-2.5 px-3 font-sans">
                             {(() => {
-                              const accDef = accounts.find((a) => a.codigo === line.cuentaCodigo);
+                              const accDef = accounts.find(
+                                (a) =>
+                                  a.codigo.trim() === line.cuentaCodigo.trim() ||
+                                  a.nombre.trim().toLowerCase() === line.cuentaNombre.trim().toLowerCase()
+                              );
                               const isBank = Boolean(accDef?.esConciliableBancaria) || line.cuentaCodigo.startsWith('1.1.02') || (/banco|cuenta corriente/i.test(line.cuentaNombre) && !/caja chica|efectivo/i.test(line.cuentaNombre));
                               const reqAux = !isBank && (Boolean(accDef?.requiereAuxiliarRut) || line.cuentaCodigo.startsWith('1.1.03') || line.cuentaCodigo.startsWith('2.1.01') || line.cuentaCodigo.startsWith('2.1.02') || line.cuentaCodigo.startsWith('2.1.05'));
-                              const reqCc = Boolean(accDef?.requiereCentroCosto) || line.cuentaCodigo.startsWith('4.') || line.cuentaCodigo.startsWith('5.') || /costo|gasto|remuneraci|servicios|arriendo/i.test(line.cuentaNombre);
+                              const reqCc = isAccountCostCenterRequired(accDef || line.cuentaCodigo, line.cuentaNombre, accounts);
 
                               return (
                                 <div className="space-y-1.5">
@@ -520,16 +528,24 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
                                     )}
                                   </div>
 
-                                  {/* Centro de Costos si lo exige la cuenta */}
+                                  {/* Centro de Costos si lo exige la cuenta o es de resultados */}
                                   {reqCc && (
                                     <div className="pt-1">
-                                      <input
-                                        type="text"
+                                      <select
                                         value={line.centroCosto || ''}
                                         onChange={(e) => handleLineChange(idx, 'centroCosto', e.target.value)}
-                                        placeholder="Centro de Costo (ej: CC-ADM, PRODUCCION)"
-                                        className="w-full text-[11px] bg-purple-50/70 border border-purple-300 rounded px-2 py-1 text-purple-950 font-medium focus:outline-hidden focus:border-purple-500"
-                                      />
+                                        className="w-full text-[11px] bg-purple-50/70 border border-purple-300 rounded px-2 py-1 text-purple-950 font-medium focus:outline-hidden focus:border-purple-500 font-mono"
+                                      >
+                                        <option value="">-- Seleccionar Centro de Costos --</option>
+                                        {SEED_COST_CENTERS.map((cc) => (
+                                          <option key={cc.id} value={cc.codigo}>
+                                            {cc.codigo} - {cc.nombre}
+                                          </option>
+                                        ))}
+                                        {line.centroCosto && !SEED_COST_CENTERS.some((c) => c.codigo === line.centroCosto) && (
+                                          <option value={line.centroCosto}>{line.centroCosto} (Actual)</option>
+                                        )}
+                                      </select>
                                     </div>
                                   )}
                                 </div>

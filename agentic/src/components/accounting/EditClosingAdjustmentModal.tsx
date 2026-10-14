@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Check, Calculator, AlertCircle, Save, Plus, Trash2, Edit3 } from 'lucide-react';
 import { PeriodClosingAdjustment, AccountingProposalLine } from '../../types';
 import { formatCLP } from '../../utils/chileanAccounting';
+import { SEED_COST_CENTERS } from '../../data/seedCostCenters';
 
 interface EditClosingAdjustmentModalProps {
   isOpen: boolean;
@@ -218,14 +219,22 @@ export const EditClosingAdjustmentModal: React.FC<EditClosingAdjustmentModalProp
                           className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
                         />
                       </td>
-                      <td className="py-2 px-2 w-32">
+                      <td className="py-2 px-2 w-36">
                         <input
                           type="text"
+                          list="edit-closing-cc-options"
                           value={line.centro_costo || ''}
                           onChange={(e) => handleUpdateLine(idx, 'centro_costo', e.target.value)}
                           placeholder="CC (Opcional)"
                           className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-blue-500 font-mono"
                         />
+                        <datalist id="edit-closing-cc-options">
+                          {SEED_COST_CENTERS.map((cc) => (
+                            <option key={cc.id} value={cc.codigo}>
+                              {cc.codigo} - {cc.nombre}
+                            </option>
+                          ))}
+                        </datalist>
                       </td>
                       <td className="py-2 px-2 w-32">
                         <input

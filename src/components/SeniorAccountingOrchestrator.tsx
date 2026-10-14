@@ -110,6 +110,7 @@ import {
   validateAndBalanceEntry,
   buildTransactionalAccountingProposalJSON,
   findAccountInChart,
+  isAccountCostCenterRequired as checkIsAccountCostCenterRequired,
   validateEntryFiscalPeriod,
   getFiscalYearDates,
 } from '../utils/accountingOrchestratorEngine';
@@ -1437,9 +1438,24 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     return list;
   }, [safeEntries, selectedMayorAccountCode]);
 
-  // Auxiliar, Cost Center & Bank Reconcilable Detection Helpers
+  // Auxiliar, Cost Center & Bank Reconcilable Detection Helpers (con soporte de Plan de Cuentas activo y personalizado)
+  const findActiveAccount = (code?: string, name?: string): HierarchicalAccountItem | undefined => {
+    const cClean = (code || '').trim().toLowerCase();
+    const nClean = (name || '').trim().toLowerCase();
+    if (!cClean && !nClean) return undefined;
+    return (
+      chartOfAccounts.find(
+        (a) =>
+          (cClean && a.codigo.trim().toLowerCase() === cClean) ||
+          (nClean && a.nombre.trim().toLowerCase() === nClean)
+      ) ||
+      (cClean ? findAccountInChart(cClean) : undefined) ||
+      (nClean ? findAccountInChart(nClean) : undefined)
+    );
+  };
+
   const isAccountBankReconcilable = (code: string, name: string): boolean => {
-    const acc = findAccountInChart(code) || findAccountInChart(name);
+    const acc = findActiveAccount(code, name);
     if (acc?.esConciliableBancaria) return true;
     if (code.startsWith('1.1.02')) return true;
     return /banco|cuenta corriente|cta\.? ?cte|bancari/i.test(name) && !/caja chica|efectivo|reintegro/i.test(name);
@@ -1450,7 +1466,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     if (code.startsWith('1.1.02') || (/banco|cuenta corriente|cta\.? ?cte/i.test(name) && !/caja chica|efectivo/i.test(name))) {
       return false;
     }
-    const acc = findAccountInChart(code) || findAccountInChart(name);
+    const acc = findActiveAccount(code, name);
     if (acc?.requiereAuxiliarRut) return true;
     if (
       code.startsWith('1.1.03') ||
@@ -1465,8 +1481,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   };
 
   const isAccountCostCenterRequired = (code: string, name: string): boolean => {
-    if (code.startsWith('4.') || code.startsWith('5.')) return true;
-    return /costo|gasto|remuneraci|servicios|arriendo|honorario|operaci|fabricaci|mantenimiento/i.test(name);
+    return checkIsAccountCostCenterRequired(code, name, chartOfAccounts);
   };
 
   // Memoized directory of all auxiliaries (from Master Padron and DTEs)
