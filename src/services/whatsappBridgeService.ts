@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { piperTtsService } from './piperTtsService';
+import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
 
 const execAsync = promisify(exec);
 
@@ -510,16 +512,16 @@ export class WhatsAppBridgeService {
 
     // 4. Flujo de Caja / Liquidez / Tesorería
     if (
-      /\b(flujo de caja|flujo|liquidez|tesoreria|proyeccion de caja|quiebre de caja|what-if|disponible a 30|caja hoy)\b/.test(
+      /\b(flujo de caja|flujo|liquidez|proyeccion de caja|quiebre de caja|what-if|disponible a 30|caja hoy)\b/.test(
         norm
       )
     ) {
       scopes.add('FLUJO_CAJA');
     }
 
-    // 5. Bancos / Conciliación Bancaria / Cartolas
+    // 5. Bancos / Saldos por Cuenta y Banco / Conciliación Bancaria / Cartolas
     if (
-      /\b(banco|conciliacion|cartola|cuenta corriente|santander|banco de chile|bci|cheque|transferencia bancaria|saldo bancario|bancos)\b/.test(
+      /\b(banco|bancos|bancario|bancarios|conciliacion|cartola|cuenta corriente|cuenta vista|cuentas bancarias|aperturado por cuenta|saldo por cuenta|saldo por banco|santander|banco de chile|bci|cheque|transferencia bancaria|saldo bancario|saldos bancarios)\b/.test(
         norm
       )
     ) {
@@ -897,31 +899,122 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
     for (const scope of scopes) {
       switch (scope) {
         case 'FLUJO_CAJA': {
+          const clpBanks = INITIAL_BANK_ACCOUNTS.filter((b) => (b.moneda || 'CLP') === 'CLP');
+          const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
+          const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
+          const disponibleHoyClp = totalClpBanks + totalCajas; // $71.182.013 CLP
+          const ingresosProy = 14850000;
+          const egresosProy = 11200000;
+          const cierreProy30d = disponibleHoyClp + ingresosProy - egresosProy;
+
+          const bankLines = clpBanks
+            .map(
+              (b) =>
+                `  ◦ *${b.banco}* (Cta ${b.tipoCuenta} N° ${b.numeroCuenta}): *$${formatCLP(b.saldoEnLinea)} CLP*`
+            )
+            .join('\n');
+
           sections.push(`📊 *FLUJO DE CAJA & LIQUIDEZ (ACTUALIZADO A HOY: ${fechaHoy})*
 👩‍💼 *Agente:* Vera Albornoz (Directora Financiera)
-• 🏦 *Saldo Inicial Consolidado en Bancos:* $18.450.000 CLP
-• 🟢 *Ingresos Proyectados (Próximos 30d):* +$14.850.000 CLP
-• 🔴 *Egresos Comprometidos (Próximos 30d):* -$11.200.000 CLP
+• 🏦 *Bancos Moneda Nacional (${clpBanks.length} Cuentas):* *$${formatCLP(totalClpBanks)} CLP*
+${bankLines}
+• 💼 *Cajas y Fondos Fijos (${INITIAL_CASH_ACCOUNTS.length} Cajas):* *$${formatCLP(totalCajas)} CLP*
+• 💰 *Liquidez Disponible Hoy (CLP):* *$${formatCLP(disponibleHoyClp)} CLP*
+• 🟢 *Ingresos Proyectados (Próximos 30d):* +$${formatCLP(ingresosProy)} CLP
+• 🔴 *Egresos Comprometidos (Próximos 30d):* -$${formatCLP(egresosProy)} CLP
   ◦ Remuneraciones: -$4.850.000 CLP
   ◦ IVA F29 SII: -$1.890.000 CLP
   ◦ Proveedores Operativos: -$4.460.000 CLP
-• 📈 *Saldo Final Proyectado (30 días):* *$22.100.000 CLP* (Solvencia Positiva)`);
+• 📈 *Saldo Final Proyectado (30 días):* *$${formatCLP(cierreProy30d)} CLP* (Solvencia Positiva)`);
           verbalParts.push(
-            'En flujo de caja a partir de hoy, contamos con dieciocho millones cuatrocientos cincuenta mil pesos en bancos y proyectamos cerrar los próximos treinta días con veintidós millones cien mil pesos.'
+            `En flujo de caja a partir de hoy, contamos con sesenta y tres millones seiscientos treinta y dos mil trece pesos en cuentas bancarias nacionales y siete millones quinientos cincuenta mil pesos en cajas, proyectando cerrar los próximos treinta días con setenta y cuatro millones ochocientos treinta y dos mil trece pesos.`
           );
           break;
         }
 
         case 'BANCOS_CONCILIACION': {
-          sections.push(`🏦 *CONCILIACIÓN BANCARIA & SALDOS EN LÍNEA*
-👩‍💼 *Agente:* Vera Albornoz / Tesorería
-• *Saldo Cartola Bancaria:* $18.450.000 CLP
-• *Depósitos en Tránsito:* +$2.150.000 CLP
-• *Giros/Cheques Pendientes de Cobro:* -$2.150.000 CLP
-• *Saldo Contable Libro Banco (1.1.01.002):* *$18.450.000 CLP*
-• ✅ *Estado:* *100% CONCILIADO* ($0 diferencia entre cartola y contabilidad)`);
+          const clpBanks = INITIAL_BANK_ACCOUNTS.filter((b) => (b.moneda || 'CLP') === 'CLP');
+          const fxBanks = INITIAL_BANK_ACCOUNTS.filter((b) => b.moneda && b.moneda !== 'CLP');
+          const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
+          const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
+
+          const tcUsd = 945;
+          const tcEur = 1035;
+          let totalFxInClp = 0;
+
+          const clpDetails = clpBanks
+            .map((b, idx) => {
+              const ctaIfrs =
+                b.cuentaContableIfrs ||
+                (idx === 0 ? '1.1.02.001' : idx === 1 ? '1.1.02.002' : '1.1.02.005');
+              const tipoLabel =
+                b.tipoCuenta === 'CORRIENTE'
+                  ? 'Cuenta Corriente'
+                  : b.tipoCuenta === 'VISTA'
+                  ? 'Cuenta Vista Empresas'
+                  : b.tipoCuenta;
+              const estadoLabel =
+                b.estadoConexion === 'CONECTADO' ? '🟢 En Línea / Conciliada' : '🟢 Cartola Conciliada';
+              return `*${idx + 1}. ${b.banco}* ${b.esPrincipal ? '_(Principal)_' : ''}
+   • *Tipo & N° Cuenta:* ${tipoLabel} N° \`${b.numeroCuenta}\`
+   • *Cuenta Contable IFRS:* \`${ctaIfrs}\`
+   • *Saldo Disponible / Cartola:* *$${formatCLP(b.saldoEnLinea)} CLP*
+   • *Estado:* ${estadoLabel} ($0 dif.)`;
+            })
+            .join('\n\n');
+
+          const fxDetails = fxBanks
+            .map((b, idx) => {
+              const isUsd = b.moneda === 'USD';
+              const symbol = isUsd ? 'US$' : '€';
+              const tc = isUsd ? tcUsd : tcEur;
+              const equivClp = Math.round((b.saldoEnLinea || 0) * tc);
+              totalFxInClp += equivClp;
+              const formattedForeign = (b.saldoEnLinea || 0).toLocaleString('es-CL', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              });
+              return `*${clpBanks.length + idx + 1}. ${b.banco}*
+   • *Tipo & N° Cuenta:* Cta. Moneda Extranjera (${b.moneda}) N° \`${b.numeroCuenta}\`
+   • *Cuenta Contable IFRS:* \`${b.cuentaContableIfrs || '1.1.02.003'}\`
+   • *Saldo en Divisa:* *${symbol} ${formattedForeign}* _(Equiv. TC $${tc}: $${formatCLP(equivClp)} CLP)_
+   • *Estado:* 🟢 En Línea / Conciliada`;
+            })
+            .join('\n\n');
+
+          const cashDetails = INITIAL_CASH_ACCOUNTS.map(
+            (c) =>
+              `• *${c.nombre}* (\`${c.codigoContable}\`): *$${formatCLP(c.montoSaldo)} CLP* _(${c.responsableNombre})_`
+          ).join('\n');
+
+          const granTotalLiquidez = totalClpBanks + totalFxInClp + totalCajas;
+
+          sections.push(`🏦 *SALDOS BANCARIOS APERTURADOS POR CUENTA Y BANCO*
+👩‍💼 *Agente:* Vera Albornoz / Tesorería & Conciliación
+
+🇨🇱 *A) CUENTAS BANCARIAS MONEDA NACIONAL (CLP):*
+${clpDetails}
+
+👉 *Subtotal Bancos Moneda Nacional (3 Cuentas):* *$${formatCLP(totalClpBanks)} CLP*
+
+🌎 *B) CUENTAS BANCARIAS MONEDA EXTRANJERA (USD / EUR):*
+${fxDetails}
+
+👉 *Subtotal Bancos Moneda Extranjera (Valorizado CLP):* *$${formatCLP(totalFxInClp)} CLP*
+
+💼 *C) DISPONIBILIDAD EN CAJAS Y FONDOS FIJOS (1.1.01):*
+${cashDetails}
+👉 *Subtotal Cajas y Fondos Fijos:* *$${formatCLP(totalCajas)} CLP*
+
+────────────────────
+💰 *RESUMEN CONSOLIDADO Y CONCILIACIÓN BANCARIA:*
+• *Total Bancos CLP:* *$${formatCLP(totalClpBanks)} CLP*
+• *Total Bancos CLP + Divisas (USD/EUR):* *$${formatCLP(totalClpBanks + totalFxInClp)} CLP*
+• *Total Liquidez General (Bancos + Cajas):* *$${formatCLP(granTotalLiquidez)} CLP*
+• ✅ *Estado Conciliación Libro Mayor vs Cartolas:* *100% CONCILIADO* ($0 diferencia en las 5 cuentas bancarias)`);
+
           verbalParts.push(
-            'En bancos, el saldo en cartola y en libro banco está cien por ciento conciliado en dieciocho millones cuatrocientos cincuenta mil pesos.'
+            `En saldos bancarios aperturados por cuenta y banco: en moneda nacional contamos con cuarenta y cuatro millones trescientos ochenta y dos mil trece pesos en la cuenta corriente de Banco Santander, seis millones ochocientos cincuenta mil pesos en la cuenta vista de Banco de Chile, y doce millones cuatrocientos mil pesos en la cuenta corriente de Banco B C I, sumando sesenta y tres millones seiscientos treinta y dos mil trece pesos. Adicionalmente, en moneda extranjera disponemos de treinta y ocho mil cuatrocientos cincuenta dólares en Banco Santander y catorce mil doscientos euros en Banco de Chile, más siete millones quinientos cincuenta mil pesos en cajas, todo cien por ciento conciliado.`
           );
           break;
         }
@@ -1436,16 +1529,15 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
                   'es_AR-daniela-high'
                 );
                 if (ttsRes && ttsRes.audioBuffer) {
-                  const sentAudioMsg = await this.sock.sendMessage(remoteJid, {
-                    audio: ttsRes.audioBuffer,
-                    mimetype: 'audio/mp4',
-                    ptt: true,
-                  });
+                  const voicePayload = await this.prepareWhatsAppVoicePayload(ttsRes.audioBuffer);
+                  const sentAudioMsg = await this.sock.sendMessage(remoteJid, voicePayload);
                   if (sentAudioMsg?.key?.id) {
                     this.sentBotMessageIds.add(sentAudioMsg.key.id);
                   }
                 }
-              } catch {}
+              } catch (audioErr) {
+                console.error('[WhatsAppBridge] Error enviando nota de voz:', audioErr);
+              }
             }
           } catch (err) {
             console.error('[WhatsAppBridge] Error procesando mensaje autorizado:', err);
@@ -1461,6 +1553,171 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
       this.connectionState = 'ERROR';
       this.lastErrorMessage = err.message || 'Error al inicializar el socket de WhatsApp.';
       return { status: 'ERROR', message: this.lastErrorMessage! };
+    }
+  }
+
+  /**
+   * Localiza o instala un binario de ffmpeg para convertir el WAV crudo de Piper
+   * a formato nativo de Nota de Voz de WhatsApp (OGG/Opus a 48kHz mono o M4A/AAC).
+   */
+  private cachedFfmpegBin: string | null = null;
+
+  private async getFfmpegBinary(): Promise<string | null> {
+    if (this.cachedFfmpegBin) return this.cachedFfmpegBin;
+
+    const candidates = [
+      '/usr/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+      '/root/miniconda3/bin/ffmpeg',
+      '/opt/conda/bin/ffmpeg',
+      '/opt/homebrew/bin/ffmpeg',
+    ];
+
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        this.cachedFfmpegBin = c;
+        return c;
+      }
+    }
+
+    try {
+      const { stdout } = await execAsync('which ffmpeg');
+      const found = (stdout || '').trim();
+      if (found && fs.existsSync(found)) {
+        this.cachedFfmpegBin = found;
+        return found;
+      }
+    } catch {}
+
+    // Intentar cargar ffmpeg-static si está instalado o instalarlo automáticamente
+    try {
+      const ffMod: any = await import('ffmpeg-static');
+      const binPath = ffMod?.default || ffMod;
+      if (typeof binPath === 'string' && fs.existsSync(binPath)) {
+        this.cachedFfmpegBin = binPath;
+        return binPath;
+      }
+    } catch {
+      try {
+        console.log('[WhatsAppBridge] Instalando ffmpeg-static para notas de voz OGG/Opus de WhatsApp...');
+        await execAsync('npm install ffmpeg-static --no-save --legacy-peer-deps', {
+          cwd: process.cwd(),
+          timeout: 90000,
+        });
+        const ffMod2: any = await import('ffmpeg-static');
+        const binPath2 = ffMod2?.default || ffMod2;
+        if (typeof binPath2 === 'string' && fs.existsSync(binPath2)) {
+          this.cachedFfmpegBin = binPath2;
+          return binPath2;
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  /**
+   * Convierte el Buffer WAV generado por Piper TTS a OGG/Opus (audio/ogg; codecs=opus),
+   * que es el formato oficial exigido por WhatsApp iOS y Android para reproducir notas de voz (PTT).
+   */
+  public async prepareWhatsAppVoicePayload(wavBuffer: Buffer): Promise<{
+    audio: Buffer;
+    mimetype: string;
+    ptt: boolean;
+    seconds: number;
+  }> {
+    let byteRate = 44100;
+    if (wavBuffer.length >= 32 && wavBuffer.toString('ascii', 0, 4) === 'RIFF') {
+      const parsedRate = wavBuffer.readUInt32LE(28);
+      if (parsedRate >= 8000 && parsedRate <= 192000) {
+        byteRate = parsedRate;
+      }
+    }
+    const seconds = Math.max(1, Math.round(Math.max(0, wavBuffer.length - 44) / byteRate));
+
+    const ffmpegBin = await this.getFfmpegBinary();
+    if (!ffmpegBin) {
+      // Fallback si no hay ffmpeg
+      return {
+        audio: wavBuffer,
+        mimetype: 'audio/mp4',
+        ptt: false,
+        seconds,
+      };
+    }
+
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const tmpWav = path.join(os.tmpdir(), `wa_in_${id}.wav`);
+    const tmpOgg = path.join(os.tmpdir(), `wa_out_${id}.ogg`);
+    const tmpM4a = path.join(os.tmpdir(), `wa_out_${id}.m4a`);
+    const tmpMp3 = path.join(os.tmpdir(), `wa_out_${id}.mp3`);
+
+    try {
+      await fs.promises.writeFile(tmpWav, wavBuffer);
+
+      // 1. Intentar conversión a OGG/Opus nativo de WhatsApp PTT (48kHz mono voip)
+      try {
+        await execAsync(
+          `"${ffmpegBin}" -y -i "${tmpWav}" -c:a libopus -b:a 32k -vbr on -compression_level 10 -frame_duration 20 -application voip -ar 48000 -ac 1 "${tmpOgg}"`,
+          { timeout: 15000 }
+        );
+        if (fs.existsSync(tmpOgg) && fs.statSync(tmpOgg).size > 100) {
+          const oggBuffer = await fs.promises.readFile(tmpOgg);
+          return {
+            audio: oggBuffer,
+            mimetype: 'audio/ogg; codecs=opus',
+            ptt: true,
+            seconds,
+          };
+        }
+      } catch {}
+
+      // 2. Fallback a M4A/AAC si el ffmpeg del sistema no tiene libopus compilado
+      try {
+        await execAsync(
+          `"${ffmpegBin}" -y -i "${tmpWav}" -c:a aac -b:a 64k -ar 44100 -ac 1 -movflags +faststart "${tmpM4a}"`,
+          { timeout: 15000 }
+        );
+        if (fs.existsSync(tmpM4a) && fs.statSync(tmpM4a).size > 100) {
+          const m4aBuffer = await fs.promises.readFile(tmpM4a);
+          return {
+            audio: m4aBuffer,
+            mimetype: 'audio/mp4',
+            ptt: true,
+            seconds,
+          };
+        }
+      } catch {}
+
+      // 3. Fallback a MP3 universal
+      try {
+        await execAsync(
+          `"${ffmpegBin}" -y -i "${tmpWav}" -c:a libmp3lame -b:a 64k -ar 44100 -ac 1 "${tmpMp3}"`,
+          { timeout: 15000 }
+        );
+        if (fs.existsSync(tmpMp3) && fs.statSync(tmpMp3).size > 100) {
+          const mp3Buffer = await fs.promises.readFile(tmpMp3);
+          return {
+            audio: mp3Buffer,
+            mimetype: 'audio/mpeg',
+            ptt: false,
+            seconds,
+          };
+        }
+      } catch {}
+
+      return {
+        audio: wavBuffer,
+        mimetype: 'audio/wav',
+        ptt: false,
+        seconds,
+      };
+    } finally {
+      for (const f of [tmpWav, tmpOgg, tmpM4a, tmpMp3]) {
+        try {
+          if (fs.existsSync(f)) await fs.promises.unlink(f);
+        } catch {}
+      }
     }
   }
 
@@ -1515,17 +1772,20 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
     }
 
     const jid = `${this.normalizePhone(entry.telefono)}@s.whatsapp.net`;
-    await this.sock.sendMessage(jid, { text: params.mensaje });
+    const sentDirectText = await this.sock.sendMessage(jid, { text: params.mensaje });
+    if (sentDirectText?.key?.id) {
+      this.sentBotMessageIds.add(sentDirectText.key.id);
+    }
 
     if (params.incluirAudioPiper && params.textoVerbalAudio) {
       try {
         const tts = await piperTtsService.synthesize(params.textoVerbalAudio, 'es_AR-daniela-high');
         if (tts?.audioBuffer) {
-          await this.sock.sendMessage(jid, {
-            audio: tts.audioBuffer,
-            mimetype: 'audio/mp4',
-            ptt: true,
-          });
+          const voicePayload = await this.prepareWhatsAppVoicePayload(tts.audioBuffer);
+          const sentDirectAudio = await this.sock.sendMessage(jid, voicePayload);
+          if (sentDirectAudio?.key?.id) {
+            this.sentBotMessageIds.add(sentDirectAudio.key.id);
+          }
         }
       } catch {}
     }

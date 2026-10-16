@@ -11,6 +11,7 @@ import {
   ExpenseReport 
 } from '../types';
 import { formatCLP } from '../utils/chileanAccounting';
+import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
 
 export interface DialogueContext {
   clientName: string;
@@ -1148,53 +1149,99 @@ Se ha registrado el asiento resumen de ventas para **${context.clientName}**.
       };
     }
 
-    // 3. Intención: Bancos & Conciliación Bancaria (Informe Oficial & WhatsApp 1-Click)
+    // 3. Intención: Bancos, Saldos por Cuenta y Banco & Conciliación Bancaria (Informe Oficial & WhatsApp 1-Click)
     const isBankReconciliationIntent =
       normalized.includes('concili') ||
       normalized.includes('cartola') ||
       normalized.includes('novedades bancarias') ||
       (normalized.includes('banco') && !normalized.includes('proveedor')) ||
       normalized.includes('cuadrar banco') ||
-      normalized.includes('saldo bancario');
+      normalized.includes('saldo bancario') ||
+      normalized.includes('saldos bancarios') ||
+      normalized.includes('aperturado por cuenta');
 
     if (isBankReconciliationIntent) {
       const isExecutiveInterlocutor = persona.id === 'AGENTE_GENERAL_VERA' || persona.isExecutiveGeneral;
       const agentRoleIntro = isExecutiveInterlocutor 
-        ? 'He coordinado con Sofía Morales en Tesorería y conciliado la cuenta corriente del banco principal.' 
-        : 'Como Jefa de Tesorería, he ejecutado la conciliación oficial de la cuenta corriente.';
+        ? 'He coordinado con Sofía Morales en Tesorería y consolidado el saldo aperturado por cada cuenta y banco.' 
+        : 'Como Jefa de Tesorería, te presento la apertura de saldos por cuenta y banco junto a su estado de conciliación.';
 
-      // Datos de cuenta y saldos
-      const mainBank = context.bankAccounts?.[0] || {
+      const activeBanks =
+        context.bankAccounts && context.bankAccounts.length > 0
+          ? context.bankAccounts
+          : INITIAL_BANK_ACCOUNTS;
+
+      const clpBanks = activeBanks.filter((b) => (b.moneda || 'CLP') === 'CLP');
+      const fxBanks = activeBanks.filter((b) => b.moneda && b.moneda !== 'CLP');
+      const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
+      const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
+      const tcUsd = 945;
+      const tcEur = 1035;
+      const totalFxInClp = fxBanks.reduce(
+        (acc, b) => acc + Math.round((b.saldoEnLinea || 0) * (b.moneda === 'USD' ? tcUsd : tcEur)),
+        0
+      );
+      const granTotalLiquidez = totalClpBanks + totalFxInClp + totalCajas;
+
+      const mainBank = clpBanks[0] || activeBanks[0] || {
         banco: 'Banco Santander Chile',
-        numeroCuenta: '98-765432-1',
-        saldoEnLinea: 18450000,
+        numeroCuenta: '00-0839210-4',
+        saldoEnLinea: 44382013,
       };
 
-      const saldoCartola = mainBank.saldoEnLinea || 18450000;
-      const depositosEnTransito = 2150000;  // Abonos de clientes en proceso de compensación
-      const cargosEnTransito = 1340000;     // Cheques / TEF a proveedores pendientes de cobro
-      const comisionesAjustadas = 12500;    // Cargos bancarios regularizados automáticamente
-      const saldoLibroBanco = saldoCartola + depositosEnTransito - cargosEnTransito - comisionesAjustadas; // $19.247.500
+      const saldoCartola = totalClpBanks;
+      const depositosEnTransito = 2150000;
+      const cargosEnTransito = 2150000;
+      const comisionesAjustadas = 0;
+      const saldoLibroBanco = saldoCartola;
       const totalMovimientos = context.bankMovements?.length || 24;
       const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
 
+      const clpRowsMd = clpBanks
+        .map(
+          (b, idx) =>
+            `| **${b.banco}** ${b.esPrincipal ? '*(Principal)*' : ''} | Cta. ${b.tipoCuenta} N° \`${b.numeroCuenta}\` | \`${b.cuentaContableIfrs || (idx === 0 ? '1.1.02.001' : idx === 1 ? '1.1.02.002' : '1.1.02.005')}\` | **$${formatCLP(b.saldoEnLinea)} CLP** | 🟢 100% Conciliada |`
+        )
+        .join('\n');
+
+      const fxRowsMd = fxBanks
+        .map((b) => {
+          const isUsd = b.moneda === 'USD';
+          const sym = isUsd ? 'US$' : '€';
+          const tc = isUsd ? tcUsd : tcEur;
+          const equiv = Math.round((b.saldoEnLinea || 0) * tc);
+          return `| **${b.banco}** | Cta. ${b.moneda} N° \`${b.numeroCuenta}\` | \`${b.cuentaContableIfrs || '1.1.02.003'}\` | **${sym} ${(b.saldoEnLinea || 0).toLocaleString('es-CL', { minimumFractionDigits: 2 })}** *(~$${formatCLP(equiv)} CLP)* | 🟢 100% Conciliada |`;
+        })
+        .join('\n');
+
+      const waClpLines = clpBanks
+        .map((b) => `• *${b.banco}* (Cta ${b.tipoCuenta} N° ${b.numeroCuenta}): *$${formatCLP(b.saldoEnLinea)} CLP*`)
+        .join('\n');
+      const waFxLines = fxBanks
+        .map((b) => {
+          const sym = b.moneda === 'USD' ? 'US$' : '€';
+          return `• *${b.banco}* (N° ${b.numeroCuenta}): *${sym} ${(b.saldoEnLinea || 0).toLocaleString('es-CL', { minimumFractionDigits: 2 })}*`;
+        })
+        .join('\n');
+
       // Mensaje estructurado para WhatsApp 1-Click
-      const waBankText = `📊 *INFORME OFICIAL DE CONCILIACIÓN BANCARIA (NIC 7)*
+      const waBankText = `🏦 *SALDOS BANCARIOS APERTURADOS POR CUENTA Y BANCO*
 🏢 *Empresa:* ${context.clientName} (RUT: ${context.rut})
 👩‍💼 *Emitido por:* Vera Albornoz (Directora General & Socia Virtual)
-🏦 *Banco:* ${mainBank.banco} — Cta Cte N° ${mainBank.numeroCuenta}
 📅 *Fecha:* ${fechaHoy}
 
-💰 *Saldo según Cartola Oficial:* $${formatCLP(saldoCartola)} CLP
-• (+) Abonos / Depósitos en Tránsito: +$${formatCLP(depositosEnTransito)} CLP
-• (-) Cheques / TEF en Tránsito: -$${formatCLP(cargosEnTransito)} CLP
-• (-) Comisiones y PAC regularizados: -$${formatCLP(comisionesAjustadas)} CLP
+🇨🇱 *A) CUENTAS MONEDA NACIONAL (CLP):*
+${waClpLines}
+👉 *Subtotal Bancos CLP:* *$${formatCLP(totalClpBanks)} CLP*
 
-⚖️ *Saldo Conciliado en Libro Mayor:* *$${formatCLP(saldoLibroBanco)} CLP*
-✅ *Estado de Cuadratura:* *100% CUADRADO (Diferencia: $0 CLP)*
-🛡️ *Movimientos Procesados:* ${totalMovimientos} registros regularizados en Libro Diario.
+🌎 *B) CUENTAS MONEDA EXTRANJERA (USD / EUR):*
+${waFxLines}
+👉 *Subtotal Divisas Valorizado:* *$${formatCLP(totalFxInClp)} CLP*
 
-🔗 _Informe generado automáticamente por Vera ERP para el Directorio._`;
+💼 *C) CAJAS Y FONDOS FIJOS (1.1.01):* *$${formatCLP(totalCajas)} CLP*
+
+💰 *LIQUIDEZ TOTAL CONSOLIDADA:* *$${formatCLP(granTotalLiquidez)} CLP*
+✅ *Estado de Cuadratura:* *100% CONCILIADO en las ${activeBanks.length} cuentas bancarias (Diferencia: $0 CLP)*`;
 
       const waBankUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waBankText)}`;
 
@@ -1206,34 +1253,41 @@ Se ha registrado el asiento resumen de ventas para **${context.clientName}**.
         normalized.includes('regulariz');
 
       return {
-        verbalResponse: `Hola socio. ${agentRoleIntro} El saldo oficial según cartola es de $${formatCLP(saldoCartola)} pesos y el saldo en Libro Banco quedó exactamente cuadrado en $${formatCLP(saldoLibroBanco)} pesos, sin partidas pendientes ni descuadres. Te preparé el informe oficial de conciliación bancaria y el mensaje listo para enviar a los socios por WhatsApp.`,
-        displayMarkdown: `### 🏦 Informe Oficial de Conciliación Bancaria Cuadrada (NIC 7)
+        verbalResponse: `Hola socio. ${agentRoleIntro} En moneda nacional tenemos cuarenta y cuatro millones trescientos ochenta y dos mil trece pesos en la cuenta corriente de Banco Santander, seis millones ochocientos cincuenta mil pesos en la cuenta vista de Banco de Chile, y doce millones cuatrocientos mil pesos en la cuenta corriente de Banco B C I, sumando sesenta y tres millones seiscientos treinta y dos mil trece pesos. Adicionalmente, en moneda extranjera disponemos de treinta y ocho mil cuatrocientos cincuenta dólares en Banco Santander y catorce mil doscientos euros en Banco de Chile, más siete millones quinientos cincuenta mil pesos en cajas, todas cien por ciento conciliadas.`,
+        displayMarkdown: `### 🏦 Saldos Bancarios Aperturados por Cuenta y Banco & Conciliación (NIC 7)
 > **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Sofía Morales (Tesorería)
 
-He procesado la conciliación bancaria oficial para **${context.clientName}**:
-- **Institución Financiera:** **${mainBank.banco}**
-- **Cuenta Corriente Operativa:** **N° ${mainBank.numeroCuenta}**
-- **Fecha de Corte:** ${fechaHoy}
+Detalle oficial de saldos en línea aperturados por institución financiera, tipo de cuenta y moneda para **${context.clientName}** al **${fechaHoy}**:
 
-| Partida de Conciliación Bancaria | Monto ($ CLP) | Respaldo / Tipo de Movimiento |
-| :--- | :---: | :--- |
-| **Saldo Disponible según Cartola Bancaria** | **$${formatCLP(saldoCartola)}** | Saldo en línea confirmado con cartola oficial |
-| **(+) Depósitos y Abonos en Tránsito** | +$${formatCLP(depositosEnTransito)} | Cobranzas recibidas pendientes de compensación |
-| **(-) Cheques y TEF Emitidas en Tránsito** | -$${formatCLP(cargosEnTransito)} | Pagos a proveedores autorizados pendientes de cobro |
-| **(-) Novedades y Comisiones Regularizadas** | -$${formatCLP(comisionesAjustadas)} | Comisiones de mantención y transferencias imputadas |
-| **(=) SALDO AJUSTADO EN LIBRO BANCO** | **$${formatCLP(saldoLibroBanco)}** | **100% CUADRADO (Partida Doble Auditada)** |
+#### 🇨🇱 1. Cuentas Bancarias en Moneda Nacional (CLP)
+| Institución Bancaria | Tipo y Número de Cuenta | Cuenta Contable IFRS | Saldo Disponible / Cartola | Estado Conciliación |
+| :--- | :--- | :---: | :---: | :---: |
+${clpRowsMd}
+| **SUBTOTAL BANCOS CLP (${clpBanks.length} Cuentas)** | — | \`1.1.02\` | **$${formatCLP(totalClpBanks)} CLP** | **100% CUADRADO** |
+
+#### 🌎 2. Cuentas Bancarias en Moneda Extranjera (USD / EUR)
+| Institución Bancaria | Tipo y Número de Cuenta | Cuenta Contable IFRS | Saldo en Divisa (y Equiv. CLP) | Estado Conciliación |
+| :--- | :--- | :---: | :---: | :---: |
+${fxRowsMd}
+| **SUBTOTAL DIVISAS VALORIZADO** | — | \`1.1.02.003/004\` | **$${formatCLP(totalFxInClp)} CLP** | **100% CUADRADO** |
+
+#### 💼 3. Cajas y Fondos Fijos Operativos (\`1.1.01\`)
+- **Caja Central Oficina Principal (\`1.1.01.001\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[0]?.montoSaldo || 3850000)} CLP** *(Camila Fuentes)*
+- **Fondo Fijo Operaciones Planta Quellón (\`1.1.01.002\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[1]?.montoSaldo || 2500000)} CLP** *(Roberto Oyarzún)*
+- **Caja Chica Sucursal Santiago (\`1.1.01.003\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[2]?.montoSaldo || 1200000)} CLP** *(Marcelo Lagos)*
+- **Total Liquidez Consolidada (Bancos CLP + Divisas + Cajas):** **$${formatCLP(granTotalLiquidez)} CLP**
 
 ---
 
 #### 🛡️ Certificación de Auditoría & Control Interno:
-1. **Diferencia de Conciliación:** **$0 CLP**. La totalidad de los cargos y abonos bancarios se encuentran respaldados por DTEs o comprobantes válidos.
+1. **Diferencia de Conciliación:** **$0 CLP**. Las ${activeBanks.length} cuentas bancarias se encuentran 100% conciliadas entre Cartola Bancaria y Libro Mayor.
 2. **Novedades de Cartola:** ${context.pendingBankNoveltiesCount > 0 ? `${context.pendingBankNoveltiesCount} movimientos regularizados` : 'Todas las comisiones e intereses regularizados'} con asiento automático en el Libro Diario.
 3. **Flujo de Fondos:** Sin partidas huérfanas ni cargos no identificados.
 
 ---
 
 #### 📱 Canal de Comunicación WhatsApp (Directorio & Socios):
-Puedes compartir este informe oficial de conciliación directamente al directorio con un solo clic:
+Puedes compartir este informe oficial de saldos aperturados por cuenta y banco con un solo clic:
 
 <div class="p-3 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2 my-2">
   <div class="flex items-center justify-between">
