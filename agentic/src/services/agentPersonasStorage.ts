@@ -28,6 +28,14 @@ export const agentPersonasStorage = {
           pitch = def.voz.pitch;
         }
 
+        let piperVoiceId = found.voz?.piperVoiceId || def.voz.piperVoiceId;
+        // Si una persona femenina tenía asignado el modelo sharvard (que era masculino en el VPS), migrarla a daniela
+        if (effectiveSex === 'FEMENINO' && (piperVoiceId === 'es_ES-sharvard-medium' || !piperVoiceId)) {
+          piperVoiceId = 'es_AR-daniela-high';
+        } else if (effectiveSex === 'MASCULINO' && (!piperVoiceId || piperVoiceId === 'es_AR-daniela-high')) {
+          piperVoiceId = def.voz.piperVoiceId || 'es_ES-sharvard-medium';
+        }
+
         return {
           ...def,
           nombre: found.nombre || def.nombre,
@@ -38,6 +46,8 @@ export const agentPersonasStorage = {
             ...def.voz,
             ...(found.voz || {}),
             pitch,
+            neuralModel: found.voz?.neuralModel || def.voz.neuralModel || 'piper',
+            piperVoiceId,
           },
         };
       });

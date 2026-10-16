@@ -37,6 +37,37 @@ export function loadClientState<T>(clientId: string, entityKey: string, fallback
 export function saveClientState<T>(clientId: string, entityKey: string, data: T): void {
   const compositeKey = `client_${clientId}_${entityKey}`;
   savePersistentState<T>(compositeKey, data);
+
+  // Sincronización en segundo plano con el servidor (Multi-Tenant & Multi-Usuario)
+  if (typeof fetch !== 'undefined') {
+    fetch('/api/accounting/client-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: clientId, key: entityKey, data }),
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Obtener estado de cliente actualizado desde el servidor (Multi-Tenant & Multi-Usuario)
+ */
+export async function fetchClientState<T>(clientId: string, entityKey: string, fallback: T): Promise<T> {
+  if (typeof fetch !== 'undefined') {
+    try {
+      const res = await fetch(`/api/accounting/client-state?empresaId=${encodeURIComponent(clientId)}&key=${encodeURIComponent(entityKey)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data !== null && json.data !== undefined) {
+          const compositeKey = `client_${clientId}_${entityKey}`;
+          savePersistentState<T>(compositeKey, json.data as T);
+          return json.data as T;
+        }
+      }
+    } catch (err) {
+      console.warn(`[StorageService] Error al obtener ${entityKey} del servidor:`, err);
+    }
+  }
+  return loadClientState<T>(clientId, entityKey, fallback);
 }
 
 export function clearPersistentState(key?: string): void {

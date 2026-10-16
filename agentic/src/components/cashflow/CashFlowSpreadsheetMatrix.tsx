@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -120,12 +120,30 @@ export const CashFlowSpreadsheetMatrix: React.FC<CashFlowSpreadsheetMatrixProps>
   horizon: propHorizon,
   onHorizonChange,
 }) => {
-  // 1. Estados de Control de la Matriz
-  const [baseDateStr, setBaseDateStr] = useState<string>('2026-09-25');
+  // 1. Estados de Control de la Matriz (Inicia por defecto con la fecha de hoy)
+  const [baseDateStr, setBaseDateStr] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   const [internalHorizonType, setInternalHorizonType] = useState<MatrixHorizonType>(
     propHorizon || '30_DIAS'
   );
   const horizonType = propHorizon || internalHorizonType;
+
+  // Escuchar eventos globales para actualizar la fecha base (disparados por Vera o botones de la UI)
+  useEffect(() => {
+    const handleUpdateBaseDate = (e: any) => {
+      const targetDate = e.detail?.date || new Date().toISOString().split('T')[0];
+      setBaseDateStr(targetDate);
+      setToastMessage({
+        type: 'success',
+        text: `Flujo de caja actualizado e iniciado a partir de hoy (${targetDate})`,
+      });
+      setTimeout(() => setToastMessage(null), 3500);
+    };
+
+    window.addEventListener('update-cashflow-base-date', handleUpdateBaseDate);
+    return () => window.removeEventListener('update-cashflow-base-date', handleUpdateBaseDate);
+  }, []);
 
   const handleHorizonChange = (newH: MatrixHorizonType) => {
     setInternalHorizonType(newH);
@@ -630,6 +648,23 @@ export const CashFlowSpreadsheetMatrix: React.FC<CashFlowSpreadsheetMatrixProps>
               onChange={(e) => setBaseDateStr(e.target.value)}
               className="px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
             />
+            <button
+              type="button"
+              onClick={() => {
+                const today = new Date().toISOString().split('T')[0];
+                setBaseDateStr(today);
+                setToastMessage({
+                  type: 'success',
+                  text: `Fecha base actualizada a Hoy (${today})`,
+                });
+                setTimeout(() => setToastMessage(null), 3000);
+              }}
+              className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-lg text-xs transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+              title="Iniciar flujo de caja a partir del día de hoy"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Hoy</span>
+            </button>
 
             {/* Rango de Proyección Diaria de la Planilla */}
             <div className="flex flex-wrap items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 ml-2 gap-0.5">

@@ -1232,10 +1232,27 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
 /**
  * Helper to match an account name or code to the standard Chilean hierarchical chart
  */
+function normalizeCodeKey(code?: string): string {
+  if (!code) return '';
+  return code
+    .trim()
+    .toLowerCase()
+    .split('.')
+    .map((part) => {
+      const num = parseInt(part, 10);
+      return isNaN(num) ? part.trim() : String(num);
+    })
+    .join('.');
+}
+
 export function findAccountInChart(identifier: string): HierarchicalAccountItem | undefined {
   const clean = identifier.trim().toLowerCase();
+  const norm = normalizeCodeKey(clean);
   return CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS.find(
-    acc => acc.codigo.toLowerCase() === clean || acc.nombre.toLowerCase() === clean
+    acc =>
+      acc.codigo.toLowerCase() === clean ||
+      acc.nombre.toLowerCase() === clean ||
+      normalizeCodeKey(acc.codigo) === norm
   );
 }
 
@@ -1287,9 +1304,11 @@ export function isAccountCostCenterRequired(
 
   // 1. Buscar en el plan de cuentas provisto o en el catálogo estándar
   if (!acc && code) {
+    const norm = normalizeCodeKey(code);
     acc = chartOfAccounts?.find(
       (a) =>
         a.codigo.trim().toLowerCase() === code.toLowerCase() ||
+        normalizeCodeKey(a.codigo) === norm ||
         (name && a.nombre.trim().toLowerCase() === name.trim().toLowerCase())
     ) || findAccountInChart(code) || (name ? findAccountInChart(name) : undefined);
   }
@@ -2558,6 +2577,96 @@ export function validateEntryFiscalPeriod(
 
   return { permitido: true };
 }
+
+/**
+ * Obtiene la fecha por defecto para nuevos asientos contables.
+ * Prioriza la fecha del día actual (en hora local) siempre y cuando el ejercicio
+ * fiscal y el período mensual se encuentren formalmente abiertos. Si el período de hoy
+ * o el ejercicio estuviese cerrado, busca inteligentemente la fecha válida más reciente
+ * dentro de un período abierto del ejercicio activo.
+ */
+export function getDefaultAccountingDate(company?: Partial<CompanyProfile>): string {
+  const safeCompany = company || {};
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${y}-${m}-${d}`;
+
+  // 1. Si hoy está permitido directamente según el ejercicio fiscal y períodos cerrados, usar hoy
+  const checkToday = validateEntryFiscalPeriod(todayStr, safeCompany);
+  if (checkToday.permitido) {
+    return todayStr;
+  }
+
+  // 2. Si hoy no está permitido (ej: período cerrado o año diferente al ejercicio activo),
+  // buscar una fecha válida dentro del ejercicio fiscal activo.
+  const { fechaInicio, fechaFin } = getFiscalYearDates(safeCompany);
+  const periodosCerrados = safeCompany.periodosCerrados || [];
+  const bloqueoActivo = safeCompany.bloqueoPeriodoCerrado !== false;
+
+  // Determinar la fecha base de referencia (acotada al rango del ejercicio activo)
+  let refDateStr = todayStr;
+  if (refDateStr > fechaFin) {
+    refDateStr = fechaFin;
+  } else if (refDateStr < fechaInicio) {
+    refDateStr = fechaInicio;
+  }
+
+  // Si esa fecha de referencia está permitida (período mensual no cerrado), usarla
+  if (validateEntryFiscalPeriod(refDateStr, safeCompany).permitido) {
+    return refDateStr;
+  }
+
+  // 3. Si el período de referencia está cerrado, buscar el mes abierto más cercano dentro del ejercicio
+  // Buscar primero hacia atrás (el mes abierto más reciente hasta la fecha)
+  const [startYear, startMonth] = fechaInicio.split('-').map(Number);
+  const [refYear, refMonth] = refDateStr.split('-').map(Number);
+
+  let curY = refYear;
+  let curM = refMonth;
+  while (curY > startYear || (curY === startYear && curM >= startMonth)) {
+    const pStr = `${curY}-${String(curM).padStart(2, '0')}`;
+    if (!bloqueoActivo || !periodosCerrados.includes(pStr)) {
+      // Período abierto encontrado: tomar el último día de este mes acotado a fechaFin
+      const lastDay = new Date(curY, curM, 0).getDate();
+      const candidateDate = `${pStr}-${String(lastDay).padStart(2, '0')}`;
+      const finalDate = candidateDate > fechaFin ? fechaFin : candidateDate < fechaInicio ? fechaInicio : candidateDate;
+      if (validateEntryFiscalPeriod(finalDate, safeCompany).permitido) {
+        return finalDate;
+      }
+    }
+    curM--;
+    if (curM < 1) {
+      curM = 12;
+      curY--;
+    }
+  }
+
+  // 4. Si hacia atrás no encontramos (todos los meses anteriores están cerrados), buscar hacia adelante hasta fechaFin
+  const [endYear, endMonth] = fechaFin.split('-').map(Number);
+  curY = refYear;
+  curM = refMonth;
+  while (curY < endYear || (curY === endYear && curM <= endMonth)) {
+    const pStr = `${curY}-${String(curM).padStart(2, '0')}`;
+    if (!bloqueoActivo || !periodosCerrados.includes(pStr)) {
+      const candidateDate = `${pStr}-01`;
+      const finalDate = candidateDate < fechaInicio ? fechaInicio : candidateDate > fechaFin ? fechaFin : candidateDate;
+      if (validateEntryFiscalPeriod(finalDate, safeCompany).permitido) {
+        return finalDate;
+      }
+    }
+    curM++;
+    if (curM > 12) {
+      curM = 1;
+      curY++;
+    }
+  }
+
+  // 5. Fallback de resguardo: fecha acotada al ejercicio o todayStr
+  return todayStr >= fechaInicio && todayStr <= fechaFin ? todayStr : fechaFin;
+}
+
 
 /**
  * =========================================================================

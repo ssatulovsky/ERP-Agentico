@@ -50,6 +50,7 @@ export interface EditAccountingEntryModalProps {
         rutAuxiliar?: string;
         nombreAuxiliar?: string;
         centroCosto?: string;
+        proyecto?: string;
         documentoRef?: string;
         dteIdAsociado?: string;
         tipoDocumentoRef?: string;
@@ -112,6 +113,7 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
       rutAuxiliar: l.rutAuxiliar || l.rut_auxiliar || '',
       nombreAuxiliar: l.nombreAuxiliar || l.nombre_auxiliar || '',
       centroCosto: l.centroCosto || l.centro_costo || '',
+      proyecto: (l as any).proyecto || (l as any).proyecto_codigo || '',
       documentoRef: docRef,
       dteIdAsociado: l.dteIdAsociado || l.dte_id_asociado || '',
       tipoDocumentoRef: tipoRef,
@@ -206,11 +208,19 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
     setLines((prev) => {
       const copy = [...prev];
       const isCc = isAccountCostCenterRequired(acc, acc.nombre, accounts);
+      const defaultRut = acc.auxiliarPredeterminadoRut;
+      let defaultNombre = copy[index].nombreAuxiliar;
+      if (defaultRut && availableAuxiliaries) {
+        const found = availableAuxiliaries.find(a => a.rut.replace(/[\.\-\s]/g, '').toUpperCase() === defaultRut.replace(/[\.\-\s]/g, '').toUpperCase());
+        if (found) defaultNombre = found.razonSocial;
+      }
       copy[index] = {
         ...copy[index],
         cuentaCodigo: acc.codigo,
         cuentaNombre: acc.nombre,
         centroCosto: isCc && !copy[index].centroCosto ? 'CC-ADM-01' : copy[index].centroCosto,
+        rutAuxiliar: defaultRut || copy[index].rutAuxiliar,
+        nombreAuxiliar: defaultNombre,
       };
       return copy;
     });
@@ -263,7 +273,68 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
     }
 
     try {
-      setIsSubmitting(true);
+      const mappedLines = lines.map((l) => ({
+        codigoCuenta: l.cuentaCodigo,
+        nombreCuenta: l.cuentaNombre,
+        debe: Number(l.debe) || 0,
+        haber: Number(l.haber) || 0,
+        rutAuxiliar: l.rutAuxiliar || undefined,
+        nombreAuxiliar: l.nombreAuxiliar || undefined,
+        centroCosto: l.centroCosto || undefined,
+        proyecto: l.proyecto || undefined,
+        documentoRef: l.documentoRef || documentoRef.trim(),
+        dteIdAsociado: l.dteIdAsociado || undefined,
+        tipoDocumentoRef: l.tipoDocumentoRef || tipoDocumentoRef || undefined,
+        folioDocumentoRef: l.folioDocumentoRef || folioDocumentoRef || undefined,
+        montoDocumentoRef: l.montoDocumentoRef ? Number(l.montoDocumentoRef) : undefined,
+        fechaDocumentoRef: l.fechaDocumentoRef || undefined,
+        fechaVencimientoRef: l.fechaVencimientoRef || undefined,
+        documentoOperacion: l.documentoOperacion || undefined,
+        tipoDocumentoOperacion: l.tipoDocumentoOperacion || undefined,
+        fechaDocumentoOperacion: l.fechaDocumentoOperacion || undefined,
+        documentoConciliacion: l.documentoConciliacion || undefined,
+        tipoDocumentoConciliacion: l.tipoDocumentoConciliacion || undefined,
+        monedaOriginal: l.monedaOriginal || undefined,
+        montoMonedaOriginal: l.montoMonedaOriginal ? Number(l.montoMonedaOriginal) : undefined,
+        tipoCambio: l.tipoCambio ? Number(l.tipoCambio) : undefined,
+      }));
+
+      // Trazabilidad y cruce bidireccional entre la contrapartida bancaria y el auxiliar:
+      const auxLines = mappedLines.filter((l) => Boolean(l.rutAuxiliar));
+      const bankLines = mappedLines.filter(
+        (l) =>
+          l.codigoCuenta.startsWith('1.1.02') ||
+          Boolean(l.documentoConciliacion) ||
+          Boolean(l.tipoDocumentoConciliacion)
+      );
+
+      if (auxLines.length > 0 && bankLines.length > 0) {
+        const primaryBank = bankLines[0];
+        const primaryAux = auxLines[0];
+
+        auxLines.forEach((aLine) => {
+          if (!aLine.documentoOperacion && (primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef)) {
+            aLine.documentoOperacion = primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef;
+          }
+          if (!aLine.tipoDocumentoOperacion && primaryBank.tipoDocumentoConciliacion) {
+            aLine.tipoDocumentoOperacion = primaryBank.tipoDocumentoConciliacion;
+          }
+          if (!aLine.fechaDocumentoOperacion) {
+            aLine.fechaDocumentoOperacion = primaryBank.fechaDocumentoRef || fecha;
+          }
+        });
+
+        bankLines.forEach((bLine) => {
+          if (!bLine.rutAuxiliar && primaryAux.rutAuxiliar) {
+            bLine.rutAuxiliar = primaryAux.rutAuxiliar;
+            bLine.nombreAuxiliar = primaryAux.nombreAuxiliar;
+          }
+          if (!bLine.documentoConciliacion && primaryAux.documentoOperacion) {
+            bLine.documentoConciliacion = primaryAux.documentoOperacion;
+          }
+        });
+      }
+
       await onSave(entry.id, {
         fecha,
         concepto: concepto.trim(),
@@ -272,30 +343,7 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
         tipoDocumentoRef: tipoDocumentoRef || undefined,
         folioDocumentoRef: folioDocumentoRef || undefined,
         motivoModificacion: motivoModificacion.trim(),
-        lineas: lines.map((l) => ({
-          codigoCuenta: l.cuentaCodigo,
-          nombreCuenta: l.cuentaNombre,
-          debe: Number(l.debe) || 0,
-          haber: Number(l.haber) || 0,
-          rutAuxiliar: l.rutAuxiliar || undefined,
-          nombreAuxiliar: l.nombreAuxiliar || undefined,
-          centroCosto: l.centroCosto || undefined,
-          documentoRef: l.documentoRef || documentoRef.trim(),
-          dteIdAsociado: l.dteIdAsociado || undefined,
-          tipoDocumentoRef: l.tipoDocumentoRef || tipoDocumentoRef || undefined,
-          folioDocumentoRef: l.folioDocumentoRef || folioDocumentoRef || undefined,
-          montoDocumentoRef: l.montoDocumentoRef ? Number(l.montoDocumentoRef) : undefined,
-          fechaDocumentoRef: l.fechaDocumentoRef || undefined,
-          fechaVencimientoRef: l.fechaVencimientoRef || undefined,
-          documentoOperacion: l.documentoOperacion || undefined,
-          tipoDocumentoOperacion: l.tipoDocumentoOperacion || undefined,
-          fechaDocumentoOperacion: l.fechaDocumentoOperacion || undefined,
-          documentoConciliacion: l.documentoConciliacion || undefined,
-          tipoDocumentoConciliacion: l.tipoDocumentoConciliacion || undefined,
-          monedaOriginal: l.monedaOriginal || undefined,
-          montoMonedaOriginal: l.montoMonedaOriginal ? Number(l.montoMonedaOriginal) : undefined,
-          tipoCambio: l.tipoCambio ? Number(l.tipoCambio) : undefined,
-        })),
+        lineas: mappedLines,
       });
       onClose();
     } catch (err: any) {
@@ -526,6 +574,11 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
                                         Exige CC
                                       </span>
                                     )}
+                                    {Boolean(accDef?.requiereProyecto) && (
+                                      <span className="bg-cyan-100 text-cyan-800 font-bold px-1.5 py-0.2 rounded border border-cyan-300">
+                                        Exige Proyecto
+                                      </span>
+                                    )}
                                   </div>
 
                                   {/* Centro de Costos si lo exige la cuenta o es de resultados */}
@@ -546,6 +599,19 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
                                           <option value={line.centroCosto}>{line.centroCosto} (Actual)</option>
                                         )}
                                       </select>
+                                    </div>
+                                  )}
+
+                                  {/* Centro de Proyecto / Obra si lo exige la cuenta */}
+                                  {(Boolean(accDef?.requiereProyecto) || line.proyecto) && (
+                                    <div className="pt-1">
+                                      <input
+                                        type="text"
+                                        placeholder="Código Proyecto / Obra"
+                                        value={line.proyecto || ''}
+                                        onChange={(e) => handleLineChange(idx, 'proyecto', e.target.value)}
+                                        className="w-full text-[11px] bg-cyan-50/70 border border-cyan-300 rounded px-2 py-1 text-cyan-950 font-medium focus:outline-hidden focus:border-cyan-500 font-mono"
+                                      />
                                     </div>
                                   )}
                                 </div>

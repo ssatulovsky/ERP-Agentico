@@ -195,6 +195,42 @@ export const expenseApiService = {
   },
 
   /**
+   * Actualiza un proyecto en el servidor y MySQL 8.0
+   */
+  async updateExpenseProject(id: string, updates: Partial<ExpenseProject>): Promise<ExpenseProject | null> {
+    try {
+      const res = await fetch(`/api/expenses/projects/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      return json.data || null;
+    } catch (err) {
+      console.error('[ExpenseApiService] Error al actualizar proyecto:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Elimina un proyecto en el servidor y MySQL 8.0
+   */
+  async deleteExpenseProject(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/expenses/projects/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) return false;
+      const json = await res.json();
+      return Boolean(json.success);
+    } catch (err) {
+      console.error('[ExpenseApiService] Error al eliminar proyecto:', err);
+      return false;
+    }
+  },
+
+  /**
    * Contabiliza formalmente una rendición de gastos en el Libro Diario
    */
   async contabilizarReport(

@@ -706,6 +706,59 @@ expenseReportsRouter.post('/projects', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// 8.1 ACTUALIZAR PROYECTO (MODIFICACIÓN)
+// ============================================================================
+expenseReportsRouter.put('/projects/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const db = getMysqlDb();
+
+    if (isRealMysqlConnected) {
+      try {
+        await db.update(expenseProjects).set({
+          nombre: updates.nombre,
+          clienteNombre: updates.clienteNombre,
+          presupuestoTotalClp: updates.presupuestoTotalClp ? String(updates.presupuestoTotalClp) : undefined,
+          activo: updates.activo !== undefined ? Boolean(updates.activo) : undefined,
+          descripcion: updates.descripcion,
+        }).where(eq(expenseProjects.id, id));
+      } catch (mysqlErr: any) {
+        console.warn('[ExpenseReportsController] Error al actualizar en MySQL:', mysqlErr.message);
+      }
+    }
+
+    const updated = diskPersistence.updateExpenseProject(id, updates);
+    res.json({ success: true, message: 'Proyecto actualizado con éxito', data: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// 8.2 ELIMINAR PROYECTO (BAJA)
+// ============================================================================
+expenseReportsRouter.delete('/projects/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const db = getMysqlDb();
+
+    if (isRealMysqlConnected) {
+      try {
+        await db.delete(expenseProjects).where(eq(expenseProjects.id, id));
+      } catch (mysqlErr: any) {
+        console.warn('[ExpenseReportsController] Error al eliminar en MySQL:', mysqlErr.message);
+      }
+    }
+
+    const deleted = diskPersistence.deleteExpenseProject(id);
+    res.json({ success: true, message: 'Proyecto eliminado con éxito', deleted });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
 // 9. CONTABILIZAR RENDICIÓN FORMALMENTE EN LIBRO DIARIO
 // ============================================================================
 expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res: Response) => {

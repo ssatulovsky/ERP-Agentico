@@ -143,7 +143,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('executive_dashboard');
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
   const [isVoiceDialogueOpen, setIsVoiceDialogueOpen] = useState<boolean>(false);
-  const [voiceDialoguePersonaId, setVoiceDialoguePersonaId] = useState<string>('CONTABILIDAD_SENIOR');
+  const [voiceDialoguePersonaId, setVoiceDialoguePersonaId] = useState<string>('AGENTE_GENERAL_VERA');
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
@@ -1149,7 +1149,7 @@ export default function App() {
         openAuditor={() => setIsAiModalOpen(true)}
         openManual={() => setIsManualOpen(true)}
         openVoiceDialogue={() => {
-          setVoiceDialoguePersonaId('CONTABILIDAD_SENIOR');
+          setVoiceDialoguePersonaId('AGENTE_GENERAL_VERA');
           setIsVoiceDialogueOpen(true);
         }}
       />
@@ -1580,8 +1580,13 @@ export default function App() {
         onCentralizeExpenses={handleVoiceCentralizeExpenses}
         onNavigateToTab={(tabId) => setActiveTab(tabId)}
         dtes={dtes}
+        bankAccounts={bankAccounts}
         bankMovements={bankMovements}
         f29={f29}
+        payrolls={payrolls}
+        inventoryItems={inventoryItems}
+        productionOrders={productionOrders}
+        productionBudgets={productionBudgets}
         employeesCount={payrolls.length}
         inventoryCount={inventoryItems.length}
         expensesCount={expenseReports.length}

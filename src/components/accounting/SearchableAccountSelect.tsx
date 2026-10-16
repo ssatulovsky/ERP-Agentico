@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Search, ChevronDown, Check, X, Building, BookOpen } from 'lucide-react';
 import type { HierarchicalAccountItem } from '../../types';
+import { normalizeAccountCodeKey } from '../../utils/companyChartOfAccountsService';
 
 interface SearchableAccountSelectProps {
   value: string; // account name or code
@@ -28,14 +29,20 @@ export const SearchableAccountSelect: React.FC<SearchableAccountSelectProps> = (
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  // Determinar la cuenta actualmente seleccionada
+  // Determinar la cuenta actualmente seleccionada (con soporte de códigos normalizados ej: 6.1.2.1 vs 6.1.02.001)
   const selectedAccount = useMemo(() => {
+    const normSelected = normalizeAccountCodeKey(selectedCode);
+    const normValue = normalizeAccountCodeKey(value);
+    const lowerVal = (value || '').toLowerCase().trim();
+
     return (
       accounts.find(
         (a) =>
           (selectedCode && a.codigo === selectedCode) ||
-          a.nombre.toLowerCase() === (value || '').toLowerCase() ||
-          a.codigo === value
+          (normSelected && normalizeAccountCodeKey(a.codigo) === normSelected) ||
+          (value && a.codigo === value) ||
+          (normValue && normalizeAccountCodeKey(a.codigo) === normValue) ||
+          (lowerVal && a.nombre.toLowerCase().trim() === lowerVal)
       ) || null
     );
   }, [accounts, selectedCode, value]);
@@ -46,9 +53,12 @@ export const SearchableAccountSelect: React.FC<SearchableAccountSelectProps> = (
       return accounts.slice(0, 100); // Primeras 100 por defecto para velocidad
     }
     const term = searchTerm.toLowerCase().trim();
+    const normTerm = normalizeAccountCodeKey(term);
+
     return accounts.filter(
       (acc) =>
         acc.codigo.toLowerCase().includes(term) ||
+        (normTerm && normalizeAccountCodeKey(acc.codigo).includes(normTerm)) ||
         acc.nombre.toLowerCase().includes(term) ||
         acc.tipo.toLowerCase().includes(term) ||
         (acc.grupo && acc.grupo.toLowerCase().includes(term))

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Bot,
@@ -20,19 +20,54 @@ import {
 import { ClientAuxiliaryMasterRecord } from '../../types';
 import { INITIAL_CLIENT_AUXILIARIES, CHILEAN_REGIONS_WITH_COMMUNES } from '../../data/erpMasterConfig';
 import { validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
+import {
+  loadCompanyAuxiliaries,
+  fetchCompanyAuxiliaries,
+  saveCompanyAuxiliaries,
+} from '../../utils/companyAuxiliariesService';
 
 interface ClientAuxiliariesMasterModalProps {
   isOpen: boolean;
   onClose: () => void;
+  companyRut?: string;
   onSelectAuxiliary?: (aux: ClientAuxiliaryMasterRecord) => void;
 }
 
 export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModalProps> = ({
   isOpen,
   onClose,
+  companyRut = 'default',
   onSelectAuxiliary,
 }) => {
-  const [auxiliariesList, setAuxiliariesList] = useState<ClientAuxiliaryMasterRecord[]>(INITIAL_CLIENT_AUXILIARIES);
+  const [auxiliariesList, setAuxiliariesList] = useState<ClientAuxiliaryMasterRecord[]>(() => {
+    return loadCompanyAuxiliaries(companyRut) as any;
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      let isMounted = true;
+      const targetRut = companyRut || 'default';
+      setAuxiliariesList(loadCompanyAuxiliaries(targetRut) as any);
+      fetchCompanyAuxiliaries(targetRut).then((remoteAuxs) => {
+        if (isMounted && Array.isArray(remoteAuxs) && remoteAuxs.length > 0) {
+          setAuxiliariesList(remoteAuxs as any);
+        }
+      }).catch(() => {});
+
+      const handleAuxUpdated = (e: any) => {
+        if (e?.detail?.empresaRut === targetRut && Array.isArray(e?.detail?.auxiliaries)) {
+          setAuxiliariesList(e.detail.auxiliaries as any);
+        }
+      };
+
+      window.addEventListener('companyAuxiliariesUpdated', handleAuxUpdated);
+      return () => {
+        isMounted = false;
+        window.removeEventListener('companyAuxiliariesUpdated', handleAuxUpdated);
+      };
+    }
+  }, [isOpen, companyRut]);
+
   const [activeSideTab, setActiveSideTab] = useState<'IDENTIFICACION' | 'UBICACION' | 'TIPO' | 'COMERCIAL' | 'SUCURSALES'>('IDENTIFICACION');
   const [selectedAuxId, setSelectedAuxId] = useState<string>(INITIAL_CLIENT_AUXILIARIES[0]?.id || '');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -149,10 +184,9 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
 
     setAuxiliariesList((prev) => {
       const exists = prev.find((a) => a.id === newAux.id);
-      if (exists) {
-        return prev.map((a) => (a.id === newAux.id ? newAux : a));
-      }
-      return [newAux, ...prev];
+      const next = exists ? prev.map((a) => (a.id === newAux.id ? newAux : a)) : [newAux, ...prev];
+      saveCompanyAuxiliaries(companyRut || 'default', next as any);
+      return next;
     });
 
     setSuccessNotice(`Auxiliar "${newAux.razonSocial}" guardado exitosamente.`);

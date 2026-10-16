@@ -106,6 +106,7 @@ export async function postModuleTransaction(
     monedaOriginal?: string;
     montoMonedaOriginal?: number;
     tipoCambio?: number;
+    proyecto?: string;
   }
 
   const debeLines: CanonicalLineItem[] = [];
@@ -144,13 +145,17 @@ export async function postModuleTransaction(
       rutAuxiliar: l.rutAuxiliar?.trim() || undefined,
       nombreAuxiliar: l.nombreAuxiliar?.trim() || undefined,
       centroCosto: l.centroCosto?.trim() || undefined,
+      proyecto: (l as any).proyecto?.trim() || undefined,
       documentoRef: l.documentoRef?.trim() || params.documentoRef?.trim() || undefined,
       dteIdAsociado: l.dteIdAsociado?.trim() || undefined,
       tipoDocumentoRef: l.tipoDocumentoRef?.trim() || params.tipoDocumentoRef?.trim() || undefined,
       folioDocumentoRef: l.folioDocumentoRef?.trim() || params.folioDocumentoRef?.trim() || undefined,
       montoDocumentoRef: l.montoDocumentoRef !== undefined && l.montoDocumentoRef !== null ? Number(l.montoDocumentoRef) : undefined,
+      fechaDocumentoRef: (l as any).fechaDocumentoRef?.trim() || undefined,
+      fechaVencimientoRef: (l as any).fechaVencimientoRef?.trim() || undefined,
       documentoOperacion: l.documentoOperacion?.trim() || undefined,
       tipoDocumentoOperacion: l.tipoDocumentoOperacion?.trim() || undefined,
+      fechaDocumentoOperacion: (l as any).fechaDocumentoOperacion?.trim() || undefined,
       documentoConciliacion: l.documentoConciliacion?.trim() || undefined,
       tipoDocumentoConciliacion: l.tipoDocumentoConciliacion?.trim() || undefined,
       monedaOriginal: l.monedaOriginal?.trim() || undefined,
@@ -275,13 +280,17 @@ export async function postModuleTransaction(
       rutAuxiliar: line.rutAuxiliar || null,
       nombreAuxiliar: line.nombreAuxiliar || null,
       centroCosto: line.centroCosto || null,
+      proyecto: line.proyecto || null,
       documentoRef: line.documentoRef || params.documentoRef?.trim() || null,
       dteIdAsociado: line.dteIdAsociado || null,
       tipoDocumentoRef: line.tipoDocumentoRef || params.tipoDocumentoRef?.trim() || null,
       folioDocumentoRef: line.folioDocumentoRef || params.folioDocumentoRef?.trim() || null,
       montoDocumentoRef: line.montoDocumentoRef != null ? String(line.montoDocumentoRef) : null,
+      fechaDocumentoRef: (line as any).fechaDocumentoRef || null,
+      fechaVencimientoRef: (line as any).fechaVencimientoRef || null,
       documentoOperacion: line.documentoOperacion || null,
       tipoDocumentoOperacion: line.tipoDocumentoOperacion || null,
+      fechaDocumentoOperacion: (line as any).fechaDocumentoOperacion || null,
       documentoConciliacion: line.documentoConciliacion || null,
       tipoDocumentoConciliacion: line.tipoDocumentoConciliacion || null,
       monedaOriginal: line.monedaOriginal || null,

@@ -56,6 +56,7 @@ import { AddExpenseItemModal } from './AddExpenseItemModal';
 import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
 import { CentralizeExpenseModal } from './CentralizeExpenseModal';
 import { CollaboratorExpenseMobileApp } from './mobile/CollaboratorExpenseMobileApp';
+import { ProjectManagerModal } from '../accounting/ProjectManagerModal';
 
 interface ExpenseReportsModuleProps {
   company?: CompanyProfile;
@@ -82,6 +83,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [createdNotification, setCreatedNotification] = useState<string | null>(null);
+  const [showProjectManagerModal, setShowProjectManagerModal] = useState<boolean>(false);
 
   // Pestañas del módulo
   const [activeTab, setActiveTab] = useState<'BANDEJA_RENDICIONES' | 'COMPROBANTES_EXPLORER' | 'IMPUTACION_CC_PROYECTOS' | 'REPORTES_DESCARGABLES'>('BANDEJA_RENDICIONES');
@@ -998,6 +1000,14 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                 <Briefcase className="w-4 h-4 text-emerald-600" />
                 Gastos Imputados por Proyecto / Obra
               </h3>
+              <button
+                type="button"
+                onClick={() => setShowProjectManagerModal(true)}
+                className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Briefcase className="w-3.5 h-3.5" />
+                Gestionar Catálogo de Proyectos
+              </button>
             </div>
 
             <div className="space-y-3">
@@ -1158,6 +1168,17 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
           comprobantes={items.filter((i) => i.expenseReportId === reportToCentralize.id)}
           chartOfAccounts={chartOfAccounts}
           onConfirm={handleConfirmCentralize}
+        />
+      )}
+
+      {/* Modal ABM de Proyectos y Obras */}
+      {showProjectManagerModal && (
+        <ProjectManagerModal
+          isOpen={showProjectManagerModal}
+          onClose={() => setShowProjectManagerModal(false)}
+          projects={projects}
+          onProjectsChange={(updated) => setProjects(updated)}
+          empresaId={empresaId}
         />
       )}
 

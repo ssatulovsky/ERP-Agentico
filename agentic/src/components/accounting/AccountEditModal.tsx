@@ -18,8 +18,10 @@ interface AccountEditModalProps {
   onSave: (account: HierarchicalAccountItem) => void;
   accountToEdit?: HierarchicalAccountItem | null;
   initialParentCode?: string;
+  parentAccountCode?: string;
   groups: AccountGroupDefinition[];
   existingAccounts: HierarchicalAccountItem[];
+  availableAuxiliaries?: Array<{ rut: string; razonSocial: string; tipo?: string }>;
 }
 
 export const AccountEditModal: React.FC<AccountEditModalProps> = ({
@@ -28,9 +30,12 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
   onSave,
   accountToEdit,
   initialParentCode,
+  parentAccountCode,
   groups,
   existingAccounts,
+  availableAuxiliaries = [],
 }) => {
+  const effectiveParentCode = initialParentCode || parentAccountCode;
   const isEditing = Boolean(accountToEdit);
 
   const [codigo, setCodigo] = useState('');
@@ -51,6 +56,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
 
   // Atributos y Validaciones Contables Avanzadas
   const [requiereAuxiliarRut, setRequiereAuxiliarRut] = useState(false);
+  const [tipoAuxiliarPermitido, setTipoAuxiliarPermitido] = useState<'TODOS' | 'PROVEEDOR' | 'CLIENTE' | 'HONORARIO' | 'EMPLEADO'>('TODOS');
+  const [auxiliarPredeterminadoRut, setAuxiliarPredeterminadoRut] = useState<string>('');
   const [requiereCentroCosto, setRequiereCentroCosto] = useState(false);
   const [esConciliableBancaria, setEsConciliableBancaria] = useState(false);
   const [activa, setActiva] = useState(true);
@@ -88,6 +95,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setAgrupacionPersonalizada(accountToEdit.agrupacionPersonalizada || '');
 
       setRequiereAuxiliarRut(Boolean(accountToEdit.requiereAuxiliarRut));
+      setTipoAuxiliarPermitido(accountToEdit.tipoAuxiliarPermitido || (accountToEdit.clase === 2 ? 'PROVEEDOR' : accountToEdit.clase === 1 ? 'CLIENTE' : 'TODOS'));
+      setAuxiliarPredeterminadoRut(accountToEdit.auxiliarPredeterminadoRut || '');
       setRequiereCentroCosto(Boolean(accountToEdit.requiereCentroCosto));
       setEsConciliableBancaria(Boolean(accountToEdit.esConciliableBancaria));
       setActiva(accountToEdit.activa !== false);
@@ -111,9 +120,10 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
     } else {
       // Modo nueva cuenta o subcuenta
       setNotasExplicativasStr('');
-      if (initialParentCode) {
+      const pCode = effectiveParentCode;
+      if (pCode) {
         // Sugerir código hijo
-        const parentParts = initialParentCode.split('.');
+        const parentParts = pCode.split('.');
         const parentClass = Number(parentParts[0]) as any;
         setClase(parentClass >= 1 && parentClass <= 7 ? parentClass : 1);
         const derivedGrp = parentParts.slice(0, 2).join('.');
@@ -140,6 +150,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setAgrupacionMatrizExtranjera(HEADQUARTERS_GROUPING_OPTIONS[0]);
       setAgrupacionPersonalizada('');
       setRequiereAuxiliarRut(false);
+      setTipoAuxiliarPermitido(clase === 2 ? 'PROVEEDOR' : clase === 1 ? 'CLIENTE' : 'TODOS');
+      setAuxiliarPredeterminadoRut('');
       setRequiereCentroCosto(false);
       setEsConciliableBancaria(false);
       setActiva(true);
@@ -152,7 +164,7 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       setEsContracuentaEfectivo(false);
       setRequiereProyecto(false);
     }
-  }, [isOpen, accountToEdit, initialParentCode, existingAccounts]);
+  }, [isOpen, accountToEdit, effectiveParentCode, existingAccounts]);
 
   if (!isOpen) return null;
 
@@ -276,6 +288,8 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
       clasificacion,
       naturaleza,
       requiereAuxiliarRut,
+      tipoAuxiliarPermitido: requiereAuxiliarRut ? tipoAuxiliarPermitido : undefined,
+      auxiliarPredeterminadoRut: (requiereAuxiliarRut && auxiliarPredeterminadoRut) ? auxiliarPredeterminadoRut : undefined,
       requiereCentroCosto,
       esConciliableBancaria,
       activa,
@@ -296,6 +310,23 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
     onSave(accountResult);
     onClose();
   };
+
+  // Auxiliares filtrados para el selector de auxiliar predeterminado
+  const filteredAuxForAccount = existingAccounts ? availableAuxiliaries.filter((aux) => {
+    if (tipoAuxiliarPermitido === 'PROVEEDOR') {
+      return !aux.tipo || aux.tipo === 'PROVEEDOR' || aux.tipo === 'AMBOS';
+    }
+    if (tipoAuxiliarPermitido === 'CLIENTE') {
+      return !aux.tipo || aux.tipo === 'CLIENTE' || aux.tipo === 'AMBOS';
+    }
+    if (tipoAuxiliarPermitido === 'HONORARIO') {
+      return aux.tipo === 'HONORARIO' || aux.tipo === 'AMBOS';
+    }
+    if (tipoAuxiliarPermitido === 'EMPLEADO') {
+      return aux.tipo === 'EMPLEADO' || aux.tipo === 'AMBOS';
+    }
+    return true;
+  }) : availableAuxiliaries;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
@@ -679,23 +710,70 @@ export const AccountEditModal: React.FC<AccountEditModalProps> = ({
               </label>
 
               {/* EXIGIR AUXILIAR RUT */}
-              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={requiereAuxiliarRut}
-                  onChange={(e) => setRequiereAuxiliarRut(e.target.checked)}
-                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-800 font-semibold">Exigir RUT Auxiliar</span>
-                    <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono font-bold">RUT</span>
+              <div className={`flex flex-col gap-2 p-2.5 rounded-lg bg-white border border-slate-200 transition-colors ${requiereAuxiliarRut ? 'sm:col-span-2 bg-amber-50/30 border-amber-300' : ''}`}>
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={requiereAuxiliarRut}
+                    onChange={(e) => setRequiereAuxiliarRut(e.target.checked)}
+                    className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-800 font-semibold">Exigir RUT Auxiliar</span>
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-mono font-bold">RUT ERP</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                      Obligatorio para cuentas corrientes de clientes, proveedores, retenciones o entidades específicas.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                    Obligatorio para cuentas corrientes de clientes, proveedores y retenciones impositivas.
-                  </p>
-                </div>
-              </label>
+                </label>
+
+                {requiereAuxiliarRut && (
+                  <div className="pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-amber-50/70 p-2.5 rounded-md animate-in fade-in">
+                    <div>
+                      <label className="text-[11px] font-bold text-amber-950 block mb-1">
+                        Tipo de Auxiliar Permitido:
+                      </label>
+                      <select
+                        value={tipoAuxiliarPermitido}
+                        onChange={(e) => setTipoAuxiliarPermitido(e.target.value as any)}
+                        className="w-full text-xs bg-white border border-amber-300 rounded-md px-2 py-1 text-slate-800 font-semibold focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                      >
+                        <option value="TODOS">Todos (Sin restricción de rol)</option>
+                        <option value="PROVEEDOR">Solo Proveedores (Pasivos 2.1 / Cuentas por Pagar)</option>
+                        <option value="CLIENTE">Solo Clientes (Activos 1.1.03 / Cuentas por Cobrar)</option>
+                        <option value="HONORARIO">Solo Honorarios Profesionales</option>
+                        <option value="EMPLEADO">Solo Empleados / Rendiciones</option>
+                      </select>
+                      <span className="text-[10px] text-slate-500 mt-0.5 block">
+                        Filtra automáticamente el selector al imputar asientos con esta cuenta.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-amber-950 block mb-1">
+                        Auxiliar Predeterminado (Opcional):
+                      </label>
+                      <select
+                        value={auxiliarPredeterminadoRut}
+                        onChange={(e) => setAuxiliarPredeterminadoRut(e.target.value)}
+                        className="w-full text-xs bg-white border border-amber-300 rounded-md px-2 py-1 text-slate-800 font-medium focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                      >
+                        <option value="">-- Ninguno (Seleccionar en cada asiento) --</option>
+                        {filteredAuxForAccount.map((aux) => (
+                          <option key={aux.rut} value={aux.rut}>
+                            {aux.rut} - {aux.razonSocial} ({aux.tipo || 'AUX'})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-slate-500 mt-0.5 block">
+                        Para cuentas fijas asociadas a una misma entidad (se preseleccionará automáticamente).
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* EXIGIR CENTRO DE COSTO */}
               <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white hover:bg-slate-100 cursor-pointer border border-slate-200 transition-colors">

@@ -23,7 +23,18 @@ import {
 import { AgentPersona } from '../../types/agentPersona';
 import { agentPersonasStorage } from '../../services/agentPersonasStorage';
 import { voiceAssistantEngine, AgentDialogueTurnResult } from '../../services/voiceAssistantEngine';
-import { CompanyProfile, DteDocument, CashFlowMovement, BankStatementMovement, F29Declaration } from '../../types';
+import { 
+  CompanyProfile, 
+  DteDocument, 
+  CashFlowMovement, 
+  BankStatementMovement, 
+  BankAccountConfig,
+  F29Declaration,
+  EmployeePayroll,
+  InventoryItem,
+  ProductionOrder,
+  ProductionBudget
+} from '../../types';
 import { formatCLP } from '../../utils/chileanAccounting';
 
 interface VoiceAgentDialogueModalProps {
@@ -42,8 +53,13 @@ interface VoiceAgentDialogueModalProps {
   onNavigateToTab?: (tabId: string) => void;
   // Datos contextuales del ERP para auditoría en tiempo real
   dtes?: DteDocument[];
+  bankAccounts?: BankAccountConfig[];
   bankMovements?: BankStatementMovement[];
   f29?: F29Declaration;
+  payrolls?: EmployeePayroll[];
+  inventoryItems?: InventoryItem[];
+  productionOrders?: ProductionOrder[];
+  productionBudgets?: ProductionBudget[];
   employeesCount?: number;
   inventoryCount?: number;
   expensesCount?: number;
@@ -60,12 +76,101 @@ interface ChatMessage {
   actionResult?: string;
 }
 
+function parseMarkdownToHtml(md: string): string {
+  if (!md) return '';
+
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let inTable = false;
+  let tableLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      tableLines.push(trimmed);
+      inTable = true;
+    } else {
+      if (inTable) {
+        const rows = tableLines.map(r => r.slice(1, -1).split('|'));
+        if (rows.length >= 2) {
+          const header = rows[0];
+          const isSeparator = rows.length > 1 && rows[1].some(c => c.includes('---'));
+          const body = isSeparator ? rows.slice(2) : rows.slice(1);
+          let tableHtml = '<div class="overflow-x-auto my-3 rounded-xl border border-slate-700 bg-slate-900/90 shadow-md"><table class="w-full text-xs text-left border-collapse">';
+          tableHtml += '<thead><tr class="bg-slate-800 text-slate-200 border-b border-slate-700">';
+          for (const c of header) {
+            tableHtml += `<th class="p-2.5 font-bold">${c.trim()}</th>`;
+          }
+          tableHtml += '</tr></thead><tbody>';
+          for (const r of body) {
+            tableHtml += '<tr class="border-b border-slate-800/60 hover:bg-slate-800/40">';
+            for (const c of r) {
+              tableHtml += `<td class="p-2.5 text-slate-300">${c.trim()}</td>`;
+            }
+            tableHtml += '</tr>';
+          }
+          tableHtml += '</tbody></table></div>';
+          out.push(tableHtml);
+        }
+        tableLines = [];
+        inTable = false;
+      }
+      out.push(line);
+    }
+  }
+
+  if (inTable && tableLines.length >= 2) {
+    const rows = tableLines.map(r => r.slice(1, -1).split('|'));
+    const header = rows[0];
+    const isSeparator = rows.length > 1 && rows[1].some(c => c.includes('---'));
+    const body = isSeparator ? rows.slice(2) : rows.slice(1);
+    let tableHtml = '<div class="overflow-x-auto my-3 rounded-xl border border-slate-700 bg-slate-900/90 shadow-md"><table class="w-full text-xs text-left border-collapse">';
+    tableHtml += '<thead><tr class="bg-slate-800 text-slate-200 border-b border-slate-700">';
+    for (const c of header) {
+      tableHtml += `<th class="p-2.5 font-bold">${c.trim()}</th>`;
+    }
+    tableHtml += '</tr></thead><tbody>';
+    for (const r of body) {
+      tableHtml += '<tr class="border-b border-slate-800/60 hover:bg-slate-800/40">';
+      for (const c of r) {
+        tableHtml += `<td class="p-2.5 text-slate-300">${c.trim()}</td>`;
+      }
+      tableHtml += '</tr>';
+    }
+    tableHtml += '</tbody></table></div>';
+    out.push(tableHtml);
+  }
+
+  let text = out.join('\n');
+
+  // Headings
+  text = text.replace(/^#### (.*)$/gm, '<h4 class="text-sm font-bold text-slate-100 mt-3 mb-1">$1</h4>');
+  text = text.replace(/^### (.*)$/gm, '<h3 class="text-base font-extrabold text-blue-300 mt-3 mb-1.5">$1</h3>');
+  text = text.replace(/^## (.*)$/gm, '<h2 class="text-lg font-extrabold text-blue-200 mt-4 mb-2">$1</h2>');
+
+  // Blockquotes
+  text = text.replace(/^> (.*)$/gm, '<blockquote class="border-l-4 border-indigo-500 pl-3 py-1 my-2 italic text-slate-300 bg-slate-800/40 rounded-r-lg">$1</blockquote>');
+
+  // Bold & Italic
+  text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
+  text = text.replace(/\*(.*?)\*/g, '<em class="italic text-slate-300">$1</em>');
+
+  // Lists
+  text = text.replace(/^\d+\.\s+(.*)$/gm, '<div class="flex items-start gap-2 my-1 pl-1"><span class="text-indigo-400 font-bold shrink-0">•</span><span>$1</span></div>');
+  text = text.replace(/^[•\-]\s+(.*)$/gm, '<div class="flex items-start gap-2 my-1 pl-1"><span class="text-slate-400 shrink-0">•</span><span>$1</span></div>');
+
+  // Dividers
+  text = text.replace(/^---$/gm, '<hr class="border-slate-700/80 my-3" />');
+
+  return text;
+}
+
 export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = ({
   isOpen,
   onClose,
   activeClientId,
   company,
-  initialPersonaId = 'CONTABILIDAD_SENIOR',
+  initialPersonaId = 'AGENTE_GENERAL_VERA',
   onOpenConfig,
   onCentralizePurchases,
   onCentralizeSales,
@@ -74,8 +179,13 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
   onCentralizeExpenses,
   onNavigateToTab,
   dtes = [],
+  bankAccounts = [],
   bankMovements = [],
   f29,
+  payrolls = [],
+  inventoryItems = [],
+  productionOrders = [],
+  productionBudgets = [],
   employeesCount = 6,
   inventoryCount = 18,
   expensesCount = 2,
@@ -216,13 +326,21 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
           clientName: company.razonSocial || company.nombreFantasia,
           rut: company.rut,
           dtesCount: dtes.length,
+          dtes,
           pendingPurchasesCount: purchasesPending,
           pendingSalesCount: salesPending,
-          bankAccountsCount: 2,
+          bankAccountsCount: bankAccounts.length || 2,
+          bankAccounts,
+          bankMovements,
           pendingBankNoveltiesCount: bankNoveltiesPending,
           f29IvaTotal: f29Iva,
-          employeesCount,
-          inventoryItemsCount: inventoryCount,
+          f29,
+          employeesCount: payrolls.length || employeesCount,
+          payrolls,
+          inventoryItemsCount: inventoryItems.length || inventoryCount,
+          inventoryItems,
+          productionOrders,
+          productionBudgets,
           pendingExpensesCount: expensesCount,
         },
         [...messages, userMsg]
@@ -387,9 +505,15 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
                 <h3 className="text-base font-extrabold text-white truncate">
                   {selectedPersona.nombre}
                 </h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
-                  {selectedPersona.sexo === 'FEMENINO' ? 'Jefa' : 'Jefe'} de Área
-                </span>
+                {selectedPersona.isExecutiveGeneral ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-purple-300" /> Socia Virtual • Dirección General
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
+                    {selectedPersona.sexo === 'FEMENINO' ? 'Jefa' : 'Jefe'} de Área
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 truncate">
                 {selectedPersona.cargo}
@@ -483,8 +607,15 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
             )}
           </div>
 
-          <div className="text-[11px] text-slate-500 hidden sm:block">
-            Voz: {selectedPersona.voz.voiceURI ? selectedPersona.voz.voiceURI.slice(0, 25) : 'Auto'} • Tono: {selectedPersona.voz.pitch.toFixed(2)}
+          <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-2">
+            {selectedPersona.voz.neuralModel === 'piper' ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-sans font-semibold">
+                <Sparkles className="w-3 h-3 text-purple-400" />
+                Voz Neuronal Piper: {selectedPersona.voz.piperVoiceId || (selectedPersona.sexo === 'MASCULINO' ? 'es_ES-davefx-medium' : 'es_AR-daniela-high')}
+              </span>
+            ) : (
+              <span>Voz: {selectedPersona.voz.voiceURI ? selectedPersona.voz.voiceURI.slice(0, 25) : 'Auto'} • Tono: {selectedPersona.voz.pitch.toFixed(2)}</span>
+            )}
           </div>
         </div>
 
@@ -523,15 +654,76 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
                 </div>
 
                 {/* Contenido en Markdown o Texto */}
-                <div className="whitespace-pre-wrap space-y-2">
+                <div className="space-y-2">
                   {msg.markdown ? (
-                    <div className="prose prose-invert prose-xs max-w-none">
-                      {msg.markdown}
-                    </div>
+                    <div
+                      className="prose prose-invert prose-xs max-w-none text-slate-200"
+                      dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(msg.markdown) }}
+                    />
                   ) : (
-                    <p>{msg.text}</p>
+                    <p className="whitespace-pre-wrap">{msg.text}</p>
                   )}
                 </div>
+
+                {/* Botón Destacado WhatsApp si el mensaje contiene enlace */}
+                {(() => {
+                  const fullText = (msg.markdown || '') + ' ' + (msg.text || '');
+                  const waMatch = fullText.match(/https:\/\/api\.whatsapp\.com\/send\?text=[^\s"'>]+/);
+                  if (!waMatch) return null;
+                  const waUrl = waMatch[0];
+
+                  // Título y descripción dinámica según el tipo de reporte generado
+                  let bannerTitle = 'Resumen Ejecutivo Listo para WhatsApp';
+                  let bannerDesc = 'Compartir reporte ejecutivo y estado de negocio con socios y directorio';
+
+                  const decodedWa = decodeURIComponent(waUrl).toLowerCase();
+                  if (decodedWa.includes('conciliaci') || decodedWa.includes('bancaria') || decodedWa.includes('cartola')) {
+                    bannerTitle = 'Informe Oficial de Conciliación Bancaria';
+                    bannerDesc = 'Compartir saldo según cartola, libro banco cuadrado y auditoría con los socios';
+                  } else if (decodedWa.includes('remuneraci') || decodedWa.includes('previred') || decodedWa.includes('leyes sociales')) {
+                    bannerTitle = 'Resumen de Nómina & Leyes Sociales (Previred)';
+                    bannerDesc = 'Compartir sueldos líquidos, desglose de imposiciones y fecha límite con el directorio';
+                  } else if (decodedWa.includes('stock') || decodedWa.includes('inventario') || decodedWa.includes('bodega')) {
+                    bannerTitle = 'Reporte de Existencias & Stock Valorizado (PMP)';
+                    bannerDesc = 'Compartir stock disponible, costos PMP y distribución por bodega con operaciones y socios';
+                  } else if (decodedWa.includes('producci') || decodedWa.includes('orden de fabricaci') || decodedWa.includes('orden de producci')) {
+                    bannerTitle = 'Reporte de Avance de Producción & Costos NIC 2';
+                    bannerDesc = 'Compartir avance físico, entrega y costos MPD, MOD y CIF con gerencia y socios';
+                  } else if (decodedWa.includes('cotizaci') || decodedWa.includes('presupuesto') || decodedWa.includes('pipeline')) {
+                    bannerTitle = 'Pipeline de Presupuestos & Cotizaciones Enviadas';
+                    bannerDesc = 'Compartir cotizaciones vigentes a clientes, montos netos y márgenes presupuestados';
+                  } else if (decodedWa.includes('flujo de caja') || decodedWa.includes('what-if')) {
+                    bannerTitle = 'Simulación de Flujo de Caja Proyectado (What-If)';
+                    bannerDesc = 'Compartir reprogramación de pagos, prórroga de cobranzas y colchón de liquidez con socios';
+                  }
+
+                  return (
+                    <div className="mt-3.5 p-3.5 bg-gradient-to-r from-emerald-950/90 via-slate-900 to-emerald-950/80 border border-emerald-500/50 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white shrink-0 shadow-sm">
+                          <MessageSquare className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                            <span>{bannerTitle}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">1-Click</span>
+                          </div>
+                          <div className="text-[11px] text-emerald-400/80">
+                            {bannerDesc}
+                          </div>
+                        </div>
+                      </div>
+                      <a
+                        href={waUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 shadow-md hover:scale-102 transition-all cursor-pointer shrink-0"
+                      >
+                        <span>📱 Abrir en WhatsApp</span>
+                      </a>
+                    </div>
+                  );
+                })()}
 
                 {/* Banner de Acción Ejecutada si aplica */}
                 {msg.actionResult && (

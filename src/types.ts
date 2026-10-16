@@ -1134,6 +1134,7 @@ export interface AccountingEntryLine {
   rutAuxiliar?: string;
   nombreAuxiliar?: string;
   centroCosto?: string;
+  proyecto?: string; // Código o Nombre del Proyecto / Obra / Contrato (WIP / IFRS)
   documentoRef?: string;
   dteIdAsociado?: string;
   tipoDocumentoRef?: TipoDocumentoRespaldo | string;
@@ -1187,9 +1188,19 @@ export interface AccountPlanItem {
   esContracuentaEfectivo?: boolean; // CONTRACUENTA EFECTIVO Y EFECTIVO EQUIVALENTE (Puente Tesorería)
   requiereProyecto?: boolean; // PROYECTO (Centro de Proyecto / Obra / Contrato)
   notasExplicativas?: number[]; // Números de Notas a los Estados Financieros (NIIF / CMF)
+  tipoAuxiliarPermitido?: 'TODOS' | 'PROVEEDOR' | 'CLIENTE' | 'HONORARIO' | 'EMPLEADO';
+  auxiliarPredeterminadoRut?: string;
 }
 
 export type AccountNature = 'DEUDORA' | 'ACREEDORA';
+
+export interface AuxiliaryBankMovementInfo {
+  bancoNombre?: string;
+  tipoMedio?: string;
+  folioOperacion?: string;
+  fechaOperacion?: string;
+  fechaCobro?: string;
+}
 
 export interface HierarchicalAccountItem {
   codigo: string;
@@ -1214,6 +1225,8 @@ export interface HierarchicalAccountItem {
   requiereProyecto?: boolean; // PROYECTO
   // Notas a los Estados Financieros (NIIF / CMF)
   notasExplicativas?: number[]; // Uno o varios números de notas asociadas (ej: [3, 17])
+  tipoAuxiliarPermitido?: 'TODOS' | 'PROVEEDOR' | 'CLIENTE' | 'HONORARIO' | 'EMPLEADO';
+  auxiliarPredeterminadoRut?: string;
   // Campos de personalización por empresa y presentación
   nombreGrupo?: string;
   nombreSubgrupo?: string;

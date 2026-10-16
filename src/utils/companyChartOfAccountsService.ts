@@ -385,7 +385,24 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
 }
 
 /**
- * Guardar Plan de Cuentas personalizado de la empresa
+ * Normaliza un código de cuenta contable para comparación homogénea eliminando ceros a la izquierda en subniveles
+ * Ejemplo: '6.1.02.001' -> '6.1.2.1', '6.1.2.1' -> '6.1.2.1'
+ */
+export function normalizeAccountCodeKey(code?: string): string {
+  if (!code) return '';
+  return code
+    .trim()
+    .toLowerCase()
+    .split('.')
+    .map((part) => {
+      const num = parseInt(part, 10);
+      return isNaN(num) ? part.trim() : String(num);
+    })
+    .join('.');
+}
+
+/**
+ * Guardar Plan de Cuentas personalizado de la empresa (Sincronización Local + Servidor Multi-Usuario)
  */
 export function saveCompanyChartOfAccounts(empresaRut: string, chart: HierarchicalAccountItem[]): void {
   const key = getStorageKey(empresaRut, 'accounts');
@@ -394,6 +411,81 @@ export function saveCompanyChartOfAccounts(empresaRut: string, chart: Hierarchic
   } catch (e) {
     console.error('Error guardando plan de cuentas en localStorage:', e);
   }
+
+  // Notificar en caliente a la ventana y pestañas locales
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('companyChartUpdated', {
+          detail: { empresaRut, chart },
+        })
+      );
+    } catch {}
+  }
+
+  // Sincronizar en segundo plano con el backend y base de datos MySQL (para que otros usuarios y el contador lo vean)
+  if (typeof fetch !== 'undefined') {
+    fetch('/api/accounting/chart-of-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: empresaRut, chart }),
+    }).catch((err) => {
+      console.warn('[CompanyChartService] No se pudo sincronizar plan de cuentas con el servidor:', err);
+    });
+  }
+}
+
+/**
+ * Obtener Plan de Cuentas actualizado desde el Servidor / Base de Datos MySQL
+ */
+export async function fetchCompanyChartOfAccounts(empresaRut: string): Promise<HierarchicalAccountItem[]> {
+  try {
+    const res = await fetch(`/api/accounting/chart-of-accounts?empresaId=${encodeURIComponent(empresaRut)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        // Mapear al modelo frontend tipado
+        const mapped: HierarchicalAccountItem[] = json.data.map((item: any) => ({
+          codigo: item.codigo || item.codigoCuenta,
+          nombre: item.nombre || item.nombreCuenta,
+          clase: item.clase || (item.codigo || item.codigoCuenta ? (parseInt(String(item.codigo || item.codigoCuenta).charAt(0), 10) as any) : 1),
+          grupo: item.grupo || (item.codigo || item.codigoCuenta ? String(item.codigo || item.codigoCuenta).substring(0, 3) : '1.1'),
+          subgrupo: item.subgrupo || (item.codigo || item.codigoCuenta ? String(item.codigo || item.codigoCuenta).substring(0, 6) : '1.1.01'),
+          nivel: item.nivel || 5,
+          tipo: item.tipo || (item.clasificacion === 'ACTIVO' ? 'ACTIVO' : item.clasificacion === 'PASIVO' ? 'PASIVO' : item.clasificacion === 'PATRIMONIO' ? 'PATRIMONIO' : item.clasificacion === 'INGRESOS' ? 'INGRESO' : item.clasificacion === 'COSTOS' ? 'COSTO' : 'GASTO'),
+          clasificacion: item.clasificacion || 'OPERACIONAL',
+          naturaleza: item.naturaleza || (item.tipo === 'PASIVO' || item.tipo === 'PATRIMONIO' || item.tipo === 'INGRESO' ? 'ACREEDORA' : 'DEUDORA'),
+          requiereAuxiliarRut: item.requiereAuxiliarRut !== undefined ? Boolean(item.requiereAuxiliarRut) : Boolean(item.aceptaAuxiliar),
+          requiereCentroCosto: Boolean(item.requiereCentroCosto),
+          esConciliableBancaria: Boolean(item.esConciliableBancaria),
+          activa: item.activa !== false,
+          manejaMultimoneda: Boolean(item.manejaMultimoneda),
+          monedaCodigo: item.monedaCodigo || 'CLP',
+          requiereDocReferencia: item.requiereDocReferencia !== undefined ? Boolean(item.requiereDocReferencia) : Boolean(item.requiereDocRef),
+          esEfectivoEquivalente: Boolean(item.esEfectivoEquivalente),
+          esContracuentaEfectivo: Boolean(item.esContracuentaEfectivo),
+          requiereProyecto: Boolean(item.requiereProyecto),
+          notasExplicativas: item.notasExplicativas || undefined,
+          tipoAuxiliarPermitido: item.tipoAuxiliarPermitido || undefined,
+          auxiliarPredeterminadoRut: item.auxiliarPredeterminadoRut || undefined,
+          agrupacionFiscal: item.agrupacionFiscal,
+          agrupacionMatrizExtranjera: item.agrupacionMatrizExtranjera,
+          agrupacionPersonalizada: item.agrupacionPersonalizada,
+          empresaRut,
+        }));
+
+        const key = getStorageKey(empresaRut, 'accounts');
+        try {
+          localStorage.setItem(key, JSON.stringify(mapped));
+        } catch {}
+
+        return mapped;
+      }
+    }
+  } catch (err) {
+    console.warn('[CompanyChartService] Error al obtener plan del servidor:', err);
+  }
+  return loadCompanyChartOfAccounts(empresaRut);
 }
 
 /**
@@ -418,7 +510,7 @@ export function loadCompanyGroups(empresaRut: string): AccountGroupDefinition[] 
 }
 
 /**
- * Guardar Grupos y Subgrupos personalizados de la empresa
+ * Guardar Grupos y Subgrupos personalizados de la empresa (Sincronización Local + Servidor Multi-Usuario)
  */
 export function saveCompanyGroups(empresaRut: string, groups: AccountGroupDefinition[]): void {
   const key = getStorageKey(empresaRut, 'groups');
@@ -427,6 +519,46 @@ export function saveCompanyGroups(empresaRut: string, groups: AccountGroupDefini
   } catch (e) {
     console.error('Error guardando grupos en localStorage:', e);
   }
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('companyGroupsUpdated', {
+          detail: { empresaRut, groups },
+        })
+      );
+    } catch {}
+  }
+
+  if (typeof fetch !== 'undefined') {
+    fetch('/api/accounting/chart-groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: empresaRut, groups }),
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Obtener Grupos y Subgrupos actualizados desde el Servidor
+ */
+export async function fetchCompanyGroups(empresaRut: string): Promise<AccountGroupDefinition[]> {
+  try {
+    const res = await fetch(`/api/accounting/chart-groups?empresaId=${encodeURIComponent(empresaRut)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        const key = getStorageKey(empresaRut, 'groups');
+        try {
+          localStorage.setItem(key, JSON.stringify(json.data));
+        } catch {}
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('[CompanyChartService] Error al obtener grupos del servidor:', err);
+  }
+  return loadCompanyGroups(empresaRut);
 }
 
 /**

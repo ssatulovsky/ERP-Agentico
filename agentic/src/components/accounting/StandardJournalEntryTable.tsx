@@ -13,6 +13,7 @@ export interface StandardJournalLine {
   haber: number | string;
   rutAuxiliar?: string | null;
   centroCosto?: string | null;
+  proyecto?: string | null;
   glosaDetalle?: string | null;
 }
 
@@ -68,6 +69,7 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     haber: number;
     rutAuxiliar?: string | null;
     centroCosto?: string | null;
+    proyecto?: string | null;
   }> = [];
 
   const creditLines: Array<{
@@ -77,6 +79,7 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     haber: number;
     rutAuxiliar?: string | null;
     centroCosto?: string | null;
+    proyecto?: string | null;
   }> = [];
 
   rawLines.forEach((l) => {
@@ -97,14 +100,15 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     const nombre = l.nombreCuenta || l.cuentaNombre || l.cuenta || 'Cuenta Contable';
     const rutAuxiliar = l.rutAuxiliar || null;
     const centroCosto = l.centroCosto || null;
+    const proyecto = l.proyecto || (l as any).centroProyecto || null;
 
     if (d > 0) {
-      debitLines.push({ codigo, nombre, debe: d, haber: 0, rutAuxiliar, centroCosto });
+      debitLines.push({ codigo, nombre, debe: d, haber: 0, rutAuxiliar, centroCosto, proyecto });
     } else if (h > 0) {
-      creditLines.push({ codigo, nombre, debe: 0, haber: h, rutAuxiliar, centroCosto });
+      creditLines.push({ codigo, nombre, debe: 0, haber: h, rutAuxiliar, centroCosto, proyecto });
     } else {
       // Línea neutra o con cero
-      debitLines.push({ codigo, nombre, debe: 0, haber: 0, rutAuxiliar, centroCosto });
+      debitLines.push({ codigo, nombre, debe: 0, haber: 0, rutAuxiliar, centroCosto, proyecto });
     }
   });
 
@@ -122,7 +126,13 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     debitLines.forEach((l) => {
       const idxStr = String(idx++).padStart(2, ' ');
       const codStr = l.codigo.padEnd(9, ' ');
-      const extra = [l.centroCosto ? `[CC: ${l.centroCosto}]` : '', l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : ''].filter(Boolean).join(' ');
+      const extra = [
+        l.centroCosto ? `[CC: ${l.centroCosto}]` : '',
+        l.proyecto ? `[Pry: ${l.proyecto}]` : '',
+        l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
       const fullNom = extra ? `${l.nombre} ${extra}` : l.nombre;
       const nomStr = (fullNom.length > 36 ? fullNom.slice(0, 33) + '...' : fullNom).padEnd(38, ' ');
       const dStr = formatNumberCL(l.debe).padStart(13, ' ');
@@ -133,7 +143,13 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
     creditLines.forEach((l) => {
       const idxStr = String(idx++).padStart(2, ' ');
       const codStr = l.codigo.padEnd(9, ' ');
-      const extra = [l.centroCosto ? `[CC: ${l.centroCosto}]` : '', l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : ''].filter(Boolean).join(' ');
+      const extra = [
+        l.centroCosto ? `[CC: ${l.centroCosto}]` : '',
+        l.proyecto ? `[Pry: ${l.proyecto}]` : '',
+        l.rutAuxiliar ? `[RUT: ${l.rutAuxiliar}]` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
       const fullNom = extra ? `  a ${l.nombre} ${extra}` : `  a ${l.nombre}`;
       const nomStr = (fullNom.length > 36 ? fullNom.slice(0, 33) + '...' : fullNom).padEnd(38, ' ');
       const dStr = ''.padStart(13, ' ');
@@ -315,6 +331,11 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
                             CC: {line.centroCosto}
                           </span>
                         )}
+                        {line.proyecto && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-cyan-50 text-cyan-700 font-mono border border-cyan-200">
+                            Pry: {line.proyecto}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -351,6 +372,11 @@ export const StandardJournalEntryTable: React.FC<StandardJournalEntryTableProps>
                         {line.centroCosto && (
                           <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 font-mono border border-purple-200">
                             CC: {line.centroCosto}
+                          </span>
+                        )}
+                        {line.proyecto && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-cyan-50 text-cyan-700 font-mono border border-cyan-200">
+                            Pry: {line.proyecto}
                           </span>
                         )}
                       </div>

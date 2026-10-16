@@ -2,6 +2,50 @@ import { AgentPersona } from '../types/agentPersona';
 
 export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
   {
+    id: 'AGENTE_GENERAL_VERA',
+    nombre: 'Vera Albornoz',
+    sexo: 'FEMENINO',
+    cargo: 'Directora General & Socia Financiera (Socia Virtual)',
+    area: 'Dirección General, Flujo de Caja & Proyecciones Estratégicas',
+    color: '#0f766e',
+    avatarBg: 'bg-teal-700',
+    avatarText: 'VA',
+    isExecutiveGeneral: true,
+    descripcion: 'Directora Ejecutiva y Socia Financiera Virtual de la empresa. Orquesta todas las áreas del ERP, proyecta la liquidez en tiempo real, simula escenarios What-If de postergación de pagos/cobros y redacta reportes ejecutivos para WhatsApp.',
+    saludoPersonal: 'Hola socio. Soy Vera, tu Directora Financiera y Socia Virtual. Tengo el flujo de caja, las cuentas por cobrar y los compromisos de pago actualizados en tiempo real. ¿Qué escenario o consulta financiera deseas que evaluemos hoy?',
+    voz: {
+      lang: 'es-ES',
+      pitch: 1.0,
+      rate: 1.0,
+      volume: 1.0,
+      neuralModel: 'piper',
+      piperVoiceId: 'es_AR-daniela-high',
+    },
+    accionesSugeridas: [
+      {
+        id: 'simular_flujo_caja',
+        label: 'Simular escenario de flujo de caja (What-If)',
+        prompt: 'Oye Vera, necesito contar con el flujo de caja actualizado al momento, teniendo presente que reprogramaremos un pago a proveedor y un cliente se retrasará unos 15 días.',
+        categoria: 'EJECUCION',
+        targetTab: 'bank',
+      },
+      {
+        id: 'resumen_whatsapp_socio',
+        label: 'Generar resumen ejecutivo para WhatsApp',
+        prompt: 'Vera, prepárame un resumen conciso para enviar por WhatsApp al directorio con el saldo disponible y vencimientos de la semana.',
+        categoria: 'CONSULTA',
+        targetTab: 'bank',
+      },
+      {
+        id: 'estado_liquidez_general',
+        label: 'Radiografía de liquidez y solvencia general',
+        prompt: 'Vera, dame una radiografía completa del negocio: bancos, IVA F29 estimado, cuentas por pagar críticas y cobranza pendiente.',
+        categoria: 'AUDITORIA',
+        targetTab: 'orchestrator',
+      },
+    ],
+  },
+  {
     id: 'CONTABILIDAD_SENIOR',
     nombre: 'Camila Valenzuela',
     sexo: 'FEMENINO',

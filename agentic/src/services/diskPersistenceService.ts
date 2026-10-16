@@ -40,6 +40,11 @@ export interface DiskDataStore {
   expenseItems?: any[];
   expenseProjects?: any[];
   credentialsVault?: any[];
+  chartsOfAccounts?: Record<string, any[]>;
+  auxiliaries?: Record<string, any[]>;
+  groups?: Record<string, any[]>;
+  financialNotes?: Record<string, any[]>;
+  clientStates?: Record<string, any>;
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -67,6 +72,11 @@ class DiskPersistenceService {
     expenseItems: [],
     expenseProjects: [],
     credentialsVault: [],
+    chartsOfAccounts: {},
+    auxiliaries: {},
+    groups: {},
+    financialNotes: {},
+    clientStates: {},
   };
 
   private isInitialized = false;
@@ -107,6 +117,11 @@ class DiskPersistenceService {
           expenseReports: parsed.expenseReports || [],
           expenseItems: parsed.expenseItems || [],
           expenseProjects: parsed.expenseProjects || [],
+          chartsOfAccounts: parsed.chartsOfAccounts || {},
+          auxiliaries: parsed.auxiliaries || {},
+          groups: parsed.groups || {},
+          financialNotes: parsed.financialNotes || {},
+          clientStates: parsed.clientStates || {},
           ...parsed,
         };
         if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
@@ -1234,6 +1249,192 @@ class DiskPersistenceService {
         createdAt: project.createdAt || new Date().toISOString(),
       });
     }
+    this.scheduleFlush();
+    return project;
+  }
+
+  public updateExpenseProject(id: string, updates: any): any | null {
+    if (!this.store.expenseProjects) this.store.expenseProjects = [];
+    const idx = this.store.expenseProjects.findIndex((p) => p.id === id || p.codigo === id);
+    if (idx >= 0) {
+      this.store.expenseProjects[idx] = { ...this.store.expenseProjects[idx], ...updates, updatedAt: new Date().toISOString() };
+      this.scheduleFlush();
+      return this.store.expenseProjects[idx];
+    }
+    return null;
+  }
+
+  public deleteExpenseProject(id: string): boolean {
+    if (!this.store.expenseProjects) return false;
+    const initialLen = this.store.expenseProjects.length;
+    this.store.expenseProjects = this.store.expenseProjects.filter((p) => p.id !== id && p.codigo !== id);
+    if (this.store.expenseProjects.length < initialLen) {
+      this.scheduleFlush();
+      return true;
+    }
+    return false;
+  }
+
+  public getCompanyChart(empresaId: string): any[] | null {
+    if (!this.store.chartsOfAccounts) this.store.chartsOfAccounts = {};
+    return this.store.chartsOfAccounts[empresaId] || null;
+  }
+
+  public saveCompanyChart(empresaId: string, chart: any[]): void {
+    if (!this.store.chartsOfAccounts) this.store.chartsOfAccounts = {};
+    this.store.chartsOfAccounts[empresaId] = chart;
+    this.scheduleFlush();
+  }
+
+  public updateCompanyAccount(empresaId: string, account: any): void {
+    if (!this.store.chartsOfAccounts) this.store.chartsOfAccounts = {};
+    const chart = this.store.chartsOfAccounts[empresaId] ? [...this.store.chartsOfAccounts[empresaId]] : [];
+    const idx = chart.findIndex((a: any) => a.codigo === account.codigo);
+    if (idx >= 0) {
+      chart[idx] = { ...chart[idx], ...account };
+    } else {
+      chart.push(account);
+    }
+    this.store.chartsOfAccounts[empresaId] = chart;
+    this.scheduleFlush();
+  }
+
+  // ============================================================================
+  // AUXILIARES Y PADRÓN DE CLIENTES/PROVEEDORES (MULTI-TENANT & MULTI-USUARIO)
+  // ============================================================================
+  public getCompanyAuxiliaries(empresaId: string): any[] | null {
+    if (!this.store.auxiliaries) this.store.auxiliaries = {};
+    return this.store.auxiliaries[empresaId] || null;
+  }
+
+  public saveCompanyAuxiliaries(empresaId: string, auxiliaries: any[]): void {
+    if (!this.store.auxiliaries) this.store.auxiliaries = {};
+    this.store.auxiliaries[empresaId] = auxiliaries;
+    this.scheduleFlush();
+
+    // Sincronizar asíncronamente con MySQL si está conectado
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          const db = getMysqlDb();
+          const { clientAuxiliariesMaster } = await import('../db/mysqlSchema');
+          for (const aux of auxiliaries) {
+            const rawRut = (aux.rut || aux.rutCompleto || '').trim();
+            if (!rawRut) continue;
+            const auxId = aux.id || `aux-${empresaId}-${rawRut}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const cleanTipo = String(aux.tipo || aux.tipoAuxiliar || 'CLIENTE').toUpperCase();
+            const tipoValid = cleanTipo === 'PROVEEDOR' ? 'PROVEEDOR' : cleanTipo === 'CLIENTE' ? 'CLIENTE' : cleanTipo === 'HONORARIOS' || cleanTipo === 'HONORARIO' ? 'HONORARIOS' : 'AMBOS';
+
+            await db.insert(clientAuxiliariesMaster).values({
+              id: auxId,
+              empresaId,
+              rutCompleto: rawRut,
+              codigoAuxiliar: aux.codigoAuxiliar || rawRut.replace(/[^0-9Kk]/g, ''),
+              razonSocial: aux.razonSocial || rawRut,
+              nombreFantasia: aux.nombreFantasia || null,
+              giroComercial: aux.giroComercial || 'Giro General',
+              inactivo: Boolean(aux.inactivo),
+              telefonoPrincipal: aux.telefonoPrincipal || null,
+              emailContacto: aux.emailContacto || null,
+              nombreContacto: aux.nombreContacto || null,
+              emailDte: aux.emailDte || aux.emailContacto || 'dte@empresa.cl',
+              direccion: aux.direccion || 'Dirección Comercial',
+              region: aux.region || 'Metropolitana',
+              ciudad: aux.ciudad || 'Santiago',
+              comuna: aux.comuna || 'Santiago',
+              tipoAuxiliar: tipoValid,
+              limiteCredito: String(Number(aux.limiteCredito) || 0),
+              terminosPago: aux.terminosPago || '30 días factura',
+              vendedor: aux.vendedor || null,
+              descuentoPorcentaje: String(Number(aux.descuentoPorcentaje) || 0),
+              sucursales: aux.sucursales ? (typeof aux.sucursales === 'string' ? JSON.parse(aux.sucursales) : aux.sucursales) : null,
+            }).onDuplicateKeyUpdate({
+              set: {
+                razonSocial: aux.razonSocial || rawRut,
+                nombreFantasia: aux.nombreFantasia || null,
+                giroComercial: aux.giroComercial || 'Giro General',
+                inactivo: Boolean(aux.inactivo),
+                telefonoPrincipal: aux.telefonoPrincipal || null,
+                emailContacto: aux.emailContacto || null,
+                nombreContacto: aux.nombreContacto || null,
+                emailDte: aux.emailDte || aux.emailContacto || 'dte@empresa.cl',
+                direccion: aux.direccion || 'Dirección Comercial',
+                region: aux.region || 'Metropolitana',
+                ciudad: aux.ciudad || 'Santiago',
+                comuna: aux.comuna || 'Santiago',
+                tipoAuxiliar: tipoValid,
+                limiteCredito: String(Number(aux.limiteCredito) || 0),
+                terminosPago: aux.terminosPago || '30 días factura',
+                vendedor: aux.vendedor || null,
+                descuentoPorcentaje: String(Number(aux.descuentoPorcentaje) || 0),
+                sucursales: aux.sucursales ? (typeof aux.sucursales === 'string' ? JSON.parse(aux.sucursales) : aux.sucursales) : null,
+              }
+            });
+          }
+        } catch (err: any) {
+          console.warn('[DiskPersistence] Error al sincronizar auxiliares en MySQL:', err.message);
+        }
+      })();
+    }
+  }
+
+  public addOrUpdateCompanyAuxiliary(empresaId: string, aux: any): any[] {
+    if (!this.store.auxiliaries) this.store.auxiliaries = {};
+    const list = this.store.auxiliaries[empresaId] ? [...this.store.auxiliaries[empresaId]] : [];
+    const cleanRut = (aux.rut || aux.rutCompleto || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    const idx = list.findIndex((a: any) => (a.rut || a.rutCompleto || '').replace(/[\.\-\s]/g, '').toUpperCase() === cleanRut);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...aux };
+    } else {
+      list.unshift(aux);
+    }
+    this.store.auxiliaries[empresaId] = list;
+    this.scheduleFlush();
+    this.saveCompanyAuxiliaries(empresaId, list);
+    return list;
+  }
+
+  // ============================================================================
+  // GRUPOS Y SUBGRUPOS DEL PLAN DE CUENTAS
+  // ============================================================================
+  public getCompanyGroups(empresaId: string): any[] | null {
+    if (!this.store.groups) this.store.groups = {};
+    return this.store.groups[empresaId] || null;
+  }
+
+  public saveCompanyGroups(empresaId: string, groups: any[]): void {
+    if (!this.store.groups) this.store.groups = {};
+    this.store.groups[empresaId] = groups;
+    this.scheduleFlush();
+  }
+
+  // ============================================================================
+  // NOTAS EXPLICATIVAS IFRS A LOS ESTADOS FINANCIEROS
+  // ============================================================================
+  public getCompanyFinancialNotes(empresaId: string): any[] | null {
+    if (!this.store.financialNotes) this.store.financialNotes = {};
+    return this.store.financialNotes[empresaId] || null;
+  }
+
+  public saveCompanyFinancialNotes(empresaId: string, notes: any[]): void {
+    if (!this.store.financialNotes) this.store.financialNotes = {};
+    this.store.financialNotes[empresaId] = notes;
+    this.scheduleFlush();
+  }
+
+  // ============================================================================
+  // ESTADOS DE CLIENTES Y PARÁMETROS GENÉRICOS (MULTI-TENANT & MULTI-USUARIO)
+  // ============================================================================
+  public getClientState(empresaId: string, key: string): any | null {
+    if (!this.store.clientStates) this.store.clientStates = {};
+    const tenantKey = `${empresaId}__${key}`;
+    return this.store.clientStates[tenantKey] !== undefined ? this.store.clientStates[tenantKey] : null;
+  }
+
+  public saveClientState(empresaId: string, key: string, data: any): void {
+    if (!this.store.clientStates) this.store.clientStates = {};
+    const tenantKey = `${empresaId}__${key}`;
+    this.store.clientStates[tenantKey] = data;
     this.scheduleFlush();
   }
 

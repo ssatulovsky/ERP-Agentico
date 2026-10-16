@@ -34,7 +34,8 @@ import {
   UserPlus,
   CreditCard,
   Mic,
-  Volume2
+  Volume2,
+  Smartphone
 } from 'lucide-react';
 import { 
   AccountingFirmProfile, 
@@ -59,6 +60,7 @@ import { SystemGeneralConfigModal } from './tenancy/SystemGeneralConfigModal';
 import { IfrsChartOfAccountsModal } from './tenancy/IfrsChartOfAccountsModal';
 import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterModal';
 import { AgentPersonasConfigSection } from './voice/AgentPersonasConfigSection';
+import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePanel';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -89,7 +91,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onUpdateSystemParams,
   onOpenVoiceDialogue,
 }) => {
-  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE'>('PERSONAS_VOICE');
+  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE' | 'WHATSAPP_BRIDGE'>('WHATSAPP_BRIDGE');
   
   // Modales ERP Multi-Tenant (Conforme a Capturas del Sistema)
   const [isErpOnboardingOpen, setIsErpOnboardingOpen] = useState(false);
@@ -387,6 +389,18 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         {/* Section Navigation Tabs */}
         <div className="flex items-center gap-2 mt-6 pt-4 border-t border-slate-100 overflow-x-auto text-xs font-semibold">
           <button
+            onClick={() => setActiveSection('WHATSAPP_BRIDGE')}
+            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeSection === 'WHATSAPP_BRIDGE'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Smartphone className="w-4 h-4 text-emerald-300 animate-pulse" />
+            <span>WhatsApp Web QR & Lista Blanca (Seguridad RBAC)</span>
+          </button>
+
+          <button
             onClick={() => setActiveSection('PERSONAS_VOICE')}
             className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
               activeSection === 'PERSONAS_VOICE'
@@ -394,7 +408,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <Mic className="w-4 h-4 text-indigo-300 animate-pulse" />
+            <Mic className="w-4 h-4 text-indigo-300" />
             <span>Personas a Cargo & Voces de Agentes</span>
           </button>
 
@@ -447,6 +461,14 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </button>
         </div>
       </div>
+
+      {/* SECTION -2: WHATSAPP WEB QR & LISTA BLANCA RBAC POR AGENTE */}
+      {activeSection === 'WHATSAPP_BRIDGE' && (
+        <WhatsAppSecurityBridgePanel
+          activeClientId={activeClientId}
+          clientName={clients.find(c => c.id === activeClientId)?.razonSocial || firm.nombreFantasia}
+        />
+      )}
 
       {/* SECTION -1: PERSONAS A CARGO, IDENTIDAD Y VOCES */}
       {activeSection === 'PERSONAS_VOICE' && (
@@ -1677,6 +1699,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       <ClientAuxiliariesMasterModal
         isOpen={isAuxiliariesModalOpen}
         onClose={() => setIsAuxiliariesModalOpen(false)}
+        companyRut={activeClient?.rut || 'default'}
         onSelectAuxiliary={(aux) => {
           console.log('Auxiliar seleccionado:', aux);
         }}

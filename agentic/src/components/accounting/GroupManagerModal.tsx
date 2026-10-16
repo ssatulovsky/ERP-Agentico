@@ -7,15 +7,15 @@ interface GroupManagerModalProps {
   onClose: () => void;
   groups: AccountGroupDefinition[];
   onSaveGroups: (groups: AccountGroupDefinition[]) => void;
-  accounts: HierarchicalAccountItem[];
+  accounts?: HierarchicalAccountItem[];
 }
 
 export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
   isOpen,
   onClose,
-  groups,
+  groups = [],
   onSaveGroups,
-  accounts,
+  accounts = [],
 }) => {
   const [selectedClase, setSelectedClase] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1);
   const [localGroups, setLocalGroups] = useState<AccountGroupDefinition[]>(groups);

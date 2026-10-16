@@ -12,8 +12,116 @@ import {
   Radio, 
   Mic, 
   Edit3,
-  Bot
+  Bot,
+  Download,
+  RefreshCw
 } from 'lucide-react';
+
+interface PiperVoiceItem {
+  id: string;
+  name: string;
+  lang: string;
+  gender: 'FEMENINO' | 'MASCULINO';
+  quality: 'high' | 'medium' | 'low' | 'x_low';
+  region: string;
+  description: string;
+  sampleSentence: string;
+  isInstalled?: boolean;
+  fileSizeMb?: number;
+}
+
+const DEFAULT_PIPER_VOICES: PiperVoiceItem[] = [
+  {
+    id: 'es_AR-daniela-high',
+    name: 'Vera / Daniela High (Femenina Ejecutiva 22kHz)',
+    lang: 'es-AR',
+    gender: 'FEMENINO',
+    quality: 'high',
+    region: 'Argentina / Latam',
+    description: 'Voz femenina de alta fidelidad (22kHz), cálida, ejecutiva y sumamente natural.',
+    sampleSentence: 'Hola socio, tengo las proyecciones de flujo de caja y compromisos bancarios listos para revisar.',
+  },
+  {
+    id: 'es_MX-ald-medium',
+    name: 'Sofía / Camila / Ald Medium (Femenina Neutra)',
+    lang: 'es-MX',
+    gender: 'FEMENINO',
+    quality: 'medium',
+    region: 'México / Latam',
+    description: 'Voz femenina hispana neutra, ágil y de baja latencia.',
+    sampleSentence: 'Conciliación bancaria procesada con éxito en las cuentas de la empresa.',
+  },
+  {
+    id: 'es_MX-ald-x_low',
+    name: 'Ald Ultrarrápida (Femenina x_low Ligera)',
+    lang: 'es-MX',
+    gender: 'FEMENINO',
+    quality: 'x_low',
+    region: 'México / Latam',
+    description: 'Voz femenina ultraligera (~16MB), consumo mínimo de CPU.',
+    sampleSentence: 'Órdenes de compra y facturas procesadas en el sistema.',
+  },
+  {
+    id: 'es_MX-claude-high',
+    name: 'Claude Consultor Directivo (Masculina High 22kHz)',
+    lang: 'es-MX',
+    gender: 'MASCULINO',
+    quality: 'high',
+    region: 'México / Latam',
+    description: 'Voz masculina de alta definición (22kHz), dicción impecable y porte corporativo.',
+    sampleSentence: 'Hemos completado la revisión fiscal y la proyección del estado de resultados del trimestre.',
+  },
+  {
+    id: 'es_ES-sharvard-medium',
+    name: 'Rodrigo / Tomás / Sharvard Medium (Masculina Sobria)',
+    lang: 'es-ES',
+    gender: 'MASCULINO',
+    quality: 'medium',
+    region: 'España',
+    description: 'Voz masculina sobria, profesional y pausada.',
+    sampleSentence: 'Los asientos del Libro Diario y el cálculo de impuestos se encuentran cuadrados y sellados.',
+  },
+  {
+    id: 'es_ES-davefx-medium',
+    name: 'Matías / Juan Pablo / Davefx Medium (Masculina Barítono)',
+    lang: 'es-ES',
+    gender: 'MASCULINO',
+    quality: 'medium',
+    region: 'España',
+    description: 'Voz masculina sobria, profesional y con excelente articulación.',
+    sampleSentence: 'El saldo oficial en bancos y la emisión de facturas electrónicas están sincronizados.',
+  },
+  {
+    id: 'es_ES-carlfm-x_low',
+    name: 'Ignacio / Carlfm x_low (Masculina Ultrarrápida)',
+    lang: 'es-ES',
+    gender: 'MASCULINO',
+    quality: 'x_low',
+    region: 'España',
+    description: 'Voz masculina ultraligera y rápida, optimizada para mínima latencia.',
+    sampleSentence: 'Stock de materias primas y órdenes de producción verificadas en bodega.',
+  },
+  {
+    id: 'es_ES-mls_10246-low',
+    name: 'Elena / MLS 10246 (Femenina Low Ligera)',
+    lang: 'es-ES',
+    gender: 'FEMENINO',
+    quality: 'low',
+    region: 'España',
+    description: 'Voz femenina natural basada en corpus MLS, ligera y fluida.',
+    sampleSentence: 'Informe de remuneraciones e imposiciones listo para su aprobación.',
+  },
+  {
+    id: 'es_ES-mls_9972-low',
+    name: 'Gonzalo / MLS 9972 (Masculina Low Ligera)',
+    lang: 'es-ES',
+    gender: 'MASCULINO',
+    quality: 'low',
+    region: 'España',
+    description: 'Voz masculina ligera basada en corpus MLS, rápida y clara.',
+    sampleSentence: 'Verificación de existencias y pedidos de compra actualizados.',
+  },
+];
 import { AgentPersona, AgentGender } from '../../types/agentPersona';
 import { agentPersonasStorage } from '../../services/agentPersonasStorage';
 import { voiceAssistantEngine, detectVoiceGender } from '../../services/voiceAssistantEngine';
@@ -35,6 +143,45 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [playingPersonaId, setPlayingPersonaId] = useState<string | null>(null);
   const [savedNotification, setSavedNotification] = useState<string | null>(null);
+  const [piperVoices, setPiperVoices] = useState<PiperVoiceItem[]>(DEFAULT_PIPER_VOICES);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [downloadProgressMsg, setDownloadProgressMsg] = useState<string | null>(null);
+
+  const fetchPiperVoices = async () => {
+    try {
+      const res = await fetch('/api/voice/piper-voices');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+          setPiperVoices(data.data);
+        }
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchPiperVoices();
+  }, []);
+
+  const handleDownloadAllVoices = async () => {
+    setIsDownloadingAll(true);
+    setDownloadProgressMsg('Iniciando descarga de las 9 voces desde Hugging Face... Aguarde unos instantes.');
+    try {
+      const res = await fetch('/api/voice/download-all', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setDownloadProgressMsg('¡Descarga completada con éxito! Todas las voces en español están disponibles en el servidor.');
+        await fetchPiperVoices();
+      } else {
+        setDownloadProgressMsg(`Aviso: ${data.error || 'Verifique conexión en VPS'}`);
+      }
+    } catch {
+      setDownloadProgressMsg('Error al conectar con la API de descarga del servidor.');
+    } finally {
+      setIsDownloadingAll(false);
+      setTimeout(() => setDownloadProgressMsg(null), 6000);
+    }
+  };
 
   // Cargar voces del navegador
   useEffect(() => {
@@ -171,6 +318,49 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
             <span>{savedNotification}</span>
           </div>
         )}
+
+        {/* Banner de Estado de Voces Piper en el Servidor */}
+        <div className="mt-4 pt-3 border-t border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>
+              Catálogo de Voces Piper en Español (Hugging Face):{' '}
+              <strong className="text-teal-300 font-mono">
+                {piperVoices.filter(v => v.isInstalled).length > 0
+                  ? `${piperVoices.filter(v => v.isInstalled).length}/${piperVoices.length} instaladas en el VPS`
+                  : '1 instalada (sharvard-medium)'}
+              </strong>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              disabled={isDownloadingAll}
+              onClick={handleDownloadAllVoices}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                isDownloadingAll
+                  ? 'bg-amber-600 text-white cursor-wait'
+                  : 'bg-teal-600 hover:bg-teal-500 text-white'
+              }`}
+              title="Descargar automáticamente todas las 9 voces de Hugging Face en /opt/agentic/piper"
+            >
+              {isDownloadingAll ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>{isDownloadingAll ? 'Descargando...' : 'Descargar Todas las Voces en Servidor'}</span>
+            </button>
+          </div>
+        </div>
+
+        {downloadProgressMsg && (
+          <div className="mt-2.5 px-3 py-1.5 rounded-lg bg-teal-900/60 border border-teal-500/40 text-teal-200 text-xs font-medium flex items-center gap-2 animate-in fade-in">
+            <Sparkles className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+            <span>{downloadProgressMsg}</span>
+          </div>
+        )}
       </div>
 
       {/* Grid de Personas a Cargo */}
@@ -254,61 +444,86 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                     </div>
                   </div>
 
-                  {/* Selector de Voz del Sistema */}
+                  {/* Selector de Motor de Voz (Piper Neural TTS vs Navegador) */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between">
-                      <span>Voz del Sistema (TTS)</span>
-                      <span className="text-[10px] text-slate-400 font-normal">
-                        {voicesToShow.length} voces detectadas
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+                        Motor de Voz de Síntesis
+                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-teal-100 text-teal-800 border border-teal-200">
+                        {persona.voz.neuralModel === 'browser' ? 'Nativo' : 'Neural VITS'}
                       </span>
                     </label>
                     <select
-                      value={persona.voz.voiceURI || ''}
-                      onChange={e => handleUpdateVoiceConfig(persona.id, 'voiceURI', e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
+                      value={persona.voz.neuralModel || 'piper'}
+                      onChange={e => handleUpdateVoiceConfig(persona.id, 'neuralModel', e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:ring-1 focus:ring-teal-500 focus:outline-hidden cursor-pointer"
                     >
-                      <option value="">
-                        Asignación automática ({persona.sexo === 'MASCULINO' ? '👨 Masculina' : '👩 Femenina'})
-                      </option>
-                      {voicesToShow.map((v, idx) => {
-                        const gender = detectVoiceGender(v);
-                        const genderTag = gender === 'MALE' ? '👨 [Masc]' : gender === 'FEMALE' ? '👩 [Fem]' : '⚪ [Auto]';
-                        return (
-                          <option key={`${v.voiceURI}-${idx}`} value={v.voiceURI || v.name}>
-                            {genderTag} {v.name} ({v.lang})
-                          </option>
-                        );
-                      })}
+                      <option value="piper">✨ Piper Neural TTS (Modelo Humano VITS en Español)</option>
+                      <option value="browser">🔊 Síntesis Nativa del Navegador (Web Speech API)</option>
                     </select>
-
-                    {/* Indicador de voz activa asignada */}
-                    {(() => {
-                      const activeVoice = voiceAssistantEngine.getBestVoiceForPersona(persona);
-                      const voiceGender = activeVoice ? detectVoiceGender(activeVoice) : 'UNKNOWN';
-                      const isMalePersona = persona.sexo === 'MASCULINO';
-                      return activeVoice ? (
-                        <div className="mt-1.5 px-2 py-1 bg-slate-100 rounded-md border border-slate-200/80 flex items-center justify-between text-[10px]">
-                          <span className="text-slate-600 truncate flex items-center gap-1">
-                            <Radio className="w-3 h-3 text-indigo-500 shrink-0" />
-                            Voz activa: <strong className="text-slate-800">{activeVoice.name}</strong>
-                          </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${
-                            voiceGender === 'MALE'
-                              ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                              : isMalePersona
-                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                              : 'bg-rose-100 text-rose-700 border border-rose-200'
-                          }`}>
-                            {voiceGender === 'MALE' 
-                              ? '👨 Masculina Nativa' 
-                              : isMalePersona 
-                              ? '👨 Barítono Modulado' 
-                              : '👩 Femenina Nativa'}
-                          </span>
-                        </div>
-                      ) : null;
-                    })()}
                   </div>
+
+                  {/* Selector de Modelo Piper o Voz del Sistema */}
+                  {(persona.voz.neuralModel || 'piper') === 'piper' ? (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Modelo Piper Neural en Español
+                      </label>
+                      <select
+                        value={persona.voz.piperVoiceId || (persona.sexo === 'MASCULINO' ? 'es_ES-davefx-medium' : 'es_AR-daniela-high')}
+                        onChange={e => handleUpdateVoiceConfig(persona.id, 'piperVoiceId', e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:ring-1 focus:ring-teal-500 focus:outline-hidden cursor-pointer"
+                      >
+                        <optgroup label="👩 Voces Femeninas (Vera, Camila, Auditoría, RRHH)">
+                          {piperVoices.filter(v => v.gender === 'FEMENINO').map(v => (
+                            <option key={v.id} value={v.id}>
+                              {v.name} {v.isInstalled ? '✓' : ''} ({v.region})
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="👨 Voces Masculinas (Dirección, Costos, Tributario, Bodega)">
+                          {piperVoices.filter(v => v.gender === 'MASCULINO').map(v => (
+                            <option key={v.id} value={v.id}>
+                              {v.name} {v.isInstalled ? '✓' : ''} ({v.region})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                      <p className="text-[10px] text-teal-700 mt-1 font-medium flex items-center gap-1">
+                        <Check className="w-3 h-3 text-teal-600" />
+                        Voz neural con entonación humana fluida (sin tono robótico).
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between">
+                        <span>Voz del Sistema (TTS)</span>
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          {voicesToShow.length} voces detectadas
+                        </span>
+                      </label>
+                      <select
+                        value={persona.voz.voiceURI || ''}
+                        onChange={e => handleUpdateVoiceConfig(persona.id, 'voiceURI', e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="">
+                          Asignación automática ({persona.sexo === 'MASCULINO' ? '👨 Masculina' : '👩 Femenina'})
+                        </option>
+                        {voicesToShow.map((v, idx) => {
+                          const gender = detectVoiceGender(v);
+                          const genderTag = gender === 'MALE' ? '👨 [Masc]' : gender === 'FEMALE' ? '👩 [Fem]' : '⚪ [Auto]';
+                          return (
+                            <option key={`${v.voiceURI}-${idx}`} value={v.voiceURI || v.name}>
+                              {genderTag} {v.name} ({v.lang})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Sliders de Tono (Pitch) y Velocidad (Rate) */}
                   <div className="grid grid-cols-2 gap-3 pt-1">

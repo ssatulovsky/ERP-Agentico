@@ -12,6 +12,8 @@
     "db:init:mysql": "tsx src/scripts/initMysqlDb.ts",
     "db:update:mysql": "tsx src/scripts/updateMysqlDb.ts",
     "db:migrate:mysql": "tsx src/scripts/migrateMysql.ts",
+    "download:voices": "bash scripts/download_all_piper_voices.sh",
+    "download:voices:node": "tsx src/scripts/downloadPiperVoices.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

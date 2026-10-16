@@ -28,6 +28,7 @@ export interface JournalEntryLine {
   nombreCuenta: string; // Nombre oficial en Plan de Cuentas
   rutAuxiliar?: string | null; // RUT entidad analítica (proveedor, cliente, empleado, SII)
   centroCosto?: string | null; // Centro de costo (ej: 'ADMINISTRACION', 'VENTAS', 'OPERACIONES')
+  proyecto?: string | null; // Centro de Proyecto / Obra (WIP / IFRS Art. 31)
   glosaDetalle?: string | null; // Glosa particular de la línea
   debe: number; // Siempre >= 0.00 (Decimal 15,2)
   haber: number; // Siempre >= 0.00 (Decimal 15,2)
@@ -70,6 +71,7 @@ export interface RawJournalEntryInput {
     cuenta?: string; // Soporte para estructuras heredadas { cuenta: 'IVA Débito', debe: 100, haber: 0 }
     rutAuxiliar?: string | null;
     centroCosto?: string | null;
+    proyecto?: string | null;
     glosaDetalle?: string | null;
     debe?: number | string | null;
     haber?: number | string | null;

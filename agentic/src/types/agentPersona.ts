@@ -1,6 +1,7 @@
 export type AgentGender = 'FEMENINO' | 'MASCULINO' | 'NEUTRO';
 
 export type AgentModuleArea = 
+  | 'AGENTE_GENERAL_VERA'
   | 'CONTABILIDAD_SENIOR'
   | 'TRIBUTARIO_F29'
   | 'TESORERIA_BANCOS'
@@ -18,6 +19,35 @@ export interface AgentVoiceConfig {
   pitch: number;  // 0.5 a 1.8 (ej: 1.15 para voces femeninas, 0.9 para masculinas)
   rate: number;   // 0.7 a 1.4 (1.0 normal)
   volume: number; // 0 a 1.0
+  neuralModel?: 'piper' | 'browser'; // Motor de voz: Piper Neural TTS o Síntesis del Navegador
+  piperVoiceId?: 'es_AR-daniela-high' | 'es_MX-ald-medium' | 'es_ES-sharvard-medium' | 'es_ES-davefx-medium' | 'es_ES-carlfm-x_low' | string;
+}
+
+export interface CashflowScenarioItem {
+  tipo: 'INGRESO' | 'EGRESO';
+  entidad: string;
+  folio?: string;
+  monto: number;
+  fechaOriginal: string;
+  fechaSimulada: string;
+  diasDiferencia: number;
+  motivo: string;
+}
+
+export interface CashflowScenarioResult {
+  id: string;
+  titulo: string;
+  saldoInicialCaja: number;
+  ingresosBase: number;
+  ingresosSimulados: number;
+  egresosBase: number;
+  egresosSimulados: number;
+  saldoFinalBase: number;
+  saldoFinalSimulado: number;
+  variacionNeta: number;
+  itemsAfectados: CashflowScenarioItem[];
+  whatsappSummaryText: string;
+  fechaCalculo: string;
 }
 
 export interface AgentSuggestedAction {
@@ -26,6 +56,7 @@ export interface AgentSuggestedAction {
   prompt: string;
   categoria: 'CONSULTA' | 'EJECUCION' | 'AUDITORIA';
   icon?: string;
+  targetTab?: string;
 }
 
 export interface AgentPersona {
@@ -42,4 +73,5 @@ export interface AgentPersona {
   saludoPersonal: string;
   voz: AgentVoiceConfig;
   accionesSugeridas: AgentSuggestedAction[];
+  isExecutiveGeneral?: boolean;
 }

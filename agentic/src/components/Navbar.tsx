@@ -14,7 +14,8 @@ import {
   ChevronDown,
   Sliders,
   Key,
-  Mic
+  Mic,
+  Sparkles
 } from 'lucide-react';
 import { 
   ChileIndicators, 
@@ -236,11 +237,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={openVoiceDialogue}
               className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold px-3 py-1.5 rounded-md transition-all shadow-md shadow-indigo-600/30 cursor-pointer text-xs"
-              title="Dialogar por voz con los agentes y personas a cargo de cada área"
+              title="Hablar con Vera (Socia Virtual) y agentes del ERP con Voz Neuronal Piper"
             >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
               <Mic className="w-3.5 h-3.5 text-blue-200 animate-pulse" />
-              <span className="hidden sm:inline">Hablar con</span>
-              <span>Agentes (Voz)</span>
+              <span className="hidden sm:inline">Hablar con Vera</span>
+              <span>(Voz Piper)</span>
             </button>
           )}
 

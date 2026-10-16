@@ -237,6 +237,7 @@ export function normalizeAndValidateJournalEntry(
     nombreCuenta: string;
     rutAuxiliar: string | null;
     centroCosto: string | null;
+    proyecto: string | null;
     glosaDetalle: string | null;
     debe: number;
     haber: number;
@@ -290,6 +291,7 @@ export function normalizeAndValidateJournalEntry(
 
     const rutAuxiliar = rawLine.rutAuxiliar ? String(rawLine.rutAuxiliar).trim() : null;
     const centroCosto = rawLine.centroCosto ? String(rawLine.centroCosto).trim() : null;
+    const proyecto = (rawLine as any).proyecto ? String((rawLine as any).proyecto).trim() : null;
     const glosaDetalle = rawLine.glosaDetalle ? String(rawLine.glosaDetalle).trim() : null;
 
     const lineData: SanitizedLine = {
@@ -297,6 +299,7 @@ export function normalizeAndValidateJournalEntry(
       nombreCuenta: nombre,
       rutAuxiliar,
       centroCosto,
+      proyecto,
       glosaDetalle,
       debe: finalDebe,
       haber: finalHaber,
@@ -326,6 +329,7 @@ export function normalizeAndValidateJournalEntry(
       nombreCuenta: deb.nombreCuenta,
       rutAuxiliar: deb.rutAuxiliar,
       centroCosto: deb.centroCosto,
+      proyecto: deb.proyecto,
       glosaDetalle: deb.glosaDetalle,
       debe: deb.debe,
       haber: 0,
@@ -339,6 +343,7 @@ export function normalizeAndValidateJournalEntry(
       nombreCuenta: cred.nombreCuenta,
       rutAuxiliar: cred.rutAuxiliar,
       centroCosto: cred.centroCosto,
+      proyecto: cred.proyecto,
       glosaDetalle: cred.glosaDetalle,
       debe: 0,
       haber: cred.haber,

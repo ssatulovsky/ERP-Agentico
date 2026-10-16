@@ -28,8 +28,17 @@ import {
   normalizeAndValidateJournalEntry,
   formatJournalEntryToTextTable,
 } from "./src/services/journalEntryNormalizer";
+import { piperTtsService, PIPER_SPANISH_VOICES } from "./src/services/piperTtsService";
+import { whatsappBridgeService } from "./src/services/whatsappBridgeService";
 
 dotenv.config({ override: true });
+
+process.on("uncaughtException", (err) => {
+  console.error("[Process] Uncaught Exception capturada (evitando caída 502):", err);
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Process] Unhandled Rejection capturado:", promise, "razón:", reason);
+});
 
 const app = express();
 const PORT = 3000;
@@ -210,6 +219,195 @@ Responde de forma clara, ejecutiva y con el formato de asientos normalizado.`;
       success: false,
       error: error.message || "Error al ejecutar la auditoría tributaria.",
     });
+  }
+});
+
+// Piper Neural TTS Voice Endpoints
+app.get("/api/voice/piper-voices", (_req, res) => {
+  res.json({
+    success: true,
+    data: piperTtsService.getSpanishVoicesWithInstallStatus(),
+  });
+});
+
+app.post("/api/voice/download-all", async (_req, res) => {
+  try {
+    const result = await piperTtsService.downloadAllVoices();
+    res.json({
+      success: true,
+      message: "Descarga de voces de Hugging Face completada.",
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/voice/download-voice", async (req, res) => {
+  try {
+    const { voiceId } = req.body;
+    if (!voiceId) {
+      return res.status(400).json({ success: false, error: "voiceId es requerido." });
+    }
+    const result = await piperTtsService.downloadVoice(voiceId);
+    res.json({
+      success: true,
+      message: `Voz ${result.voiceName} descargada exitosamente.`,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/voice/status", async (_req, res) => {
+  try {
+    const status = await piperTtsService.getStatus();
+    res.json({
+      success: true,
+      ...status,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/voice/tts", async (req, res) => {
+  try {
+    const { text, voiceId, rate, pitch } = req.body;
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({ success: false, error: "El campo 'text' es requerido." });
+    }
+
+    const result = await piperTtsService.synthesize(text, voiceId, { rate, pitch });
+
+    if (req.headers.accept?.includes("audio/wav")) {
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("Content-Length", result.audioBuffer.length);
+      return res.send(result.audioBuffer);
+    }
+
+    res.json({
+      success: true,
+      audioBase64: result.audioBase64,
+      mimeType: result.mimeType,
+      modelUsed: result.modelUsed,
+      voiceName: result.voiceName,
+    });
+  } catch (err: any) {
+    console.error("[Server] Error en /api/voice/tts:", err);
+    res.status(500).json({ success: false, error: err.message || "Error al sintetizar voz con Piper." });
+  }
+});
+
+// ============================================================================
+// WHATSAPP WEB MULTI-DEVICE QR + LISTA BLANCA RBAC + ESCUDO DE PRIVACIDAD
+// ============================================================================
+
+app.get("/api/whatsapp/status", (_req, res) => {
+  try {
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/connect", async (_req, res) => {
+  try {
+    const result = await whatsappBridgeService.startWhatsAppLink();
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({ success: true, ...result, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/disconnect", async (_req, res) => {
+  try {
+    await whatsappBridgeService.disconnectAndLogout();
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({ success: true, message: "Sesión de WhatsApp desvinculada exitosamente.", ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/privacy", (req, res) => {
+  try {
+    const updated = whatsappBridgeService.updatePrivacyConfig(req.body || {});
+    res.json({ success: true, privacyConfig: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/whitelist", (req, res) => {
+  try {
+    const entry = whatsappBridgeService.upsertWhitelistEntry(req.body);
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({ success: true, entry, whitelist: status.whitelist });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.delete("/api/whatsapp/whitelist/:id", (req, res) => {
+  try {
+    const whitelist = whatsappBridgeService.deleteWhitelistEntry(req.params.id);
+    res.json({ success: true, whitelist });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/simulate-incoming", (req, res) => {
+  try {
+    const { remoteJid, messageText, isGroup } = req.body;
+    const evaluation = whatsappBridgeService.evaluateIncomingMessage({
+      remoteJid: remoteJid || "",
+      messageText: messageText || "",
+      isGroup: Boolean(isGroup),
+      fromMe: false,
+      simulateBypassPrefix: false,
+    });
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({
+      success: true,
+      evaluation,
+      auditLogs: status.auditLogs,
+      stats: status.stats,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/send-direct", async (req, res) => {
+  try {
+    const { telefonoDestino, mensaje, incluirAudioPiper, textoVerbalAudio } = req.body;
+    if (!telefonoDestino || !mensaje) {
+      return res.status(400).json({ success: false, error: "telefonoDestino y mensaje son requeridos." });
+    }
+    const result = await whatsappBridgeService.sendDirectMessageToAuthorizedNumber({
+      telefonoDestino,
+      mensaje,
+      incluirAudioPiper,
+      textoVerbalAudio,
+    });
+    const status = whatsappBridgeService.getStatusAndConfig();
+    res.json({ ...result, auditLogs: status.auditLogs });
+  } catch (err: any) {
+    res.status(403).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/clear-logs", (_req, res) => {
+  try {
+    whatsappBridgeService.clearAuditLogs();
+    res.json({ success: true, auditLogs: [] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

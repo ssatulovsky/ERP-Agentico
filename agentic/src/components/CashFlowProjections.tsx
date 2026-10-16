@@ -620,6 +620,19 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
             )}
           </button>
 
+          {/* Botón Actualizar a Hoy / Regenerar Flujo */}
+          <button
+            onClick={() => {
+              const todayStr = new Date().toISOString().split('T')[0];
+              window.dispatchEvent(new CustomEvent('update-cashflow-base-date', { detail: { date: todayStr } }));
+            }}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-2 rounded-lg text-xs font-black transition-all shadow-xs cursor-pointer border border-amber-600/30"
+            title="Regenerar e iniciar el flujo de caja a partir de la fecha de hoy"
+          >
+            <RefreshCw className="w-4 h-4 text-slate-950" />
+            <span>Actualizar a Hoy</span>
+          </button>
+
           {/* Manual Movement */}
           <button
             onClick={() => setShowAddModal(true)}

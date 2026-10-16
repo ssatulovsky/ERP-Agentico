@@ -96,10 +96,30 @@ export function useAccountingLedger(
     }
   }, [empresaId, periodo]);
 
-  // Carga inicial y recarga al cambiar empresaId o periodo
+  // Carga inicial y recarga al cambiar empresaId o periodo, o al recuperar foco / recibir actualizaciones remotas
   useEffect(() => {
     loadEntries(true);
-  }, [loadEntries]);
+
+    const handleWindowFocus = () => {
+      loadEntries(false);
+    };
+
+    const handleLedgerUpdated = (e: any) => {
+      if (!e?.detail?.empresaId || e.detail.empresaId === empresaId) {
+        loadEntries(false);
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('companyLedgerUpdated', handleLedgerUpdated);
+    window.addEventListener('storage', handleLedgerUpdated);
+
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('companyLedgerUpdated', handleLedgerUpdated);
+      window.removeEventListener('storage', handleLedgerUpdated);
+    };
+  }, [loadEntries, empresaId]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -170,6 +190,9 @@ export function useAccountingLedger(
         );
 
         setLastCommittedEntry(response.data);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('companyLedgerUpdated', { detail: { empresaId } }));
+        }
         return response;
       } catch (err: any) {
         // 4. Rollback de la mutación optimista en caso de fallo o descuadre
@@ -250,6 +273,9 @@ export function useAccountingLedger(
             };
           })
         );
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('companyLedgerUpdated', { detail: { empresaId } }));
+        }
         return response;
       } catch (err: any) {
         setError(err?.message || 'Error al actualizar el asiento contable');
@@ -258,7 +284,7 @@ export function useAccountingLedger(
         setIsCommitting(false);
       }
     },
-    []
+    [empresaId]
   );
 
   /**
@@ -271,6 +297,9 @@ export function useAccountingLedger(
       try {
         await deleteAccountingEntryApi(id, motivo);
         setEntries((prev) => prev.filter((item) => item.id !== id));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('companyLedgerUpdated', { detail: { empresaId } }));
+        }
       } catch (err: any) {
         setError(err?.message || 'Error al eliminar el asiento contable');
         throw err;
@@ -278,7 +307,7 @@ export function useAccountingLedger(
         setIsCommitting(false);
       }
     },
-    []
+    [empresaId]
   );
 
   /**
@@ -291,6 +320,9 @@ export function useAccountingLedger(
       try {
         const response = await reverseAccountingEntryApi(id, motivo, fecha);
         await loadEntries(false);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('companyLedgerUpdated', { detail: { empresaId } }));
+        }
         return response;
       } catch (err: any) {
         setError(err?.message || 'Error al revertir el asiento contable');
@@ -299,7 +331,7 @@ export function useAccountingLedger(
         setIsCommitting(false);
       }
     },
-    [loadEntries]
+    [loadEntries, empresaId]
   );
 
   return {

@@ -311,7 +311,7 @@ export function loadCompanyFinancialNotes(empresaRut: string, chart?: Hierarchic
 }
 
 /**
- * Guardar notas a los estados financieros de la empresa
+ * Guardar notas a los estados financieros de la empresa (Sincronización Local + Servidor Multi-Usuario)
  */
 export function saveCompanyFinancialNotes(empresaRut: string, notes: FinancialStatementNote[]): void {
   const key = getNotesStorageKey(empresaRut);
@@ -320,6 +320,46 @@ export function saveCompanyFinancialNotes(empresaRut: string, notes: FinancialSt
   } catch (e) {
     console.error('Error guardando notas a los EE.FF. en localStorage:', e);
   }
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('companyFinancialNotesUpdated', {
+          detail: { empresaRut, notes },
+        })
+      );
+    } catch {}
+  }
+
+  if (typeof fetch !== 'undefined') {
+    fetch('/api/accounting/financial-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: empresaRut, notes }),
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Obtener notas a los estados financieros actualizadas desde el Servidor
+ */
+export async function fetchCompanyFinancialNotes(empresaRut: string, chart?: HierarchicalAccountItem[]): Promise<FinancialStatementNote[]> {
+  try {
+    const res = await fetch(`/api/accounting/financial-notes?empresaId=${encodeURIComponent(empresaRut)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        const key = getNotesStorageKey(empresaRut);
+        try {
+          localStorage.setItem(key, JSON.stringify(json.data));
+        } catch {}
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('[FinancialNotesService] Error al obtener notas del servidor:', err);
+  }
+  return loadCompanyFinancialNotes(empresaRut, chart);
 }
 
 /**

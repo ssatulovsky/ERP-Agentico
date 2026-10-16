@@ -111,6 +111,7 @@ export async function updateMysqlDatabase(): Promise<{
       { table: 'accounting_entries', col: 'folio_documento_ref', type: 'VARCHAR(100) NULL' },
       // accounting_entry_lines: Correlativo, documentos no-SII y multimoneda
       { table: 'accounting_entry_lines', col: 'linea_numero', type: 'INT NOT NULL DEFAULT 1' },
+      { table: 'accounting_entry_lines', col: 'proyecto', type: 'VARCHAR(100) NULL' },
       { table: 'accounting_entry_lines', col: 'documento_ref', type: 'VARCHAR(150) NULL' },
       { table: 'accounting_entry_lines', col: 'dte_id_asociado', type: 'VARCHAR(36) NULL' },
       { table: 'accounting_entry_lines', col: 'tipo_documento_ref', type: 'VARCHAR(50) NULL' },
@@ -284,7 +285,11 @@ function splitSqlStatements(sql: string): string[] {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectRun =
+  Boolean(process.argv[1] && (process.argv[1].endsWith('updateMysqlDb.ts') || process.argv[1].endsWith('updateMysqlDb.js'))) ||
+  (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module);
+
+if (isDirectRun) {
   updateMysqlDatabase().then((res) => {
     process.exit(res.success ? 0 : 1);
   });

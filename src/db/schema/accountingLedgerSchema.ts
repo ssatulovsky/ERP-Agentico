@@ -120,6 +120,7 @@ export const accountingEntryLines = mysqlTable(
     haber: decimal('haber', { precision: 15, scale: 2 }).notNull().default('0.00'),
     rutAuxiliar: varchar('rut_auxiliar', { length: 20 }),
     centroCosto: varchar('centro_costo', { length: 100 }),
+    proyecto: varchar('proyecto', { length: 100 }),
     documentoRef: varchar('documento_ref', { length: 150 }),
     dteIdAsociado: varchar('dte_id_asociado', { length: 36 }),
     tipoDocumentoRef: varchar('tipo_documento_ref', { length: 50 }),
