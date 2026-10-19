@@ -103,6 +103,20 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
     const fEmision = l.fechaDocumentoRef || l.fecha_documento_ref || fallbackFecha || '';
     const fVenc = l.fechaVencimientoRef || l.fecha_vencimiento_ref || fEmision || '';
 
+    const rawConcilType = l.tipoDocumentoConciliacion || l.tipo_documento_conciliacion || '';
+    const isCorruptedConcilType = /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(rawConcilType);
+    const rawConcilDoc = l.documentoConciliacion || l.documento_conciliacion || docRef || '';
+    const normalizedConcilType = isCorruptedConcilType
+      ? /cheque|chq/i.test(`${rawConcilDoc} ${l.glosa || ''}`)
+        ? 'CHEQUE'
+        : 'TRANSFERENCIA'
+      : rawConcilType || 'TRANSFERENCIA';
+
+    const rawOpType = l.tipoDocumentoOperacion || l.tipo_documento_operacion || '';
+    const normalizedOpType = /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(rawOpType)
+      ? ''
+      : rawOpType;
+
     return {
       id: l.id,
       idTemp: `line-${i}-${Date.now()}-${Math.random()}`,
@@ -126,10 +140,10 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
       fechaDocumentoRef: fEmision,
       fechaVencimientoRef: fVenc,
       documentoOperacion: l.documentoOperacion || l.documento_operacion || '',
-      tipoDocumentoOperacion: l.tipoDocumentoOperacion || l.tipo_documento_operacion || '',
+      tipoDocumentoOperacion: normalizedOpType,
       fechaDocumentoOperacion: l.fechaDocumentoOperacion || l.fecha_documento_operacion || '',
-      documentoConciliacion: l.documentoConciliacion || l.documento_conciliacion || docRef || '',
-      tipoDocumentoConciliacion: l.tipoDocumentoConciliacion || l.tipo_documento_conciliacion || 'TRANSFERENCIA',
+      documentoConciliacion: rawConcilDoc,
+      tipoDocumentoConciliacion: normalizedConcilType,
       monedaOriginal: l.monedaOriginal || l.moneda_original || '',
       montoMonedaOriginal: l.montoMonedaOriginal != null ? Number(l.montoMonedaOriginal) : undefined,
       tipoCambio: l.tipoCambio != null ? Number(l.tipoCambio) : undefined,
@@ -311,20 +325,27 @@ export const EditAccountingEntryModal: React.FC<EditAccountingEntryModalProps> =
       if (auxLines.length > 0 && bankLines.length > 0) {
         const primaryBank = bankLines[0];
         const primaryAux = auxLines[0];
+        const bankPayType =
+          primaryBank.tipoDocumentoConciliacion &&
+          !/FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(primaryBank.tipoDocumentoConciliacion)
+            ? primaryBank.tipoDocumentoConciliacion
+            : 'TRANSFERENCIA';
+        const bankPayDoc =
+          primaryBank.documentoConciliacion ||
+          primaryBank.folioDocumentoRef ||
+          primaryBank.documentoRef ||
+          '';
 
         auxLines.forEach((aLine) => {
-          if (!aLine.documentoOperacion && (primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef)) {
-            aLine.documentoOperacion = primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef;
+          if (bankPayDoc) {
+            aLine.documentoOperacion = bankPayDoc;
           }
-          if (!aLine.tipoDocumentoOperacion && primaryBank.tipoDocumentoConciliacion) {
-            aLine.tipoDocumentoOperacion = primaryBank.tipoDocumentoConciliacion;
-          }
-          if (!aLine.fechaDocumentoOperacion) {
-            aLine.fechaDocumentoOperacion = primaryBank.fechaDocumentoRef || fecha;
-          }
+          aLine.tipoDocumentoOperacion = bankPayType;
+          aLine.fechaDocumentoOperacion = primaryBank.fechaDocumentoRef || fecha;
         });
 
         bankLines.forEach((bLine) => {
+          bLine.tipoDocumentoConciliacion = bankPayType;
           if (!bLine.rutAuxiliar && primaryAux.rutAuxiliar) {
             bLine.rutAuxiliar = primaryAux.rutAuxiliar;
             bLine.nombreAuxiliar = primaryAux.nombreAuxiliar;

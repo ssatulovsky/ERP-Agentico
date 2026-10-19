@@ -102,6 +102,14 @@ import {
   downloadLibroDiarioExcel,
   downloadLibroMayorPdf,
   downloadFinancialNotesBookletPdf,
+  downloadLibroAuxiliarPdf,
+  downloadLibroAuxiliarExcel,
+  downloadLibroAuxiliarCsv,
+  type AuxiliaryBookReportConfig,
+  type AuxiliaryDetailedMovement,
+  type AuxiliaryLegalSummaryItem,
+  type AuxiliaryRangedSummaryRow,
+  type AuxiliaryBookReportPayload,
 } from '../utils/reportGenerators';
 import {
   CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS,
@@ -280,6 +288,42 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [auxiliarSearchTerm, setAuxiliarSearchTerm] = useState<string>('');
   const [auxiliarFilterStatus, setAuxiliarFilterStatus] = useState<'TODOS' | 'CON_SALDO' | 'SALDADO'>('TODOS');
   const [selectedAuxiliarRut, setSelectedAuxiliarRut] = useState<string | null>(null);
+  const [auxiliarViewMode, setAuxiliarViewMode] = useState<'RESUMEN_RUT' | 'DETALLADO_FECHAS' | 'LIBRO_SEGUN_LEY'>('RESUMEN_RUT');
+  const [auxiliarDateFrom, setAuxiliarDateFrom] = useState<string>(() => dates.startDate || '2026-01-01');
+  const [auxiliarDateTo, setAuxiliarDateTo] = useState<string>(() => dates.endDate || '2026-12-31');
+  const [showAuxReportCustomizer, setShowAuxReportCustomizer] = useState<boolean>(false);
+  const [auxReportConfig, setAuxReportConfig] = useState<AuxiliaryBookReportConfig>(() => ({
+    bookScope: 'PROVEEDORES',
+    reportMode: 'LIBRO_SEGUN_LEY',
+    fechaDesde: dates.startDate || '2026-01-01',
+    fechaHasta: dates.endDate || '2026-12-31',
+    selectedRut: null,
+    customTitle: '',
+    folioInicial: 101,
+    orientation: 'landscape',
+    sortBy: 'FECHA_ASC',
+    includeZeroBalance: true,
+    includeLegalSummary: true,
+    includeSignatures: true,
+    observacionesAuditoria:
+      'Libro Auxiliar electrónico emitido conforme al Art. 25 del Código de Comercio, Art. 59 del D.L. 825 y Resoluciones Exentas SII N° 45 y N° 61. Cuadrado íntegramente con el Libro Mayor y RCV SII.',
+    columns: {
+      correlativo: true,
+      fecha: true,
+      tipoDocSii: true,
+      folioDoc: true,
+      fechaVencimiento: true,
+      rutAuxiliar: true,
+      razonSocial: true,
+      cuentaContable: true,
+      glosaConcepto: true,
+      desgloseIva: true,
+      debeHaber: true,
+      saldoProgresivo: true,
+      trazabilidadBancaria: true,
+      centroCosto: false,
+    },
+  }));
 
   // Plan de cuentas filter & search
   const [planClassFilter, setPlanClassFilter] = useState<number | 'TODOS'>('TODOS');
@@ -1679,6 +1723,135 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   // Helper de normalización de RUT para cruces seguros
   const normRut = (r?: string | null) => (r || '').replace(/[\.\-\s]/g, '').toUpperCase();
 
+  // Resolutor experto de medio de pago bancario (TEF vs Cheque vs Depósito vs Devengo)
+  const resolveAuxiliaryPaymentTrace = (
+    entry: AccountingEntry,
+    line: AccountingEntryLine,
+    bankLine: AccountingEntryLine | undefined,
+    isSupplierSide: boolean
+  ) => {
+    const isPaymentMove = isSupplierSide ? (Number(line.debe) || 0) > 0 : (Number(line.haber) || 0) > 0;
+    const isDevengoMove = isSupplierSide
+      ? (Number(line.haber) || 0) > 0 && (Number(line.debe) || 0) === 0
+      : (Number(line.debe) || 0) > 0 && (Number(line.haber) || 0) === 0;
+
+    // Si es un devengo (contabilización de factura por pagar / cobrar) y no tiene línea de banco/caja
+    if (isDevengoMove && !bankLine) {
+      const fEmis = line.fechaDocumentoRef || entry.fecha;
+      const fVenc = line.fechaVencimientoRef || fEmis;
+      const docLabel = line.documentoRef || (line.folioDocumentoRef ? `F.${line.folioDocumentoRef}` : entry.documento || '-');
+      return {
+        esPagoBancario: false,
+        instrumentoCodigo: 'DEVENGO' as const,
+        tipoMedio: isSupplierSide ? 'DEVENGO FACTURA (POR PAGAR)' : 'DEVENGO FACTURA (POR COBRAR)',
+        bancoNombre: isSupplierSide ? 'Provisión Cuentas por Pagar (Sin Pago)' : 'Devengo Cuentas por Cobrar (Sin Cobro)',
+        folioOperacion: docLabel,
+        fechaOperacion: fEmis,
+        fechaCobro: fVenc,
+        resumenTexto: `Devengo Documentario (${docLabel}) | Emisión: ${fEmis} | Vencimiento: ${fVenc}`,
+      };
+    }
+
+    const rawBankType = bankLine?.tipoDocumentoConciliacion || '';
+    const rawAuxType = line.tipoDocumentoOperacion || '';
+    const cleanBankType = /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(rawBankType) ? '' : rawBankType;
+    const cleanAuxType = /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(rawAuxType) ? '' : rawAuxType;
+
+    const rawBankDoc =
+      bankLine?.documentoConciliacion ||
+      bankLine?.folioDocumentoRef ||
+      (bankLine?.documentoRef && !/factura|boleta|nota/i.test(bankLine.documentoRef) ? bankLine.documentoRef : '') ||
+      '';
+    const rawAuxDoc =
+      (line.documentoOperacion && !/factura|boleta|nota/i.test(line.documentoOperacion) ? line.documentoOperacion : '') ||
+      line.folioDocumentoRef ||
+      '';
+    const combinedHint = `${cleanBankType} ${cleanAuxType} ${rawBankDoc} ${rawAuxDoc} ${entry.concepto || ''} ${entry.documento || ''}`;
+
+    const isCheque =
+      cleanBankType === 'CHEQUE' ||
+      cleanAuxType === 'CHEQUE' ||
+      /cheque|\bchq\b|ch\.\s*\d|vale[\s_]*vista/i.test(combinedHint);
+    const isCaja =
+      Boolean(bankLine?.cuentaCodigo?.startsWith('1.1.01')) &&
+      /caja|efectivo/i.test(bankLine?.cuentaNombre || '');
+    const isDeposito =
+      cleanBankType === 'DEPOSITO' ||
+      cleanAuxType === 'DEPOSITO_BANCARIO' ||
+      /deposito|depósito/i.test(combinedHint);
+    const isCartola =
+      cleanBankType === 'CARGO_CARTOLA' ||
+      cleanBankType === 'ABONO_CARTOLA' ||
+      /\bpac\b|\bpat\b/i.test(combinedHint);
+
+    const instrumentoCodigo: 'CHEQUE' | 'CAJA' | 'DEPOSITO' | 'PAC_CARTOLA' | 'TEF' = isCheque
+      ? 'CHEQUE'
+      : isCaja
+      ? 'CAJA'
+      : isDeposito
+      ? 'DEPOSITO'
+      : isCartola
+      ? 'PAC_CARTOLA'
+      : 'TEF';
+
+    const tipoMedio =
+      instrumentoCodigo === 'CHEQUE'
+        ? 'CHEQUE BANCARIO'
+        : instrumentoCodigo === 'CAJA'
+        ? 'EFECTIVO / CAJA'
+        : instrumentoCodigo === 'DEPOSITO'
+        ? 'DEPÓSITO BANCARIO'
+        : instrumentoCodigo === 'PAC_CARTOLA'
+        ? 'CARGO / ABONO EN CARTOLA'
+        : 'TEF (Transferencia Electrónica)';
+
+    const rawOpNumber = (rawBankDoc || rawAuxDoc || entry.folioDocumentoRef || 'S/N').trim();
+    const folioOperacion =
+      instrumentoCodigo === 'TEF'
+        ? /^\d+$/.test(rawOpNumber)
+          ? `TEF-${rawOpNumber}`
+          : rawOpNumber
+        : instrumentoCodigo === 'CHEQUE'
+        ? rawOpNumber.replace(/^cheque\s*(n[°º]?\s*)?/i, '').trim() || rawOpNumber
+        : rawOpNumber;
+
+    // Priorizar fechas del instrumento bancario (bankLine) sobre las fechas de la factura
+    const fechaEmisionPago =
+      bankLine?.fechaDocumentoRef ||
+      line.fechaDocumentoOperacion ||
+      entry.fecha;
+    const fechaVencimientoPago =
+      bankLine?.fechaVencimientoRef ||
+      (instrumentoCodigo === 'CHEQUE' ? line.fechaVencimientoRef : undefined) ||
+      fechaEmisionPago;
+
+    const bancoNombre =
+      bankLine?.cuentaNombre ||
+      (isPaymentMove ? 'Banco / Tesorería' : 'Cuenta Corriente Bancaria');
+
+    const resumenTexto =
+      instrumentoCodigo === 'CHEQUE'
+        ? `${bancoNombre} | CHEQUE N° ${folioOperacion} | F. Emisión: ${fechaEmisionPago} | F. Vencimiento: ${fechaVencimientoPago}`
+        : instrumentoCodigo === 'TEF'
+        ? `${bancoNombre} | TEF N° ${folioOperacion} | F. Emisión/Ejec.: ${fechaEmisionPago}${
+            fechaVencimientoPago && fechaVencimientoPago !== fechaEmisionPago
+              ? ` | F. Valor: ${fechaVencimientoPago}`
+              : ''
+          }`
+        : `${bancoNombre} | ${tipoMedio}: ${folioOperacion} | Fecha: ${fechaEmisionPago}`;
+
+    return {
+      esPagoBancario: true,
+      instrumentoCodigo,
+      tipoMedio,
+      bancoNombre,
+      folioOperacion,
+      fechaOperacion: fechaEmisionPago,
+      fechaCobro: fechaVencimientoPago,
+      resumenTexto,
+    };
+  };
+
   // Libro Mayor Auxiliar de Proveedores (Pasivos / Cuentas por Pagar 2.1.01)
   const auxiliarSuppliersSummary = useMemo(() => {
     const supplierRuts = new Set<string>();
@@ -1716,11 +1889,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         debe: number;
         haber: number;
         bancoInfo?: {
+          esPagoBancario?: boolean;
+          instrumentoCodigo?: 'TEF' | 'CHEQUE' | 'DEPOSITO' | 'CAJA' | 'PAC_CARTOLA' | 'DEVENGO';
           bancoNombre?: string;
           tipoMedio?: string;
           folioOperacion?: string;
           fechaOperacion?: string;
           fechaCobro?: string;
+          resumenTexto?: string;
         };
       }> = [];
 
@@ -1741,8 +1917,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         const bankLine = entry.lineas.find(l =>
           l.cuentaCodigo.startsWith('1.1.02') ||
           l.cuentaCodigo.startsWith('1.1.01') ||
-          Boolean(l.documentoConciliacion) ||
-          Boolean(l.tipoDocumentoConciliacion)
+          isAccountBankReconcilable(l.cuentaCodigo, l.cuentaNombre)
         );
 
         entry.lineas.forEach(line => {
@@ -1750,9 +1925,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             journalDebitos += line.debe || 0;
             journalCreditos += line.haber || 0;
 
-            const docOp = line.documentoOperacion || line.documentoConciliacion || bankLine?.documentoConciliacion || bankLine?.documentoOperacion || '';
-            const tipoOp = line.tipoDocumentoOperacion || line.tipoDocumentoConciliacion || bankLine?.tipoDocumentoConciliacion || bankLine?.tipoDocumentoOperacion || '';
-            const bancoNom = bankLine?.cuentaNombre;
+            const trace = resolveAuxiliaryPaymentTrace(entry, line, bankLine, true);
 
             journalMovements.push({
               fecha: entry.fecha,
@@ -1761,13 +1934,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               documento: line.documentoRef || entry.documento,
               debe: line.debe,
               haber: line.haber,
-              bancoInfo: (bancoNom || docOp || tipoOp) ? {
-                bancoNombre: bancoNom,
-                tipoMedio: tipoOp || 'TEF / Transferencia',
-                folioOperacion: docOp || '-',
-                fechaOperacion: line.fechaDocumentoOperacion || bankLine?.fechaDocumentoRef || entry.fecha,
-                fechaCobro: line.fechaVencimientoRef || bankLine?.fechaVencimientoRef || entry.fecha,
-              } : undefined,
+              bancoInfo: trace,
             });
 
             const docKey = (line.folioDocumentoRef || line.documentoRef || entry.documento || '').trim();
@@ -1931,11 +2098,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         debe: number;
         haber: number;
         bancoInfo?: {
+          esPagoBancario?: boolean;
+          instrumentoCodigo?: 'TEF' | 'CHEQUE' | 'DEPOSITO' | 'CAJA' | 'PAC_CARTOLA' | 'DEVENGO';
           bancoNombre?: string;
           tipoMedio?: string;
           folioOperacion?: string;
           fechaOperacion?: string;
           fechaCobro?: string;
+          resumenTexto?: string;
         };
       }> = [];
 
@@ -1955,8 +2125,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         const bankLine = entry.lineas.find(l =>
           l.cuentaCodigo.startsWith('1.1.02') ||
           l.cuentaCodigo.startsWith('1.1.01') ||
-          Boolean(l.documentoConciliacion) ||
-          Boolean(l.tipoDocumentoConciliacion)
+          isAccountBankReconcilable(l.cuentaCodigo, l.cuentaNombre)
         );
 
         entry.lineas.forEach(line => {
@@ -1964,9 +2133,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             journalDebitos += line.debe || 0;
             journalCreditos += line.haber || 0;
 
-            const docOp = line.documentoOperacion || line.documentoConciliacion || bankLine?.documentoConciliacion || bankLine?.documentoOperacion || '';
-            const tipoOp = line.tipoDocumentoOperacion || line.tipoDocumentoConciliacion || bankLine?.tipoDocumentoConciliacion || bankLine?.tipoDocumentoOperacion || '';
-            const bancoNom = bankLine?.cuentaNombre;
+            const trace = resolveAuxiliaryPaymentTrace(entry, line, bankLine, false);
 
             journalMovements.push({
               fecha: entry.fecha,
@@ -1975,13 +2142,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               documento: line.documentoRef || entry.documento,
               debe: line.debe,
               haber: line.haber,
-              bancoInfo: (bancoNom || docOp || tipoOp) ? {
-                bancoNombre: bancoNom,
-                tipoMedio: tipoOp || 'TEF / Cobranza',
-                folioOperacion: docOp || '-',
-                fechaOperacion: line.fechaDocumentoOperacion || bankLine?.fechaDocumentoRef || entry.fecha,
-                fechaCobro: line.fechaVencimientoRef || bankLine?.fechaVencimientoRef || entry.fecha,
-              } : undefined,
+              bancoInfo: trace,
             });
 
             const docKey = (line.folioDocumentoRef || line.documentoRef || entry.documento || '').trim();
@@ -2128,6 +2289,449 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     [auxiliarSuppliersSummary, auxiliarClientsSummary]
   );
 
+  // Motor de Generación de Libro Auxiliar Según Ley y Detallado por Rango de Fechas
+  const auxiliaryBookReportPayload: AuxiliaryBookReportPayload = useMemo(() => {
+    const effectiveScope = auxReportConfig.bookScope;
+    const fromDate = auxiliarDateFrom || '2000-01-01';
+    const toDate = auxiliarDateTo || '2099-12-31';
+    const searchQ = auxiliarSearchTerm.trim().toLowerCase();
+
+    const rawMovements: Omit<AuxiliaryDetailedMovement, 'correlativo' | 'saldoProgresivo'>[] = [];
+    const registeredDteFolios = new Set<string>();
+
+    // 1. Incorporar DTEs oficiales del Registro de Compras y Ventas (RCV SII)
+    safeDtes.forEach((d) => {
+      const isCompra = d.tipoOperacion === 'COMPRA';
+      const isVenta = d.tipoOperacion === 'VENTA';
+      if (effectiveScope === 'PROVEEDORES' && !isCompra) return;
+      if (effectiveScope === 'CLIENTES' && !isVenta) return;
+      if (effectiveScope === 'HONORARIOS') return; // Honorarios se extrae de 2.1.02
+
+      const rutAux = d.rutContraparte || 'S/RUT';
+      const matchedAux = availableAuxiliaries.find((a) => normRut(a.rut) === normRut(rutAux));
+      const razonSocial = d.razonSocialContraparte || matchedAux?.razonSocial || `Auxiliar ${rutAux}`;
+      const codigoSii = String(d.tipoDte || '33');
+      const tipoDocLabel =
+        codigoSii === '33'
+          ? 'Factura Electrónica'
+          : codigoSii === '34'
+          ? 'Factura No Afecta o Exenta'
+          : codigoSii === '61'
+          ? 'Nota de Crédito Electrónica'
+          : codigoSii === '56'
+          ? 'Nota de Débito Electrónica'
+          : `DTE SII (${codigoSii})`;
+
+      const isNotaCredito = codigoSii === '61';
+      const montoBruto = Number(d.montoTotal) || 0;
+
+      // En Proveedores (Pasivo 2.1.01): Factura abona al Haber, Nota de Crédito carga al Debe
+      // En Clientes (Activo 1.1.03): Factura carga al Debe, Nota de Crédito abona al Haber
+      const debe = isCompra
+        ? isNotaCredito
+          ? montoBruto
+          : 0
+        : isNotaCredito
+        ? 0
+        : montoBruto;
+      const haber = isCompra
+        ? isNotaCredito
+          ? 0
+          : montoBruto
+        : isNotaCredito
+        ? montoBruto
+        : 0;
+
+      const dteKey = `${ isCompra ? 'C' : 'V' }-${normRut(rutAux)}-${d.folio}`;
+      registeredDteFolios.add(dteKey);
+
+      rawMovements.push({
+        id: `dte-${d.id}`,
+        fecha: d.fechaEmision || '2026-01-01',
+        fechaVencimiento: d.fechaVencimiento || d.fechaEmision || '-',
+        origen: 'DTE_SII',
+        codigoSii,
+        tipoDocLabel,
+        folio: String(d.folio),
+        rutAuxiliar: rutAux,
+        razonSocial,
+        tipoAuxiliar: isCompra ? 'PROVEEDOR' : 'CLIENTE',
+        cuentaCodigo: isCompra ? '2.1.01.001' : '1.1.03.001',
+        cuentaNombre: isCompra
+          ? 'Proveedores Nacionales (Cuentas por Pagar)'
+          : 'Clientes Nacionales (Cuentas por Cobrar)',
+        concepto: `${tipoDocLabel} F.${d.folio} - ${razonSocial} (RCV SII)`,
+        montoExento: Number(d.montoExento) || 0,
+        montoNeto: Number(d.montoNeto) || 0,
+        montoIva: Number(d.montoIva) || 0,
+        montoRetencion: Number(d.retencionMonto) || 0,
+        montoTotalBruto: montoBruto,
+        debe,
+        haber,
+        estadoPago: d.estadoPago || 'PENDIENTE',
+        bancoTrazabilidad:
+          d.estadoPago === 'PAGADO' || d.estadoPago === 'COBRADO'
+            ? `RCV SII: ${d.estadoPago}`
+            : 'PENDIENTE DE PAGO/COBRO',
+        centroCosto: 'ADM-CENTRAL',
+      });
+    });
+
+    // 2. Incorporar movimientos del Libro Diario (Cancelaciones, Cobranzas, Honorarios y Asientos Directos)
+    safeEntries.forEach((entry) => {
+      const bankLine = entry.lineas.find(
+        (l) =>
+          l.cuentaCodigo.startsWith('1.1.02') ||
+          l.cuentaCodigo.startsWith('1.1.01') ||
+          isAccountBankReconcilable(l.cuentaCodigo, l.cuentaNombre)
+      );
+
+      entry.lineas.forEach((line, idx) => {
+        const isProvAccount = line.cuentaCodigo.startsWith('2.1.01');
+        const isHonAccount = line.cuentaCodigo.startsWith('2.1.02');
+        const isCliAccount = line.cuentaCodigo.startsWith('1.1.03');
+
+        if (!isProvAccount && !isHonAccount && !isCliAccount) return;
+
+        if (effectiveScope === 'PROVEEDORES' && !isProvAccount && !isHonAccount) return;
+        if (effectiveScope === 'CLIENTES' && !isCliAccount) return;
+        if (effectiveScope === 'HONORARIOS' && !isHonAccount) return;
+
+        const rutAux = line.rutAuxiliar || 'S/RUT';
+        const matchedAux = availableAuxiliaries.find((a) => normRut(a.rut) === normRut(rutAux));
+        const razonSocial =
+          line.nombreAuxiliar || matchedAux?.razonSocial || `Auxiliar ${rutAux}`;
+
+        const folioCand = String(
+          line.folioDocumentoRef || line.documentoOperacion || line.documentoRef || entry.documento || entry.id
+        ).replace(/[^0-9A-Za-z\-]/g, '');
+
+        // Evitar duplicar el devengo si ya vino desde safeDtes con el mismo RUT y folio
+        const isDevengo =
+          (isProvAccount && (line.haber || 0) > 0 && (line.debe || 0) === 0) ||
+          (isCliAccount && (line.debe || 0) > 0 && (line.haber || 0) === 0);
+
+        const possibleDteKey = `${isProvAccount ? 'C' : 'V'}-${normRut(rutAux)}-${folioCand.replace(/\D/g, '')}`;
+        if (isDevengo && registeredDteFolios.has(possibleDteKey)) {
+          return;
+        }
+
+        const isPaymentOrCollection =
+          (isProvAccount && (line.debe || 0) > 0) ||
+          (isHonAccount && (line.debe || 0) > 0) ||
+          (isCliAccount && (line.haber || 0) > 0);
+
+        const codigoSii = isHonAccount
+          ? 'BHE'
+          : isPaymentOrCollection
+          ? 'COMP'
+          : line.tipoDocumentoRef?.includes('34')
+          ? '34'
+          : line.tipoDocumentoRef?.includes('61')
+          ? '61'
+          : '33';
+
+        const tipoDocLabel =
+          codigoSii === 'BHE'
+            ? 'Boleta de Honorarios Electrónica'
+            : codigoSii === 'COMP'
+            ? isCliAccount
+              ? 'Comprobante de Cobranza / Abono'
+              : 'Comprobante de Pago / Cargo'
+            : codigoSii === '34'
+            ? 'Factura Exenta'
+            : codigoSii === '61'
+            ? 'Nota de Crédito'
+            : 'Factura / Devengo Contable';
+
+        const montoMov = Math.max(Number(line.debe) || 0, Number(line.haber) || 0);
+        const netoEst =
+          codigoSii === '33' ? Math.round(montoMov / 1.19) : codigoSii === 'BHE' ? Math.round(montoMov / 0.8625) : 0;
+        const ivaEst = codigoSii === '33' ? montoMov - netoEst : 0;
+        const retEst = codigoSii === 'BHE' ? montoMov - Math.round(montoMov * 0.8625) : 0;
+        const exentoEst = codigoSii === '34' ? montoMov : 0;
+
+        const trace = resolveAuxiliaryPaymentTrace(entry, line, bankLine, isProvAccount || isHonAccount);
+        const trazabilidad = trace.resumenTexto || (isPaymentOrCollection ? 'Cancelación en Libro Diario' : 'Devengo en Libro Diario');
+
+        rawMovements.push({
+          id: `je-${entry.id}-${idx}`,
+          fecha: entry.fecha,
+          fechaVencimiento: trace.esPagoBancario
+            ? trace.fechaCobro || entry.fecha
+            : line.fechaVencimientoRef || line.fechaDocumentoRef || entry.fecha,
+          origen: 'COMPROBANTE_DIARIO',
+          codigoSii,
+          tipoDocLabel,
+          folio: folioCand || entry.id,
+          rutAuxiliar: rutAux,
+          razonSocial,
+          tipoAuxiliar: isHonAccount ? 'HONORARIOS' : isProvAccount ? 'PROVEEDOR' : 'CLIENTE',
+          cuentaCodigo: line.cuentaCodigo,
+          cuentaNombre: line.cuentaNombre,
+          concepto: entry.concepto || line.documentoRef || 'Movimiento Contable Auxiliar',
+          montoExento: exentoEst,
+          montoNeto: netoEst,
+          montoIva: ivaEst,
+          montoRetencion: retEst,
+          montoTotalBruto: montoMov,
+          debe: Number(line.debe) || 0,
+          haber: Number(line.haber) || 0,
+          estadoPago: isPaymentOrCollection ? 'IMPUTADO' : 'REGISTRADO',
+          bancoTrazabilidad: trazabilidad,
+          centroCosto: line.centroCosto || 'ADM-CENTRAL',
+        });
+      });
+    });
+
+    // 3. Para DTEs que figuran como PAGADO / COBRADO en el padrón SII pero no tienen asiento de pago explícito en Libro Diario,
+    // reflejar su comprobante de pago/cobro implícito para cuadrar el saldo exigible con las tarjetas KPI.
+    safeDtes.forEach((d) => {
+      const isCompra = d.tipoOperacion === 'COMPRA';
+      const isVenta = d.tipoOperacion === 'VENTA';
+      if (effectiveScope === 'PROVEEDORES' && !isCompra) return;
+      if (effectiveScope === 'CLIENTES' && !isVenta) return;
+      if (effectiveScope === 'HONORARIOS') return;
+
+      if (d.estadoPago === 'PAGADO' || d.estadoPago === 'COBRADO') {
+        const rutKey = normRut(d.rutContraparte);
+        const hasJournalPayment = rawMovements.some(
+          (m) =>
+            m.origen === 'COMPROBANTE_DIARIO' &&
+            normRut(m.rutAuxiliar) === rutKey &&
+            (isCompra ? m.debe > 0 : m.haber > 0)
+        );
+        if (!hasJournalPayment) {
+          const montoBruto = Number(d.montoTotal) || 0;
+          rawMovements.push({
+            id: `dte-paid-${d.id}`,
+            fecha: d.fechaVencimiento || d.fechaEmision || '2026-01-01',
+            fechaVencimiento: d.fechaVencimiento || d.fechaEmision || '-',
+            origen: 'COMPROBANTE_DIARIO',
+            codigoSii: 'COMP',
+            tipoDocLabel: isCompra ? 'Comprobante de Pago SII' : 'Comprobante de Cobro SII',
+            folio: `PAG-${d.folio}`,
+            rutAuxiliar: d.rutContraparte || 'S/RUT',
+            razonSocial: d.razonSocialContraparte || `Auxiliar ${d.rutContraparte}`,
+            tipoAuxiliar: isCompra ? 'PROVEEDOR' : 'CLIENTE',
+            cuentaCodigo: isCompra ? '2.1.01.001' : '1.1.03.001',
+            cuentaNombre: isCompra
+              ? 'Proveedores Nacionales (Cuentas por Pagar)'
+              : 'Clientes Nacionales (Cuentas por Cobrar)',
+            concepto: `${isCompra ? 'Cancelación Factura Compra' : 'Cobranza Factura Venta'} F.${d.folio} (${d.razonSocialContraparte})`,
+            montoExento: 0,
+            montoNeto: 0,
+            montoIva: 0,
+            montoRetencion: 0,
+            montoTotalBruto: montoBruto,
+            debe: isCompra ? montoBruto : 0,
+            haber: isCompra ? 0 : montoBruto,
+            estadoPago: d.estadoPago,
+            bancoTrazabilidad: 'Banco / Conciliación SII RCV',
+            centroCosto: 'ADM-CENTRAL',
+          });
+        }
+      }
+    });
+
+    // Filtrar por búsqueda o RUT seleccionado si aplica
+    const filteredAllDates = rawMovements.filter((m) => {
+      if (auxReportConfig.reportMode === 'ESTADO_CUENTA_RUT' && auxReportConfig.selectedRut) {
+        if (normRut(m.rutAuxiliar) !== normRut(auxReportConfig.selectedRut)) return false;
+      }
+      if (searchQ) {
+        const match =
+          m.rutAuxiliar.toLowerCase().includes(searchQ) ||
+          m.razonSocial.toLowerCase().includes(searchQ) ||
+          m.folio.toLowerCase().includes(searchQ) ||
+          m.concepto.toLowerCase().includes(searchQ);
+        if (!match) return false;
+      }
+      return true;
+    });
+
+    // Ordenar cronológicamente para calcular Saldo Inicial y Saldo Progresivo
+    filteredAllDates.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id.localeCompare(b.id));
+
+    // Función de variación de saldo según naturaleza de la cuenta auxiliar:
+    // En Proveedores/Honorarios (Pasivo): Haber aumenta deuda (+), Debe disminuye deuda (-)
+    // En Clientes (Activo): Debe aumenta cuenta por cobrar (+), Haber disminuye (-)
+    const getDelta = (m: Omit<AuxiliaryDetailedMovement, 'correlativo' | 'saldoProgresivo'>) => {
+      if (m.tipoAuxiliar === 'CLIENTE') {
+        return m.debe - m.haber;
+      }
+      return m.haber - m.debe;
+    };
+
+    let saldoInicialGlobal = 0;
+    const inRangeRaw: Omit<AuxiliaryDetailedMovement, 'correlativo' | 'saldoProgresivo'>[] = [];
+
+    // Mapa para resumen por RUT en el rango de fechas
+    const rutSummaryMap = new Map<
+      string,
+      {
+        rut: string;
+        razonSocial: string;
+        tipoAuxiliar: string;
+        cuentaContable: string;
+        cantidadDocs: number;
+        saldoInicial: number;
+        cargosPeriodo: number;
+        abonosPeriodo: number;
+      }
+    >();
+
+    filteredAllDates.forEach((m) => {
+      const rutKey = normRut(m.rutAuxiliar) || m.razonSocial;
+      const entryRut = rutSummaryMap.get(rutKey) || {
+        rut: m.rutAuxiliar,
+        razonSocial: m.razonSocial,
+        tipoAuxiliar: m.tipoAuxiliar,
+        cuentaContable: m.cuentaCodigo,
+        cantidadDocs: 0,
+        saldoInicial: 0,
+        cargosPeriodo: 0,
+        abonosPeriodo: 0,
+      };
+
+      if (m.fecha < fromDate) {
+        const delta = getDelta(m);
+        saldoInicialGlobal += delta;
+        entryRut.saldoInicial += delta;
+      } else if (m.fecha >= fromDate && m.fecha <= toDate) {
+        inRangeRaw.push(m);
+        if (m.origen === 'DTE_SII' || m.codigoSii !== 'COMP') {
+          entryRut.cantidadDocs += 1;
+        }
+        if (m.tipoAuxiliar === 'CLIENTE') {
+          entryRut.cargosPeriodo += m.debe;
+          entryRut.abonosPeriodo += m.haber;
+        } else {
+          entryRut.cargosPeriodo += m.haber;
+          entryRut.abonosPeriodo += m.debe;
+        }
+      }
+      rutSummaryMap.set(rutKey, entryRut);
+    });
+
+    // Ordenar movimientos del período según preferencia del usuario
+    const sortedInRange = [...inRangeRaw];
+    if (auxReportConfig.sortBy === 'FECHA_DESC') {
+      sortedInRange.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    } else if (auxReportConfig.sortBy === 'RUT') {
+      sortedInRange.sort((a, b) => a.rutAuxiliar.localeCompare(b.rutAuxiliar) || a.fecha.localeCompare(b.fecha));
+    } else if (auxReportConfig.sortBy === 'RAZON_SOCIAL') {
+      sortedInRange.sort((a, b) => a.razonSocial.localeCompare(b.razonSocial) || a.fecha.localeCompare(b.fecha));
+    } else if (auxReportConfig.sortBy === 'MONTO_DESC') {
+      sortedInRange.sort((a, b) => b.montoTotalBruto - a.montoTotalBruto);
+    }
+
+    let runningSaldo = saldoInicialGlobal;
+    let totalDebePeriodo = 0;
+    let totalHaberPeriodo = 0;
+    let totalExentoPeriodo = 0;
+    let totalNetoPeriodo = 0;
+    let totalIvaPeriodo = 0;
+    let totalRetencionPeriodo = 0;
+    let totalBrutoPeriodo = 0;
+
+    const legalDocMap = new Map<string, AuxiliaryLegalSummaryItem>();
+
+    const movements: AuxiliaryDetailedMovement[] = sortedInRange.map((m, idx) => {
+      runningSaldo += getDelta(m);
+      totalDebePeriodo += m.debe;
+      totalHaberPeriodo += m.haber;
+      totalExentoPeriodo += m.montoExento;
+      totalNetoPeriodo += m.montoNeto;
+      totalIvaPeriodo += m.montoIva;
+      totalRetencionPeriodo += m.montoRetencion;
+      if (m.codigoSii !== 'COMP') {
+        totalBrutoPeriodo += m.montoTotalBruto;
+      }
+
+      const docGroup = legalDocMap.get(m.codigoSii) || {
+        codigoSii: m.codigoSii,
+        nombreDocumento: m.tipoDocLabel,
+        cantidadDocumentos: 0,
+        totalExento: 0,
+        totalNeto: 0,
+        totalIva: 0,
+        totalRetencion: 0,
+        totalBruto: 0,
+        totalDebe: 0,
+        totalHaber: 0,
+      };
+      docGroup.cantidadDocumentos += 1;
+      docGroup.totalExento += m.montoExento;
+      docGroup.totalNeto += m.montoNeto;
+      docGroup.totalIva += m.montoIva;
+      docGroup.totalRetencion += m.montoRetencion;
+      docGroup.totalBruto += m.montoTotalBruto;
+      docGroup.totalDebe += m.debe;
+      docGroup.totalHaber += m.haber;
+      legalDocMap.set(m.codigoSii, docGroup);
+
+      return {
+        ...m,
+        correlativo: idx + 1,
+        saldoProgresivo: runningSaldo,
+      };
+    });
+
+    const rangedSummariesByRut: AuxiliaryRangedSummaryRow[] = Array.from(rutSummaryMap.values())
+      .map((r) => {
+        const saldoFinal = Math.max(0, r.saldoInicial + r.cargosPeriodo - r.abonosPeriodo);
+        return {
+          rut: r.rut,
+          razonSocial: r.razonSocial,
+          tipoAuxiliar: r.tipoAuxiliar,
+          cuentaContable: r.cuentaContable,
+          cantidadDocs: r.cantidadDocs,
+          saldoInicial: Math.max(0, r.saldoInicial),
+          cargosPeriodo: r.cargosPeriodo,
+          abonosPeriodo: r.abonosPeriodo,
+          saldoFinal,
+          estado: saldoFinal > 0 ? 'PENDIENTE' : 'AL DÍA',
+        };
+      })
+      .filter((r) => {
+        if (!auxReportConfig.includeZeroBalance && r.saldoFinal === 0) return false;
+        if (auxiliarFilterStatus === 'CON_SALDO' && r.saldoFinal <= 0) return false;
+        if (auxiliarFilterStatus === 'SALDADO' && r.saldoFinal > 0) return false;
+        return r.saldoInicial > 0 || r.cargosPeriodo > 0 || r.abonosPeriodo > 0 || r.saldoFinal > 0;
+      })
+      .sort((a, b) => b.saldoFinal - a.saldoFinal);
+
+    return {
+      config: {
+        ...auxReportConfig,
+        fechaDesde: fromDate,
+        fechaHasta: toDate,
+      },
+      saldoInicialGlobal: Math.max(0, saldoInicialGlobal),
+      totalDebePeriodo,
+      totalHaberPeriodo,
+      saldoFinalGlobal: Math.max(0, runningSaldo),
+      totalExentoPeriodo,
+      totalNetoPeriodo,
+      totalIvaPeriodo,
+      totalRetencionPeriodo,
+      totalBrutoPeriodo,
+      movements,
+      legalSummaryByDocType: Array.from(legalDocMap.values()),
+      rangedSummariesByRut,
+    };
+  }, [
+    safeDtes,
+    safeEntries,
+    availableAuxiliaries,
+    auxReportConfig,
+    auxiliarDateFrom,
+    auxiliarDateTo,
+    auxiliarSearchTerm,
+    auxiliarFilterStatus,
+  ]);
+
   // Manual Entry Form Line Handlers
   const handleAddManualLine = () => {
     setManualEntry(prev => ({
@@ -2188,6 +2792,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       if (foundAux) defaultNombre = foundAux.razonSocial;
     }
 
+    const isBankAcc =
+      account.codigo.startsWith('1.1.02') ||
+      Boolean(account.esConciliableBancaria) ||
+      isAccountBankReconcilable(account.codigo, account.nombre);
+
     updated[index] = {
       ...updated[index],
       cuentaNombre: account.nombre,
@@ -2200,6 +2809,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       montoMonedaOriginal: currInfo.manejaMonedaExtranjera ? newMontoOrig : undefined,
       debe: newDebe,
       haber: newHaber,
+      ...(isBankAcc
+        ? {
+            tipoDocumentoConciliacion:
+              updated[index].tipoDocumentoConciliacion &&
+              !/FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(updated[index].tipoDocumentoConciliacion)
+                ? updated[index].tipoDocumentoConciliacion
+                : 'TRANSFERENCIA',
+            fechaDocumentoRef: updated[index].fechaDocumentoRef || manualEntry.fecha,
+            fechaVencimientoRef: updated[index].fechaVencimientoRef || manualEntry.fecha,
+          }
+        : {}),
     };
     setManualEntry(prev => ({ ...prev, lineas: updated }));
     setManualEntryError(null);
@@ -2409,28 +3029,42 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       if (auxLines.length > 0 && bankLines.length > 0) {
         const primaryBank = bankLines[0];
         const primaryAux = auxLines[0];
+        const cleanBankType =
+          primaryBank.tipoDocumentoConciliacion &&
+          !/FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(primaryBank.tipoDocumentoConciliacion)
+            ? primaryBank.tipoDocumentoConciliacion
+            : 'TRANSFERENCIA';
+        const cleanBankDoc =
+          primaryBank.documentoConciliacion ||
+          primaryBank.folioDocumentoRef ||
+          primaryBank.documentoRef ||
+          primaryAux.documentoOperacion ||
+          '';
 
-        // 1. Enlazar datos bancarios (TEF, cheque, banco) en la línea de auxiliar para la cartola del auxiliar
+        // 1. Enlazar datos bancarios (TEF, cheque, banco, fechas) en la línea de auxiliar para la cartola del auxiliar
         auxLines.forEach(aLine => {
-          if (!aLine.documentoOperacion && (primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef)) {
-            aLine.documentoOperacion = primaryBank.documentoConciliacion || primaryBank.folioDocumentoRef || primaryBank.documentoRef;
+          if (cleanBankDoc) {
+            aLine.documentoOperacion = cleanBankDoc;
           }
-          if (!aLine.tipoDocumentoOperacion && primaryBank.tipoDocumentoConciliacion) {
-            aLine.tipoDocumentoOperacion = primaryBank.tipoDocumentoConciliacion;
-          }
-          if (!aLine.fechaDocumentoOperacion) {
-            aLine.fechaDocumentoOperacion = primaryBank.fechaDocumentoRef || normalized.fecha;
-          }
+          aLine.tipoDocumentoOperacion = cleanBankType;
+          aLine.fechaDocumentoOperacion = primaryBank.fechaDocumentoRef || normalized.fecha;
         });
 
         // 2. Enlazar datos del auxiliar en la línea de banco para la cartola bancaria y conciliación
         bankLines.forEach(bLine => {
+          bLine.tipoDocumentoConciliacion = cleanBankType;
+          if (!bLine.fechaDocumentoRef) {
+            bLine.fechaDocumentoRef = normalized.fecha;
+          }
+          if (!bLine.fechaVencimientoRef) {
+            bLine.fechaVencimientoRef = bLine.fechaDocumentoRef || normalized.fecha;
+          }
           if (!bLine.rutAuxiliar && primaryAux.rutAuxiliar) {
             bLine.rutAuxiliar = primaryAux.rutAuxiliar;
             bLine.nombreAuxiliar = primaryAux.nombreAuxiliar;
           }
-          if (!bLine.documentoConciliacion && primaryAux.documentoOperacion) {
-            bLine.documentoConciliacion = primaryAux.documentoOperacion;
+          if (!bLine.documentoConciliacion && cleanBankDoc) {
+            bLine.documentoConciliacion = cleanBankDoc;
           }
         });
       }
@@ -3648,15 +4282,18 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         </div>
       )}
 
-      {/* VIEW: LIBROS AUXILIARES (PROVEEDORES & CLIENTES) */}
+      {/* VIEW: LIBROS AUXILIARES (PROVEEDORES, CLIENTES, LIBRO SEGÚN LEY & DETALLADO POR FECHAS) */}
       {activeTab === 'AUXILIARES' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
           {/* Header */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div>
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
                 <span className="bg-violet-100 text-violet-900 text-[11px] font-bold px-2 py-0.5 rounded font-mono">
-                  LIBROS AUXILIARES OFICIALES
+                  LIBROS AUXILIARES OFICIALES SII / CÓD. COMERCIO
+                </span>
+                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded font-mono">
+                  RES. EX. SII N° 45 / N° 61 &amp; ART. 25 CÓD. COMERCIO
                 </span>
                 <span className="text-xs text-slate-500 font-medium">
                   {company.razonSocial} (RUT: {company.rut})
@@ -3664,14 +4301,90 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Users className="w-5 h-5 text-violet-600" />
-                Control de Auxiliares: Cuentas por Pagar (2.1.01) y Cuentas por Cobrar (1.1.03)
+                Control de Libros Auxiliares, Emisión Legal Timbrada y Detallado por Rango de Fechas
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Seguimiento analítico individual por RUT y contraparte, vinculando Facturas de Compra/Venta SII (RCV) con cancelaciones en el Libro Diario.
+                Seguimiento analítico por RUT, generación del Libro Auxiliar Según Ley con cuadro de centralización SII y libro detallado cronológico por rango de fechas.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAuxReportCustomizer((prev) => !prev)}
+                className={`text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors border shadow-2xs ${
+                  showAuxReportCustomizer
+                    ? 'bg-violet-600 text-white border-violet-700'
+                    : 'bg-violet-50 hover:bg-violet-100 text-violet-900 border-violet-200'
+                }`}
+                title="Personalizar columnas, orientación, foliación legal, ordenamiento y formato del reporte"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>{showAuxReportCustomizer ? 'Ocultar Personalización' : 'Personalizar Reporte'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const legalPayload: AuxiliaryBookReportPayload = {
+                    ...auxiliaryBookReportPayload,
+                    config: {
+                      ...auxiliaryBookReportPayload.config,
+                      reportMode: 'LIBRO_SEGUN_LEY',
+                      includeLegalSummary: true,
+                      includeSignatures: true,
+                    },
+                  };
+                  setAuxiliarViewMode('LIBRO_SEGUN_LEY');
+                  setAuxReportConfig((prev) => ({
+                    ...prev,
+                    reportMode: 'LIBRO_SEGUN_LEY',
+                    includeLegalSummary: true,
+                    includeSignatures: true,
+                  }));
+                  downloadLibroAuxiliarPdf(legalPayload, effectiveCompany);
+                }}
+                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Generar y descargar Libro Auxiliar Oficial Según Ley (Art. 25 Cód. Comercio / Res. Ex. SII N° 45)"
+              >
+                <Scale className="w-3.5 h-3.5 text-amber-400" />
+                <span>Generar Libro Según Ley (PDF)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const rangedPayload: AuxiliaryBookReportPayload = {
+                    ...auxiliaryBookReportPayload,
+                    config: {
+                      ...auxiliaryBookReportPayload.config,
+                      reportMode: 'DETALLADO_RANGO_FECHAS',
+                    },
+                  };
+                  setAuxiliarViewMode('DETALLADO_FECHAS');
+                  setAuxReportConfig((prev) => ({
+                    ...prev,
+                    reportMode: 'DETALLADO_RANGO_FECHAS',
+                  }));
+                  downloadLibroAuxiliarPdf(rangedPayload, effectiveCompany);
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Generar y descargar Libro Auxiliar Detallado por Rango de Fechas"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Libro Detallado por Fechas (PDF)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => downloadLibroAuxiliarExcel(auxiliaryBookReportPayload, effectiveCompany)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Exportar Libro Auxiliar Multi-Hoja a Excel (.xlsx) con Detalle por Fechas, Centralización SII y Saldos por RUT"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Excel SII (.xlsx)</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -3682,7 +4395,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 title="Administrar Padrón y Catálogo de Auxiliares (Proveedores, Clientes, Honorarios)"
               >
                 <Users className="w-3.5 h-3.5 text-violet-600" />
-                <span>Gestionar Padrón de Auxiliares</span>
+                <span>Padrón Auxiliares</span>
               </button>
 
               <button
@@ -3695,28 +4408,483 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Nuevo Asiento / Pago con Auxiliar</span>
+                <span>Nuevo Asiento / Pago</span>
               </button>
             </div>
           </div>
 
+          {/* Barra de Rango de Fechas, Presets Rápidos y Selector de Vista del Libro */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            {/* Selector de Rango de Fechas + Presets */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-2xs">
+                <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[11px] font-bold text-slate-600 uppercase">Desde:</span>
+                <input
+                  type="date"
+                  value={auxiliarDateFrom}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuxiliarDateFrom(val);
+                    setAuxReportConfig((prev) => ({ ...prev, fechaDesde: val }));
+                  }}
+                  className="text-xs font-mono font-semibold text-slate-800 bg-transparent focus:outline-hidden"
+                />
+                <span className="text-slate-300">|</span>
+                <span className="text-[11px] font-bold text-slate-600 uppercase">Hasta:</span>
+                <input
+                  type="date"
+                  value={auxiliarDateTo}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuxiliarDateTo(val);
+                    setAuxReportConfig((prev) => ({ ...prev, fechaHasta: val }));
+                  }}
+                  className="text-xs font-mono font-semibold text-slate-800 bg-transparent focus:outline-hidden"
+                />
+              </div>
+
+              {/* Presets rápidos de rango de fechas */}
+              <div className="flex flex-wrap items-center gap-1">
+                {[
+                  { label: '1er Trim.', from: '2026-01-01', to: '2026-03-31' },
+                  { label: '2do Trim.', from: '2026-04-01', to: '2026-06-30' },
+                  { label: '3er Trim.', from: '2026-07-01', to: '2026-09-30' },
+                  { label: 'Oct 2026', from: '2026-10-01', to: '2026-10-31' },
+                  { label: 'Año 2026', from: '2026-01-01', to: '2026-12-31' },
+                  { label: 'Histórico', from: '2020-01-01', to: '2026-12-31' },
+                ].map((preset) => {
+                  const isActive = auxiliarDateFrom === preset.from && auxiliarDateTo === preset.to;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setAuxiliarDateFrom(preset.from);
+                        setAuxiliarDateTo(preset.to);
+                        setAuxReportConfig((prev) => ({
+                          ...prev,
+                          fechaDesde: preset.from,
+                          fechaHasta: preset.to,
+                        }));
+                      }}
+                      className={`px-2 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors ${
+                        isActive
+                          ? 'bg-indigo-600 text-white shadow-2xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Selector de Modalidad de Visualización en Pantalla */}
+            <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxiliarViewMode('RESUMEN_RUT');
+                  setAuxReportConfig((prev) => ({ ...prev, reportMode: 'RESUMEN_SALDOS' }));
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  auxiliarViewMode === 'RESUMEN_RUT'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 text-violet-600" />
+                <span>Resumen por Auxiliar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxiliarViewMode('DETALLADO_FECHAS');
+                  setAuxReportConfig((prev) => ({ ...prev, reportMode: 'DETALLADO_RANGO_FECHAS' }));
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  auxiliarViewMode === 'DETALLADO_FECHAS'
+                    ? 'bg-white text-indigo-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Detallado por Rango de Fechas</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800 font-mono">
+                  {auxiliaryBookReportPayload.movements.length} movs
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxiliarViewMode('LIBRO_SEGUN_LEY');
+                  setAuxReportConfig((prev) => ({
+                    ...prev,
+                    reportMode: 'LIBRO_SEGUN_LEY',
+                    includeLegalSummary: true,
+                    includeSignatures: true,
+                  }));
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  auxiliarViewMode === 'LIBRO_SEGUN_LEY'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-900'
+                }`}
+              >
+                <Scale className="w-3.5 h-3.5 text-amber-500" />
+                <span>Libro Oficial Según Ley</span>
+              </button>
+            </div>
+          </div>
+
+          {/* PANEL DE PERSONALIZACIÓN DEL REPORTE DE LIBROS AUXILIARES */}
+          {showAuxReportCustomizer && (
+            <div className="bg-violet-50/50 border border-violet-200 rounded-xl p-5 space-y-4 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-violet-200/70">
+                <div>
+                  <h4 className="text-xs font-bold text-violet-950 uppercase tracking-wider flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-violet-600" />
+                    Configurador y Personalización del Reporte de Libros Auxiliares
+                  </h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Personalice el alcance contable, modalidad normativa, columnas visibles, ordenamiento y timbraje de folios para vista en pantalla y exportación oficial.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadLibroAuxiliarPdf(auxiliaryBookReportPayload, effectiveCompany)}
+                    className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Descargar PDF Personalizado</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadLibroAuxiliarExcel(auxiliaryBookReportPayload, effectiveCompany)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Exportar Excel (.xlsx)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadLibroAuxiliarCsv(auxiliaryBookReportPayload, effectiveCompany)}
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-500" />
+                    <span>CSV SII</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Parámetros Principales del Reporte */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    1. Libro / Alcance Auxiliar
+                  </label>
+                  <select
+                    value={auxReportConfig.bookScope}
+                    onChange={(e) => {
+                      const scope = e.target.value as AuxiliaryBookReportConfig['bookScope'];
+                      setAuxReportConfig((prev) => ({ ...prev, bookScope: scope }));
+                      if (scope === 'PROVEEDORES') setAuxiliarSubTab('PROVEEDORES');
+                      if (scope === 'CLIENTES') setAuxiliarSubTab('CLIENTES');
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800 font-semibold"
+                  >
+                    <option value="PROVEEDORES">Auxiliar Proveedores (2.1.01)</option>
+                    <option value="CLIENTES">Auxiliar Clientes (1.1.03)</option>
+                    <option value="HONORARIOS">Auxiliar Honorarios (2.1.02)</option>
+                    <option value="CONSOLIDADO">Consolidado General (CxP + CxC)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    2. Modalidad del Reporte
+                  </label>
+                  <select
+                    value={auxReportConfig.reportMode}
+                    onChange={(e) => {
+                      const mode = e.target.value as AuxiliaryBookReportConfig['reportMode'];
+                      setAuxReportConfig((prev) => ({ ...prev, reportMode: mode }));
+                      if (mode === 'LIBRO_SEGUN_LEY') setAuxiliarViewMode('LIBRO_SEGUN_LEY');
+                      else if (mode === 'DETALLADO_RANGO_FECHAS' || mode === 'ESTADO_CUENTA_RUT')
+                        setAuxiliarViewMode('DETALLADO_FECHAS');
+                      else setAuxiliarViewMode('RESUMEN_RUT');
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800 font-semibold"
+                  >
+                    <option value="LIBRO_SEGUN_LEY">Libro Oficial Según Ley (SII / Cód. Comercio)</option>
+                    <option value="DETALLADO_RANGO_FECHAS">Libro Detallado por Rango de Fechas</option>
+                    <option value="RESUMEN_SALDOS">Resumen de Saldos por Auxiliar en Rango</option>
+                    <option value="ESTADO_CUENTA_RUT">Cartola Individual por RUT Auxiliar</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    3. Ordenamiento de Registros
+                  </label>
+                  <select
+                    value={auxReportConfig.sortBy}
+                    onChange={(e) =>
+                      setAuxReportConfig((prev) => ({
+                        ...prev,
+                        sortBy: e.target.value as AuxiliaryBookReportConfig['sortBy'],
+                      }))
+                    }
+                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800 font-semibold"
+                  >
+                    <option value="FECHA_ASC">Cronológico Ascendente (Ley)</option>
+                    <option value="FECHA_DESC">Cronológico Descendente</option>
+                    <option value="RUT">Por RUT Auxiliar</option>
+                    <option value="RAZON_SOCIAL">Por Razón Social (A-Z)</option>
+                    <option value="MONTO_DESC">Por Mayor Monto Bruto</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    4. Orientación PDF &amp; Folio Legal
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={auxReportConfig.orientation}
+                      onChange={(e) =>
+                        setAuxReportConfig((prev) => ({
+                          ...prev,
+                          orientation: e.target.value as 'landscape' | 'portrait',
+                        }))
+                      }
+                      className="flex-1 text-xs bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-slate-800 font-semibold"
+                    >
+                      <option value="landscape">Horizontal (Landscape)</option>
+                      <option value="portrait">Vertical (Portrait)</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      value={auxReportConfig.folioInicial}
+                      onChange={(e) =>
+                        setAuxReportConfig((prev) => ({
+                          ...prev,
+                          folioInicial: Math.max(1, Number(e.target.value) || 1),
+                        }))
+                      }
+                      className="w-20 text-xs font-mono bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-slate-800"
+                      title="N° Folio Legal Inicial Timbrado"
+                      placeholder="Folio"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    5. Título Personalizado (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Libro Auxiliar Oficial Octubre 2026"
+                    value={auxReportConfig.customTitle}
+                    onChange={(e) =>
+                      setAuxReportConfig((prev) => ({ ...prev, customTitle: e.target.value }))
+                    }
+                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Selector de Columnas Personalizables */}
+              <div className="bg-white border border-violet-100 rounded-lg p-3.5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Columnas Visibles y Exportables del Libro Auxiliar
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAuxReportConfig((prev) => ({
+                          ...prev,
+                          columns: {
+                            correlativo: true,
+                            fecha: true,
+                            tipoDocSii: true,
+                            folioDoc: true,
+                            fechaVencimiento: true,
+                            rutAuxiliar: true,
+                            razonSocial: true,
+                            cuentaContable: true,
+                            glosaConcepto: true,
+                            desgloseIva: true,
+                            debeHaber: true,
+                            saldoProgresivo: true,
+                            trazabilidadBancaria: true,
+                            centroCosto: true,
+                          },
+                        }))
+                      }
+                      className="text-[11px] font-semibold text-violet-700 hover:underline cursor-pointer"
+                    >
+                      Marcar todas
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAuxReportConfig((prev) => ({
+                          ...prev,
+                          columns: {
+                            correlativo: true,
+                            fecha: true,
+                            tipoDocSii: true,
+                            folioDoc: true,
+                            fechaVencimiento: false,
+                            rutAuxiliar: true,
+                            razonSocial: true,
+                            cuentaContable: true,
+                            glosaConcepto: false,
+                            desgloseIva: true,
+                            debeHaber: true,
+                            saldoProgresivo: true,
+                            trazabilidadBancaria: false,
+                            centroCosto: false,
+                          },
+                        }))
+                      }
+                      className="text-[11px] font-semibold text-slate-600 hover:underline cursor-pointer"
+                    >
+                      Estándar Legal SII
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
+                  {[
+                    { key: 'correlativo', label: 'N° Correlativo' },
+                    { key: 'fecha', label: 'Fecha Contable' },
+                    { key: 'tipoDocSii', label: 'Código / Tipo SII' },
+                    { key: 'folioDoc', label: 'Folio Documento' },
+                    { key: 'fechaVencimiento', label: 'Fecha Vencimiento' },
+                    { key: 'rutAuxiliar', label: 'RUT Auxiliar' },
+                    { key: 'razonSocial', label: 'Razón Social' },
+                    { key: 'cuentaContable', label: 'Cuenta Mayor IFRS' },
+                    { key: 'glosaConcepto', label: 'Glosa / Concepto' },
+                    { key: 'desgloseIva', label: 'Exento / Neto / IVA' },
+                    { key: 'debeHaber', label: 'Debe / Haber ($)' },
+                    { key: 'saldoProgresivo', label: 'Saldo Acumulado' },
+                    { key: 'trazabilidadBancaria', label: 'Banco / Medio Pago' },
+                    { key: 'centroCosto', label: 'Centro de Costo' },
+                  ].map((col) => {
+                    const checked =
+                      auxReportConfig.columns[col.key as keyof AuxiliaryBookReportConfig['columns']];
+                    return (
+                      <label
+                        key={col.key}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-violet-50 border-violet-300 text-violet-950 font-semibold'
+                            : 'bg-slate-50 border-slate-200 text-slate-500'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setAuxReportConfig((prev) => ({
+                              ...prev,
+                              columns: {
+                                ...prev.columns,
+                                [col.key]: e.target.checked,
+                              },
+                            }))
+                          }
+                          className="rounded text-violet-600 focus:ring-violet-500"
+                        />
+                        <span className="truncate text-[11px]">{col.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {/* Opciones de Certificación Legal */}
+                <div className="flex flex-wrap items-center justify-between gap-3 mt-3 pt-3 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center gap-4 text-xs">
+                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={auxReportConfig.includeLegalSummary}
+                        onChange={(e) =>
+                          setAuxReportConfig((prev) => ({
+                            ...prev,
+                            includeLegalSummary: e.target.checked,
+                          }))
+                        }
+                        className="rounded text-violet-600"
+                      />
+                      <span>Incluir Cuadro Legal de Centralización SII por Tipo DTE (Art. 59 DL 825)</span>
+                    </label>
+
+                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={auxReportConfig.includeSignatures}
+                        onChange={(e) =>
+                          setAuxReportConfig((prev) => ({
+                            ...prev,
+                            includeSignatures: e.target.checked,
+                          }))
+                        }
+                        className="rounded text-violet-600"
+                      />
+                      <span>Incluir Pie de Firmas (Contador General y Representante Legal)</span>
+                    </label>
+
+                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={auxReportConfig.includeZeroBalance}
+                        onChange={(e) =>
+                          setAuxReportConfig((prev) => ({
+                            ...prev,
+                            includeZeroBalance: e.target.checked,
+                          }))
+                        }
+                        className="rounded text-violet-600"
+                      />
+                      <span>Incluir Auxiliares Saldados ($0)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Sub-tab Switcher & Filter Controls */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+            <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl">
               <button
                 type="button"
                 onClick={() => {
                   setAuxiliarSubTab('PROVEEDORES');
+                  setAuxReportConfig((prev) => ({ ...prev, bookScope: 'PROVEEDORES' }));
                   setSelectedAuxiliarRut(null);
                 }}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                  auxiliarSubTab === 'PROVEEDORES'
+                  auxReportConfig.bookScope === 'PROVEEDORES'
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5 text-amber-600" />
-                <span>Auxiliar de Proveedores (CxP)</span>
+                <span>Auxiliar de Proveedores (CxP 2.1.01)</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-mono">
                   {auxiliarSuppliersSummary.filter(s => s.saldoPendiente > 0).length} pendientes
                 </span>
@@ -3726,19 +4894,38 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 type="button"
                 onClick={() => {
                   setAuxiliarSubTab('CLIENTES');
+                  setAuxReportConfig((prev) => ({ ...prev, bookScope: 'CLIENTES' }));
                   setSelectedAuxiliarRut(null);
                 }}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                  auxiliarSubTab === 'CLIENTES'
+                  auxReportConfig.bookScope === 'CLIENTES'
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Users className="w-3.5 h-3.5 text-blue-600" />
-                <span>Auxiliar de Clientes (CxC)</span>
+                <span>Auxiliar de Clientes (CxC 1.1.03)</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 font-mono">
                   {auxiliarClientsSummary.filter(c => c.saldoPorCobrar > 0).length} por cobrar
                 </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuxReportConfig((prev) => ({ ...prev, bookScope: 'CONSOLIDADO' }));
+                  if (auxiliarViewMode === 'RESUMEN_RUT') {
+                    setAuxiliarViewMode('DETALLADO_FECHAS');
+                  }
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  auxReportConfig.bookScope === 'CONSOLIDADO'
+                    ? 'bg-white text-violet-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-violet-600" />
+                <span>Consolidado General</span>
               </button>
             </div>
 
@@ -3747,7 +4934,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                 <input
                   type="text"
-                  placeholder="Buscar por RUT o razón social..."
+                  placeholder="Buscar por RUT, razón social o folio..."
                   value={auxiliarSearchTerm}
                   onChange={(e) => setAuxiliarSearchTerm(e.target.value)}
                   className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
@@ -3784,25 +4971,45 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                    {isSuppliers ? 'Total Compras Facturadas (SII)' : 'Total Ventas Facturadas (SII)'}
+                    {auxiliarViewMode === 'RESUMEN_RUT'
+                      ? isSuppliers
+                        ? 'Total Compras Facturadas (SII)'
+                        : 'Total Ventas Facturadas (SII)'
+                      : `Saldo Inicial (al ${auxiliarDateFrom})`}
                   </span>
                   <div className="font-mono font-bold text-slate-900 text-lg mt-1">
-                    {convertAmount(totalFact)}
+                    {convertAmount(
+                      auxiliarViewMode === 'RESUMEN_RUT'
+                        ? totalFact
+                        : auxiliaryBookReportPayload.saldoInicialGlobal
+                    )}
                   </div>
                   <span className="text-[10px] text-slate-400">
-                    {dataList.length} {isSuppliers ? 'proveedores registrados' : 'clientes registrados'}
+                    {auxiliarViewMode === 'RESUMEN_RUT'
+                      ? `${dataList.length} ${isSuppliers ? 'proveedores registrados' : 'clientes registrados'}`
+                      : `Arrastre previo a ${auxiliarDateFrom}`}
                   </span>
                 </div>
 
                 <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                    {isSuppliers ? 'Total Pagos Imputados' : 'Total Cobros Imputados'}
+                    {auxiliarViewMode === 'RESUMEN_RUT'
+                      ? isSuppliers
+                        ? 'Total Pagos Imputados'
+                        : 'Total Cobros Imputados'
+                      : 'Movimientos en Rango (Debe / Haber)'}
                   </span>
                   <div className="font-mono font-bold text-emerald-700 text-lg mt-1">
-                    {convertAmount(totalCancelado)}
+                    {auxiliarViewMode === 'RESUMEN_RUT'
+                      ? convertAmount(totalCancelado)
+                      : `${convertAmount(auxiliaryBookReportPayload.totalDebePeriodo)} / ${convertAmount(
+                          auxiliaryBookReportPayload.totalHaberPeriodo
+                        )}`}
                   </div>
                   <span className="text-[10px] text-slate-400">
-                    Comprobantes bancarios y de caja
+                    {auxiliarViewMode === 'RESUMEN_RUT'
+                      ? 'Comprobantes bancarios y de caja'
+                      : `${auxiliaryBookReportPayload.movements.length} registros entre ${auxiliarDateFrom} y ${auxiliarDateTo}`}
                   </span>
                 </div>
 
@@ -3811,7 +5018,11 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                     {isSuppliers ? 'Saldo Total por Pagar (Pasivo)' : 'Saldo Total por Cobrar (Activo)'}
                   </span>
                   <div className={`font-mono font-bold text-lg mt-1 ${totalSaldo > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
-                    {convertAmount(totalSaldo)}
+                    {convertAmount(
+                      auxiliarViewMode === 'RESUMEN_RUT'
+                        ? totalSaldo
+                        : auxiliaryBookReportPayload.saldoFinalGlobal
+                    )}
                   </div>
                   <span className="text-[10px] text-slate-400">
                     {isSuppliers ? 'Exigible ante proveedores' : 'Cartera vigente a cobrar'}
@@ -3820,21 +5031,404 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
                 <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                    Estado de Cuadre Auxiliar
+                    Estado de Cuadre Legal &amp; SII
                   </span>
                   <div className="font-bold text-sm mt-1 text-slate-800 flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     <span>Sincronizado con Mayor</span>
                   </div>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    Partida doble &amp; DTE correlacionados
+                    Folio Legal N° {String(auxReportConfig.folioInicial).padStart(6, '0')} | RCV Cuadrado
                   </span>
                 </div>
               </div>
             );
           })()}
 
-          {/* Tabla de Auxiliares */}
+          {/* ========================================================================= */}
+          {/* VISTA 2 Y 3: LIBRO DETALLADO POR RANGO DE FECHAS Y LIBRO OFICIAL SEGÚN LEY */}
+          {/* ========================================================================= */}
+          {(auxiliarViewMode === 'DETALLADO_FECHAS' || auxiliarViewMode === 'LIBRO_SEGUN_LEY') && (
+            <div className="space-y-5">
+              {/* Encabezado Legal Oficial si estamos en LIBRO_SEGUN_LEY */}
+              {auxiliarViewMode === 'LIBRO_SEGUN_LEY' && (
+                <div className="bg-slate-900 text-white rounded-xl p-5 border border-slate-800 shadow-xs">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-700 pb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-mono text-[10px] font-extrabold uppercase">
+                          TIMBRAJE ELECTRÓNICO SII — FOLIO N° {String(auxReportConfig.folioInicial).padStart(6, '0')}
+                        </span>
+                        <span className="text-xs text-slate-300 font-mono">
+                          Art. 25 al 30 Código de Comercio | Art. 59 D.L. 825 | Res. Ex. SII N° 45 y N° 61
+                        </span>
+                      </div>
+                      <h4 className="text-sm font-bold text-white mt-1.5 uppercase tracking-wide">
+                        {auxReportConfig.customTitle?.trim() ||
+                          (auxReportConfig.bookScope === 'PROVEEDORES'
+                            ? 'LIBRO AUXILIAR OFICIAL DE PROVEEDORES Y CUENTAS POR PAGAR (CUENTA MAYOR 2.1.01)'
+                            : auxReportConfig.bookScope === 'CLIENTES'
+                            ? 'LIBRO AUXILIAR OFICIAL DE CLIENTES Y CUENTAS POR COBRAR (CUENTA MAYOR 1.1.03)'
+                            : 'LIBRO AUXILIAR CONSOLIDADO DE CUENTAS CORRIENTES MERCANTILES')}
+                      </h4>
+                    </div>
+                    <div className="text-left lg:text-right font-mono text-xs space-y-0.5 text-slate-300">
+                      <div className="font-bold text-white">{effectiveCompany.razonSocial}</div>
+                      <div>RUT: {effectiveCompany.rut} | Giro: {effectiveCompany.giro || 'Servicios y Comercio'}</div>
+                      <div className="text-amber-300 font-semibold">
+                        Período Tributario: {auxiliarDateFrom} al {auxiliarDateTo}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-3 text-xs font-mono">
+                    <div>
+                      <span className="text-slate-400 text-[10px] block uppercase">Monto Exento SII</span>
+                      <span className="font-bold text-white">{convertAmount(auxiliaryBookReportPayload.totalExentoPeriodo)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block uppercase">Monto Neto Afecto</span>
+                      <span className="font-bold text-white">{convertAmount(auxiliaryBookReportPayload.totalNetoPeriodo)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block uppercase">IVA 19% (D.L. 825)</span>
+                      <span className="font-bold text-amber-300">{convertAmount(auxiliaryBookReportPayload.totalIvaPeriodo)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block uppercase">Total Bruto Documentado</span>
+                      <span className="font-bold text-white">{convertAmount(auxiliaryBookReportPayload.totalBrutoPeriodo)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block uppercase">Saldo Cierre Libro Mayor</span>
+                      <span className="font-bold text-emerald-400">{convertAmount(auxiliaryBookReportPayload.saldoFinalGlobal)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tabla Cronológica Detallada por Rango de Fechas / Libro Según Ley */}
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="bg-slate-800 text-white font-semibold border-b border-slate-700 uppercase text-[10px] font-mono">
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.correlativo) && (
+                        <th className="py-2.5 px-2.5 text-center">N°</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.fecha) && (
+                        <th className="py-2.5 px-2.5">Fecha</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.tipoDocSii) && (
+                        <th className="py-2.5 px-2.5">Cód. SII / Tipo Doc.</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.folioDoc) && (
+                        <th className="py-2.5 px-2.5">Folio</th>
+                      )}
+                      {auxReportConfig.columns.fechaVencimiento && (
+                        <th className="py-2.5 px-2.5">Vencim.</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.rutAuxiliar) && (
+                        <th className="py-2.5 px-2.5">RUT Auxiliar</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.razonSocial) && (
+                        <th className="py-2.5 px-2.5">Razón Social Contraparte</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.cuentaContable) && (
+                        <th className="py-2.5 px-2.5">Cuenta Mayor</th>
+                      )}
+                      {auxReportConfig.columns.glosaConcepto && (
+                        <th className="py-2.5 px-2.5">Glosa / Concepto Operación</th>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.desgloseIva) && (
+                        <>
+                          <th className="py-2.5 px-2.5 text-right">Exento ($)</th>
+                          <th className="py-2.5 px-2.5 text-right">Neto ($)</th>
+                          <th className="py-2.5 px-2.5 text-right">IVA 19% ($)</th>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.debeHaber) && (
+                        <>
+                          <th className="py-2.5 px-2.5 text-right">Debe ($)</th>
+                          <th className="py-2.5 px-2.5 text-right">Haber ($)</th>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.saldoProgresivo) && (
+                        <th className="py-2.5 px-2.5 text-right">Saldo Acum. ($)</th>
+                      )}
+                      {auxReportConfig.columns.trazabilidadBancaria && (
+                        <th className="py-2.5 px-2.5">Trazabilidad / Estado</th>
+                      )}
+                      {auxReportConfig.columns.centroCosto && (
+                        <th className="py-2.5 px-2.5">C. Costo</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                    {/* Fila de Saldo Inicial de Apertura del Rango */}
+                    <tr className="bg-slate-100/90 font-bold text-slate-800">
+                      <td
+                        colSpan={
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.correlativo ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.fecha ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.tipoDocSii ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.folioDoc ? 1 : 0) +
+                          (auxReportConfig.columns.fechaVencimiento ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.rutAuxiliar ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.razonSocial ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.cuentaContable ? 1 : 0) +
+                          (auxReportConfig.columns.glosaConcepto ? 1 : 0)
+                        }
+                        className="py-2 px-3 font-sans text-xs text-slate-800"
+                      >
+                        SALDO INICIAL ACUMULADO ANTERIOR AL {auxiliarDateFrom}
+                      </td>
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.desgloseIva) && (
+                        <>
+                          <td className="py-2 px-2.5 text-right text-slate-400">-</td>
+                          <td className="py-2 px-2.5 text-right text-slate-400">-</td>
+                          <td className="py-2 px-2.5 text-right text-slate-400">-</td>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.debeHaber) && (
+                        <>
+                          <td className="py-2 px-2.5 text-right text-slate-400">-</td>
+                          <td className="py-2 px-2.5 text-right text-slate-400">-</td>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.saldoProgresivo) && (
+                        <td className="py-2 px-2.5 text-right text-indigo-900 font-extrabold">
+                          {convertAmount(auxiliaryBookReportPayload.saldoInicialGlobal)}
+                        </td>
+                      )}
+                      {auxReportConfig.columns.trazabilidadBancaria && (
+                        <td className="py-2 px-2.5 text-slate-500 font-sans text-[10px]">APERTURA RANGO</td>
+                      )}
+                      {auxReportConfig.columns.centroCosto && (
+                        <td className="py-2 px-2.5 text-slate-400">-</td>
+                      )}
+                    </tr>
+
+                    {auxiliaryBookReportPayload.movements.length === 0 ? (
+                      <tr>
+                        <td colSpan={18} className="py-8 text-center text-slate-400 font-sans">
+                          No se registran movimientos auxiliares en el rango de fechas {auxiliarDateFrom} al {auxiliarDateTo}.
+                        </td>
+                      </tr>
+                    ) : (
+                      auxiliaryBookReportPayload.movements.map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50/90 transition-colors">
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.correlativo) && (
+                            <td className="py-2 px-2.5 text-center text-slate-500">{m.correlativo}</td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.fecha) && (
+                            <td className="py-2 px-2.5 text-slate-700 whitespace-nowrap">{m.fecha}</td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.tipoDocSii) && (
+                            <td className="py-2 px-2.5 whitespace-nowrap">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold mr-1 ${
+                                  m.codigoSii === 'COMP'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : m.codigoSii === '61'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-indigo-100 text-indigo-900'
+                                }`}
+                              >
+                                {m.codigoSii}
+                              </span>
+                              <span className="font-sans text-slate-700">{m.tipoDocLabel}</span>
+                            </td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.folioDoc) && (
+                            <td className="py-2 px-2.5 font-bold text-slate-900 whitespace-nowrap">
+                              {m.folio}
+                            </td>
+                          )}
+                          {auxReportConfig.columns.fechaVencimiento && (
+                            <td className="py-2 px-2.5 text-slate-500 whitespace-nowrap">
+                              {m.fechaVencimiento}
+                            </td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.rutAuxiliar) && (
+                            <td className="py-2 px-2.5 font-bold text-slate-800 whitespace-nowrap">
+                              {m.rutAuxiliar}
+                            </td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.razonSocial) && (
+                            <td className="py-2 px-2.5 font-sans font-medium text-slate-900 max-w-xs truncate">
+                              {m.razonSocial}
+                            </td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.cuentaContable) && (
+                            <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap" title={m.cuentaNombre}>
+                              {m.cuentaCodigo}
+                            </td>
+                          )}
+                          {auxReportConfig.columns.glosaConcepto && (
+                            <td className="py-2 px-2.5 font-sans text-slate-600 max-w-xs truncate" title={m.concepto}>
+                              {m.concepto}
+                            </td>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.desgloseIva) && (
+                            <>
+                              <td className="py-2 px-2.5 text-right text-slate-600 whitespace-nowrap">
+                                {m.montoExento > 0 ? convertAmount(m.montoExento) : '-'}
+                              </td>
+                              <td className="py-2 px-2.5 text-right text-slate-800 whitespace-nowrap">
+                                {m.montoNeto > 0 ? convertAmount(m.montoNeto) : '-'}
+                              </td>
+                              <td className="py-2 px-2.5 text-right text-slate-700 whitespace-nowrap">
+                                {m.montoIva > 0 ? convertAmount(m.montoIva) : '-'}
+                              </td>
+                            </>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.debeHaber) && (
+                            <>
+                              <td className="py-2 px-2.5 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                                {m.debe > 0 ? convertAmount(m.debe) : '-'}
+                              </td>
+                              <td className="py-2 px-2.5 text-right font-semibold text-blue-700 whitespace-nowrap">
+                                {m.haber > 0 ? convertAmount(m.haber) : '-'}
+                              </td>
+                            </>
+                          )}
+                          {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.saldoProgresivo) && (
+                            <td className="py-2 px-2.5 text-right font-bold text-slate-900 whitespace-nowrap">
+                              {convertAmount(m.saldoProgresivo)}
+                            </td>
+                          )}
+                          {auxReportConfig.columns.trazabilidadBancaria && (
+                            <td className="py-2 px-2.5 font-sans text-[11px] text-slate-600 whitespace-nowrap">
+                              {m.bancoTrazabilidad}
+                            </td>
+                          )}
+                          {auxReportConfig.columns.centroCosto && (
+                            <td className="py-2 px-2.5 text-slate-500 whitespace-nowrap">
+                              {m.centroCosto}
+                            </td>
+                          )}
+                        </tr>
+                      ))
+                    )}
+
+                    {/* Fila de Totales del Período */}
+                    <tr className="bg-slate-800 text-white font-bold">
+                      <td
+                        colSpan={
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.correlativo ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.fecha ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.tipoDocSii ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.folioDoc ? 1 : 0) +
+                          (auxReportConfig.columns.fechaVencimiento ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.rutAuxiliar ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.razonSocial ? 1 : 0) +
+                          (auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.cuentaContable ? 1 : 0) +
+                          (auxReportConfig.columns.glosaConcepto ? 1 : 0)
+                        }
+                        className="py-2.5 px-3 font-sans text-xs"
+                      >
+                        SUMAS TOTALES DEL PERÍODO ({auxiliarDateFrom} AL {auxiliarDateTo}) — {auxiliaryBookReportPayload.movements.length} REGISTROS
+                      </td>
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.desgloseIva) && (
+                        <>
+                          <td className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                            {convertAmount(auxiliaryBookReportPayload.totalExentoPeriodo)}
+                          </td>
+                          <td className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                            {convertAmount(auxiliaryBookReportPayload.totalNetoPeriodo)}
+                          </td>
+                          <td className="py-2.5 px-2.5 text-right text-amber-300 whitespace-nowrap">
+                            {convertAmount(auxiliaryBookReportPayload.totalIvaPeriodo)}
+                          </td>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.debeHaber) && (
+                        <>
+                          <td className="py-2.5 px-2.5 text-right text-emerald-300 whitespace-nowrap">
+                            {convertAmount(auxiliaryBookReportPayload.totalDebePeriodo)}
+                          </td>
+                          <td className="py-2.5 px-2.5 text-right text-sky-300 whitespace-nowrap">
+                            {convertAmount(auxiliaryBookReportPayload.totalHaberPeriodo)}
+                          </td>
+                        </>
+                      )}
+                      {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.columns.saldoProgresivo) && (
+                        <td className="py-2.5 px-2.5 text-right text-amber-300 font-extrabold whitespace-nowrap">
+                          {convertAmount(auxiliaryBookReportPayload.saldoFinalGlobal)}
+                        </td>
+                      )}
+                      {auxReportConfig.columns.trazabilidadBancaria && (
+                        <td className="py-2.5 px-2.5 font-sans text-[10px] text-emerald-300">
+                          CUADRADO SII / MAYOR
+                        </td>
+                      )}
+                      {auxReportConfig.columns.centroCosto && <td className="py-2.5 px-2.5">-</td>}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Cuadro Legal de Centralización Mensual por Tipo de Documento SII (Art. 59 DL 825 / Res. Ex. SII N° 45) */}
+              {(auxiliarViewMode === 'LIBRO_SEGUN_LEY' || auxReportConfig.includeLegalSummary) &&
+                auxiliaryBookReportPayload.legalSummaryByDocType.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h5 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                          <Scale className="w-4 h-4 text-violet-700" />
+                          Resumen Legal de Centralización Contable y Tributaria por Tipo de Documento SII
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          Exigido por Art. 59 D.L. 825 (Ley de IVA) y Resoluciones Exentas SII N° 45 y N° 61 para respaldo de centralización en Libro Diario y Libro Mayor.
+                        </p>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg">
+                        Cuadratura Exacta con F29 / RCV SII
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
+                      <table className="w-full text-xs text-left font-mono">
+                        <thead className="bg-slate-100 text-slate-700 text-[10px] uppercase border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-3">Código SII</th>
+                            <th className="py-2 px-3">Tipo de Documento / Comprobante</th>
+                            <th className="py-2 px-3 text-center">N° Docs.</th>
+                            <th className="py-2 px-3 text-right">Exento ($)</th>
+                            <th className="py-2 px-3 text-right">Neto Afecto ($)</th>
+                            <th className="py-2 px-3 text-right">IVA 19% ($)</th>
+                            <th className="py-2 px-3 text-right">Retenciones ($)</th>
+                            <th className="py-2 px-3 text-right">Total Bruto ($)</th>
+                            <th className="py-2 px-3 text-right">Cargos Debe ($)</th>
+                            <th className="py-2 px-3 text-right">Abonos Haber ($)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {auxiliaryBookReportPayload.legalSummaryByDocType.map((s) => (
+                            <tr key={s.codigoSii} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 font-bold text-indigo-900">Código {s.codigoSii}</td>
+                              <td className="py-2 px-3 font-sans font-medium text-slate-800">{s.nombreDocumento}</td>
+                              <td className="py-2 px-3 text-center font-bold">{s.cantidadDocumentos}</td>
+                              <td className="py-2 px-3 text-right">{convertAmount(s.totalExento)}</td>
+                              <td className="py-2 px-3 text-right">{convertAmount(s.totalNeto)}</td>
+                              <td className="py-2 px-3 text-right">{convertAmount(s.totalIva)}</td>
+                              <td className="py-2 px-3 text-right">{convertAmount(s.totalRetencion)}</td>
+                              <td className="py-2 px-3 text-right font-bold text-slate-900">{convertAmount(s.totalBruto)}</td>
+                              <td className="py-2 px-3 text-right text-emerald-700 font-semibold">{convertAmount(s.totalDebe)}</td>
+                              <td className="py-2 px-3 text-right text-blue-700 font-semibold">{convertAmount(s.totalHaber)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* VISTA 1: RESUMEN POR AUXILIAR (TABLA PRINCIPAL POR RUT CON DESPLEGABLE)   */}
+          {/* ========================================================================= */}
+          {auxiliarViewMode === 'RESUMEN_RUT' && (
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-xs text-left">
               <thead>
@@ -3984,8 +5578,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                               montoDocumentoRef: docMontoTotal,
                                               fechaDocumentoRef: docFechaEmision,
                                               fechaVencimientoRef: docFechaVenc,
-                                              documentoOperacion: docFolio,
-                                              tipoDocumentoOperacion: pendingDoc?.tipoLabel?.toUpperCase() || 'PAGO DIRECTO',
+                                              documentoOperacion: `TEF-${docFolio}`,
+                                              tipoDocumentoOperacion: 'TRANSFERENCIA',
+                                              fechaDocumentoOperacion: defaultAccountingDate,
                                               dteIdAsociado: dteIdAsoc,
                                             },
                                             {
@@ -3993,13 +5588,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                               cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
                                               debe: 0,
                                               haber: docMontoAplicar,
-                                              rutAuxiliar: '',
+                                              rutAuxiliar: item.rut,
+                                              nombreAuxiliar: item.razonSocial,
                                               centroCosto: '',
                                               documentoRef: `TEF-${docFolio}`,
                                               tipoDocumentoConciliacion: 'TRANSFERENCIA',
                                               documentoConciliacion: `TEF-${docFolio}`,
-                                              fechaDocumentoRef: docFechaEmision,
-                                              fechaVencimientoRef: docFechaEmision,
+                                              fechaDocumentoRef: defaultAccountingDate,
+                                              fechaVencimientoRef: defaultAccountingDate,
                                               dteIdAsociado: '',
                                             },
                                           ]
@@ -4009,13 +5605,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                               cuentaNombre: 'Banco Santander Chile Cta Cte M/N',
                                               debe: docMontoAplicar,
                                               haber: 0,
-                                              rutAuxiliar: '',
+                                              rutAuxiliar: item.rut,
+                                              nombreAuxiliar: item.razonSocial,
                                               centroCosto: '',
                                               documentoRef: `TEF-${docFolio}`,
                                               tipoDocumentoConciliacion: 'TRANSFERENCIA',
                                               documentoConciliacion: `TEF-${docFolio}`,
-                                              fechaDocumentoRef: docFechaEmision,
-                                              fechaVencimientoRef: docFechaEmision,
+                                              fechaDocumentoRef: defaultAccountingDate,
+                                              fechaVencimientoRef: defaultAccountingDate,
                                               dteIdAsociado: '',
                                             },
                                             {
@@ -4032,8 +5629,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                               montoDocumentoRef: docMontoTotal,
                                               fechaDocumentoRef: docFechaEmision,
                                               fechaVencimientoRef: docFechaVenc,
-                                              documentoOperacion: docFolio,
-                                              tipoDocumentoOperacion: pendingDoc?.tipoLabel?.toUpperCase() || 'COBRANZA DIRECTA',
+                                              documentoOperacion: `TEF-${docFolio}`,
+                                              tipoDocumentoOperacion: 'TRANSFERENCIA',
+                                              fechaDocumentoOperacion: defaultAccountingDate,
                                               dteIdAsociado: dteIdAsoc,
                                             },
                                           ],
@@ -4137,41 +5735,116 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                             <th className="py-1.5 px-3 text-left">Fecha</th>
                                             <th className="py-1.5 px-3 text-left">Concepto / Glosa</th>
                                             <th className="py-1.5 px-3 text-left">Documento Ref</th>
-                                            <th className="py-1.5 px-3 text-left">Medio Pago / Banco (Trazabilidad)</th>
+                                            <th className="py-1.5 px-3 text-left">Medio Pago / Banco (Trazabilidad TEF / Cheque)</th>
                                             <th className="py-1.5 px-3 text-right">Debe ($)</th>
                                             <th className="py-1.5 px-3 text-right">Haber ($)</th>
+                                            <th className="py-1.5 px-3 text-center">Acción</th>
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 font-mono">
-                                          {item.journalMovements.map((jm, jIdx) => (
-                                            <tr key={jIdx} className="hover:bg-slate-50">
-                                              <td className="py-1.5 px-3 text-slate-600">{jm.fecha}</td>
-                                              <td className="py-1.5 px-3 font-sans text-slate-900">{jm.concepto}</td>
-                                              <td className="py-1.5 px-3 font-sans text-slate-600">{jm.documento || '-'}</td>
-                                              <td className="py-1.5 px-3 font-sans text-slate-600">
-                                                {jm.bancoInfo ? (
-                                                  <div className="flex flex-col text-[11px] leading-tight">
-                                                    <span className="font-semibold text-slate-800 flex items-center gap-1">
-                                                      <Landmark className="w-3 h-3 text-indigo-600 shrink-0 inline" />
-                                                      {jm.bancoInfo.bancoNombre || 'Banco / Tesorería'}
-                                                    </span>
-                                                    <span className="text-slate-500 text-[10px]">
-                                                      {jm.bancoInfo.tipoMedio || 'Op'}: {jm.bancoInfo.folioOperacion || '-'}
-                                                      {jm.bancoInfo.fechaCobro ? ` | Cobro: ${jm.bancoInfo.fechaCobro}` : ''}
-                                                    </span>
-                                                  </div>
-                                                ) : (
-                                                  <span className="text-slate-400 text-[11px]">-</span>
-                                                )}
-                                              </td>
-                                              <td className="py-1.5 px-3 text-right text-emerald-700 font-semibold">
-                                                {jm.debe > 0 ? convertAmount(jm.debe) : '-'}
-                                              </td>
-                                              <td className="py-1.5 px-3 text-right text-blue-700 font-semibold">
-                                                {jm.haber > 0 ? convertAmount(jm.haber) : '-'}
-                                              </td>
-                                            </tr>
-                                          ))}
+                                          {item.journalMovements.map((jm, jIdx) => {
+                                            const bInfo = jm.bancoInfo;
+                                            const instCode = bInfo?.instrumentoCodigo || 'TEF';
+                                            const matchedEntry = safeEntries.find((e) => e.id === jm.asientoId);
+
+                                            return (
+                                              <tr key={jIdx} className="hover:bg-slate-50">
+                                                <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{jm.fecha}</td>
+                                                <td className="py-2 px-3 font-sans text-slate-900">{jm.concepto}</td>
+                                                <td className="py-2 px-3 font-sans text-slate-600 whitespace-nowrap">{jm.documento || '-'}</td>
+                                                <td className="py-2 px-3 font-sans text-slate-700">
+                                                  {bInfo ? (
+                                                    instCode === 'DEVENGO' ? (
+                                                      <div className="flex flex-col gap-0.5 text-[11px] leading-tight">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300 font-mono text-[10px] font-bold">
+                                                            DEVENGO DOCUMENTARIO (SIN PAGO BANCARIO)
+                                                          </span>
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-500 font-mono">
+                                                          <span>Doc: <strong>{bInfo.folioOperacion || '-'}</strong></span>
+                                                          <span className="mx-1">•</span>
+                                                          <span>F. Emisión: <strong>{bInfo.fechaOperacion || jm.fecha}</strong></span>
+                                                          <span className="mx-1">•</span>
+                                                          <span>F. Vencimiento: <strong>{bInfo.fechaCobro || jm.fecha}</strong></span>
+                                                        </div>
+                                                      </div>
+                                                    ) : instCode === 'CHEQUE' ? (
+                                                      <div className="flex flex-col gap-1 text-[11px] leading-tight">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                          <span className="font-bold text-slate-900 flex items-center gap-1">
+                                                            <Landmark className="w-3.5 h-3.5 text-indigo-600 shrink-0 inline" />
+                                                            {bInfo.bancoNombre || 'Banco / Cuenta Corriente'}
+                                                          </span>
+                                                          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-mono text-[10px] font-extrabold uppercase">
+                                                            CHEQUE
+                                                          </span>
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-700 font-mono bg-amber-50/70 border border-amber-200/80 rounded px-2 py-0.5 inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 w-fit">
+                                                          <span>N° Cheque: <strong className="text-slate-950">{bInfo.folioOperacion || 'S/N'}</strong></span>
+                                                          <span className="text-amber-400">|</span>
+                                                          <span>F. Emisión: <strong className="text-slate-900">{bInfo.fechaOperacion || jm.fecha}</strong></span>
+                                                          <span className="text-amber-400">|</span>
+                                                          <span>F. Vencimiento: <strong className="text-amber-950">{bInfo.fechaCobro || bInfo.fechaOperacion || jm.fecha}</strong></span>
+                                                        </div>
+                                                      </div>
+                                                    ) : (
+                                                      <div className="flex flex-col gap-1 text-[11px] leading-tight">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                          <span className="font-bold text-slate-900 flex items-center gap-1">
+                                                            <Landmark className="w-3.5 h-3.5 text-indigo-600 shrink-0 inline" />
+                                                            {bInfo.bancoNombre || 'Banco / Cuenta Corriente'}
+                                                          </span>
+                                                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 font-mono text-[10px] font-extrabold uppercase">
+                                                            {instCode === 'TEF' ? 'TEF • Transferencia Electrónica' : bInfo.tipoMedio}
+                                                          </span>
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-700 font-mono bg-emerald-50/60 border border-emerald-200/80 rounded px-2 py-0.5 inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 w-fit">
+                                                          <span>
+                                                            {instCode === 'TEF' ? 'N° Operación TEF:' : 'N° Ref.:'}{' '}
+                                                            <strong className="text-slate-950">{bInfo.folioOperacion || 'S/N'}</strong>
+                                                          </span>
+                                                          <span className="text-emerald-400">|</span>
+                                                          <span>
+                                                            {instCode === 'TEF' ? 'Fecha TEF:' : 'Fecha:'}{' '}
+                                                            <strong className="text-slate-900">{bInfo.fechaOperacion || jm.fecha}</strong>
+                                                          </span>
+                                                          {bInfo.fechaCobro && bInfo.fechaCobro !== bInfo.fechaOperacion && (
+                                                            <>
+                                                              <span className="text-emerald-400">|</span>
+                                                              <span>
+                                                                Ejec./Cobro: <strong className="text-emerald-950">{bInfo.fechaCobro}</strong>
+                                                              </span>
+                                                            </>
+                                                          )}
+                                                        </div>
+                                                      </div>
+                                                    )
+                                                  ) : (
+                                                    <span className="text-slate-400 text-[11px]">-</span>
+                                                  )}
+                                                </td>
+                                                <td className="py-2 px-3 text-right text-emerald-700 font-semibold whitespace-nowrap">
+                                                  {jm.debe > 0 ? convertAmount(jm.debe) : '-'}
+                                                </td>
+                                                <td className="py-2 px-3 text-right text-blue-700 font-semibold whitespace-nowrap">
+                                                  {jm.haber > 0 ? convertAmount(jm.haber) : '-'}
+                                                </td>
+                                                <td className="py-2 px-3 text-center whitespace-nowrap font-sans">
+                                                  {matchedEntry && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleOpenEditEntry(matchedEntry)}
+                                                      className="px-2 py-1 rounded text-[10px] font-bold bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 transition-colors cursor-pointer"
+                                                      title="Editar medio de pago (TEF / Cheque, N° operación, fecha emisión y vencimiento)"
+                                                    >
+                                                      Editar TEF / Cheque
+                                                    </button>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
                                         </tbody>
                                       </table>
                                     </div>
@@ -4188,6 +5861,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
       {activeTab === 'PLAN_CUENTAS' && (
@@ -5936,21 +7610,30 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                                   <div>
                                     <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
-                                      Tipo Movimiento Bancario:
+                                      Medio de Pago / Movimiento Bancario:
                                     </label>
                                     <select
                                       value={line.tipoDocumentoConciliacion || 'TRANSFERENCIA'}
                                       onChange={(e) => {
                                         const val = e.target.value;
                                         const updated = [...manualEntry.lineas];
+                                        const currentDoc = updated[idx].documentoConciliacion || updated[idx].documentoRef || '';
+                                        const adjustedDoc =
+                                          val === 'CHEQUE'
+                                            ? currentDoc.replace(/^TEF-/i, 'CHQ-')
+                                            : val === 'TRANSFERENCIA'
+                                            ? currentDoc.replace(/^CHQ-/i, 'TEF-')
+                                            : currentDoc;
                                         updated[idx] = {
                                           ...updated[idx],
                                           tipoDocumentoConciliacion: val,
+                                          ...(adjustedDoc ? { documentoConciliacion: adjustedDoc, documentoRef: adjustedDoc, folioDocumentoRef: adjustedDoc } : {}),
                                         };
                                         if (otherAuxLineIdx !== -1) {
                                           updated[otherAuxLineIdx] = {
                                             ...updated[otherAuxLineIdx],
                                             tipoDocumentoOperacion: val,
+                                            ...(adjustedDoc ? { documentoOperacion: adjustedDoc } : {}),
                                           };
                                         }
                                         setManualEntry((prev) => ({ ...prev, lineas: updated }));
@@ -5966,11 +7649,19 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   </div>
                                   <div>
                                     <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
-                                      N° Referencia Bancaria / Operación / Cartola *:
+                                      {line.tipoDocumentoConciliacion === 'CHEQUE'
+                                        ? 'N° Serie / Folio del Cheque *:'
+                                        : line.tipoDocumentoConciliacion === 'DEPOSITO'
+                                        ? 'N° Comprobante de Depósito *:'
+                                        : 'N° Operación TEF / ID Transferencia *:'}
                                     </label>
                                     <input
                                       type="text"
-                                      placeholder="Ej: TEF-892019, 80, OP-4412"
+                                      placeholder={
+                                        line.tipoDocumentoConciliacion === 'CHEQUE'
+                                          ? 'Ej: 0045821, Chq-80'
+                                          : 'Ej: TEF-892019, OP-4412'
+                                      }
                                       value={line.documentoConciliacion || line.documentoRef || ''}
                                       onChange={(e) => {
                                         const refVal = e.target.value;
@@ -6006,8 +7697,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   <div>
                                     <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
                                       {line.tipoDocumentoConciliacion === 'CHEQUE'
-                                        ? 'Fecha Emisión Cheque:'
-                                        : 'Fecha Emisión TEF / Transferencia:'}
+                                        ? 'Fecha de Emisión (Giro del Cheque):'
+                                        : 'Fecha de Emisión / Ejecución TEF:'}
                                     </label>
                                     <input
                                       type="date"
@@ -6037,8 +7728,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                   <div>
                                     <label className="text-[10px] font-bold text-emerald-900 block mb-0.5">
                                       {line.tipoDocumentoConciliacion === 'CHEQUE'
-                                        ? 'Fecha Vencimiento / Cobro Cheque (Diferido):'
-                                        : 'Fecha Vencimiento / Ejecución TEF:'}
+                                        ? 'Fecha de Vencimiento / Cobro Cheque:'
+                                        : 'Fecha Valor / Disponibilidad TEF:'}
                                     </label>
                                     <input
                                       type="date"
@@ -6058,7 +7749,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                 </div>
 
                                 <p className="text-[10px] text-emerald-800">
-                                  Esta referencia y fechas serán utilizadas por el módulo de <strong>Conciliación Bancaria</strong> y el <strong>Mayor Auxiliar</strong> para cruzar automáticamente el movimiento con la cartola del banco y saldar el documento del auxiliar.
+                                  Esta referencia y fechas quedan vinculadas directamente en el <strong>Libro Mayor Auxiliar</strong> (indicando si fue pagado con <strong>TEF</strong> o <strong>Cheque</strong> con su N°, emisión y vencimiento) y en la <strong>Conciliación Bancaria</strong>.
                                 </p>
                               </div>
                               );
@@ -6233,28 +7924,44 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
                                       };
                                       const bankLineIdx = updated.findIndex((l, i) => i !== idx && isAccountBankReconcilable(l.cuentaCodigo, l.cuentaNombre));
                                       if (bankLineIdx !== -1) {
-                                        if (details.documentoOperacion && !updated[bankLineIdx].documentoConciliacion) {
-                                          updated[bankLineIdx] = {
-                                            ...updated[bankLineIdx],
-                                            documentoConciliacion: details.documentoOperacion,
-                                            documentoRef: details.documentoOperacion,
-                                            folioDocumentoRef: details.documentoOperacion,
-                                          };
-                                        }
-                                        if (details.tipoDocumentoOperacion && !updated[bankLineIdx].tipoDocumentoConciliacion) {
-                                          const mappedBankType = details.tipoDocumentoOperacion === 'TRANSFERENCIA_TEF' ? 'TRANSFERENCIA' : details.tipoDocumentoOperacion;
-                                          updated[bankLineIdx] = {
-                                            ...updated[bankLineIdx],
-                                            tipoDocumentoConciliacion: mappedBankType,
-                                          };
-                                        }
-                                        if (updated[idx].rutAuxiliar) {
-                                          updated[bankLineIdx] = {
-                                            ...updated[bankLineIdx],
-                                            rutAuxiliar: updated[idx].rutAuxiliar,
-                                            nombreAuxiliar: updated[idx].nombreAuxiliar,
-                                          };
-                                        }
+                                        const curBankType = updated[bankLineIdx].tipoDocumentoConciliacion;
+                                        const isBankTypeInvalid = !curBankType || /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(curBankType);
+                                        const candidateOpType = details.tipoDocumentoOperacion && !/FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(details.tipoDocumentoOperacion)
+                                          ? (details.tipoDocumentoOperacion === 'TRANSFERENCIA_TEF' ? 'TRANSFERENCIA' : details.tipoDocumentoOperacion)
+                                          : 'TRANSFERENCIA';
+                                        const effectiveBankType = isBankTypeInvalid ? candidateOpType : curBankType;
+
+                                        const defaultOpDoc =
+                                          details.documentoOperacion ||
+                                          (details.folioDocumentoRef
+                                            ? effectiveBankType === 'CHEQUE'
+                                              ? `CHQ-${details.folioDocumentoRef}`
+                                              : `TEF-${details.folioDocumentoRef}`
+                                            : '');
+
+                                        updated[bankLineIdx] = {
+                                          ...updated[bankLineIdx],
+                                          tipoDocumentoConciliacion: effectiveBankType,
+                                          ...(!updated[bankLineIdx].documentoConciliacion && defaultOpDoc
+                                            ? {
+                                                documentoConciliacion: defaultOpDoc,
+                                                documentoRef: defaultOpDoc,
+                                                folioDocumentoRef: defaultOpDoc,
+                                              }
+                                            : {}),
+                                          ...(!updated[bankLineIdx].fechaDocumentoRef
+                                            ? { fechaDocumentoRef: prev.fecha }
+                                            : {}),
+                                          ...(!updated[bankLineIdx].fechaVencimientoRef
+                                            ? { fechaVencimientoRef: updated[bankLineIdx].fechaDocumentoRef || prev.fecha }
+                                            : {}),
+                                          ...(updated[idx].rutAuxiliar
+                                            ? {
+                                                rutAuxiliar: updated[idx].rutAuxiliar,
+                                                nombreAuxiliar: updated[idx].nombreAuxiliar,
+                                              }
+                                            : {}),
+                                        };
                                       }
                                       return { ...prev, lineas: updated };
                                     });

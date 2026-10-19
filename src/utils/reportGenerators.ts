@@ -1899,4 +1899,783 @@ export function downloadFinancialNotesBookletPdf(
   doc.save(`Notas_EEFF_${safeCompany.rut || 'Empresa'}_${periodo}.pdf`);
 }
 
+// ============================================================================
+// 8. LIBROS AUXILIARES OFICIALES SEGÚN LEY (SII / CÓDIGO DE COMERCIO) Y
+//    LIBRO AUXILIAR DETALLADO POR RANGO DE FECHAS (PERSONALIZABLE)
+// ============================================================================
+
+export interface AuxiliaryBookReportConfig {
+  bookScope: 'PROVEEDORES' | 'CLIENTES' | 'HONORARIOS' | 'CONSOLIDADO';
+  reportMode: 'LIBRO_SEGUN_LEY' | 'DETALLADO_RANGO_FECHAS' | 'RESUMEN_SALDOS' | 'ESTADO_CUENTA_RUT';
+  fechaDesde: string;
+  fechaHasta: string;
+  selectedRut?: string | null;
+  customTitle: string;
+  folioInicial: number;
+  orientation: 'landscape' | 'portrait';
+  sortBy: 'FECHA_ASC' | 'FECHA_DESC' | 'RUT' | 'RAZON_SOCIAL' | 'MONTO_DESC';
+  includeZeroBalance: boolean;
+  includeLegalSummary: boolean;
+  includeSignatures: boolean;
+  observacionesAuditoria: string;
+  columns: {
+    correlativo: boolean;
+    fecha: boolean;
+    tipoDocSii: boolean;
+    folioDoc: boolean;
+    fechaVencimiento: boolean;
+    rutAuxiliar: boolean;
+    razonSocial: boolean;
+    cuentaContable: boolean;
+    glosaConcepto: boolean;
+    desgloseIva: boolean;
+    debeHaber: boolean;
+    saldoProgresivo: boolean;
+    trazabilidadBancaria: boolean;
+    centroCosto: boolean;
+  };
+}
+
+export interface AuxiliaryDetailedMovement {
+  correlativo: number;
+  id: string;
+  fecha: string;
+  fechaVencimiento: string;
+  origen: 'DTE_SII' | 'COMPROBANTE_DIARIO';
+  codigoSii: string;
+  tipoDocLabel: string;
+  folio: string;
+  rutAuxiliar: string;
+  razonSocial: string;
+  tipoAuxiliar: 'PROVEEDOR' | 'CLIENTE' | 'HONORARIOS';
+  cuentaCodigo: string;
+  cuentaNombre: string;
+  concepto: string;
+  montoExento: number;
+  montoNeto: number;
+  montoIva: number;
+  montoRetencion: number;
+  montoTotalBruto: number;
+  debe: number;
+  haber: number;
+  saldoProgresivo: number;
+  estadoPago: string;
+  bancoTrazabilidad: string;
+  centroCosto: string;
+}
+
+export interface AuxiliaryLegalSummaryItem {
+  codigoSii: string;
+  nombreDocumento: string;
+  cantidadDocumentos: number;
+  totalExento: number;
+  totalNeto: number;
+  totalIva: number;
+  totalRetencion: number;
+  totalBruto: number;
+  totalDebe: number;
+  totalHaber: number;
+}
+
+export interface AuxiliaryRangedSummaryRow {
+  rut: string;
+  razonSocial: string;
+  tipoAuxiliar: string;
+  cuentaContable: string;
+  cantidadDocs: number;
+  saldoInicial: number;
+  cargosPeriodo: number;
+  abonosPeriodo: number;
+  saldoFinal: number;
+  estado: string;
+}
+
+export interface AuxiliaryBookReportPayload {
+  config: AuxiliaryBookReportConfig;
+  saldoInicialGlobal: number;
+  totalDebePeriodo: number;
+  totalHaberPeriodo: number;
+  saldoFinalGlobal: number;
+  totalExentoPeriodo: number;
+  totalNetoPeriodo: number;
+  totalIvaPeriodo: number;
+  totalRetencionPeriodo: number;
+  totalBrutoPeriodo: number;
+  movements: AuxiliaryDetailedMovement[];
+  legalSummaryByDocType: AuxiliaryLegalSummaryItem[];
+  rangedSummariesByRut: AuxiliaryRangedSummaryRow[];
+}
+
+export function downloadLibroAuxiliarPdf(
+  payload: AuxiliaryBookReportPayload,
+  company: CompanyProfile
+): void {
+  const { config, movements, legalSummaryByDocType, rangedSummariesByRut } = payload;
+  const isLandscape = config.orientation === 'landscape';
+  const doc = new jsPDF({
+    orientation: isLandscape ? 'landscape' : 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+  const safeCompany = ensureSafeCompany(company);
+  const pageWidth = isLandscape ? 297 : 210;
+
+  const scopeLabel =
+    config.bookScope === 'PROVEEDORES'
+      ? 'AUXILIAR DE PROVEEDORES Y CUENTAS POR PAGAR (2.1.01)'
+      : config.bookScope === 'CLIENTES'
+      ? 'AUXILIAR DE CLIENTES Y CUENTAS POR COBRAR (1.1.03)'
+      : config.bookScope === 'HONORARIOS'
+      ? 'AUXILIAR DE RETENCIONES Y BOLETAS DE HONORARIOS (2.1.02)'
+      : 'LIBRO AUXILIAR CONSOLIDADO DE CUENTAS CORRIENTES (CXC / CXP)';
+
+  const modeLabel =
+    config.reportMode === 'LIBRO_SEGUN_LEY'
+      ? 'LIBRO AUXILIAR TIMBRADO SEGÚN LEY (ART. 25 CÓDIGO DE COMERCIO / RES. EX. SII N° 45 Y N° 61)'
+      : config.reportMode === 'DETALLADO_RANGO_FECHAS'
+      ? `LIBRO AUXILIAR DETALLADO POR RANGO DE FECHAS (${config.fechaDesde} AL ${config.fechaHasta})`
+      : config.reportMode === 'ESTADO_CUENTA_RUT'
+      ? `CARTOLA ANALÍTICA POR AUXILIAR ${config.selectedRut ? `(RUT: ${config.selectedRut})` : ''}`
+      : `RESUMEN EJECUTIVO DE SALDOS AUXILIARES (${config.fechaDesde} AL ${config.fechaHasta})`;
+
+  const titleText = config.customTitle?.trim() ? config.customTitle.trim().toUpperCase() : scopeLabel;
+
+  let currentY = addPdfHeader(
+    doc,
+    titleText,
+    `${modeLabel} | Rango: ${config.fechaDesde} a ${config.fechaHasta} | Folio Legal Inicial N° ${String(config.folioInicial || 101).padStart(6, '0')}`,
+    safeCompany,
+    isLandscape
+  );
+
+  // Recuadro Normativo y Resumen de Saldos del Rango
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(14, currentY, pageWidth - 28, 18, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text(
+    `NORMATIVA APLICABLE: Art. 25 al 30 Código de Comercio | Art. 59 D.L. 825 (Ley IVA) | LIR Art. 14 Letra A | Folio N° ${String(config.folioInicial || 101).padStart(6, '0')}`,
+    18,
+    currentY + 5
+  );
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    `Saldo Inicial (al ${config.fechaDesde}): ${fmtClp(payload.saldoInicialGlobal)}   |   Total Debe Período: ${fmtClp(payload.totalDebePeriodo)}   |   Total Haber Período: ${fmtClp(payload.totalHaberPeriodo)}   |   Saldo Final Acumulado (al ${config.fechaHasta}): ${fmtClp(payload.saldoFinalGlobal)}`,
+    18,
+    currentY + 10.5
+  );
+
+  doc.text(
+    `Desglose Tributario del Período — Exento: ${fmtClp(payload.totalExentoPeriodo)} | Neto Afecto: ${fmtClp(payload.totalNetoPeriodo)} | IVA (19%): ${fmtClp(payload.totalIvaPeriodo)} | Retenciones: ${fmtClp(payload.totalRetencionPeriodo)} | Total Bruto Documentado: ${fmtClp(payload.totalBrutoPeriodo)}`,
+    18,
+    currentY + 15.5
+  );
+
+  currentY += 22;
+
+  // Si la modalidad es RESUMEN_SALDOS, imprimimos la tabla resumen por RUT con Saldo Inicial, Cargos, Abonos y Saldo Final
+  if (config.reportMode === 'RESUMEN_SALDOS') {
+    const summaryHeaders = [
+      'RUT Auxiliar',
+      'Razón Social / Contraparte',
+      'Tipo',
+      'Cuenta Mayor',
+      'N° Docs',
+      `Saldo Inicial (${config.fechaDesde})`,
+      'Cargos / Facturado ($)',
+      'Abonos / Pagos ($)',
+      `Saldo Final (${config.fechaHasta})`,
+      'Estado',
+    ];
+
+    const summaryBody: any[] = rangedSummariesByRut.map((r) => [
+      r.rut,
+      r.razonSocial,
+      r.tipoAuxiliar,
+      r.cuentaContable,
+      String(r.cantidadDocs),
+      fmtClp(r.saldoInicial),
+      fmtClp(r.cargosPeriodo),
+      fmtClp(r.abonosPeriodo),
+      fmtClp(r.saldoFinal),
+      r.estado,
+    ]);
+
+    summaryBody.push([
+      { content: 'TOTALES CONSOLIDADOS DEL RANGO', colSpan: 5, styles: { fontStyle: 'bold', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.saldoInicialGlobal), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(rangedSummariesByRut.reduce((s, r) => s + r.cargosPeriodo, 0)), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(rangedSummariesByRut.reduce((s, r) => s + r.abonosPeriodo, 0)), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.saldoFinalGlobal), styles: { fontStyle: 'bold', halign: 'right', fillColor: [224, 231, 255], textColor: [30, 58, 138] } },
+      { content: 'CUADRADO', styles: { fontStyle: 'bold', halign: 'center', fillColor: [226, 232, 240] } },
+    ]);
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [summaryHeaders],
+      body: summaryBody,
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1.5 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+  } else {
+    // Modalidades: LIBRO_SEGUN_LEY, DETALLADO_RANGO_FECHAS, ESTADO_CUENTA_RUT
+    // Construir columnas dinámicas según la personalización del usuario (o forzadas por ley en LIBRO_SEGUN_LEY)
+    const isStrictLaw = config.reportMode === 'LIBRO_SEGUN_LEY';
+    const cols = config.columns;
+
+    const headRow: string[] = [];
+    if (isStrictLaw || cols.correlativo) headRow.push('N°');
+    if (isStrictLaw || cols.fecha) headRow.push('Fecha');
+    if (isStrictLaw || cols.tipoDocSii) headRow.push('Cód. SII / Tipo Doc.');
+    if (isStrictLaw || cols.folioDoc) headRow.push('Folio');
+    if (cols.fechaVencimiento) headRow.push('Vencim.');
+    if (isStrictLaw || cols.rutAuxiliar) headRow.push('RUT Auxiliar');
+    if (isStrictLaw || cols.razonSocial) headRow.push('Razón Social Contraparte');
+    if (isStrictLaw || cols.cuentaContable) headRow.push('Cuenta Mayor');
+    if (cols.glosaConcepto) headRow.push('Glosa / Concepto Operación');
+    if (isStrictLaw || cols.desgloseIva) {
+      headRow.push('Exento ($)', 'Neto ($)', 'IVA 19% ($)');
+    }
+    if (isStrictLaw || cols.debeHaber) {
+      headRow.push('Debe ($)', 'Haber ($)');
+    }
+    if (isStrictLaw || cols.saldoProgresivo) {
+      headRow.push('Saldo Acum. ($)');
+    }
+    if (cols.trazabilidadBancaria) headRow.push('Trazabilidad / Pago');
+    if (cols.centroCosto) headRow.push('C. Costo');
+
+    const bodyRows: any[] = [];
+
+    // Fila de Apertura: Saldo Inicial Anterior al Rango
+    const openingRow: any[] = [];
+    const metaColCount =
+      (isStrictLaw || cols.correlativo ? 1 : 0) +
+      (isStrictLaw || cols.fecha ? 1 : 0) +
+      (isStrictLaw || cols.tipoDocSii ? 1 : 0) +
+      (isStrictLaw || cols.folioDoc ? 1 : 0) +
+      (cols.fechaVencimiento ? 1 : 0) +
+      (isStrictLaw || cols.rutAuxiliar ? 1 : 0) +
+      (isStrictLaw || cols.razonSocial ? 1 : 0) +
+      (isStrictLaw || cols.cuentaContable ? 1 : 0) +
+      (cols.glosaConcepto ? 1 : 0);
+
+    if (metaColCount > 0) {
+      openingRow.push({
+        content: `SALDO INICIAL ACUMULADO ANTERIOR AL ${config.fechaDesde}`,
+        colSpan: metaColCount,
+        styles: { fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [30, 41, 59] },
+      });
+    }
+    if (isStrictLaw || cols.desgloseIva) {
+      openingRow.push(
+        { content: '-', styles: { halign: 'right', fillColor: [241, 245, 249] } },
+        { content: '-', styles: { halign: 'right', fillColor: [241, 245, 249] } },
+        { content: '-', styles: { halign: 'right', fillColor: [241, 245, 249] } }
+      );
+    }
+    if (isStrictLaw || cols.debeHaber) {
+      openingRow.push(
+        { content: '-', styles: { halign: 'right', fillColor: [241, 245, 249] } },
+        { content: '-', styles: { halign: 'right', fillColor: [241, 245, 249] } }
+      );
+    }
+    if (isStrictLaw || cols.saldoProgresivo) {
+      openingRow.push({
+        content: fmtClp(payload.saldoInicialGlobal),
+        styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249], textColor: [30, 58, 138] },
+      });
+    }
+    if (cols.trazabilidadBancaria) {
+      openingRow.push({ content: 'APERTURA RANGO', styles: { fillColor: [241, 245, 249] } });
+    }
+    if (cols.centroCosto) {
+      openingRow.push({ content: '-', styles: { fillColor: [241, 245, 249] } });
+    }
+    bodyRows.push(openingRow);
+
+    movements.forEach((m) => {
+      const row: any[] = [];
+      if (isStrictLaw || cols.correlativo) row.push(String(m.correlativo));
+      if (isStrictLaw || cols.fecha) row.push(m.fecha);
+      if (isStrictLaw || cols.tipoDocSii) row.push(`[${m.codigoSii}] ${m.tipoDocLabel}`);
+      if (isStrictLaw || cols.folioDoc) row.push(m.folio);
+      if (cols.fechaVencimiento) row.push(m.fechaVencimiento || '-');
+      if (isStrictLaw || cols.rutAuxiliar) row.push(m.rutAuxiliar);
+      if (isStrictLaw || cols.razonSocial) row.push(m.razonSocial);
+      if (isStrictLaw || cols.cuentaContable) row.push(`${m.cuentaCodigo}`);
+      if (cols.glosaConcepto) row.push(m.concepto);
+      if (isStrictLaw || cols.desgloseIva) {
+        row.push(
+          { content: m.montoExento > 0 ? fmtClp(m.montoExento) : '-', styles: { halign: 'right' } },
+          { content: m.montoNeto > 0 ? fmtClp(m.montoNeto) : '-', styles: { halign: 'right' } },
+          { content: m.montoIva > 0 ? fmtClp(m.montoIva) : '-', styles: { halign: 'right' } }
+        );
+      }
+      if (isStrictLaw || cols.debeHaber) {
+        row.push(
+          { content: m.debe > 0 ? fmtClp(m.debe) : '-', styles: { halign: 'right', textColor: [4, 120, 87] } },
+          { content: m.haber > 0 ? fmtClp(m.haber) : '-', styles: { halign: 'right', textColor: [29, 78, 216] } }
+        );
+      }
+      if (isStrictLaw || cols.saldoProgresivo) {
+        row.push({
+          content: fmtClp(m.saldoProgresivo),
+          styles: { fontStyle: 'bold', halign: 'right' },
+        });
+      }
+      if (cols.trazabilidadBancaria) row.push(m.bancoTrazabilidad || m.estadoPago || '-');
+      if (cols.centroCosto) row.push(m.centroCosto || '-');
+
+      bodyRows.push(row);
+    });
+
+    // Fila de Totales del Período
+    const totalRow: any[] = [];
+    if (metaColCount > 0) {
+      totalRow.push({
+        content: `SUMAS DEL PERÍODO (${config.fechaDesde} AL ${config.fechaHasta}) — ${movements.length} REGISTROS`,
+        colSpan: metaColCount,
+        styles: { fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] },
+      });
+    }
+    if (isStrictLaw || cols.desgloseIva) {
+      totalRow.push(
+        { content: fmtClp(payload.totalExentoPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+        { content: fmtClp(payload.totalNetoPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+        { content: fmtClp(payload.totalIvaPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } }
+      );
+    }
+    if (isStrictLaw || cols.debeHaber) {
+      totalRow.push(
+        { content: fmtClp(payload.totalDebePeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240], textColor: [4, 120, 87] } },
+        { content: fmtClp(payload.totalHaberPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240], textColor: [29, 78, 216] } }
+      );
+    }
+    if (isStrictLaw || cols.saldoProgresivo) {
+      totalRow.push({
+        content: fmtClp(payload.saldoFinalGlobal),
+        styles: { fontStyle: 'bold', halign: 'right', fillColor: [224, 231, 255], textColor: [30, 58, 138] },
+      });
+    }
+    if (cols.trazabilidadBancaria) {
+      totalRow.push({ content: 'CUADRADO SII', styles: { fontStyle: 'bold', fillColor: [226, 232, 240] } });
+    }
+    if (cols.centroCosto) {
+      totalRow.push({ content: '-', styles: { fillColor: [226, 232, 240] } });
+    }
+    bodyRows.push(totalRow);
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [headRow],
+      body: bodyRows,
+      theme: 'grid',
+      styles: { fontSize: isLandscape ? 6.5 : 6, cellPadding: 1.2 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+  }
+
+  // Cuadro Legal de Centralización por Tipo de Documento SII (Exigido en Libro Según Ley o si está activado)
+  if ((config.reportMode === 'LIBRO_SEGUN_LEY' || config.includeLegalSummary) && legalSummaryByDocType.length > 0) {
+    const maxPageY = isLandscape ? 165 : 240;
+    if (currentY > maxPageY) {
+      doc.addPage();
+      currentY = 20;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(
+      'CUADRO OFICIAL DE CENTRALIZACIÓN TRIBUTARIA Y CONTABLE POR TIPO DE DOCUMENTO SII (ART. 59 D.L. 825 / RES. EX. SII N° 45)',
+      14,
+      currentY
+    );
+    currentY += 4;
+
+    const legalSummaryBody: any[] = legalSummaryByDocType.map((s) => [
+      `Código SII ${s.codigoSii}`,
+      s.nombreDocumento,
+      { content: String(s.cantidadDocumentos), styles: { halign: 'center' } },
+      { content: fmtClp(s.totalExento), styles: { halign: 'right' } },
+      { content: fmtClp(s.totalNeto), styles: { halign: 'right' } },
+      { content: fmtClp(s.totalIva), styles: { halign: 'right' } },
+      { content: fmtClp(s.totalRetencion), styles: { halign: 'right' } },
+      { content: fmtClp(s.totalBruto), styles: { halign: 'right', fontStyle: 'bold' } },
+      { content: fmtClp(s.totalDebe), styles: { halign: 'right', textColor: [4, 120, 87] } },
+      { content: fmtClp(s.totalHaber), styles: { halign: 'right', textColor: [29, 78, 216] } },
+    ]);
+
+    legalSummaryBody.push([
+      { content: 'TOTAL CENTRALIZACIÓN LEGAL DEL PERÍODO', colSpan: 2, styles: { fontStyle: 'bold', fillColor: [226, 232, 240] } },
+      {
+        content: String(legalSummaryByDocType.reduce((acc, i) => acc + i.cantidadDocumentos, 0)),
+        styles: { fontStyle: 'bold', halign: 'center', fillColor: [226, 232, 240] },
+      },
+      { content: fmtClp(payload.totalExentoPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.totalNetoPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.totalIvaPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.totalRetencionPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.totalBrutoPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [224, 231, 255] } },
+      { content: fmtClp(payload.totalDebePeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+      { content: fmtClp(payload.totalHaberPeriodo), styles: { fontStyle: 'bold', halign: 'right', fillColor: [226, 232, 240] } },
+    ]);
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [[
+        'Código SII',
+        'Tipo de Documento / Registro',
+        'Cant.',
+        'Monto Exento ($)',
+        'Monto Neto ($)',
+        'IVA 19% ($)',
+        'Retenciones ($)',
+        'Total Bruto ($)',
+        'Cargos Debe ($)',
+        'Abonos Haber ($)',
+      ]],
+      body: legalSummaryBody,
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1.4 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+  }
+
+  // Nota de auditoría / certificación legal personalizada
+  if (config.observacionesAuditoria?.trim()) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Certificación y Observaciones: ${config.observacionesAuditoria.trim()}`, 14, currentY);
+  }
+
+  if (config.includeSignatures !== false) {
+    addPdfFooterAndSignatures(doc, isLandscape);
+  }
+
+  const filePrefix =
+    config.reportMode === 'LIBRO_SEGUN_LEY'
+      ? 'Libro_Auxiliar_Segun_Ley'
+      : config.reportMode === 'DETALLADO_RANGO_FECHAS'
+      ? 'Libro_Auxiliar_Detallado_Fechas'
+      : 'Reporte_Auxiliar';
+
+  doc.save(`${filePrefix}_${config.bookScope}_${safeCompany.rut}_${config.fechaDesde}_a_${config.fechaHasta}.pdf`);
+}
+
+export function downloadLibroAuxiliarExcel(
+  payload: AuxiliaryBookReportPayload,
+  company: CompanyProfile
+): void {
+  const { config, movements, legalSummaryByDocType, rangedSummariesByRut } = payload;
+  const safeCompany = ensureSafeCompany(company);
+  const wb = XLSX.utils.book_new();
+
+  // Hoja 1: Libro Auxiliar Detallado (Según Ley / Rango de Fechas)
+  const detailAoA: any[][] = [
+    [config.customTitle || `LIBRO AUXILIAR OFICIAL - ${config.bookScope}`],
+    [`Razón Social: ${safeCompany.razonSocial}`, `RUT: ${safeCompany.rut}`, `Giro: ${safeCompany.giro}`],
+    [
+      `Modalidad: ${config.reportMode}`,
+      `Rango de Fechas: ${config.fechaDesde} al ${config.fechaHasta}`,
+      `Folio Legal Inicial: ${String(config.folioInicial || 101).padStart(6, '0')}`,
+    ],
+    [
+      `Saldo Inicial (${config.fechaDesde}): ${payload.saldoInicialGlobal}`,
+      `Total Debe Período: ${payload.totalDebePeriodo}`,
+      `Total Haber Período: ${payload.totalHaberPeriodo}`,
+      `Saldo Final (${config.fechaHasta}): ${payload.saldoFinalGlobal}`,
+    ],
+    [],
+    [
+      'N° Correlativo',
+      'Fecha Contable',
+      'Código SII',
+      'Tipo Documento',
+      'Folio Doc.',
+      'Fecha Vencimiento',
+      'RUT Auxiliar',
+      'Razón Social Contraparte',
+      'Tipo Auxiliar',
+      'Cuenta Contable',
+      'Nombre Cuenta',
+      'Glosa / Concepto',
+      'Monto Exento ($)',
+      'Monto Neto ($)',
+      'Monto IVA 19% ($)',
+      'Retención ($)',
+      'Total Bruto ($)',
+      'Debe ($)',
+      'Haber ($)',
+      'Saldo Progresivo ($)',
+      'Estado / Trazabilidad Bancaria',
+      'Centro de Costo',
+    ],
+    [
+      0,
+      config.fechaDesde,
+      'APERTURA',
+      'SALDO INICIAL ANTERIOR AL RANGO',
+      '-',
+      '-',
+      '-',
+      'SALDO ACUMULADO APERTURA',
+      config.bookScope,
+      '-',
+      '-',
+      `Saldo inicial anterior al ${config.fechaDesde}`,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      payload.saldoInicialGlobal,
+      'APERTURA',
+      '-',
+    ],
+  ];
+
+  movements.forEach((m) => {
+    detailAoA.push([
+      m.correlativo,
+      m.fecha,
+      m.codigoSii,
+      m.tipoDocLabel,
+      m.folio,
+      m.fechaVencimiento || '-',
+      m.rutAuxiliar,
+      m.razonSocial,
+      m.tipoAuxiliar,
+      m.cuentaCodigo,
+      m.cuentaNombre,
+      m.concepto,
+      m.montoExento,
+      m.montoNeto,
+      m.montoIva,
+      m.montoRetencion,
+      m.montoTotalBruto,
+      m.debe,
+      m.haber,
+      m.saldoProgresivo,
+      m.bancoTrazabilidad || m.estadoPago,
+      m.centroCosto || '-',
+    ]);
+  });
+
+  detailAoA.push([
+    '',
+    'TOTALES DEL PERÍODO',
+    '',
+    `${movements.length} movimientos`,
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    payload.totalExentoPeriodo,
+    payload.totalNetoPeriodo,
+    payload.totalIvaPeriodo,
+    payload.totalRetencionPeriodo,
+    payload.totalBrutoPeriodo,
+    payload.totalDebePeriodo,
+    payload.totalHaberPeriodo,
+    payload.saldoFinalGlobal,
+    'CUADRADO CON LIBRO MAYOR',
+    '',
+  ]);
+
+  const wsDetail = XLSX.utils.aoa_to_sheet(detailAoA);
+  XLSX.utils.book_append_sheet(wb, wsDetail, '1_Libro_Detallado_Fechas');
+
+  // Hoja 2: Resumen Legal de Centralización SII por Tipo de Documento
+  const legalAoA: any[][] = [
+    ['RESUMEN LEGAL DE CENTRALIZACIÓN MENSUAL POR TIPO DE DOCUMENTO SII (ART. 59 DL 825 / RES. EX. SII N° 45)'],
+    [`Contribuyente: ${safeCompany.razonSocial} (${safeCompany.rut})`, `Período: ${config.fechaDesde} al ${config.fechaHasta}`],
+    [],
+    [
+      'Código SII',
+      'Descripción Tipo de Documento',
+      'Cantidad Documentos',
+      'Total Exento ($)',
+      'Total Neto Afecto ($)',
+      'Total IVA 19% ($)',
+      'Total Retenciones ($)',
+      'Total Bruto ($)',
+      'Total Debe ($)',
+      'Total Haber ($)',
+    ],
+  ];
+
+  legalSummaryByDocType.forEach((s) => {
+    legalAoA.push([
+      s.codigoSii,
+      s.nombreDocumento,
+      s.cantidadDocumentos,
+      s.totalExento,
+      s.totalNeto,
+      s.totalIva,
+      s.totalRetencion,
+      s.totalBruto,
+      s.totalDebe,
+      s.totalHaber,
+    ]);
+  });
+
+  legalAoA.push([
+    'TOTAL',
+    'TOTAL CENTRALIZACIÓN DEL PERÍODO',
+    legalSummaryByDocType.reduce((acc, i) => acc + i.cantidadDocumentos, 0),
+    payload.totalExentoPeriodo,
+    payload.totalNetoPeriodo,
+    payload.totalIvaPeriodo,
+    payload.totalRetencionPeriodo,
+    payload.totalBrutoPeriodo,
+    payload.totalDebePeriodo,
+    payload.totalHaberPeriodo,
+  ]);
+
+  const wsLegal = XLSX.utils.aoa_to_sheet(legalAoA);
+  XLSX.utils.book_append_sheet(wb, wsLegal, '2_Resumen_Legal_SII');
+
+  // Hoja 3: Resumen de Saldos por RUT en el Rango de Fechas
+  const rutAoA: any[][] = [
+    [`RESUMEN DE SALDOS POR AUXILIAR (${config.fechaDesde} AL ${config.fechaHasta})`],
+    [],
+    [
+      'RUT Auxiliar',
+      'Razón Social Contraparte',
+      'Tipo Auxiliar',
+      'Cuenta Mayor',
+      'Cantidad Docs.',
+      `Saldo Inicial (${config.fechaDesde})`,
+      'Cargos / Facturado en Rango ($)',
+      'Abonos / Pagos en Rango ($)',
+      `Saldo Final (${config.fechaHasta})`,
+      'Estado',
+    ],
+  ];
+
+  rangedSummariesByRut.forEach((r) => {
+    rutAoA.push([
+      r.rut,
+      r.razonSocial,
+      r.tipoAuxiliar,
+      r.cuentaContable,
+      r.cantidadDocs,
+      r.saldoInicial,
+      r.cargosPeriodo,
+      r.abonosPeriodo,
+      r.saldoFinal,
+      r.estado,
+    ]);
+  });
+
+  const wsRut = XLSX.utils.aoa_to_sheet(rutAoA);
+  XLSX.utils.book_append_sheet(wb, wsRut, '3_Saldos_Por_Auxiliar');
+
+  const filePrefix =
+    config.reportMode === 'LIBRO_SEGUN_LEY'
+      ? 'Libro_Auxiliar_Segun_Ley'
+      : 'Libro_Auxiliar_Detallado';
+
+  XLSX.writeFile(
+    wb,
+    `${filePrefix}_${config.bookScope}_${safeCompany.rut}_${config.fechaDesde}_a_${config.fechaHasta}.xlsx`
+  );
+}
+
+export function downloadLibroAuxiliarCsv(
+  payload: AuxiliaryBookReportPayload,
+  company: CompanyProfile
+): void {
+  const { config, movements } = payload;
+  const safeCompany = ensureSafeCompany(company);
+
+  const headers = [
+    'Nro_Correlativo',
+    'Fecha_Emision_Contable',
+    'Codigo_SII',
+    'Tipo_Documento',
+    'Folio',
+    'Fecha_Vencimiento',
+    'RUT_Auxiliar',
+    'Razon_Social',
+    'Cuenta_Contable',
+    'Glosa_Concepto',
+    'Monto_Exento',
+    'Monto_Neto',
+    'Monto_IVA',
+    'Monto_Retencion',
+    'Monto_Total_Bruto',
+    'Debe',
+    'Haber',
+    'Saldo_Progresivo',
+    'Trazabilidad_Bancaria',
+    'Centro_Costo',
+  ];
+
+  const rows = movements.map((m) =>
+    [
+      m.correlativo,
+      m.fecha,
+      m.codigoSii,
+      `"${(m.tipoDocLabel || '').replace(/"/g, '""')}"`,
+      m.folio,
+      m.fechaVencimiento || '',
+      m.rutAuxiliar,
+      `"${(m.razonSocial || '').replace(/"/g, '""')}"`,
+      m.cuentaCodigo,
+      `"${(m.concepto || '').replace(/"/g, '""')}"`,
+      m.montoExento,
+      m.montoNeto,
+      m.montoIva,
+      m.montoRetencion,
+      m.montoTotalBruto,
+      m.debe,
+      m.haber,
+      m.saldoProgresivo,
+      `"${(m.bancoTrazabilidad || m.estadoPago || '').replace(/"/g, '""')}"`,
+      `"${(m.centroCosto || '').replace(/"/g, '""')}"`,
+    ].join(';')
+  );
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute(
+    'download',
+    `Libro_Auxiliar_SII_${config.bookScope}_${safeCompany.rut}_${config.fechaDesde}_a_${config.fechaHasta}.csv`
+  );
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+
 

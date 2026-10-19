@@ -386,6 +386,9 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
     const fullRef = `${tipoLabel} F.${pDoc.folio}`;
     if (onChangeManualDocRef) onChangeManualDocRef(fullRef);
     if (onChangeDocDetails) {
+      const isInvalidOpType =
+        !tipoDocumentoOperacion ||
+        /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(tipoDocumentoOperacion);
       onChangeDocDetails({
         documentoRef: fullRef,
         tipoDocumentoRef: pDoc.tipo || 'FACTURA_ELECTRONICA_33',
@@ -393,8 +396,8 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
         montoDocumentoRef: pDoc.montoTotal,
         fechaDocumentoRef: pDoc.fechaEmision,
         fechaVencimientoRef: pDoc.fechaVencimiento || pDoc.fechaEmision,
-        documentoOperacion: String(pDoc.folio),
-        tipoDocumentoOperacion: tipoLabel.toUpperCase(),
+        documentoOperacion: documentoOperacion || `TEF-${pDoc.folio}`,
+        tipoDocumentoOperacion: isInvalidOpType ? 'TRANSFERENCIA_TEF' : tipoDocumentoOperacion,
       });
     }
     if (pDoc.dteId && onSelectDocument) {
@@ -440,6 +443,9 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
       const fullRef = `${tipoLabel} F.${doc.folio}`;
       if (onChangeManualDocRef) onChangeManualDocRef(fullRef);
       if (onChangeDocDetails) {
+        const isInvalidOpType =
+          !tipoDocumentoOperacion ||
+          /FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(tipoDocumentoOperacion);
         onChangeDocDetails({
           documentoRef: fullRef,
           tipoDocumentoRef: 'DTE_SII',
@@ -447,8 +453,8 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
           montoDocumentoRef: doc.montoTotal,
           fechaDocumentoRef: doc.fechaEmision,
           fechaVencimientoRef: doc.fechaVencimiento || doc.fechaEmision,
-          documentoOperacion: String(doc.folio),
-          tipoDocumentoOperacion: tipoLabel.toUpperCase(),
+          documentoOperacion: documentoOperacion || `TEF-${doc.folio}`,
+          tipoDocumentoOperacion: isInvalidOpType ? 'TRANSFERENCIA_TEF' : tipoDocumentoOperacion,
         });
       }
       if (onApplyDocAmountToLine) {
@@ -495,6 +501,10 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
       onChangeManualDocRef(fullRef);
     }
     if (onChangeDocDetails) {
+      const cleanOpType =
+        tipoDocumentoOperacion && !/FACTURA|BOLETA|NOTA|DTE|DOCUMENTO/i.test(tipoDocumentoOperacion)
+          ? tipoDocumentoOperacion
+          : undefined;
       onChangeDocDetails({
         documentoRef: fullRef,
         tipoDocumentoRef: tipo,
@@ -502,8 +512,8 @@ export const SearchableAuxiliarySelect: React.FC<SearchableAuxiliarySelectProps>
         montoDocumentoRef: effectiveMonto,
         fechaDocumentoRef: effectiveFechaEmision,
         fechaVencimientoRef: effectiveFechaVenc,
-        documentoOperacion: documentoOperacion || String(folioDocumentoRef),
-        tipoDocumentoOperacion: tipoDocumentoOperacion || tipoLabel.toUpperCase(),
+        documentoOperacion: documentoOperacion || undefined,
+        tipoDocumentoOperacion: cleanOpType,
         fechaDocumentoOperacion: fechaDocumentoOperacion || effectiveFechaEmision,
       });
     }
