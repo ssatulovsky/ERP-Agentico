@@ -15,7 +15,9 @@ import {
   Sliders,
   Key,
   Mic,
-  Sparkles
+  Sparkles,
+  LogOut,
+  UserCheck
 } from 'lucide-react';
 import { 
   ChileIndicators, 
@@ -40,6 +42,10 @@ interface NavbarProps {
   openAuditor: () => void;
   openManual: () => void;
   openVoiceDialogue?: () => void;
+  currentUserName?: string;
+  currentRoleName?: string;
+  isAdminOrSuperAdmin?: boolean;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -56,6 +62,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   openAuditor,
   openManual,
   openVoiceDialogue,
+  currentUserName,
+  currentRoleName,
+  isAdminOrSuperAdmin,
+  onLogout,
 }) => {
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
@@ -190,20 +200,39 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Security & RBAC Module Button (For SuperAdmin and Admin) */}
+          {isAdminOrSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('security_admin')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'security_admin'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                  : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border border-emerald-500/40'
+              }`}
+              title="Capa de Seguridad: Empresas, Usuarios, Creación de Roles y Permisos WhatsApp Vera"
+            >
+              <Key className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Seguridad</span>
+              <span>& Roles</span>
+            </button>
+          )}
+
           {/* Config Module Button */}
-          <button
-            onClick={() => setActiveTab('agents')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'agents'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">Configuración</span>
-            <span>Agentes & SII</span>
-          </button>
+          {isAdminOrSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('agents')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'agents'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5 text-blue-400" />
+              <span className="hidden sm:inline">Configuración</span>
+              <span>Agentes & SII</span>
+            </button>
+          )}
 
           {discrepanciesCount > 0 && (
             <button
@@ -223,14 +252,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
             <span className="hidden sm:inline">Manual de</span>
             <span>Usuario</span>
-          </button>
-
-          <button
-            onClick={openAuditor}
-            className="hidden sm:flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3 py-1.5 rounded-md transition-colors cursor-pointer text-xs font-medium"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-            <span>Auditor Fiscal</span>
           </button>
 
           {openVoiceDialogue && (
@@ -253,6 +274,32 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Bot className="w-3.5 h-3.5" />
             <span>Consultar Agente (IA)</span>
           </button>
+
+          {/* Active User & Role Badge + Logout */}
+          {currentUserName && (
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700">
+              <div className="hidden md:flex flex-col text-right leading-tight">
+                <span className="text-[11px] font-bold text-white flex items-center justify-end gap-1">
+                  <UserCheck className="w-3 h-3 text-emerald-400" />
+                  {currentUserName}
+                </span>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                  Rol: {currentRoleName || 'Usuario'}
+                </span>
+              </div>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="flex items-center gap-1 bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-500/40 px-2.5 py-1.5 rounded-md transition-colors cursor-pointer text-xs font-bold"
+                  title="Cerrar sesión o cambiar de usuario / empresa"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">Salir</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </header>

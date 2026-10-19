@@ -5,6 +5,12 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { piperTtsService } from './piperTtsService';
 import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
+import {
+  DEFAULT_SECURITY_RBAC_STATE,
+  SecurityRbacStoreState,
+  evaluateWhatsappPhoneAgainstRbac,
+  deriveWhatsappScopesFromModules,
+} from './securityRbacService';
 
 const execAsync = promisify(exec);
 
@@ -298,8 +304,10 @@ function formatCLP(val: number): string {
 export class WhatsAppBridgeService {
   private static instance: WhatsAppBridgeService;
   private storePath: string;
+  private rbacStorePath: string;
   private authDir: string;
   private store: WhatsAppSecurityStoreData;
+  private rbacState: SecurityRbacStoreState;
 
   // Estado de conexión en vivo
   private connectionState: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED' | 'INSTALLING_DEPS' | 'ERROR' =
@@ -323,8 +331,11 @@ export class WhatsAppBridgeService {
       } catch {}
     }
     this.storePath = path.join(dataDir, 'whatsapp_security_config.json');
+    this.rbacStorePath = path.join(dataDir, 'erp_security_rbac_state.json');
     this.authDir = path.join(dataDir, 'whatsapp_auth_session');
     this.store = this.loadStore();
+    this.rbacState = this.loadRbacStore();
+    this.syncWhitelistFromRbacUsers();
 
     // Si ya existe una sesión QR vinculada en disco, reconectar automáticamente al iniciar el servidor
     try {
@@ -341,6 +352,115 @@ export class WhatsAppBridgeService {
       WhatsAppBridgeService.instance = new WhatsAppBridgeService();
     }
     return WhatsAppBridgeService.instance;
+  }
+
+  private loadRbacStore(): SecurityRbacStoreState {
+    try {
+      if (fs.existsSync(this.rbacStorePath)) {
+        const raw = fs.readFileSync(this.rbacStorePath, 'utf-8');
+        const parsed = JSON.parse(raw) as SecurityRbacStoreState;
+        if (parsed && Array.isArray(parsed.roles) && Array.isArray(parsed.users)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('[WhatsAppBridge] Error cargando estado RBAC, usando valores por defecto:', e);
+    }
+    this.saveRbacStore(DEFAULT_SECURITY_RBAC_STATE);
+    return JSON.parse(JSON.stringify(DEFAULT_SECURITY_RBAC_STATE));
+  }
+
+  public getRbacState(): SecurityRbacStoreState {
+    return this.rbacState;
+  }
+
+  public saveRbacStore(newState: SecurityRbacStoreState): SecurityRbacStoreState {
+    this.rbacState = newState;
+    try {
+      fs.writeFileSync(this.rbacStorePath, JSON.stringify(newState, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('[WhatsAppBridge] Error guardando estado RBAC:', e);
+    }
+    this.syncWhitelistFromRbacUsers();
+    return this.rbacState;
+  }
+
+  /**
+   * Sincroniza automáticamente los Usuarios y Roles del ERP hacia la Lista Blanca de WhatsApp,
+   * garantizando que los mismos permisos de Rol, estado de Usuario y estado de Empresa rijan en Vera.
+   */
+  private syncWhitelistFromRbacUsers(): void {
+    if (!this.rbacState || !Array.isArray(this.rbacState.users)) return;
+    let changed = false;
+
+    for (const user of this.rbacState.users) {
+      const cleanPhone = this.normalizePhone(user.telefonoWhatsapp || '');
+      if (!cleanPhone || cleanPhone.length < 7) continue;
+
+      const role = this.rbacState.roles.find((r) => r.id === user.rolId);
+      const company = this.rbacState.companiesConfig.find(
+        (c) => c.empresaId === user.empresaPrincipalId
+      );
+
+      const isCompanyActive = !company || company.estadoCuenta === 'ACTIVA';
+      const isUserActive = user.estado === 'ACTIVO' && isCompanyActive;
+
+      const scopes: WhatsAppAgentScope[] = !role
+        ? []
+        : role.whatsappScopesPermitidos && role.whatsappScopesPermitidos.length > 0
+        ? role.whatsappScopesPermitidos
+        : deriveWhatsappScopesFromModules(role.modulosPermitidos, role.tipoSistema);
+
+      const existingIdx = this.store.whitelist.findIndex(
+        (w) =>
+          w.id === `rbac-${user.id}` ||
+          this.normalizePhone(w.telefono) === cleanPhone ||
+          (cleanPhone.length >= 8 &&
+            this.normalizePhone(w.telefono).length >= 8 &&
+            this.normalizePhone(w.telefono).slice(-8) === cleanPhone.slice(-8))
+      );
+
+      const preset: WhatsAppRolePresetId =
+        role?.tipoSistema === 'SUPERADMIN' || role?.tipoSistema === 'ADMIN'
+          ? 'SOCIO_DIRECTOR_TOTAL'
+          : role?.codigo === 'RRHH'
+          ? 'SOLO_RRHH'
+          : role?.codigo === 'RRHH_INVENTARIO'
+          ? 'RRHH_MAS_INVENTARIO'
+          : 'PERSONALIZADO';
+
+      if (existingIdx >= 0) {
+        const existing = this.store.whitelist[existingIdx];
+        this.store.whitelist[existingIdx] = {
+          ...existing,
+          telefono: cleanPhone,
+          nombre: user.nombreCompleto,
+          cargo: `${user.cargo || role?.nombre || 'Usuario ERP'} (${company?.nombreCorto || 'ERP'})`,
+          rolPreset: preset,
+          agentesPermitidos: scopes,
+          activo: isUserActive,
+          responderConAudio: user.recibirAudioWhatsapp ?? existing.responderConAudio,
+        };
+        changed = true;
+      } else {
+        this.store.whitelist.push({
+          id: `rbac-${user.id}`,
+          telefono: cleanPhone,
+          nombre: user.nombreCompleto,
+          cargo: `${user.cargo || role?.nombre || 'Usuario ERP'} (${company?.nombreCorto || 'ERP'})`,
+          rolPreset: preset,
+          agentesPermitidos: scopes,
+          activo: isUserActive,
+          recibirReportesDirectos: role?.tipoSistema === 'SUPERADMIN' || role?.tipoSistema === 'ADMIN',
+          responderConAudio: Boolean(user.recibirAudioWhatsapp),
+        });
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.saveStore();
+    }
   }
 
   private loadStore(): WhatsAppSecurityStoreData {
@@ -394,6 +514,9 @@ export class WhatsAppBridgeService {
       t.startsWith('👩‍💼 *Vera') ||
       t.startsWith('🤖 *Respuesta Autorizada') ||
       t.startsWith('🔒 *ACCESO RESTRINGIDO') ||
+      t.startsWith('🔒 *USUARIO NO ACTIVO') ||
+      t.startsWith('⚠️ *CUENTA DE EMPRESA SUSPENDIDA') ||
+      t.startsWith('⛔ *CUENTA DE EMPRESA DADA DE BAJA') ||
       t.startsWith('🏛️ *Reporte Ejecutivo')
     );
   }
@@ -689,8 +812,74 @@ export class WhatsAppBridgeService {
       };
     }
 
-    // 3. ESCUDO DE LISTA BLANCA: Buscar el número en la Lista Blanca activa (incluyendo candidatos alternativos @lid / senderPn)
+    // 3. CAPA DE SEGURIDAD ERP (Empresa Activa / Usuario Activo / Rol RBAC) + ESCUDO DE LISTA BLANCA
+    const rbacEval = evaluateWhatsappPhoneAgainstRbac(
+      remoteJid,
+      this.rbacState,
+      extraCandidateJids
+    );
+
+    if (
+      rbacEval.statusValidation === 'EMPRESA_SUSPENDIDA_PAGO' ||
+      rbacEval.statusValidation === 'EMPRESA_BAJA' ||
+      rbacEval.statusValidation === 'USUARIO_INACTIVO'
+    ) {
+      // Si es charla con un tercero y no mencionó a @vera, no interrumpir conversación humana
+      if (!isOwnerSelfChat && !fromMe && configuredPrefix && !simulateBypassPrefix && !hasExplicitVeraMention) {
+        return {
+          shouldIgnoreSilently: true,
+          ignoreReason: `CHARLA_HUMANA_SIN_MENCION_VERA (requiere ${configuredPrefix})`,
+          allowed: false,
+          requiredScopes: [],
+          deniedScopes: [],
+        };
+      }
+
+      this.store.stats.intentosRolBloqueados++;
+      this.recordAuditLog({
+        telefono: rbacEval.matchedUser?.telefonoWhatsapp || this.normalizePhone(remoteJid),
+        nombreUsuario: rbacEval.matchedUser?.nombreCompleto || 'Usuario ERP',
+        tipoEvento: 'BLOQUEADO_ROL_INSUFICIENTE',
+        agentesInvolucrados: [],
+        resumenAccion: `Bloqueo Capa de Seguridad ERP (${rbacEval.statusValidation}): ${
+          rbacEval.companyConfig?.razonSocial || ''
+        }`,
+      });
+      this.saveStore();
+
+      return {
+        shouldIgnoreSilently: false,
+        allowed: false,
+        requiredScopes: [],
+        deniedScopes: [],
+        responseText: rbacEval.blockMessageForWhatsapp,
+        verbalSummaryForAudio: rbacEval.blockAudioSummary,
+      };
+    }
+
     let entry = this.findAuthorizedWhitelistEntry(remoteJid, extraCandidateJids);
+
+    // Si el usuario está activo y autorizado en la Capa de Seguridad RBAC del ERP, aplicar exactamente los permisos de su Rol
+    if (rbacEval.statusValidation === 'OK_AUTORIZADO' && rbacEval.matchedUser) {
+      const cleanUserPhone = this.normalizePhone(rbacEval.matchedUser.telefonoWhatsapp || remoteJid);
+      entry = {
+        id: entry?.id || `rbac-${rbacEval.matchedUser.id}`,
+        telefono: cleanUserPhone,
+        nombre: rbacEval.matchedUser.nombreCompleto,
+        cargo: `${rbacEval.role?.nombre || rbacEval.matchedUser.cargo} — ${
+          rbacEval.companyConfig?.nombreCorto || 'ERP'
+        }`,
+        rolPreset:
+          rbacEval.role?.tipoSistema === 'SUPERADMIN' || rbacEval.role?.tipoSistema === 'ADMIN'
+            ? 'SOCIO_DIRECTOR_TOTAL'
+            : 'PERSONALIZADO',
+        agentesPermitidos: rbacEval.allowedWhatsappScopes,
+        activo: true,
+        recibirReportesDirectos:
+          rbacEval.role?.tipoSistema === 'SUPERADMIN' || rbacEval.role?.tipoSistema === 'ADMIN',
+        responderConAudio: entry?.responderConAudio ?? Boolean(rbacEval.matchedUser.recibirAudioWhatsapp),
+      };
+    }
 
     // Si es el propio dueño probando en su chat "Mensajes a ti mismo" o invocando @vera desde su teléfono
     if (!entry && (isOwnerSelfChat || fromMe)) {

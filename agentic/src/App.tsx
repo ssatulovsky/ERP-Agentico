@@ -112,6 +112,20 @@ import {
 } from './data/seedHrData';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { VoiceAgentDialogueModal } from './components/voice/VoiceAgentDialogueModal';
+import { LoginScreen } from './components/security/LoginScreen';
+import { SecurityManagementModule } from './components/security/SecurityManagementModule';
+import {
+  SecurityRbacStoreState,
+  LoginValidationResult,
+  loadSecurityRbacStateFromStorage,
+  saveSecurityRbacStateToStorage,
+  loadActiveAuthSession,
+  saveActiveAuthSession,
+  ensureCompaniesSyncedWithSecurity,
+  resolveAllowedCompanyIdsForUser,
+  ALL_ERP_MODULE_IDS,
+  ErpModuleId,
+} from './services/securityRbacService';
 import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
 import { 
   Receipt, 
@@ -137,6 +151,7 @@ import {
   LayoutDashboard,
   CreditCard,
   Smartphone,
+  Key,
 } from 'lucide-react';
 
 export default function App() {
@@ -148,7 +163,31 @@ export default function App() {
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
   const [clients, setClients] = useState<ClientCompany[]>(seedClients);
-  const [activeClientId, setActiveClientId] = useState<string>(seedClients[0].id);
+  const [activeClientId, setActiveClientId] = useState<string>(() => {
+    const savedSession = loadActiveAuthSession();
+    return savedSession?.empresaId || seedClients[0].id;
+  });
+
+  // Security & RBAC State (Empresas, Usuarios, Roles y Permisos WhatsApp Vera)
+  const [securityState, setSecurityState] = useState<SecurityRbacStoreState>(() => {
+    const local = loadSecurityRbacStateFromStorage();
+    return ensureCompaniesSyncedWithSecurity(seedClients, local);
+  });
+
+  const [authUserId, setAuthUserId] = useState<string | null>(() => {
+    const savedSession = loadActiveAuthSession();
+    return savedSession?.userId || null;
+  });
+
+  // Sync security state with backend (/api/security/state) on mount
+  useEffect(() => {
+    saveSecurityRbacStateToStorage(securityState);
+  }, []);
+
+  const handleUpdateSecurityState = (nextState: SecurityRbacStoreState) => {
+    setSecurityState(nextState);
+    saveSecurityRbacStateToStorage(nextState);
+  };
 
   // Active Client derived object (backward-compatible with company)
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
@@ -455,13 +494,17 @@ export default function App() {
 
   // Add new client to firm's portfolio
   const handleAddClient = (newClient: ClientCompany) => {
-    setClients(prev => [newClient, ...prev]);
+    const nextClients = [newClient, ...clients];
+    setClients(nextClients);
+    handleUpdateSecurityState(ensureCompaniesSyncedWithSecurity(nextClients, securityState));
     handleSelectActiveClient(newClient.id);
   };
 
   // Update existing client configuration
   const handleUpdateClient = (updatedClient: ClientCompany) => {
-    setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+    const nextClients = clients.map(c => c.id === updatedClient.id ? updatedClient : c);
+    setClients(nextClients);
+    handleUpdateSecurityState(ensureCompaniesSyncedWithSecurity(nextClients, securityState));
     if (updatedClient.id === activeClientId) {
       setCompany(updatedClient);
       setF29(prev => ({
@@ -1112,8 +1155,9 @@ export default function App() {
     }
   };
 
-  const navLinks = [
+  const allNavLinks = [
     { id: 'executive_dashboard', label: 'Dashboard Ejecutivo', subtitle: 'Evolución de Agentes & KPIs 360°', icon: LayoutDashboard },
+    { id: 'security_admin', label: 'Seguridad, Roles & Empresas', subtitle: 'Usuarios, Roles RBAC, Empresas Anclas & Vera', icon: Key },
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
     { id: 'billing_agent', label: 'Facturación & Cobranza', subtitle: 'DTE, Playwright SII & Boletas', icon: Bot },
     { id: 'rcv', label: 'Registro Compras, Ventas / Honorarios', subtitle: 'DTEs 33, 34, 61, BHE & Boletas', icon: Receipt },
@@ -1132,6 +1176,90 @@ export default function App() {
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
   ];
 
+  // Resolver Usuario, Rol, Empresa y Módulos Autorizados en vivo
+  const currentUser = authUserId
+    ? securityState.users.find((u) => u.id === authUserId && u.estado === 'ACTIVO') || null
+    : null;
+
+  const currentRole = currentUser
+    ? securityState.roles.find((r) => r.id === currentUser.rolId) || null
+    : null;
+
+  const activeCompanySecurity = securityState.companiesConfig.find(
+    (c) => c.empresaId === activeClientId
+  );
+
+  // Si la empresa actual pasa a SUSPENDIDA_PAGO o BAJA, o el usuario pasa a INACTIVO, exigir re-validación en LoginScreen
+  const isCurrentSessionValid = Boolean(
+    currentUser &&
+      currentRole &&
+      (!activeCompanySecurity || activeCompanySecurity.estadoCuenta === 'ACTIVA')
+  );
+
+  const allowedModules: ErpModuleId[] = !currentRole
+    ? []
+    : currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN'
+    ? [...ALL_ERP_MODULE_IDS]
+    : currentRole.modulosPermitidos;
+
+  const allowedCompanyIds: string[] =
+    currentUser && currentRole
+      ? resolveAllowedCompanyIdsForUser(
+          currentUser,
+          currentRole,
+          securityState.companiesConfig,
+          activeClientId
+        )
+      : [];
+
+  // Filtrar las empresas que ve el usuario en el selector superior (y excluir las suspendidas/dadas de baja para operar)
+  const authorizedClients = clients.filter((c) => {
+    const sec = securityState.companiesConfig.find((sc) => sc.empresaId === c.id);
+    const isActiva = !sec || sec.estadoCuenta === 'ACTIVA';
+    if (!isActiva) return false;
+    if (currentRole?.tipoSistema === 'SUPERADMIN') return true;
+    return allowedCompanyIds.includes(c.id);
+  });
+
+  const navLinks = allNavLinks.filter((link) =>
+    allowedModules.includes(link.id as ErpModuleId)
+  );
+
+  const handleLoginSuccess = (result: LoginValidationResult, selectedEmpresaId: string) => {
+    if (!result.ok || !result.user || !result.role) return;
+    setAuthUserId(result.user.id);
+    saveActiveAuthSession({
+      userId: result.user.id,
+      username: result.user.username,
+      empresaId: selectedEmpresaId,
+      loginTimestamp: new Date().toISOString(),
+    });
+    handleSelectActiveClient(selectedEmpresaId);
+
+    const mods =
+      result.role.tipoSistema === 'SUPERADMIN' || result.role.tipoSistema === 'ADMIN'
+        ? ALL_ERP_MODULE_IDS
+        : result.role.modulosPermitidos;
+
+    if (!mods.includes(activeTab as ErpModuleId)) {
+      setActiveTab(mods[0] || 'executive_dashboard');
+    }
+  };
+
+  const handleLogout = () => {
+    setAuthUserId(null);
+    saveActiveAuthSession(null);
+  };
+
+  if (!isCurrentSessionValid || !currentUser || !currentRole) {
+    return (
+      <LoginScreen
+        securityState={securityState}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 flex flex-col font-sans selection:bg-blue-500/20 selection:text-blue-700">
       {/* Geometric Balance Top Bar */}
@@ -1141,7 +1269,7 @@ export default function App() {
         indicators={indicators}
         company={company}
         firm={firm}
-        clients={clients}
+        clients={authorizedClients.length > 0 ? authorizedClients : [activeClient]}
         activeClientId={activeClientId}
         onSelectClient={handleSelectActiveClient}
         discrepanciesCount={discrepanciesCount}
@@ -1152,6 +1280,12 @@ export default function App() {
           setVoiceDialoguePersonaId('AGENTE_GENERAL_VERA');
           setIsVoiceDialogueOpen(true);
         }}
+        currentUserName={currentUser.nombreCompleto}
+        currentRoleName={currentRole.nombre}
+        isAdminOrSuperAdmin={
+          currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN'
+        }
+        onLogout={handleLogout}
       />
 
       {/* Main Two-Column Layout */}
@@ -1160,8 +1294,9 @@ export default function App() {
         <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-[1px_0_3px_rgba(0,0,0,0.02)]">
 
           <div className="py-3 space-y-1">
-            <div className="px-5 pb-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              Módulos del Sistema
+            <div className="px-5 pb-2 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              <span>Módulos Autorizados</span>
+              <span className="text-indigo-600 font-extrabold">{navLinks.length}</span>
             </div>
             {navLinks.map((link) => {
               const Icon = link.icon;
@@ -1198,14 +1333,14 @@ export default function App() {
           <div className="p-4 border-t border-slate-200 bg-slate-50/70 space-y-2">
             <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-500 uppercase">Estado Cumplimiento</span>
+                <span className="text-[11px] font-semibold text-slate-500 uppercase">Sesión & Rol RBAC</span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               </div>
-              <div className="mt-1 font-bold text-xs text-emerald-700">
-                SII & Previred Conectados
+              <div className="mt-1 font-bold text-xs text-indigo-700">
+                {currentRole.nombre} ({currentUser.username})
               </div>
               <div className="mt-0.5 text-[10px] text-slate-500 truncate">
-                Cliente: <strong className="text-slate-700">{activeClient.nombreCorto}</strong>
+                Empresa: <strong className="text-slate-700">{activeClient.nombreCorto}</strong>
               </div>
               <div className="text-[10px] text-slate-400">
                 Régimen: {company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : '14 A General'}
@@ -1232,6 +1367,16 @@ export default function App() {
 
         {/* Content Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto bg-[#f8fafc]">
+          {activeTab === 'security_admin' && (
+            <SecurityManagementModule
+              securityState={securityState}
+              currentUser={currentUser}
+              currentRole={currentRole}
+              activeCompanyId={activeClientId}
+              onUpdateSecurityState={handleUpdateSecurityState}
+            />
+          )}
+
           {activeTab === 'executive_dashboard' && (
             <ExecutiveDashboard
               company={company}

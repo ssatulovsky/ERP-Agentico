@@ -411,6 +411,33 @@ app.post("/api/whatsapp/clear-logs", (_req, res) => {
   }
 });
 
+// ============================================================================
+// CAPA DE SEGURIDAD RBAC DEL SISTEMA (EMPRESAS, USUARIOS, ROLES & WHATSAPP VERA)
+// ============================================================================
+
+app.get("/api/security/state", (_req, res) => {
+  try {
+    const rbacState = whatsappBridgeService.getRbacState();
+    res.json({ success: true, state: rbacState });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/security/state", (req, res) => {
+  try {
+    const updated = whatsappBridgeService.saveRbacStore(req.body);
+    const waStatus = whatsappBridgeService.getStatusAndConfig();
+    res.json({
+      success: true,
+      state: updated,
+      whatsappWhitelist: waStatus.whitelist,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // SII Endpoints: Detección automática de meses desactualizados
 app.post("/api/sii/detect-pending", (req, res) => {
   try {

@@ -160,6 +160,10 @@ export interface ClientCompany extends CompanyProfile {
     mandatarioNombre?: string;
     cafsDisponibles?: number[];
   };
+  // Capa de Seguridad & Estado Comercial de la Empresa en el ERP
+  estadoCuentaEmpresa?: 'ACTIVA' | 'SUSPENDIDA_PAGO' | 'BAJA';
+  empresasAnclasIds?: string[]; // Empresas vinculadas / grupo empresarial administradas por el mismo Admin
+  esEmpresaDuenaErp?: boolean; // Si es la empresa propietaria del ERP (SuperAdmin)
 }
 
 export interface TenantCafItem {
