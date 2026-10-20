@@ -19,7 +19,7 @@ import {
   Check
 } from 'lucide-react';
 import { CompanyProfile, ChileIndicators, AccountingFirmProfile, AccountingEntry } from '../../types';
-import { formatCLP } from '../../utils/chileanAccounting';
+import { formatCLP, enrichEntryWithChartAttributes } from '../../utils/chileanAccounting';
 import {
   StandardJournalEntryTable,
   StandardJournalEntryData,

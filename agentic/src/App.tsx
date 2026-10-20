@@ -8,6 +8,7 @@ import { CashFlowProjections } from './components/CashFlowProjections';
 import { AccountingLedger } from './components/AccountingLedger';
 import { SeniorAccountingOrchestrator } from './components/SeniorAccountingOrchestrator';
 import { AiFiscalAuditorModal } from './components/AiFiscalAuditorModal';
+import { AiModelManagerModal } from './components/admin/AiModelManagerModal';
 import { AgentClientConfig } from './components/AgentClientConfig';
 import { BankReconciliation } from './components/BankReconciliation';
 import { InventoryAgentModule } from './components/InventoryAgentModule';
@@ -119,6 +120,7 @@ import {
   LoginValidationResult,
   loadSecurityRbacStateFromStorage,
   saveSecurityRbacStateToStorage,
+  fetchSecurityRbacStateFromServer,
   loadActiveAuthSession,
   saveActiveAuthSession,
   ensureCompaniesSyncedWithSecurity,
@@ -162,7 +164,9 @@ export default function App() {
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
-  const [clients, setClients] = useState<ClientCompany[]>(seedClients);
+  const [clients, setClients] = useState<ClientCompany[]>(() =>
+    loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', seedClients)
+  );
   const [activeClientId, setActiveClientId] = useState<string>(() => {
     const savedSession = loadActiveAuthSession();
     return savedSession?.empresaId || seedClients[0].id;
@@ -171,7 +175,7 @@ export default function App() {
   // Security & RBAC State (Empresas, Usuarios, Roles y Permisos WhatsApp Vera)
   const [securityState, setSecurityState] = useState<SecurityRbacStoreState>(() => {
     const local = loadSecurityRbacStateFromStorage();
-    return ensureCompaniesSyncedWithSecurity(seedClients, local);
+    return ensureCompaniesSyncedWithSecurity(clients, local);
   });
 
   const [authUserId, setAuthUserId] = useState<string | null>(() => {
@@ -179,14 +183,46 @@ export default function App() {
     return savedSession?.userId || null;
   });
 
-  // Sync security state with backend (/api/security/state) on mount
+  // Al iniciar (en cualquier sesión, navegador o ventana incógnito), descargar del servidor (/api/security/state)
+  // todos los usuarios, superusuarios, roles y empresas dados de alta sin pisar el servidor con valores por defecto
   useEffect(() => {
-    saveSecurityRbacStateToStorage(securityState);
+    let mounted = true;
+    const syncFromBackend = () => {
+      const latestLocal = ensureCompaniesSyncedWithSecurity(
+        clients,
+        loadSecurityRbacStateFromStorage()
+      );
+      fetchSecurityRbacStateFromServer(latestLocal, clients).then((mergedState) => {
+        if (mounted && mergedState) {
+          setSecurityState(mergedState);
+        }
+      });
+    };
+
+    syncFromBackend();
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'erp_security_rbac_state_v1') {
+        const refreshed = ensureCompaniesSyncedWithSecurity(
+          clients,
+          loadSecurityRbacStateFromStorage()
+        );
+        setSecurityState(refreshed);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('focus', syncFromBackend);
+    return () => {
+      mounted = false;
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', syncFromBackend);
+    };
   }, []);
 
   const handleUpdateSecurityState = (nextState: SecurityRbacStoreState) => {
     setSecurityState(nextState);
-    saveSecurityRbacStateToStorage(nextState);
+    saveSecurityRbacStateToStorage(nextState, true);
   };
 
   // Active Client derived object (backward-compatible with company)
@@ -496,6 +532,7 @@ export default function App() {
   const handleAddClient = (newClient: ClientCompany) => {
     const nextClients = [newClient, ...clients];
     setClients(nextClients);
+    savePersistentState('erp_clients_portfolio_v1', nextClients);
     handleUpdateSecurityState(ensureCompaniesSyncedWithSecurity(nextClients, securityState));
     handleSelectActiveClient(newClient.id);
   };
@@ -504,6 +541,7 @@ export default function App() {
   const handleUpdateClient = (updatedClient: ClientCompany) => {
     const nextClients = clients.map(c => c.id === updatedClient.id ? updatedClient : c);
     setClients(nextClients);
+    savePersistentState('erp_clients_portfolio_v1', nextClients);
     handleUpdateSecurityState(ensureCompaniesSyncedWithSecurity(nextClients, securityState));
     if (updatedClient.id === activeClientId) {
       setCompany(updatedClient);
@@ -520,6 +558,7 @@ export default function App() {
   const handleDeleteClient = (clientId: string) => {
     const remaining = clients.filter(c => c.id !== clientId);
     setClients(remaining);
+    savePersistentState('erp_clients_portfolio_v1', remaining);
     if (activeClientId === clientId && remaining.length > 0) {
       handleSelectActiveClient(remaining[0].id);
     }
@@ -808,6 +847,7 @@ export default function App() {
 
   // Modals
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [isAiModelManagerOpen, setIsAiModelManagerOpen] = useState(false);
 
   // Handlers
   const handleAddDte = (newDte: DteDocument) => {
@@ -1256,6 +1296,18 @@ export default function App() {
       <LoginScreen
         securityState={securityState}
         onLoginSuccess={handleLoginSuccess}
+        onToggleTestPanelConfig={(visible) =>
+          handleUpdateSecurityState({
+            ...securityState,
+            mostrarPanelPruebasLogin: visible,
+          })
+        }
+        onRefreshFromServer={async () => {
+          const merged = await fetchSecurityRbacStateFromServer(securityState, clients);
+          if (merged) {
+            setSecurityState(merged);
+          }
+        }}
       />
     );
   }
@@ -1285,6 +1337,7 @@ export default function App() {
         isAdminOrSuperAdmin={
           currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN'
         }
+        openAiModelManager={() => setIsAiModelManagerOpen(true)}
         onLogout={handleLogout}
       />
 
@@ -1701,6 +1754,14 @@ export default function App() {
         company={company}
         firm={firm}
         onAddEntry={handleAddEntry}
+      />
+
+      {/* AI Model Manager & Consumption Report Modal */}
+      <AiModelManagerModal
+        isOpen={isAiModelManagerOpen}
+        onClose={() => setIsAiModelManagerOpen(false)}
+        clients={clients}
+        activeClientId={activeClientId}
       />
 
       {/* Interactive In-App User Manual & Casuistics Modal */}

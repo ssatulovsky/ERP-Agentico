@@ -1,5 +1,117 @@
-import type { WhatsAppAgentScope } from './whatsappBridgeService';
 import type { ClientCompany } from '../types';
+
+export type WhatsAppAgentScope =
+  | 'FLUJO_CAJA'
+  | 'BANCOS_CONCILIACION'
+  | 'CONTABILIDAD_IFRS'
+  | 'TRIBUTARIO_F29'
+  | 'FACTURACION_DTE'
+  | 'RRHH_REMUNERACIONES'
+  | 'BODEGA_INVENTARIO'
+  | 'PRODUCCION_COSTEO'
+  | 'PRESUPUESTOS_COMERCIAL'
+  | 'RENDICIONES_GASTOS'
+  | 'PANORAMA_DIRECTORIO';
+
+export interface WhatsAppAgentScopeMeta {
+  id: WhatsAppAgentScope;
+  nombre: string;
+  agenteResponsable: string;
+  descripcion: string;
+  icono: string;
+  ejemplosConsulta: string[];
+}
+
+export const WHATSAPP_AGENT_SCOPES_CATALOG: WhatsAppAgentScopeMeta[] = [
+  {
+    id: 'FLUJO_CAJA',
+    nombre: 'Flujo de Caja & Tesorería',
+    agenteResponsable: 'Vera Albornoz (Directora Financiera)',
+    descripcion: 'Proyección de liquidez a 30/60/90 días, actualización a fecha de hoy y escenarios What-If.',
+    icono: 'TrendingUp',
+    ejemplosConsulta: ['Actualiza el flujo de caja partiendo de hoy', '¿Cuál es el flujo de caja proyectado?'],
+  },
+  {
+    id: 'BANCOS_CONCILIACION',
+    nombre: 'Bancos & Conciliación Bancaria',
+    agenteResponsable: 'Vera Albornoz / Tesorería',
+    descripcion: 'Saldos en línea de cuentas corrientes, estado de conciliación bancaria y partidas en tránsito.',
+    icono: 'Landmark',
+    ejemplosConsulta: ['¿Cómo está la conciliación bancaria?', 'Saldo disponible en bancos hoy'],
+  },
+  {
+    id: 'RRHH_REMUNERACIONES',
+    nombre: 'RRHH, Remuneraciones & Previred',
+    agenteResponsable: 'Sofía Castro (Jefa de Nómina & Personas)',
+    descripcion: 'Nómina de sueldos líquidos, imposiciones Previred, leyes sociales y vencimientos laborales.',
+    icono: 'Users',
+    ejemplosConsulta: ['¿Cuánto hay que pagar de sueldos e imposiciones?', 'Estado de Previred del mes'],
+  },
+  {
+    id: 'BODEGA_INVENTARIO',
+    nombre: 'Bodega, Stock & Inventarios',
+    agenteResponsable: 'Diego Morales (Jefe de Bodega & Logística)',
+    descripcion: 'Existencias físicas, stock de paño Dyneema, cabos, grilletes, valorización PMP y alertas de reposición.',
+    icono: 'Package',
+    ejemplosConsulta: ['¿Cuánto stock de paño Dyneema queda en bodega?', 'Reporte de inventario actual'],
+  },
+  {
+    id: 'PRODUCCION_COSTEO',
+    nombre: 'Órdenes de Producción & Costeo NIC 2',
+    agenteResponsable: 'Roberto Soto (Jefe de Planta & Costeo)',
+    descripcion: 'Avance físico de órdenes de fabricación en taller, consumo de materiales y desvío presupuestario.',
+    icono: 'Factory',
+    ejemplosConsulta: ['¿Cuál es el estado de la orden de producción?', 'Avance de fabricación Salmones Austral'],
+  },
+  {
+    id: 'PRESUPUESTOS_COMERCIAL',
+    nombre: 'Presupuestos & Pipeline Comercial',
+    agenteResponsable: 'Vera Albornoz / Área Comercial',
+    descripcion: 'Estado de cotizaciones enviadas a clientes, márgenes proyectados y seguimiento comercial.',
+    icono: 'FileSpreadsheet',
+    ejemplosConsulta: ['¿Cuál es el estado de los presupuestos enviados?', 'Pipeline de cotizaciones vigentes'],
+  },
+  {
+    id: 'TRIBUTARIO_F29',
+    nombre: 'Impuestos SII, IVA F29 & RCV',
+    agenteResponsable: 'Jorge Rojas (Especialista Tributario SII)',
+    descripcion: 'Determinación de IVA Débito/Crédito, PPM, retenciones de honorarios y monto a pagar en F29.',
+    icono: 'FileCheck',
+    ejemplosConsulta: ['¿Cuánto proyectamos pagar de F29 este mes?', 'Resumen de IVA y RCV SII'],
+  },
+  {
+    id: 'FACTURACION_DTE',
+    nombre: 'Facturación Electrónica DTE',
+    agenteResponsable: 'Juan Pablo Silva (Agente Facturador SII)',
+    descripcion: 'Consulta y emisión de Facturas Electrónicas (DTE 33/34), Notas de Crédito y estado SII.',
+    icono: 'Receipt',
+    ejemplosConsulta: ['Estado de facturas emitidas este mes', 'Emitir factura afecta'],
+  },
+  {
+    id: 'CONTABILIDAD_IFRS',
+    nombre: 'Contabilidad & Balance IFRS',
+    agenteResponsable: 'Camila Valenzuela (Auditora Senior IFRS)',
+    descripcion: 'Libro Diario, asientos contables, Balance de 8 Columnas y Estado de Resultados.',
+    icono: 'BookOpen',
+    ejemplosConsulta: ['Estado del balance y asientos del mes', 'Resultado contable acumulado'],
+  },
+  {
+    id: 'RENDICIONES_GASTOS',
+    nombre: 'Rendiciones de Gastos & Fondos Fijos',
+    agenteResponsable: 'Andrés Fuentes (Control de Gastos)',
+    descripcion: 'Estado de rendiciones de gastos por aprobar, reembolsos y saldos de fondos por rendir.',
+    icono: 'Wallet',
+    ejemplosConsulta: ['¿Hay rendiciones de gastos pendientes?', 'Estado de fondos por rendir'],
+  },
+  {
+    id: 'PANORAMA_DIRECTORIO',
+    nombre: 'Radiografía Ejecutiva 360° (Directorio)',
+    agenteResponsable: 'Vera Albornoz (Socia Virtual)',
+    descripcion: 'Resumen integral consolidando finanzas, bancos, RRHH, producción y ventas para socios.',
+    icono: 'ShieldCheck',
+    ejemplosConsulta: ['Dame un panorama general de la empresa', 'Resumen ejecutivo para directorio'],
+  },
+];
 
 export type ErpModuleId =
   | 'executive_dashboard'
@@ -229,6 +341,7 @@ export interface CompanySecurityConfig {
 
 export interface SecurityRbacStoreState {
   version: number;
+  mostrarPanelPruebasLogin?: boolean; // Si false, oculta el panel de perfiles de prueba en el Login (Modo Demo Cliente)
   companiesConfig: CompanySecurityConfig[];
   roles: SecurityRole[];
   users: SecurityUser[];
@@ -478,7 +591,7 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     estado: 'ACTIVO',
     rolId: 'role-rrhh',
     empresaPrincipalId: 'client-innovagile',
-    empresasAnclasPermitidas: ['client-retail-logistics', 'client-agro-valle'],
+    empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
   },
   {
@@ -492,7 +605,7 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     estado: 'ACTIVO',
     rolId: 'role-rrhh-inventario',
     empresaPrincipalId: 'client-retail-logistics',
-    empresasAnclasPermitidas: ['client-innovagile'],
+    empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
   },
   {
@@ -507,6 +620,20 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     rolId: 'role-contabilidad',
     empresaPrincipalId: 'client-innovagile',
     empresasAnclasPermitidas: ['client-retail-logistics', 'client-agro-valle'],
+    recibirAudioWhatsapp: false,
+  },
+  {
+    id: 'usr-minera-suspendida',
+    username: 'minera',
+    password: '123456',
+    nombreCompleto: 'Rodrigo Cifuentes (Minera del Sur)',
+    cargo: 'Gerente de Operaciones Faena',
+    email: 'adquisiciones@mineradelsur.cl',
+    telefonoWhatsapp: '56955264890',
+    estado: 'ACTIVO',
+    rolId: 'role-admin',
+    empresaPrincipalId: 'client-minera-sur',
+    empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
   },
   {
@@ -527,6 +654,7 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
 
 export const DEFAULT_SECURITY_RBAC_STATE: SecurityRbacStoreState = {
   version: 1,
+  mostrarPanelPruebasLogin: false, // Oculto por defecto para presentaciones / demos con clientes
   companiesConfig: DEFAULT_SECURITY_COMPANIES,
   roles: DEFAULT_SECURITY_ROLES,
   users: DEFAULT_SECURITY_USERS,
@@ -549,11 +677,13 @@ export function ensureCompaniesSyncedWithSecurity(
   state: SecurityRbacStoreState
 ): SecurityRbacStoreState {
   const existingMap = new Map<string, CompanySecurityConfig>();
-  for (const c of state.companiesConfig) {
+  for (const c of state.companiesConfig || []) {
     existingMap.set(c.empresaId, c);
   }
 
+  const clientIdsSet = new Set<string>();
   const mergedCompanies: CompanySecurityConfig[] = clients.map((client) => {
+    clientIdsSet.add(client.id);
     const existing = existingMap.get(client.id);
     if (existing) {
       return {
@@ -581,9 +711,16 @@ export function ensureCompaniesSyncedWithSecurity(
     };
   });
 
+  // Conservar cualquier empresa adicional registrada en el estado del servidor/seguridad que no esté aún en clients
+  for (const extra of state.companiesConfig || []) {
+    if (!clientIdsSet.has(extra.empresaId)) {
+      mergedCompanies.push(extra);
+    }
+  }
+
   return {
     ...state,
-    companiesConfig: mergedCompanies,
+    companiesConfig: mergedCompanies.length > 0 ? mergedCompanies : DEFAULT_SECURITY_COMPANIES,
   };
 }
 
@@ -599,8 +736,11 @@ export function resolveAllowedCompanyIdsForUser(
   allCompanies: CompanySecurityConfig[],
   selectedCompanyId?: string
 ): string[] {
-  if (role.tipoSistema === 'SUPERADMIN') {
-    return allCompanies.map((c) => c.empresaId);
+  const companiesSource =
+    allCompanies && allCompanies.length > 0 ? allCompanies : DEFAULT_SECURITY_COMPANIES;
+
+  if (role.tipoSistema === 'SUPERADMIN' || user.rolId === 'role-superadmin') {
+    return companiesSource.map((c) => c.empresaId);
   }
 
   const allowedSet = new Set<string>();
@@ -616,19 +756,110 @@ export function resolveAllowedCompanyIdsForUser(
 
   // Si es Admin de una empresa cliente ERP, también administra las empresas anclas vinculadas a su empresa principal o seleccionada
   if (role.tipoSistema === 'ADMIN') {
-    const primaryComp = allCompanies.find((c) => c.empresaId === user.empresaPrincipalId);
+    const primaryComp = companiesSource.find((c) => c.empresaId === user.empresaPrincipalId);
     if (primaryComp?.empresasAnclasIds) {
       primaryComp.empresasAnclasIds.forEach((id) => allowedSet.add(id));
     }
     if (selectedCompanyId) {
-      const selectedComp = allCompanies.find((c) => c.empresaId === selectedCompanyId);
+      const selectedComp = companiesSource.find((c) => c.empresaId === selectedCompanyId);
       if (selectedComp?.empresasAnclasIds) {
         selectedComp.empresasAnclasIds.forEach((id) => allowedSet.add(id));
       }
     }
   }
 
+  // Si por algún motivo el set quedó vacío, asignar la primera empresa disponible
+  if (allowedSet.size === 0 && companiesSource[0]?.empresaId) {
+    allowedSet.add(companiesSource[0].empresaId);
+  }
+
   return Array.from(allowedSet);
+}
+
+/**
+ * Resuelve las empresas autorizadas únicamente después de que el usuario ingresó su UserID / Email en el Login.
+ * Protege la privacidad multi-empresa: los usuarios de la Empresa A jamás ven que existen las Empresas B, C o D.
+ */
+export function resolveCompaniesForLoginUsername(
+  usernameInput: string,
+  state: SecurityRbacStoreState
+): {
+  matchedUser: SecurityUser | null;
+  role: SecurityRole | null;
+  allowedCompanies: CompanySecurityConfig[];
+  defaultCompanyId: string;
+} {
+  const cleanUser = (usernameInput || '').trim().toLowerCase();
+  if (!cleanUser) {
+    return {
+      matchedUser: null,
+      role: null,
+      allowedCompanies: [],
+      defaultCompanyId: '',
+    };
+  }
+
+  const matchedUser = (state.users || []).find((u) => {
+    const uName = (u.username || '').trim().toLowerCase();
+    const uMail = (u.email || '').trim().toLowerCase();
+    const uFull = (u.nombreCompleto || '').trim().toLowerCase();
+    if (uName === cleanUser || (uMail && uMail === cleanUser) || (uFull && uFull === cleanUser)) {
+      return true;
+    }
+    if (cleanUser === 'superadmin' && u.rolId === 'role-superadmin') return true;
+    return false;
+  });
+
+  if (!matchedUser) {
+    return {
+      matchedUser: null,
+      role: null,
+      allowedCompanies: [],
+      defaultCompanyId: '',
+    };
+  }
+
+  const role =
+    (state.roles || []).find((r) => r.id === matchedUser.rolId) ||
+    DEFAULT_SECURITY_ROLES.find((r) => r.id === matchedUser.rolId) ||
+    DEFAULT_SECURITY_ROLES[0];
+
+  const companiesSource =
+    state.companiesConfig && state.companiesConfig.length > 0
+      ? state.companiesConfig
+      : DEFAULT_SECURITY_COMPANIES;
+
+  const allowedIds = resolveAllowedCompanyIdsForUser(
+    matchedUser,
+    role,
+    companiesSource
+  );
+
+  let allowedCompanies = companiesSource.filter((c) =>
+    allowedIds.includes(c.empresaId)
+  );
+
+  // Fallback de seguridad: si el usuario existe pero el ID de su empresa principal no coincidía o es SuperAdmin, asegurar que cargue empresas
+  if (allowedCompanies.length === 0) {
+    if (role.tipoSistema === 'SUPERADMIN' || matchedUser.rolId === 'role-superadmin') {
+      allowedCompanies = [...companiesSource];
+    } else if (companiesSource.length > 0) {
+      allowedCompanies = [companiesSource[0]];
+    }
+  }
+
+  const defaultCompanyId =
+    matchedUser.empresaPrincipalId &&
+    allowedCompanies.some((c) => c.empresaId === matchedUser.empresaPrincipalId)
+      ? matchedUser.empresaPrincipalId
+      : allowedCompanies[0]?.empresaId || '';
+
+  return {
+    matchedUser,
+    role,
+    allowedCompanies,
+    defaultCompanyId,
+  };
 }
 
 /**
@@ -923,7 +1154,10 @@ export function loadSecurityRbacStateFromStorage(): SecurityRbacStoreState {
   return JSON.parse(JSON.stringify(DEFAULT_SECURITY_RBAC_STATE));
 }
 
-export function saveSecurityRbacStateToStorage(state: SecurityRbacStoreState): void {
+export function saveSecurityRbacStateToStorage(
+  state: SecurityRbacStoreState,
+  syncToServer = true
+): void {
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       window.localStorage.setItem(STORAGE_KEY_SECURITY_STATE, JSON.stringify(state));
@@ -931,14 +1165,117 @@ export function saveSecurityRbacStateToStorage(state: SecurityRbacStoreState): v
       console.warn('[SecurityRBAC] Error guardando en localStorage:', e);
     }
   }
-  // Sincronizar asíncronamente con el servidor Node para que Vera en WhatsApp aplique los mismos roles/estados al instante
-  if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+  // Sincronizar asíncronamente con el servidor Node para que Vera en WhatsApp y otras sesiones tengan los usuarios/roles al instante
+  if (syncToServer && typeof window !== 'undefined' && typeof fetch !== 'undefined') {
     fetch('/api/security/state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state),
     }).catch(() => {});
   }
+}
+
+/**
+ * Fusiona el estado del servidor (`data/erp_security_rbac_state.json`) con el estado local
+ * preservando todos los usuarios, superusuarios, roles y empresas dados de alta.
+ */
+export function mergeSecurityRbacStates(
+  serverState: SecurityRbacStoreState | null | undefined,
+  localState: SecurityRbacStoreState
+): SecurityRbacStoreState {
+  if (!serverState || !Array.isArray(serverState.users) || !Array.isArray(serverState.roles)) {
+    return localState;
+  }
+
+  const defaultUsersMap = new Map<string, string>(
+    DEFAULT_SECURITY_USERS.map((u) => [u.username.trim().toLowerCase(), JSON.stringify(u)])
+  );
+
+  // 1. Fusionar Roles
+  const rolesMap = new Map<string, SecurityRole>();
+  for (const r of DEFAULT_SECURITY_ROLES) rolesMap.set(r.id, r);
+  for (const r of localState.roles || []) rolesMap.set(r.id, r);
+  for (const r of serverState.roles || []) rolesMap.set(r.id, r);
+
+  // 2. Fusionar Usuarios (por username en minúsculas para evitar duplicados y preservar altas nuevas de cualquier sesión)
+  const usersByUsername = new Map<string, SecurityUser>();
+  for (const u of DEFAULT_SECURITY_USERS) {
+    usersByUsername.set(u.username.trim().toLowerCase(), u);
+  }
+  for (const u of serverState.users || []) {
+    if (u && u.username) {
+      usersByUsername.set(u.username.trim().toLowerCase(), u);
+    }
+  }
+  for (const u of localState.users || []) {
+    if (u && u.username) {
+      const key = u.username.trim().toLowerCase();
+      const existingOnServer = usersByUsername.get(key);
+      const isDefaultUnchangedOnServer =
+        existingOnServer && defaultUsersMap.get(key) === JSON.stringify(existingOnServer);
+      // Si el usuario fue dado de alta en esta sesión (no existe aún en servidor) o fue editado localmente mientras el servidor tenía el seed por defecto
+      if (!existingOnServer || isDefaultUnchangedOnServer) {
+        usersByUsername.set(key, u);
+      }
+    }
+  }
+
+  // 3. Fusionar Empresas
+  const companiesMap = new Map<string, CompanySecurityConfig>();
+  for (const c of DEFAULT_SECURITY_COMPANIES) companiesMap.set(c.empresaId, c);
+  for (const c of localState.companiesConfig || []) companiesMap.set(c.empresaId, c);
+  for (const c of serverState.companiesConfig || []) companiesMap.set(c.empresaId, c);
+
+  return {
+    version: Math.max(serverState.version || 1, localState.version || 1),
+    mostrarPanelPruebasLogin:
+      serverState.mostrarPanelPruebasLogin !== undefined
+        ? serverState.mostrarPanelPruebasLogin
+        : localState.mostrarPanelPruebasLogin ?? false,
+    companiesConfig: Array.from(companiesMap.values()),
+    roles: Array.from(rolesMap.values()),
+    users: Array.from(usersByUsername.values()),
+  };
+}
+
+/**
+ * Descarga desde el servidor (`/api/security/state`) la nómina real de usuarios, roles y empresas
+ * para que cualquier sesión nueva (otro navegador, modo incógnito o nueva pestaña) tenga todos los usuarios creados.
+ */
+export async function fetchSecurityRbacStateFromServer(
+  currentLocalState: SecurityRbacStoreState,
+  clients?: ClientCompany[]
+): Promise<SecurityRbacStoreState> {
+  if (typeof window === 'undefined' || typeof fetch === 'undefined') {
+    return currentLocalState;
+  }
+  try {
+    const res = await fetch('/api/security/state', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return currentLocalState;
+    const data = await res.json();
+    if (data && data.success && data.state) {
+      let merged = mergeSecurityRbacStates(data.state, currentLocalState);
+      if (clients && clients.length > 0) {
+        merged = ensureCompaniesSyncedWithSecurity(clients, merged);
+      }
+      // Si el estado fusionado contiene usuarios, roles o empresas que aún no estaban en el servidor, sincronizarlos de vuelta
+      const serverUsersJson = JSON.stringify(data.state.users || []);
+      const mergedUsersJson = JSON.stringify(merged.users || []);
+      const shouldPushBack =
+        mergedUsersJson !== serverUsersJson ||
+        (merged.roles?.length || 0) > (data.state.roles?.length || 0) ||
+        (merged.companiesConfig?.length || 0) > (data.state.companiesConfig?.length || 0);
+      saveSecurityRbacStateToStorage(merged, shouldPushBack);
+      return merged;
+    }
+  } catch (e) {
+    console.warn('[SecurityRBAC] No se pudo sincronizar estado desde /api/security/state:', e);
+  }
+  return currentLocalState;
 }
 
 export interface PersistedAuthSession {
@@ -969,3 +1306,4 @@ export function saveActiveAuthSession(session: PersistedAuthSession | null): voi
     }
   } catch {}
 }
+

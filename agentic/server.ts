@@ -30,6 +30,7 @@ import {
 } from "./src/services/journalEntryNormalizer";
 import { piperTtsService, PIPER_SPANISH_VOICES } from "./src/services/piperTtsService";
 import { whatsappBridgeService } from "./src/services/whatsappBridgeService";
+import { aiRouterService } from "./src/services/aiRouterService";
 
 dotenv.config({ override: true });
 
@@ -115,11 +116,96 @@ app.get("/api/indicators/current", async (req, res) => {
   }
 });
 
-// Gemini Chat & Accounting Consultation
+// =======================================================
+// ADMINISTRACIÓN Y GOBERNANZA DE MODELOS DE IA & CONSUMO
+// =======================================================
+app.get("/api/admin/ai-config", async (_req, res) => {
+  try {
+    const config = aiRouterService.getConfig();
+    const localStatus = await aiRouterService.testLocalServer();
+    res.json({
+      success: true,
+      config,
+      localStatus,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/admin/ai-config", async (req, res) => {
+  try {
+    const patch = req.body;
+    const updated = aiRouterService.updateConfig(patch);
+    const localStatus = await aiRouterService.testLocalServer();
+    res.json({
+      success: true,
+      config: updated,
+      localStatus,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/admin/ai-test-local", async (req, res) => {
+  try {
+    const { localBaseUrl } = req.body;
+    if (localBaseUrl) {
+      aiRouterService.updateConfig({ localBaseUrl });
+    }
+    const result = await aiRouterService.testLocalServer();
+    res.json({
+      success: true,
+      result,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get("/api/admin/ai-usage-report", async (req, res) => {
+  try {
+    const empresaId = typeof req.query.empresaId === "string" ? req.query.empresaId : undefined;
+    const periodo = typeof req.query.periodo === "string" ? req.query.periodo : undefined;
+    const report = aiRouterService.getUsageReport({ empresaId, periodo });
+    res.json({
+      success: true,
+      report,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get("/api/admin/ai-usage-report/csv", (req, res) => {
+  try {
+    const empresaId = typeof req.query.empresaId === "string" ? req.query.empresaId : undefined;
+    const periodo = typeof req.query.periodo === "string" ? req.query.periodo : undefined;
+    const csv = aiRouterService.exportUsageReportCsv(empresaId, periodo);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="reporte_consumo_ia_${periodo || 'mensual'}.csv"`);
+    res.send(csv);
+  } catch (error: any) {
+    res.status(500).send("Error generando CSV: " + error.message);
+  }
+});
+
+app.post("/api/admin/ai-company-override", (req, res) => {
+  try {
+    const { empresaId, override } = req.body;
+    if (!empresaId) return res.status(400).json({ success: false, error: "empresaId es requerido" });
+    aiRouterService.setCompanyOverride(empresaId, override);
+    res.json({ success: true, config: aiRouterService.getConfig() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Gemini Chat & Accounting Consultation (vía AiRouter)
 app.post("/api/gemini/chat", async (req, res) => {
   try {
     const { messages, companyContext, firmContext, userRole, personaContext } = req.body;
-    const ai = getAIClient();
 
     const systemInstruction = `Eres un Agente Contable y Financiero Senior experto en la legislación chilena (SII, Dirección del Trabajo, Tesorería General de la República - TGR, Código del Trabajo, Ley de la Renta LIR, DL 825 de IVA e IFRS/NIIF 16).
 Tu objetivo es gestionar de manera integral la contabilidad, el flujo de caja, las proyecciones financieras y el cumplimiento tributario/laboral de la empresa en Chile, actuando bajo las directrices del Estudio Contable gestor.
@@ -157,18 +243,21 @@ ${companyContext ? `EMPRESA CLIENTE EN REVISIÓN (INCLUYE ACCESO/CLAVE SII DEL A
       ? messages.map((m: { role: string; content: string }) => `${m.role === "user" ? "Usuario" : "Agente"}: ${m.content}`).join("\n\n")
       : String(req.body.prompt || "Hola");
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: promptText,
-      config: {
-        systemInstruction,
-        temperature: 0.3,
-      },
+    const aiRes = await aiRouterService.executeAiTask({
+      capability: 'GENERAL_CHAT',
+      prompt: promptText,
+      systemInstruction,
+      temperature: 0.3,
+      empresaId: companyContext?.rut || companyContext?.id,
+      modulo: 'CHAT_CONTABLE_VERA',
     });
 
     res.json({
       success: true,
-      text: response.text || "No se obtuvo respuesta.",
+      text: aiRes.text || "No se obtuvo respuesta.",
+      modelUsed: aiRes.modelUsed,
+      providerUsed: aiRes.providerUsed,
+      isFallback: aiRes.isFallback,
     });
   } catch (error: any) {
     console.error("Error in /api/gemini/chat:", error);
@@ -179,11 +268,10 @@ ${companyContext ? `EMPRESA CLIENTE EN REVISIÓN (INCLUYE ACCESO/CLAVE SII DEL A
   }
 });
 
-// Gemini Fiscal & DTE Audit / Parsing
+// Gemini Fiscal & DTE Audit / Parsing (vía AiRouter)
 app.post("/api/gemini/audit-fiscal", async (req, res) => {
   try {
     const { rcvData, f29Data, cashFlowData } = req.body;
-    const ai = getAIClient();
 
     const prompt = `Realiza una auditoría contable y tributaria profunda (SII / TGR / Previred) comparando los siguientes datos de la empresa:
 RCV (Compras y Ventas): ${JSON.stringify(rcvData || [])}
@@ -200,18 +288,20 @@ Identifica:
 
 Responde de forma clara, ejecutiva y con el formato de asientos normalizado.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "Eres un Auditor Tributario Senior experto en fiscalización del SII y Tesorería General de la República de Chile.",
-        temperature: 0.2,
-      },
+    const aiRes = await aiRouterService.executeAiTask({
+      capability: 'REASONING_AUDIT',
+      prompt,
+      systemInstruction: "Eres un Auditor Tributario Senior experto en fiscalización del SII y Tesorería General de la República de Chile.",
+      temperature: 0.2,
+      empresaId: req.body.empresaId,
+      modulo: 'AUDITORIA_FISCAL_F29',
     });
 
     res.json({
       success: true,
-      analysis: response.text,
+      analysis: aiRes.text,
+      modelUsed: aiRes.modelUsed,
+      providerUsed: aiRes.providerUsed,
     });
   } catch (error: any) {
     console.error("Error in /api/gemini/audit-fiscal:", error);
@@ -931,8 +1021,6 @@ app.post("/api/sii/close-sessions", async (_req, res) => {
 app.post("/api/sii/suggest-imputation", async (req, res) => {
   try {
     const { rut, razonSocial, glosa, montoNeto, tipoDte } = req.body;
-    const ai = getAIClient();
-
     const prompt = `Como Contador Auditor Senior en Chile, analiza la siguiente compra o documento de proveedor y sugiere la cuenta contable de imputación del Plan de Cuentas estándar chileno:
 - RUT Proveedor: ${rut}
 - Razón Social: ${razonSocial}
@@ -949,18 +1037,18 @@ Responde EXCLUSIVAMENTE en formato JSON con la siguiente estructura:
   "sugiereDesglose": false
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "Eres un Auditor Contable experto en el Plan de Cuentas estándar chileno y normativa del SII.",
-        temperature: 0.1,
-      },
+    const aiRes = await aiRouterService.executeAiTask({
+      capability: 'CODE_JSON',
+      prompt,
+      systemInstruction: "Eres un Auditor Contable experto en el Plan de Cuentas estándar chileno y normativa del SII.",
+      temperature: 0.1,
+      empresaId: req.body.empresaId || rut,
+      modulo: 'SII_SUGERENCIA_IMPUTACION',
     });
 
     let jsonRes: any = null;
     try {
-      const cleaned = (response.text || "").replace(/```json/g, "").replace(/```/g, "").trim();
+      const cleaned = (aiRes.text || "").replace(/```json/g, "").replace(/```/g, "").trim();
       jsonRes = JSON.parse(cleaned);
     } catch {
       jsonRes = {
@@ -1214,13 +1302,13 @@ Debes responder SIEMPRE en dos capas:
 }
 \`\`\``;
 
-      const aiGen = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "Eres el Agente Fiscal y Tributario Senior de nivel experto en Chile. Responde con lenguaje técnico tributario riguroso (citando DL 825, LIR, Ley 19.983, Ley 21.133 y DL 3.063). Entrega siempre las 2 capas (Asesora ejecutiva + JSON transaccional).",
-          temperature: 0.15,
-        }
+      const aiGen = await aiRouterService.executeAiTask({
+        capability: 'REASONING_AUDIT',
+        prompt,
+        systemInstruction: "Eres el Agente Fiscal y Tributario Senior de nivel experto en Chile. Responde con lenguaje técnico tributario riguroso (citando DL 825, LIR, Ley 19.983, Ley 21.133 y DL 3.063). Entrega siempre las 2 capas (Asesora ejecutiva + JSON transaccional).",
+        temperature: 0.15,
+        empresaId: empresa?.rut || empresa?.id,
+        modulo: 'F29_SENIOR_LIQUIDACION',
       });
       aiResponseText = aiGen.text || "";
     } catch (e: any) {
@@ -1327,16 +1415,16 @@ Entrega:
 \`\`\``;
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          temperature: 0.2,
-        },
+      const aiRes = await aiRouterService.executeAiTask({
+        capability: 'CODE_JSON',
+        prompt,
+        systemInstruction,
+        temperature: 0.2,
+        empresaId: empresa?.rut || empresa?.id,
+        modulo: 'ORQUESTADOR_SENIOR_CONTABLE',
       });
 
-      aiText = response.text || "";
+      aiText = aiRes.text || "";
     } catch (e: any) {
       console.warn("[Senior Accounting Orchestrator] Fallback determinístico:", e.message);
       aiText = `Como Agente Orquestador Contable y Financiero Senior, he analizado la estructura contable bajo normativa IFRS y fiscal del SII para ${empresa?.razonSocial || "la empresa"}.
@@ -1372,7 +1460,6 @@ app.post("/api/accounting/assistant-dialogue", async (req, res) => {
     let aiResult: any = null;
 
     try {
-      const ai = getAIClient();
       const systemInstruction = `Eres un Contador Auditor y Asesor Contable Senior de Chile, experto en la legislación del SII (DL 825 de IVA, Ley sobre Impuesto a la Renta LIR, Art. 31, Facturación Electrónica DTE 33/34/39) y en normas IFRS / Plan de Cuentas estándar chileno.
 Tu tarea es conversar interactivamente con el usuario (contador, analista o empresario) para auditar e indagar toda la información REAL requerida antes de formular o asentar cualquier hecho económico o transacción comercial en el Libro Diario.
 
@@ -1450,20 +1537,19 @@ EMPRESA CLIENTE ACTIVA:
 
 Analiza la conversación considerando las DIRECTIVAS DE VERACIDAD. Si faltan precios o datos indispensables, NO generes asientoPropuesto (debe ser null) y solicita los datos. Devuelve ÚNICAMENTE el objeto JSON.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          temperature: 0.1,
-          responseMimeType: "application/json",
-        },
+      const aiRes = await aiRouterService.executeAiTask({
+        capability: 'CODE_JSON',
+        prompt,
+        systemInstruction,
+        temperature: 0.1,
+        empresaId: companyRut,
+        modulo: 'DIALOGO_ASESOR_CONTABLE',
       });
 
-      const rawJson = response.text || "{}";
+      const rawJson = (aiRes.text || "{}").replace(/```(?:json)?/gi, '').trim();
       aiResult = JSON.parse(rawJson);
     } catch (aiErr: any) {
-      console.warn("[Assistant Dialogue] Motor Gemini no disponible, procediendo con motor analítico senior:", aiErr?.message);
+      console.warn("[Assistant Dialogue] Motor AiRouter en fallback determinístico:", aiErr?.message);
     }
 
     // =======================================================

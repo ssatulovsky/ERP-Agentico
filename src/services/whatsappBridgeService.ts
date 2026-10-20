@@ -10,6 +10,7 @@ import {
   SecurityRbacStoreState,
   evaluateWhatsappPhoneAgainstRbac,
   deriveWhatsappScopesFromModules,
+  mergeSecurityRbacStates,
 } from './securityRbacService';
 
 const execAsync = promisify(exec);
@@ -375,9 +376,12 @@ export class WhatsAppBridgeService {
   }
 
   public saveRbacStore(newState: SecurityRbacStoreState): SecurityRbacStoreState {
-    this.rbacState = newState;
+    const merged = this.rbacState
+      ? mergeSecurityRbacStates(newState, this.rbacState)
+      : newState;
+    this.rbacState = merged;
     try {
-      fs.writeFileSync(this.rbacStorePath, JSON.stringify(newState, null, 2), 'utf-8');
+      fs.writeFileSync(this.rbacStorePath, JSON.stringify(merged, null, 2), 'utf-8');
     } catch (e) {
       console.error('[WhatsAppBridge] Error guardando estado RBAC:', e);
     }

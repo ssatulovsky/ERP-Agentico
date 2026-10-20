@@ -28,10 +28,10 @@ import {
   CompanyCommercialStatus,
   ErpModuleId,
   ERP_MODULES_CATALOG,
+  WHATSAPP_AGENT_SCOPES_CATALOG,
   deriveWhatsappScopesFromModules,
   evaluateWhatsappPhoneAgainstRbac,
 } from '../../services/securityRbacService';
-import { WHATSAPP_AGENT_SCOPES_CATALOG } from '../../services/whatsappBridgeService';
 
 interface SecurityManagementModuleProps {
   securityState: SecurityRbacStoreState;
@@ -484,7 +484,36 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !securityState.mostrarPanelPruebasLogin;
+                onUpdateSecurityState({
+                  ...securityState,
+                  mostrarPanelPruebasLogin: nextVal,
+                });
+                notify(
+                  'success',
+                  nextVal
+                    ? 'Panel de Perfiles de Prueba (QA) HABILITADO en la pantalla de Login.'
+                    : 'Modo Demo Cliente ACTIVO: Panel de Perfiles de Prueba OCULTO en la pantalla de Login.'
+                );
+              }}
+              className={`px-3.5 py-2.5 text-xs font-bold rounded-xl border flex items-center gap-2 transition-all cursor-pointer ${
+                securityState.mostrarPanelPruebasLogin
+                  ? 'bg-amber-500/20 text-amber-200 border-amber-400/40 hover:bg-amber-500/30'
+                  : 'bg-slate-800/90 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Configura si en la pantalla de Login se ven o se ocultan los botones de prueba rápida"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>
+                {securityState.mostrarPanelPruebasLogin
+                  ? 'Login: Panel Pruebas Visible (QA)'
+                  : 'Login: Modo Demo Cliente (Pruebas Ocultas)'}
+              </span>
+            </button>
             <button
               type="button"
               onClick={openCreateRoleModal}

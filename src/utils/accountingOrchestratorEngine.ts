@@ -146,6 +146,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     requiereAuxiliarRut: false,
     requiereCentroCosto: false,
     esConciliableBancaria: true,
+    manejaMultimoneda: true,
     activa: true,
   },
   {
@@ -159,6 +160,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CIRCULANTE',
     naturaleza: 'DEUDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -174,6 +176,8 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CIRCULANTE',
     naturaleza: 'DEUDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
+    manejaMultimoneda: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -189,6 +193,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CIRCULANTE',
     naturaleza: 'DEUDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -204,6 +209,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CIRCULANTE',
     naturaleza: 'DEUDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -249,6 +255,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CIRCULANTE',
     naturaleza: 'DEUDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: true,
     esConciliableBancaria: false,
     activa: true,
@@ -421,6 +428,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -436,6 +444,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -451,6 +460,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: true,
     activa: true,
@@ -466,6 +476,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -481,6 +492,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -496,6 +508,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -511,6 +524,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -526,6 +540,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -541,6 +556,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -556,6 +572,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -571,6 +588,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -586,6 +604,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -601,6 +620,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: false,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -616,6 +636,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -631,6 +652,7 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     clasificacion: 'CORTO_PLAZO',
     naturaleza: 'ACREEDORA',
     requiereAuxiliarRut: true,
+    requiereDocReferencia: true,
     requiereCentroCosto: false,
     esConciliableBancaria: false,
     activa: true,
@@ -2944,30 +2966,36 @@ export function generateRetroactiveCatchUpPack(
   const totalImpuestoUnico = payrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
   const totalSueldosLiquidos = payrolls.reduce((s, p) => s + p.sueldoLiquido, 0);
 
+  const folioLibroRemun = `REM-${periodo}`;
+  const folioNominaTef = `TEF-NOM-${periodo.replace('-', '')}`;
+  const folioPrevired = `PRV-${periodo.replace('-', '')}91`;
+  const folioF29 = `F29-${periodo.replace('-', '')}88`;
+  const folioPagoF29 = `TEF-TGR-${periodo.replace('-', '')}88`;
+
   const lineasDevengoRemun: AccountingEntryLine[] = [
-    { cuentaCodigo: '5.2.01.001', cuentaNombre: 'Sueldos y Remuneraciones Base', debe: totalSueldoBase, haber: 0 },
-    { cuentaCodigo: '5.2.01.002', cuentaNombre: 'Gratificaciones Legales Art. 50', debe: totalGratif, haber: 0 },
+    { cuentaCodigo: '5.2.01.001', cuentaNombre: 'Sueldos y Remuneraciones Base', debe: totalSueldoBase, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '5.2.01.002', cuentaNombre: 'Gratificaciones Legales Art. 50', debe: totalGratif, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes },
   ];
   if (totalHorasExtras + totalBonos > 0) {
-    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.003', cuentaNombre: 'Horas Extras y Bonos Imponibles', debe: totalHorasExtras + totalBonos, haber: 0 });
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.003', cuentaNombre: 'Horas Extras y Bonos Imponibles', debe: totalHorasExtras + totalBonos, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes });
   }
   if (totalNoImponibles > 0) {
-    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.005', cuentaNombre: 'Asignaciones No Imponibles (Colación/Movilización)', debe: totalNoImponibles, haber: 0 });
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.005', cuentaNombre: 'Asignaciones No Imponibles (Colación/Movilización)', debe: totalNoImponibles, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes });
   }
   if (totalAportesPatronales > 0) {
-    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.004', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)', debe: totalAportesPatronales, haber: 0 });
+    lineasDevengoRemun.push({ cuentaCodigo: '5.2.01.004', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)', debe: totalAportesPatronales, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes });
   }
 
   lineasDevengoRemun.push(
-    { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: 0, haber: totalAfp },
-    { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: 0, haber: totalSalud },
-    { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador },
-    { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis }
+    { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: 0, haber: totalAfp, rutAuxiliar: '96.919.050-8', nombreAuxiliar: 'PreviRed / Administradoras de Fondos de Pensiones', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: 0, haber: totalSalud, rutAuxiliar: '61.603.000-0', nombreAuxiliar: 'FONASA / Instituciones de Salud Previsional', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador, rutAuxiliar: '76.265.736-8', nombreAuxiliar: 'Sociedad Administradora de Fondos de Cesantía (AFC Chile)', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis, rutAuxiliar: '70.285.100-9', nombreAuxiliar: 'Mutual de Seguridad CChC / ACHS', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes }
   );
   if (totalImpuestoUnico > 0) {
-    lineasDevengoRemun.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico });
+    lineasDevengoRemun.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Impuesto Único ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes });
   }
-  lineasDevengoRemun.push({ cuentaCodigo: '2.1.07.001', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: 0, haber: totalSueldosLiquidos });
+  lineasDevengoRemun.push({ cuentaCodigo: '2.1.07.001', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: 0, haber: totalSueldosLiquidos, rutAuxiliar: payrolls[0]?.rut || 'NOMINA-COLAB', nombreAuxiliar: `Nómina Personal (${payrolls.length} colaboradores)`, documentoRef: `Libro Remuneraciones ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioLibroRemun, fechaDocumentoRef: fechaFinMes });
 
   const sumDebeRemun = lineasDevengoRemun.reduce((s, l) => s + l.debe, 0);
   const sumHaberRemun = lineasDevengoRemun.reduce((s, l) => s + l.haber, 0);
@@ -2990,11 +3018,38 @@ export function generateRetroactiveCatchUpPack(
     id: `catchup-pago-sueldos-${periodo}-${Date.now()}`,
     fecha: fechaPagoSueldos,
     concepto: `Pago Transferencia Bancaria Nómina Sueldos Líquidos Período ${periodo}`,
-    documento: `Nómina Transferencia Banco ${fechaPagoSueldos}`,
+    documento: `Nómina Transferencia Banco ${fechaPagoSueldos} (${folioNominaTef})`,
     origen: 'CAJA_BANCO',
     lineas: [
-      { cuentaCodigo: '2.1.07.001', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: totalSueldosLiquidos, haber: 0 },
-      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalSueldosLiquidos },
+      {
+        cuentaCodigo: '2.1.07.001',
+        cuentaNombre: 'Sueldos Líquidos por Pagar',
+        debe: totalSueldosLiquidos,
+        haber: 0,
+        rutAuxiliar: payrolls[0]?.rut || 'NOMINA-COLAB',
+        nombreAuxiliar: `Nómina Personal (${payrolls.length} colaboradores)`,
+        documentoRef: `Libro Remuneraciones ${periodo}`,
+        tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+        folioDocumentoRef: folioLibroRemun,
+        fechaDocumentoRef: fechaFinMes,
+        tipoDocumentoOperacion: 'TRANSFERENCIA',
+        documentoOperacion: folioNominaTef,
+        fechaDocumentoOperacion: fechaPagoSueldos,
+      },
+      {
+        cuentaCodigo: bancoCodigo,
+        cuentaNombre: bancoNombre,
+        debe: 0,
+        haber: totalSueldosLiquidos,
+        rutAuxiliar: payrolls[0]?.rut || 'NOMINA-COLAB',
+        nombreAuxiliar: `Nómina Personal (${payrolls.length} colaboradores)`,
+        tipoDocumentoConciliacion: 'TRANSFERENCIA',
+        documentoConciliacion: folioNominaTef,
+        documentoRef: `Libro Remuneraciones ${periodo}`,
+        folioDocumentoRef: folioLibroRemun,
+        fechaDocumentoRef: fechaPagoSueldos,
+        fechaVencimientoRef: fechaPagoSueldos,
+      },
     ],
     totalDebe: totalSueldosLiquidos,
     totalHaber: totalSueldosLiquidos,
@@ -3008,14 +3063,14 @@ export function generateRetroactiveCatchUpPack(
     id: `catchup-pago-previred-${periodo}-${Date.now()}`,
     fecha: fechaPagoPrevired,
     concepto: `Pago Electrónico Planillas de Imposiciones Previred Período ${periodo}`,
-    documento: `Comprobante Pago Previred Folio #${periodo.replace('-', '')}91`,
+    documento: `Comprobante Pago Previred Folio #${folioPrevired}`,
     origen: 'CAJA_BANCO',
     lineas: [
-      { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: totalAfp, haber: 0 },
-      { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: totalSalud, haber: 0 },
-      { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: totalAfcTrabajador + totalAfcEmpleador, haber: 0 },
-      { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: totalMutual + totalSis, haber: 0 },
-      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalPrevisionalPrevired },
+      { cuentaCodigo: '2.1.08.001', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: totalAfp, haber: 0, rutAuxiliar: '96.919.050-8', nombreAuxiliar: 'PreviRed / AFP', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes, tipoDocumentoOperacion: 'TRANSFERENCIA', documentoOperacion: `TEF-${folioPrevired}`, fechaDocumentoOperacion: fechaPagoPrevired },
+      { cuentaCodigo: '2.1.08.002', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: totalSalud, haber: 0, rutAuxiliar: '61.603.000-0', nombreAuxiliar: 'FONASA / Isapres', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes, tipoDocumentoOperacion: 'TRANSFERENCIA', documentoOperacion: `TEF-${folioPrevired}`, fechaDocumentoOperacion: fechaPagoPrevired },
+      { cuentaCodigo: '2.1.08.003', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: totalAfcTrabajador + totalAfcEmpleador, haber: 0, rutAuxiliar: '76.265.736-8', nombreAuxiliar: 'AFC Chile', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes, tipoDocumentoOperacion: 'TRANSFERENCIA', documentoOperacion: `TEF-${folioPrevired}`, fechaDocumentoOperacion: fechaPagoPrevired },
+      { cuentaCodigo: '2.1.08.004', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: totalMutual + totalSis, haber: 0, rutAuxiliar: '70.285.100-9', nombreAuxiliar: 'Mutual de Seguridad / SIS', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaFinMes, tipoDocumentoOperacion: 'TRANSFERENCIA', documentoOperacion: `TEF-${folioPrevired}`, fechaDocumentoOperacion: fechaPagoPrevired },
+      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalPrevisionalPrevired, rutAuxiliar: '96.919.050-8', nombreAuxiliar: 'Nómina PreviRed (AFP, Salud, AFC, Mutual)', tipoDocumentoConciliacion: 'TRANSFERENCIA', documentoConciliacion: `TEF-${folioPrevired}`, documentoRef: `Planilla PreviRed ${periodo}`, folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaPagoPrevired, fechaVencimientoRef: fechaPagoPrevired },
     ],
     totalDebe: totalPrevisionalPrevired,
     totalHaber: totalPrevisionalPrevired,
@@ -3032,17 +3087,17 @@ export function generateRetroactiveCatchUpPack(
   const totalDeterminadoF29 = f29.totalAPagar || Math.max(0, debitoFiscalIva - creditoFiscalIva + retencionHonorarios + retencionImpuestoUnicoF29 + ppmMonto);
 
   const lineasF29: AccountingEntryLine[] = [
-    { cuentaCodigo: '2.1.04.001', cuentaNombre: 'IVA Débito Fiscal (Ventas Facturadas)', debe: debitoFiscalIva, haber: 0 },
-    { cuentaCodigo: '1.1.04.001', cuentaNombre: 'IVA Crédito Fiscal (Compras y Servicios)', debe: 0, haber: creditoFiscalIva },
-    { cuentaCodigo: '1.1.04.003', cuentaNombre: 'Pagos Provisionales Mensuales (PPM Obligatorio)', debe: ppmMonto, haber: 0 },
+    { cuentaCodigo: '2.1.04.001', cuentaNombre: 'IVA Débito Fiscal (Ventas Facturadas)', debe: debitoFiscalIva, haber: 0, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '1.1.04.001', cuentaNombre: 'IVA Crédito Fiscal (Compras y Servicios)', debe: 0, haber: creditoFiscalIva, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes },
+    { cuentaCodigo: '1.1.04.003', cuentaNombre: 'Pagos Provisionales Mensuales (PPM Obligatorio)', debe: ppmMonto, haber: 0, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes },
   ];
   if (retencionHonorarios > 0) {
-    lineasF29.push({ cuentaCodigo: '2.1.04.002', cuentaNombre: 'Retención Impuesto Boletas Honorarios (14.5%)', debe: retencionHonorarios, haber: 0 });
+    lineasF29.push({ cuentaCodigo: '2.1.04.002', cuentaNombre: 'Retención Impuesto Boletas Honorarios (14.5%)', debe: retencionHonorarios, haber: 0, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes });
   }
   if (retencionImpuestoUnicoF29 > 0) {
-    lineasF29.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría Sueldos', debe: retencionImpuestoUnicoF29, haber: 0 });
+    lineasF29.push({ cuentaCodigo: '2.1.04.003', cuentaNombre: 'Impuesto Único 2da Categoría Sueldos', debe: retencionImpuestoUnicoF29, haber: 0, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes });
   }
-  lineasF29.push({ cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: 0, haber: totalDeterminadoF29 });
+  lineasF29.push({ cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: 0, haber: totalDeterminadoF29, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes });
 
   const sumDebeF29 = lineasF29.reduce((s, l) => s + l.debe, 0);
   const sumHaberF29 = lineasF29.reduce((s, l) => s + l.haber, 0);
@@ -3051,7 +3106,7 @@ export function generateRetroactiveCatchUpPack(
     id: `catchup-dev-f29-${periodo}-${Date.now()}`,
     fecha: fechaFinMes,
     concepto: `Liquidación Tributaria Mensual F29 Período ${periodo} (SII)`,
-    documento: `Formulario 29 Folio #${periodo.replace('-', '')}88`,
+    documento: `Formulario 29 Folio #${folioF29}`,
     origen: 'F29_TRIBUTARIO',
     lineas: lineasF29,
     totalDebe: sumDebeF29,
@@ -3065,11 +3120,11 @@ export function generateRetroactiveCatchUpPack(
     id: `catchup-pago-f29-${periodo}-${Date.now()}`,
     fecha: fechaPagoF29,
     concepto: `Pago Electrónico Tributario Formulario 29 SII Período ${periodo} vía Convenio Bancario`,
-    documento: `Certificado Pago SII F29 Folio #${periodo.replace('-', '')}88`,
+    documento: `Certificado Pago SII F29 Folio #${folioF29} (${folioPagoF29})`,
     origen: 'CAJA_BANCO',
     lineas: [
-      { cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: totalDeterminadoF29, haber: 0 },
-      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalDeterminadoF29 },
+      { cuentaCodigo: '2.1.04.004', cuentaNombre: 'F29 Impuestos Mensuales SII por Pagar', debe: totalDeterminadoF29, haber: 0, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Período ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: folioF29, fechaDocumentoRef: fechaFinMes, tipoDocumentoOperacion: 'TRANSFERENCIA', documentoOperacion: folioPagoF29, fechaDocumentoOperacion: fechaPagoF29 },
+      { cuentaCodigo: bancoCodigo, cuentaNombre: bancoNombre, debe: 0, haber: totalDeterminadoF29, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', tipoDocumentoConciliacion: 'TRANSFERENCIA', documentoConciliacion: folioPagoF29, documentoRef: `F29 Período ${periodo}`, folioDocumentoRef: folioF29, fechaDocumentoRef: fechaPagoF29, fechaVencimientoRef: fechaPagoF29 },
     ],
     totalDebe: totalDeterminadoF29,
     totalHaber: totalDeterminadoF29,

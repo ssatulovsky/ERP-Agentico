@@ -321,17 +321,11 @@ export function generateExpenseAccountingEntry(
   chartOfAccounts: HierarchicalAccountItem[],
   config?: ExpenseAccountingConfig
 ): AccountingEntry {
-  const lineas: {
-    cuentaCodigo: string;
-    cuentaNombre: string;
-    debe: number;
-    haber: number;
-    rutAuxiliar?: string;
-    documentoRef?: string;
-    fechaDocumentoRef?: string;
-    centroCosto?: string;
-  }[] = [];
+  const lineas: AccountingEntryLine[] = [];
   const fechaAsiento = config?.fechaContable || report.fechaCierre || new Date().toISOString().substring(0, 10);
+  const rendidorRut = report.rendidorRut && report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : '15.342.119-4';
+  const rendidorNombre = report.rendidorNombre || 'Colaborador Rendidor';
+  const docLabel = `Rendición Gastos ${report.folio}`;
 
   // 1. Agrupar gastos por cuenta contable y centro de costo
   const mapaGastos: Record<
@@ -344,6 +338,9 @@ export function generateExpenseAccountingEntry(
       centroCostoCodigo?: string;
       proyectoId?: string;
       proyectoCodigo?: string;
+      proveedorRut?: string;
+      proveedorRazonSocial?: string;
+      folioComprobante?: string;
       glosa: string;
     }
   > = {};
@@ -361,8 +358,8 @@ export function generateExpenseAccountingEntry(
           fecha: report.fechaCierre || report.fechaInicio || new Date().toISOString().substring(0, 10),
           tipoDocumento: 'BOLETA_ELECTRONICA' as const,
           folioDocumento: `RDG-${report.folio}`,
-          proveedorRut: report.rendidorRut || 'SIN_RUT',
-          proveedorRazonSocial: report.rendidorNombre || 'Gastos Operacionales Terreno',
+          proveedorRut: rendidorRut,
+          proveedorRazonSocial: rendidorNombre,
           categoria: 'ALIMENTACION' as const,
           descripcionGlosa: report.titulo || `Gastos Operacionales ${report.folio}`,
           montoNeto: Math.round(report.montoTotalRendidoClp / 1.19),
@@ -390,16 +387,18 @@ export function generateExpenseAccountingEntry(
     const ctaCodigo = item.cuentaContableCodigo || '6.1.04.007';
     const key = `${ctaCodigo}_${item.centroCostoId || report.centroCostoId || ''}_${item.proyectoId || report.proyectoId || ''}`;
     if (!mapaGastos[key]) {
-      // Buscar nombre oficial en el plan de cuentas
       const acc = chartOfAccounts.find((a) => a.codigo === ctaCodigo);
       mapaGastos[key] = {
         cuentaCodigo: ctaCodigo,
         cuentaNombre: acc?.nombre || item.cuentaContableNombre || `Gasto ${item.categoria}`,
         montoNeto: 0,
         centroCostoId: item.centroCostoId || report.centroCostoId,
-        centroCostoCodigo: item.centroCostoCodigo || report.centroCostoCodigo,
+        centroCostoCodigo: item.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
         proyectoId: item.proyectoId || report.proyectoId,
         proyectoCodigo: item.proyectoCodigo || report.proyectoCodigo,
+        proveedorRut: item.proveedorRut && item.proveedorRut !== 'SIN_RUT' ? item.proveedorRut : rendidorRut,
+        proveedorRazonSocial: item.proveedorRazonSocial || rendidorNombre,
+        folioComprobante: item.folioDocumento || report.folio,
         glosa: `${item.categoria} - Rendición ${report.folio}`,
       };
     }
@@ -413,10 +412,14 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: gasto.cuentaNombre,
       debe: Math.round(gasto.montoNeto),
       haber: 0,
-      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
-      documentoRef: report.folio,
+      rutAuxiliar: gasto.proveedorRut || rendidorRut,
+      nombreAuxiliar: gasto.proveedorRazonSocial || rendidorNombre,
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'RENDICION_GASTOS',
+      folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
-      centroCosto: gasto.centroCostoCodigo,
+      centroCosto: gasto.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
+      proyecto: gasto.proyectoCodigo || report.proyectoCodigo,
     });
   });
 
@@ -427,8 +430,11 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: 'IVA Crédito Fiscal (DL 825)',
       debe: Math.round(totalIvaCredito),
       haber: 0,
-      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
-      documentoRef: report.folio,
+      rutAuxiliar: rendidorRut,
+      nombreAuxiliar: rendidorNombre,
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'RENDICION_GASTOS',
+      folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
     });
   }
@@ -452,9 +458,14 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: ctaAnticipoNom,
       debe: 0,
       haber: Math.round(anticipoLiquidado),
-      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
-      documentoRef: report.folio,
+      rutAuxiliar: rendidorRut,
+      nombreAuxiliar: rendidorNombre,
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'RENDICION_GASTOS',
+      folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
+      centroCosto: report.centroCostoCodigo || 'OPERACIONES',
+      proyecto: report.proyectoCodigo,
     });
   }
 
@@ -466,24 +477,36 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: ctaReembolsoNom,
       debe: 0,
       haber: Math.round(saldoReembolsar),
-      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
-      documentoRef: report.folio,
+      rutAuxiliar: rendidorRut,
+      nombreAuxiliar: rendidorNombre,
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'RENDICION_GASTOS',
+      folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
-      centroCosto: report.centroCostoCodigo || undefined,
+      centroCosto: report.centroCostoCodigo || 'OPERACIONES',
+      proyecto: report.proyectoCodigo,
+      montoDocumentoRef: Math.round(saldoReembolsar),
     });
   }
 
   // 6. Si sobró anticipo y el colaborador reintegra a Banco/Caja:
   const saldoReintegrar = Math.max(0, fondoAnticipo - totalGastosMonto);
   if (saldoReintegrar > 0) {
+    const folioDep = `DEP-${report.folio}`;
     lineas.unshift({
       cuentaCodigo: ctaReintegroCod,
       cuentaNombre: ctaReintegroNom,
       debe: Math.round(saldoReintegrar),
       haber: 0,
-      rutAuxiliar: report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : undefined,
-      documentoRef: report.folio,
+      rutAuxiliar: rendidorRut,
+      nombreAuxiliar: rendidorNombre,
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'RENDICION_GASTOS',
+      folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
+      fechaVencimientoRef: fechaAsiento,
+      tipoDocumentoConciliacion: 'DEPOSITO',
+      documentoConciliacion: folioDep,
     });
   }
 
@@ -494,7 +517,7 @@ export function generateExpenseAccountingEntry(
   return {
     id: `entry-rdg-${report.id.substring(0, 8)}`,
     fecha: fechaAsiento,
-    concepto: `Centralización Rendición de Gastos ${report.folio} - ${report.titulo} (${report.rendidorNombre})`,
+    concepto: `Centralización Rendición de Gastos ${report.folio} - ${report.titulo} (${rendidorNombre})`,
     documento: report.folio,
     lineas,
     totalDebe,

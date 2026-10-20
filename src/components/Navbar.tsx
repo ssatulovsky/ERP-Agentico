@@ -17,7 +17,8 @@ import {
   Mic,
   Sparkles,
   LogOut,
-  UserCheck
+  UserCheck,
+  Cpu
 } from 'lucide-react';
 import { 
   ChileIndicators, 
@@ -45,6 +46,7 @@ interface NavbarProps {
   currentUserName?: string;
   currentRoleName?: string;
   isAdminOrSuperAdmin?: boolean;
+  openAiModelManager?: () => void;
   onLogout?: () => void;
 }
 
@@ -65,6 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUserName,
   currentRoleName,
   isAdminOrSuperAdmin,
+  openAiModelManager,
   onLogout,
 }) => {
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
@@ -231,6 +234,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Sliders className="w-3.5 h-3.5 text-blue-400" />
               <span className="hidden sm:inline">Configuración</span>
               <span>Agentes & SII</span>
+            </button>
+          )}
+
+          {/* AI Model Manager & Costs (For SuperAdmin and Admin) */}
+          {isAdminOrSuperAdmin && openAiModelManager && (
+            <button
+              onClick={openAiModelManager}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border border-indigo-500/40"
+              title="Administrador de Modelos IA: Configurar Gemini vs Ollama y Reporte Mensual de Gastos por Cliente"
+            >
+              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">Modelos IA</span>
+              <span>& Costos</span>
             </button>
           )}
 

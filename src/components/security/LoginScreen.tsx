@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ShieldCheck,
   Building2,
@@ -14,33 +14,100 @@ import {
   Eye,
   EyeOff,
   Users,
+  Sliders,
 } from 'lucide-react';
 import { ErpPremiaLogo } from '../ErpPremiaLogo';
 import {
   SecurityRbacStoreState,
   LoginValidationResult,
   authenticateErpLogin,
+  resolveCompaniesForLoginUsername,
 } from '../../services/securityRbacService';
 
 interface LoginScreenProps {
   securityState: SecurityRbacStoreState;
   onLoginSuccess: (result: LoginValidationResult, selectedEmpresaId: string) => void;
+  onToggleTestPanelConfig?: (visible: boolean) => void;
+  onRefreshFromServer?: () => Promise<void> | void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   securityState,
   onLoginSuccess,
+  onToggleTestPanelConfig,
+  onRefreshFromServer,
 }) => {
-  const [username, setUsername] = useState<string>('ssatulovsky');
-  const [password, setPassword] = useState<string>('admin123');
-  const [empresaId, setEmpresaId] = useState<string>(
-    securityState.companiesConfig[0]?.empresaId || 'client-innovagile'
-  );
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [empresaId, setEmpresaId] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<LoginValidationResult | null>(null);
 
+  // Visibilidad del panel de pruebas QA (por defecto false para demos limpias con clientes, o según configuración)
+  const [showQaPanel, setShowQaPanel] = useState<boolean>(
+    Boolean(securityState.mostrarPanelPruebasLogin)
+  );
+
+  useEffect(() => {
+    setShowQaPanel(Boolean(securityState.mostrarPanelPruebasLogin));
+  }, [securityState.mostrarPanelPruebasLogin]);
+
+  // Al abrir la pantalla de Login en una sesión nueva, sincronizar inmediatamente con el servidor
+  useEffect(() => {
+    if (onRefreshFromServer) {
+      onRefreshFromServer();
+    }
+  }, []);
+
+  // Resolver dinámicamente las empresas que pertenecen al UserID ingresado (Privacidad Multi-Tenant)
+  const userCompanyResolution = useMemo(
+    () => resolveCompaniesForLoginUsername(username, securityState),
+    [username, securityState]
+  );
+
+  // Si el usuario ingresa un username que aún no está en caché local (ej. creado en otra sesión), consultar al servidor
+  useEffect(() => {
+    if (
+      username.trim().length >= 2 &&
+      !userCompanyResolution.matchedUser &&
+      onRefreshFromServer
+    ) {
+      const timer = setTimeout(() => {
+        onRefreshFromServer();
+      }, 250);
+      return () => clearTimeout(timer);
+    }
+  }, [username, userCompanyResolution.matchedUser]);
+
+  const allowedCompaniesForUser = userCompanyResolution.allowedCompanies;
+
+  // Autoseleccionar la empresa principal del usuario cuando ingresa su UserID
+  useEffect(() => {
+    if (allowedCompaniesForUser.length > 0) {
+      const stillValid = allowedCompaniesForUser.some((c) => c.empresaId === empresaId);
+      if (!stillValid) {
+        setEmpresaId(
+          userCompanyResolution.defaultCompanyId || allowedCompaniesForUser[0].empresaId
+        );
+      }
+    } else {
+      setEmpresaId('');
+    }
+  }, [allowedCompaniesForUser, userCompanyResolution.defaultCompanyId, empresaId]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!empresaId) {
+      setValidationError({
+        ok: false,
+        errorCode: 'CREDENCIALES_INVALIDAS',
+        errorTitle: 'Usuario o Empresa no identificados',
+        errorMessage:
+          'Ingrese un usuario válido para desplegar y seleccionar las empresas autorizadas en su perfil.',
+      });
+      return;
+    }
+
     const res = authenticateErpLogin({
       usernameInput: username,
       passwordInput: password,
@@ -75,7 +142,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   };
 
-  const selectedCompanyMeta = securityState.companiesConfig.find(
+  const handleToggleQaPanel = () => {
+    const next = !showQaPanel;
+    setShowQaPanel(next);
+    if (onToggleTestPanelConfig) {
+      onToggleTestPanelConfig(next);
+    }
+  };
+
+  const selectedCompanyMeta = allowedCompaniesForUser.find(
     (c) => c.empresaId === empresaId
   );
 
@@ -90,29 +165,42 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       {/* Main Content */}
       <div className="relative z-10 flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-          {/* Left Column: Login Form */}
-          <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl p-8 flex flex-col justify-between backdrop-blur-xl">
+        <div
+          className={`w-full transition-all duration-300 ${
+            showQaPanel
+              ? 'max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch'
+              : 'max-w-xl mx-auto'
+          }`}
+        >
+          {/* Login Card */}
+          <div
+            className={`${
+              showQaPanel ? 'lg:col-span-7' : 'w-full'
+            } bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl p-8 flex flex-col justify-between backdrop-blur-xl`}
+          >
             <div>
-              {/* Brand Header */}
-              <div className="flex items-center justify-between mb-6 pb-5 border-b border-slate-800">
-                <div className="flex items-center gap-3.5">
-                  <ErpPremiaLogo className="w-12 h-12 rounded-xl shadow-lg" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h1 className="text-xl font-extrabold tracking-tight text-white">
-                        PREMIA <span className="text-emerald-400">Agentic ERP</span>
+              {/* Brand Header (Fixed Emblem + Clean Typography without overlap) */}
+              <div className="flex items-center justify-between gap-4 mb-6 pb-5 border-b border-slate-800">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="p-2 rounded-xl bg-slate-950/90 border border-slate-800 shadow-lg shrink-0">
+                    <ErpPremiaLogo variant="emblem" size="md" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h1 className="text-xl font-extrabold tracking-tight text-white leading-tight">
+                        ERP<span className="text-sky-400">premIA</span>{' '}
+                        <span className="text-emerald-400 font-bold text-base">Agentic ERP</span>
                       </h1>
                       <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">
-                        RBAC Security v2.6
+                        Acceso Seguro
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Control de Acceso Multi-Empresa, Roles por Módulo & Agente Vera WhatsApp
+                    <p className="text-xs text-slate-400 mt-1 truncate">
+                      Plataforma Contable, Tributaria & Gestión Multi-Agente con IA
                     </p>
                   </div>
                 </div>
-                <ShieldCheck className="w-8 h-8 text-emerald-400 shrink-0" />
+                <ShieldCheck className="w-7 h-7 text-emerald-400 shrink-0" />
               </div>
 
               {/* Validation Error Banner (Suspended Company, Inactive User, or Access Denied) */}
@@ -172,94 +260,41 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 </div>
               )}
 
-              {/* Form */}
+              {/* Form: 1° Usuario -> 2° Contraseña -> 3° Empresas asociadas al Usuario */}
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* 1. Selección de Empresa */}
+                {/* 1. Usuario */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    1. Empresa a Operar
-                  </label>
-                  <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <select
-                      value={empresaId}
-                      onChange={(e) => {
-                        setEmpresaId(e.target.value);
-                        setValidationError(null);
-                      }}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      {securityState.companiesConfig.map((comp) => {
-                        const statusTag =
-                          comp.estadoCuenta === 'ACTIVA'
-                            ? '🟢 ACTIVA'
-                            : comp.estadoCuenta === 'SUSPENDIDA_PAGO'
-                            ? '🟠 SUSPENDIDA POR FALTA DE PAGO'
-                            : '🔴 DADA DE BAJA';
-                        return (
-                          <option key={comp.empresaId} value={comp.empresaId}>
-                            {comp.razonSocial} (RUT {comp.rut}) — [{statusTag}]
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                  {selectedCompanyMeta && (
-                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400 px-1">
-                      <span>
-                        RUT: <strong className="text-slate-200">{selectedCompanyMeta.rut}</strong>
-                        {selectedCompanyMeta.esEmpresaDuenaErp && (
-                          <span className="ml-2 text-indigo-400 font-semibold">
-                            ★ Empresa Propietaria del ERP
-                          </span>
-                        )}
-                      </span>
-                      <span
-                        className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${
-                          selectedCompanyMeta.estadoCuenta === 'ACTIVA'
-                            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                            : selectedCompanyMeta.estadoCuenta === 'SUSPENDIDA_PAGO'
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                        }`}
-                      >
-                        Estado: {selectedCompanyMeta.estadoCuenta.replace('_', ' ')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Usuario */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    2. Usuario o Correo Electrónico
+                    1. Usuario o Correo Electrónico
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       required
+                      autoComplete="username"
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value);
                         setValidationError(null);
                       }}
-                      placeholder="Ej: ssatulovsky, admin, rrhh, contador..."
+                      placeholder="Ingrese su ID de usuario o correo corporativo"
                       className="w-full pl-10 pr-4 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
 
-                {/* 3. Contraseña */}
+                {/* 2. Contraseña */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    3. Contraseña
+                    2. Contraseña
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
+                      autoComplete="current-password"
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value);
@@ -278,182 +313,253 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   </div>
                 </div>
 
+                {/* 3. Selección de Empresa (Privacidad Multi-Empresa: solo muestra las empresas vinculadas al UserID) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      3. Empresa a Operar
+                    </label>
+                    {userCompanyResolution.matchedUser && userCompanyResolution.role && (
+                      <span className="text-[11px] font-semibold text-emerald-400">
+                        {allowedCompaniesForUser.length === 1
+                          ? '1 empresa asignada'
+                          : `${allowedCompaniesForUser.length} empresas habilitadas (${userCompanyResolution.role.nombre})`}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    {allowedCompaniesForUser.length === 0 ? (
+                      <div className="w-full pl-10 pr-4 py-2.5 bg-slate-900/70 border border-slate-800 rounded-xl text-xs text-slate-500 italic select-none">
+                        {username.trim().length === 0
+                          ? 'Ingrese primero su Usuario para cargar sus empresas autorizadas...'
+                          : 'Verificando empresas asignadas al usuario...'}
+                      </div>
+                    ) : (
+                      <select
+                        value={empresaId}
+                        onChange={(e) => {
+                          setEmpresaId(e.target.value);
+                          setValidationError(null);
+                        }}
+                        className="w-full pl-10 pr-4 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        {allowedCompaniesForUser.map((comp) => (
+                          <option key={comp.empresaId} value={comp.empresaId}>
+                            {comp.razonSocial} (RUT {comp.rut})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {selectedCompanyMeta && (
+                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400 px-1">
+                      <span>
+                        RUT: <strong className="text-slate-200">{selectedCompanyMeta.rut}</strong>
+                      </span>
+                      <span className="text-slate-400">
+                        Perfil: <strong className="text-indigo-300">{userCompanyResolution.role?.nombre}</strong>
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   type="submit"
                   className="w-full mt-2 py-3 px-5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
-                  <span>Validar Credenciales e Ingresar al ERP</span>
+                  <span>Ingresar al Sistema</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
             </div>
 
-            {/* Security Validation Pipeline Footer */}
-            <div className="mt-6 pt-4 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-[11px] text-slate-400">
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>1° Estado Empresa</span>
+            {/* Footer with discreet QA Panel toggle */}
+            <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 shrink-0" />
+                  Privacidad Multi-RUT
+                </span>
+                <span className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 shrink-0" />
+                  Sincronizado con Vera
+                </span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>2° Usuario Activo</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>3° Rol ERP + Vera WA</span>
-              </div>
+
+              <button
+                type="button"
+                onClick={handleToggleQaPanel}
+                className="text-[11px] text-slate-500 hover:text-slate-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-800/60 transition-colors cursor-pointer"
+                title="Mostrar u ocultar el panel de perfiles de prueba (configurable también desde Seguridad & Roles)"
+              >
+                <Sliders className="w-3 h-3" />
+                <span>{showQaPanel ? 'Ocultar Panel QA (Modo Demo)' : 'Accesos QA'}</span>
+              </button>
             </div>
           </div>
 
-          {/* Right Column: Interactive Quick Test Scenarios */}
-          <div className="lg:col-span-5 bg-slate-900/75 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between backdrop-blur-xl">
-            <div>
-              <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs uppercase tracking-wider mb-2">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span>Perfiles Preconfigurados & Pruebas de Validación</span>
+          {/* Right Column: Interactive Quick Test Scenarios (Only visible when enabled) */}
+          {showQaPanel && (
+            <div className="lg:col-span-5 bg-slate-900/75 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between backdrop-blur-xl animate-in fade-in duration-200">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs uppercase tracking-wider">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    <span>Perfiles de Prueba (Modo QA)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleQaPanel}
+                    className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                  >
+                    Ocultar para Demo ✕
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                  Panel visible solo en modo pruebas. Al seleccionar un usuario verás que el selector de empresas solo carga las empresas de su rol:
+                </p>
+
+                <div className="space-y-2.5">
+                  {/* 1. SuperAdmin */}
+                  <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/30 hover:border-indigo-400/60 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          👑 SuperAdmin (Dueño del ERP)
+                        </span>
+                        <p className="text-[11px] text-slate-300 mt-0.5">
+                          Usuario: <code className="text-indigo-300 font-bold">ssatulovsky</code> · Clave:{' '}
+                          <code className="text-indigo-300">admin123</code>
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Ve las 4 empresas del sistema y todos los módulos.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyQuickScenario('ssatulovsky', 'admin123', 'client-innovagile', false)
+                        }
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Cargar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Admin Cliente + Empresas Anclas */}
+                  <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 hover:border-emerald-400/60 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          🏢 Admin Cliente + Empresas Anclas
+                        </span>
+                        <p className="text-[11px] text-slate-300 mt-0.5">
+                          Usuario: <code className="text-emerald-300 font-bold">admin</code> · Clave:{' '}
+                          <code className="text-emerald-300">admin123</code>
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Solo ve <strong>Retail Logistics</strong> y su ancla <strong>Agroindustrial Valle Central</strong> (no ve las demás empresas).
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyQuickScenario('admin', 'admin123', 'client-retail-logistics', false)
+                        }
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Cargar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3. Rol Personalizado RRHH */}
+                  <div className="p-3 rounded-xl bg-sky-950/30 border border-sky-500/30 hover:border-sky-400/60 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          👩‍💼 Rol &apos;RRHH&apos; (Solo RRHH y Nómina)
+                        </span>
+                        <p className="text-[11px] text-slate-300 mt-0.5">
+                          Usuario: <code className="text-sky-300 font-bold">rrhh</code> · Clave:{' '}
+                          <code className="text-sky-300">rrhh123</code>
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Solo ve su empresa asignada y únicamente los módulos de RRHH y Remuneraciones.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyQuickScenario('rrhh', 'rrhh123', 'client-innovagile', false)
+                        }
+                        className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Cargar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4. Prueba Empresa Suspendida por Falta de Pago */}
+                  <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/30 hover:border-amber-400/60 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          🟠 Empresa Suspendida por Falta de Pago
+                        </span>
+                        <p className="text-[10px] text-slate-300 mt-0.5">
+                          Usuario: <code className="text-amber-300 font-bold">minera</code> · Empresa: <strong>Minera del Sur SpA</strong>.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyQuickScenario('minera', '123456', 'client-minera-sur', false)
+                        }
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Probar Bloqueo
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 5. Prueba Usuario Inactivo */}
+                  <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 hover:border-rose-400/60 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-rose-300 flex items-center gap-1.5">
+                          🔴 Usuario No Activo en Sistema
+                        </span>
+                        <p className="text-[10px] text-slate-300 mt-0.5">
+                          Usuario: <code className="text-rose-300 font-bold">inactivo</code> · Empresa Activa, usuario deshabilitado.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyQuickScenario('inactivo', '123456', 'client-innovagile', false)
+                        }
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Probar Bloqueo
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-                Haz clic en cualquiera de los siguientes perfiles para probar de inmediato las reglas de negocio de la Capa de Seguridad:
-              </p>
 
-              <div className="space-y-2.5">
-                {/* 1. SuperAdmin */}
-                <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/30 hover:border-indigo-400/60 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        👑 SuperAdmin (Dueño del ERP)
-                      </span>
-                      <p className="text-[11px] text-slate-300 mt-0.5">
-                        Usuario: <code className="text-indigo-300 font-bold">ssatulovsky</code> · Clave:{' '}
-                        <code className="text-indigo-300">admin123</code>
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        Accede a todas las opciones, crea roles y administra todas las empresas.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyQuickScenario('ssatulovsky', 'admin123', 'client-innovagile', true)
-                      }
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
-                    >
-                      Entrar
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. Admin Cliente + Empresas Anclas */}
-                <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 hover:border-emerald-400/60 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        🏢 Admin Empresa Cliente + Empresas Anclas
-                      </span>
-                      <p className="text-[11px] text-slate-300 mt-0.5">
-                        Usuario: <code className="text-emerald-300 font-bold">admin</code> · Clave:{' '}
-                        <code className="text-emerald-300">admin123</code>
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        Administra <strong>Retail Logistics Chile</strong> y su empresa ancla{' '}
-                        <strong>Agroindustrial Valle Central</strong>.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyQuickScenario('admin', 'admin123', 'client-retail-logistics', true)
-                      }
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
-                    >
-                      Entrar
-                    </button>
-                  </div>
-                </div>
-
-                {/* 3. Rol Personalizado RRHH */}
-                <div className="p-3 rounded-xl bg-sky-950/30 border border-sky-500/30 hover:border-sky-400/60 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        👩‍💼 Rol Personalizado &apos;RRHH&apos; (Solo RRHH y Nómina)
-                      </span>
-                      <p className="text-[11px] text-slate-300 mt-0.5">
-                        Usuario: <code className="text-sky-300 font-bold">rrhh</code> · Clave:{' '}
-                        <code className="text-sky-300">rrhh123</code>
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        Solo ve los módulos de Agente RRHH y Remuneraciones (también en WhatsApp Vera).
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyQuickScenario('rrhh', 'rrhh123', 'client-innovagile', true)
-                      }
-                      className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
-                    >
-                      Entrar
-                    </button>
-                  </div>
-                </div>
-
-                {/* 4. Prueba Empresa Suspendida por Falta de Pago */}
-                <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/30 hover:border-amber-400/60 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                        🟠 Probar Validación: Empresa Suspendida por Pago
-                      </span>
-                      <p className="text-[10px] text-slate-300 mt-0.5">
-                        Empresa: <strong>Minera del Sur SpA</strong> (Suspendida por pagos atrasados).
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyQuickScenario('ssatulovsky', 'admin123', 'client-minera-sur', false)
-                      }
-                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
-                    >
-                      Probar Bloqueo
-                    </button>
-                  </div>
-                </div>
-
-                {/* 5. Prueba Usuario Inactivo */}
-                <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 hover:border-rose-400/60 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-rose-300 flex items-center gap-1.5">
-                        🔴 Probar Validación: Usuario No Activo
-                      </span>
-                      <p className="text-[10px] text-slate-300 mt-0.5">
-                        Usuario: <code className="text-rose-300 font-bold">inactivo</code> · Empresa Activa, pero usuario deshabilitado.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyQuickScenario('inactivo', '123456', 'client-innovagile', false)
-                      }
-                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
-                    >
-                      Probar Bloqueo
-                    </button>
-                  </div>
-                </div>
+              <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span>
+                  Puedes dejar este panel oculto por defecto desde <strong>Seguridad & Roles</strong> o con el botón <em>Ocultar para Demo</em>.
+                </span>
               </div>
             </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span>
-                Los permisos de cada Rol controlan tanto el menú del ERP como las respuestas que entrega <strong>Vera por WhatsApp</strong>.
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

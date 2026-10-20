@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { eq, desc, sql, or, and, inArray } from 'drizzle-orm';
 import { GoogleGenAI } from '@google/genai';
+import { aiRouterService } from '../services/aiRouterService';
 import { getMysqlDb, isRealMysqlConnected, pool } from '../db/mysqlClient';
 import {
   expenseReports,
@@ -1007,12 +1008,10 @@ expenseReportsRouter.post('/scan-receipt-ai', async (req: Request, res: Response
       cleanBase64 = match[2];
     }
 
-    const ai = getAIClient();
     let scannedData: any = null;
 
-    if (ai) {
-      try {
-        const prompt = `Eres el Agente Auditor Tributario y Contable Chileno especializado en Rendición de Gastos (RindeGastos AI).
+    try {
+      const prompt = `Eres el Agente Auditor Tributario y Contable Chileno especializado en Rendición de Gastos (RindeGastos AI).
 Analiza detalladamente esta fotografía o documento de comprobante de gasto chileno (boleta electrónica, factura electrónica 33, voucher Transbank / POS, ticket de peaje, boleta de honorarios, o recibo de combustible/traslado).
 
 Extrae con total precisión la información en formato JSON con la siguiente estructura:
@@ -1037,32 +1036,23 @@ Extrae con total precisión la información en formato JSON con la siguiente est
 
 Responde ÚNICAMENTE con el objeto JSON válido, sin backticks (\`\`\`json) ni texto introductorio.`;
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: cleanMime,
-                    data: cleanBase64,
-                  },
-                },
-                {
-                  text: prompt,
-                },
-              ],
-            },
-          ],
-        });
+      const aiResult = await aiRouterService.executeAiTask({
+        capability: 'VISION_OCR',
+        prompt,
+        inlineData: {
+          mimeType: cleanMime,
+          data: cleanBase64,
+        },
+        temperature: 0.1,
+        empresaId: (req.body.empresaId as string) || (req.query.empresaId as string) || 'client-retail-01',
+        modulo: 'RINDE_GASTOS_OCR',
+      });
 
-        const rawText = response.text || '';
-        const cleanedJsonText = rawText.replace(/```(?:json)?/gi, '').trim();
-        scannedData = JSON.parse(cleanedJsonText);
-      } catch (geminiErr: any) {
-        console.warn('[AI Vision] Aviso al procesar con Gemini 3.8 Flash:', geminiErr.message);
-      }
+      const rawText = aiResult.text || '';
+      const cleanedJsonText = rawText.replace(/```(?:json)?/gi, '').trim();
+      scannedData = JSON.parse(cleanedJsonText);
+    } catch (aiErr: any) {
+      console.warn('[AI Vision] Aviso al procesar comprobante con AiRouter:', aiErr.message);
     }
 
     // Heurística de respaldo inteligente si la API no está configurada o falló

@@ -382,6 +382,408 @@ export function calculatePayroll(
   };
 }
 
+export interface EntryAttributeEnrichmentContext {
+  rutAuxiliar?: string;
+  nombreAuxiliar?: string;
+  centroCosto?: string;
+  proyecto?: string;
+  documentoRef?: string;
+  tipoDocumentoRef?: string;
+  folioDocumentoRef?: string;
+  fechaDocumentoRef?: string;
+  fechaVencimientoRef?: string;
+  montoDocumentoRef?: number;
+  dteIdAsociado?: string;
+  tipoDocumentoConciliacion?: 'TRANSFERENCIA' | 'CHEQUE' | 'DEPOSITO' | 'CARGO_AUTOMATICO' | 'VALE_VISTA' | 'TARJETA_CORPORATIVA' | 'OTRO';
+  documentoConciliacion?: string;
+  monedaOriginal?: 'CLP' | 'USD' | 'EUR' | 'UF';
+  montoMonedaOriginal?: number;
+  tipoCambio?: number;
+}
+
+/**
+ * Helper universal que inspecciona las marcas configuradas en cada cuenta del Plan de Cuentas
+ * (requiereDocReferencia, requiereAuxiliarRut, requiereCentroCosto, requiereProyecto,
+ * esConciliableBancaria, manejaMultimoneda) y garantiza que todas las líneas del asiento
+ * generadas por cualquier módulo del ERP tengan completos sus atributos asociados y su
+ * trazabilidad cruzada Banco <-> Auxiliar (incluyendo pagos multi-factura y multi-proveedor).
+ */
+export function enrichEntryWithChartAttributes(
+  entry: AccountingEntry,
+  customChart?: Array<Partial<AccountPlanItem> & Record<string, any>>,
+  contextDefaults?: EntryAttributeEnrichmentContext
+): AccountingEntry {
+  if (!entry || !Array.isArray(entry.lineas) || entry.lineas.length === 0) {
+    return entry;
+  }
+
+  const catalog = [
+    ...(Array.isArray(customChart) ? customChart : []),
+    ...STANDARD_ACCOUNT_PLAN,
+  ];
+
+  const findAccountMeta = (codeRaw?: string, nameRaw?: string) => {
+    const c = (codeRaw || '').trim().toLowerCase();
+    const n = (nameRaw || '').trim().toLowerCase();
+    return (
+      catalog.find((a) => (a.codigo || '').trim().toLowerCase() === c) ||
+      catalog.find((a) => c && (a.codigo || '').trim().toLowerCase().startsWith(c)) ||
+      catalog.find((a) => c && c.startsWith((a.codigo || '').trim().toLowerCase())) ||
+      (n ? catalog.find((a) => (a.nombre || '').trim().toLowerCase() === n) : undefined)
+    );
+  };
+
+  // Extraer folio base desde entry.documento si no viene explícito
+  const docHeader = (contextDefaults?.documentoRef || entry.documento || entry.documentoReferencia || '').trim();
+  const folioMatch = docHeader.match(/(?:N°|#|Folio|F\.|Ref:?)\s*([A-Za-z0-9\-_./]+)/i) || docHeader.match(/([0-9]{2,}[A-Za-z0-9\-_]*)/);
+  const extractedFolio = contextDefaults?.folioDocumentoRef || (folioMatch ? folioMatch[1] : docHeader || 'S/F');
+
+  const defaultTipoDocByOrigin = (): string => {
+    if (contextDefaults?.tipoDocumentoRef) return contextDefaults.tipoDocumentoRef;
+    const orig = (entry.origen || '').toUpperCase();
+    if (orig.includes('VENTA') || orig.includes('COMPRA') || orig === 'INVENTARIO') return 'DTE_SII';
+    if (orig.includes('HONORARIO') || orig === 'BHE') return 'BOLETA_HONORARIOS';
+    if (orig.includes('REMUNERACION') || orig.includes('RRHH')) return 'DOCUMENTO_LABORAL';
+    if (orig.includes('F29') || orig.includes('TRIBUTARIO')) return 'TRIBUTARIO_TGR';
+    if (orig.includes('RENDICION') || orig.includes('GASTO')) return 'RENDICION_GASTOS';
+    if (orig.includes('ARRIENDO') || orig.includes('IFRS16')) return 'CONTRATO';
+    return 'OTRO';
+  };
+
+  const defaultCostCenterByOrigin = (): string => {
+    if (contextDefaults?.centroCosto) return contextDefaults.centroCosto;
+    const existingCC = entry.lineas.find((l) => l.centroCosto && l.centroCosto.trim() !== '')?.centroCosto;
+    if (existingCC) return existingCC;
+    const orig = (entry.origen || '').toUpperCase();
+    if (orig.includes('VENTA')) return 'COMERCIAL_VENTAS';
+    if (orig.includes('COMPRA') || orig === 'INVENTARIO') return 'OPERACIONES';
+    if (orig.includes('PRODUCCION') || orig.includes('COSTEO')) return 'PLANTA_PRODUCTIVA';
+    if (orig.includes('REMUNERACION') || orig.includes('RRHH')) return 'RECURSOS_HUMANOS';
+    return 'ADMINISTRACION';
+  };
+
+  // Detectar auxiliar existente en líneas hermanas
+  const siblingAuxLine = entry.lineas.find((l) => l.rutAuxiliar && l.rutAuxiliar.trim() !== '');
+  const fallbackRut = contextDefaults?.rutAuxiliar || siblingAuxLine?.rutAuxiliar;
+  const fallbackNombreAux = contextDefaults?.nombreAuxiliar || siblingAuxLine?.nombreAuxiliar;
+
+  // Detectar proyecto existente en líneas hermanas o glosa
+  const siblingProy =
+    contextDefaults?.proyecto ||
+    entry.lineas.find((l) => l.proyecto && l.proyecto.trim() !== '')?.proyecto ||
+    entry.lineas.find((l) => l.centroCosto && /^(OP-|PRY-)/i.test(l.centroCosto))?.centroCosto ||
+    (entry.concepto?.match(/\b(OP-\d+[A-Za-z0-9\-]*|PRY-[A-Za-z0-9\-]+)\b/i)?.[1]);
+
+  const enrichedLines: AccountingEntryLine[] = entry.lineas.map((line) => {
+    const code = (line.cuentaCodigo || '').trim();
+    const name = (line.cuentaNombre || '').trim();
+    const meta = findAccountMeta(code, name);
+
+    const isBankAccount =
+      Boolean(meta?.esConciliableBancaria) ||
+      code === '1.1.01' ||
+      code === '1.1.01.03' ||
+      code.startsWith('1.1.02') ||
+      code === '1.1.01.003' ||
+      code === '2.1.01.003' ||
+      /banco|cta\.?\s*cte|clearing|tarjeta de cr[eé]dito/i.test(name);
+
+    const reqDoc =
+      Boolean(meta?.requiereDocReferencia) ||
+      code.startsWith('1.1.03') ||
+      code.startsWith('1.1.04') ||
+      code.startsWith('1.1.05') ||
+      code.startsWith('1.1.08') ||
+      code.startsWith('1.1.01.003') ||
+      code.startsWith('1.1.01.004') ||
+      code.startsWith('1.1.02.02') ||
+      code.startsWith('2.1.01') ||
+      code.startsWith('2.1.02') ||
+      code.startsWith('2.1.03') ||
+      code.startsWith('2.1.04') ||
+      code.startsWith('2.1.05') ||
+      code.startsWith('2.1.07') ||
+      code.startsWith('2.1.08') ||
+      code.startsWith('2.1.09') ||
+      code.startsWith('2.1.10') ||
+      code.startsWith('2.1.11') ||
+      code.startsWith('2.1.12') ||
+      code.startsWith('2.1.13') ||
+      code.startsWith('4.1.01') ||
+      code.startsWith('4.1.02');
+
+    const reqAux =
+      Boolean(meta?.requiereAuxiliarRut) ||
+      code.startsWith('1.1.03') ||
+      code.startsWith('1.1.06.001') ||
+      code.startsWith('1.1.09') ||
+      code.startsWith('1.1.01.004') ||
+      code.startsWith('1.1.02.02') ||
+      code.startsWith('1.2.01.005') ||
+      code.startsWith('2.1.01') ||
+      code.startsWith('2.1.02') ||
+      code.startsWith('2.1.04.001') ||
+      code.startsWith('2.1.05.002') ||
+      code.startsWith('2.1.07') ||
+      code.startsWith('2.1.08') ||
+      code.startsWith('2.1.09') ||
+      code.startsWith('2.1.10') ||
+      code.startsWith('2.1.11') ||
+      code.startsWith('2.1.12') ||
+      code.startsWith('2.2.01') ||
+      code.startsWith('6.1.02') ||
+      code.startsWith('6.1.03.001') ||
+      code.startsWith('6.1.04.001') ||
+      code.startsWith('6.1.04.002') ||
+      code.startsWith('6.1.04.003') ||
+      code.startsWith('6.1.04.007') ||
+      code.startsWith('6.1.04.008') ||
+      code.startsWith('6.1.04.009');
+
+    const reqCC =
+      Boolean(meta?.requiereCentroCosto) ||
+      code.startsWith('4.') ||
+      code.startsWith('5.') ||
+      code.startsWith('6.') ||
+      code.startsWith('7.2.01.001') ||
+      code.startsWith('1.1.05') ||
+      code.startsWith('1.1.08') ||
+      code.startsWith('1.2.01') ||
+      code.startsWith('1.2.02') ||
+      code.startsWith('1.2.03') ||
+      code.startsWith('1.2.04') ||
+      code.startsWith('1.2.05') ||
+      code.startsWith('1.2.06') ||
+      code.startsWith('1.2.07') ||
+      code.startsWith('1.2.08');
+
+    const reqProy =
+      Boolean(meta?.requiereProyecto) ||
+      code.startsWith('1.1.08.02') ||
+      code.startsWith('1.2.08') ||
+      code.startsWith('5.1.02') ||
+      code.startsWith('5.1.03') ||
+      code.startsWith('5.1.04') ||
+      code.startsWith('5.1.05');
+
+    const reqFx =
+      Boolean(meta?.manejaMultimoneda) ||
+      code === '1.1.01.03' ||
+      code === '1.1.02.003' ||
+      code === '1.1.03.02' ||
+      code === '1.1.03.002' ||
+      code === '2.1.01.02';
+
+    const nextLine: AccountingEntryLine = { ...line };
+    const lineAmount = Math.max(Number(nextLine.debe) || 0, Number(nextLine.haber) || 0);
+
+    // 1. Documento de Referencia
+    if (reqDoc) {
+      if (!nextLine.documentoRef && docHeader) {
+        nextLine.documentoRef = docHeader;
+      }
+      if (!nextLine.folioDocumentoRef && (extractedFolio || nextLine.documentoRef)) {
+        nextLine.folioDocumentoRef = extractedFolio || nextLine.documentoRef;
+      }
+      if (!nextLine.tipoDocumentoRef) {
+        nextLine.tipoDocumentoRef = defaultTipoDocByOrigin();
+      }
+      if (!nextLine.fechaDocumentoRef) {
+        nextLine.fechaDocumentoRef = contextDefaults?.fechaDocumentoRef || entry.fecha;
+      }
+      if (!nextLine.fechaVencimientoRef && contextDefaults?.fechaVencimientoRef) {
+        nextLine.fechaVencimientoRef = contextDefaults.fechaVencimientoRef;
+      }
+      if (nextLine.montoDocumentoRef === undefined && lineAmount > 0) {
+        nextLine.montoDocumentoRef = contextDefaults?.montoDocumentoRef || lineAmount;
+      }
+      if (!nextLine.dteIdAsociado && contextDefaults?.dteIdAsociado) {
+        nextLine.dteIdAsociado = contextDefaults.dteIdAsociado;
+      }
+    }
+
+    // 2. Auxiliar RUT y Razón Social
+    if (reqAux) {
+      if (!nextLine.rutAuxiliar) {
+        if (fallbackRut) {
+          nextLine.rutAuxiliar = fallbackRut;
+        } else if (/afp|previsional|previred/i.test(name)) {
+          nextLine.rutAuxiliar = '96.919.050-8';
+        } else if (/fonasa|isapre|salud/i.test(name)) {
+          nextLine.rutAuxiliar = '61.603.000-0';
+        } else if (/afc|cesant/i.test(name)) {
+          nextLine.rutAuxiliar = '76.265.736-8';
+        } else if (/mutual|sis/i.test(name)) {
+          nextLine.rutAuxiliar = '70.285.100-9';
+        } else if (/f29|tgr|tesorer|impuesto/i.test(name)) {
+          nextLine.rutAuxiliar = '60.803.000-K';
+        } else if (/sueldo|remuneraci|personal/i.test(name)) {
+          nextLine.rutAuxiliar = 'NOMINA-RRHH';
+        }
+      }
+      if (!nextLine.nombreAuxiliar) {
+        if (fallbackNombreAux && (!nextLine.rutAuxiliar || nextLine.rutAuxiliar === fallbackRut)) {
+          nextLine.nombreAuxiliar = fallbackNombreAux;
+        } else {
+          const parenMatch = name.match(/\(([^)]+)\)/);
+          if (parenMatch && parenMatch[1]) {
+            nextLine.nombreAuxiliar = parenMatch[1].trim();
+          } else if (fallbackNombreAux) {
+            nextLine.nombreAuxiliar = fallbackNombreAux;
+          }
+        }
+      }
+    }
+
+    // 3. Centro de Costos
+    if (reqCC && !nextLine.centroCosto) {
+      nextLine.centroCosto = defaultCostCenterByOrigin();
+    }
+
+    // 4. Proyecto / Orden de Producción
+    if (reqProy && !nextLine.proyecto && siblingProy) {
+      nextLine.proyecto = siblingProy;
+    }
+
+    // 5. Conciliación Bancaria
+    if (isBankAccount) {
+      if (!nextLine.tipoDocumentoConciliacion) {
+        const textHint = `${name} ${docHeader} ${entry.concepto || ''}`.toLowerCase();
+        if (contextDefaults?.tipoDocumentoConciliacion) {
+          nextLine.tipoDocumentoConciliacion = contextDefaults.tipoDocumentoConciliacion;
+        } else if (textHint.includes('cheque') || textHint.includes('chq')) {
+          nextLine.tipoDocumentoConciliacion = 'CHEQUE';
+        } else if (textHint.includes('pac') || textHint.includes('cargo automático') || textHint.includes('comisión') || textHint.includes('mantención')) {
+          nextLine.tipoDocumentoConciliacion = 'CARGO_AUTOMATICO';
+        } else if (textHint.includes('depósito') || textHint.includes('deposito')) {
+          nextLine.tipoDocumentoConciliacion = 'DEPOSITO';
+        } else if (textHint.includes('tarjeta')) {
+          nextLine.tipoDocumentoConciliacion = 'TARJETA_CORPORATIVA';
+        } else {
+          nextLine.tipoDocumentoConciliacion = 'TRANSFERENCIA';
+        }
+      }
+      if (!nextLine.documentoConciliacion) {
+        nextLine.documentoConciliacion =
+          contextDefaults?.documentoConciliacion ||
+          nextLine.documentoOperacion ||
+          extractedFolio ||
+          docHeader ||
+          `TEF-${entry.fecha.replace(/-/g, '')}`;
+      }
+      if (!nextLine.fechaDocumentoRef) {
+        nextLine.fechaDocumentoRef = contextDefaults?.fechaDocumentoRef || entry.fecha;
+      }
+      if (!nextLine.fechaVencimientoRef) {
+        nextLine.fechaVencimientoRef = contextDefaults?.fechaVencimientoRef || nextLine.fechaDocumentoRef || entry.fecha;
+      }
+    }
+
+    // 6. Multimoneda
+    if (reqFx && !nextLine.monedaOriginal && contextDefaults?.monedaOriginal) {
+      nextLine.monedaOriginal = contextDefaults.monedaOriginal;
+      nextLine.montoMonedaOriginal = contextDefaults.montoMonedaOriginal;
+      nextLine.tipoCambio = contextDefaults.tipoCambio;
+    }
+
+    return nextLine;
+  });
+
+  // 7. Trazabilidad Cruzada Banco <-> Líneas Auxiliares (soporta 1-a-1, 1-a-N facturas de 1 proveedor y M proveedores en 1 pago)
+  const bankLineIndices: number[] = [];
+  const auxLineIndices: number[] = [];
+
+  enrichedLines.forEach((l, idx) => {
+    const code = (l.cuentaCodigo || '').trim();
+    const name = (l.cuentaNombre || '').trim();
+    const meta = findAccountMeta(code, name);
+    const isBank =
+      Boolean(meta?.esConciliableBancaria) ||
+      code === '1.1.01' ||
+      code === '1.1.01.03' ||
+      code.startsWith('1.1.02') ||
+      code === '1.1.01.003' ||
+      code === '2.1.01.003';
+    const isAuxPayableReceivable =
+      !isBank &&
+      (Boolean(meta?.requiereAuxiliarRut) ||
+        code.startsWith('1.1.03') ||
+        code.startsWith('2.1.01') ||
+        code.startsWith('2.1.02') ||
+        code.startsWith('2.1.04') ||
+        code.startsWith('2.1.05') ||
+        code.startsWith('2.1.07') ||
+        code.startsWith('2.1.08') ||
+        code.startsWith('2.1.09') ||
+        code.startsWith('2.1.10') ||
+        code.startsWith('2.1.11') ||
+        code.startsWith('2.1.12'));
+
+    if (isBank) bankLineIndices.push(idx);
+    if (isAuxPayableReceivable) auxLineIndices.push(idx);
+  });
+
+  if (bankLineIndices.length > 0 && auxLineIndices.length > 0) {
+    const primaryBank = enrichedLines[bankLineIndices[0]];
+    const opType = primaryBank.tipoDocumentoConciliacion || 'TRANSFERENCIA';
+    const opNum = primaryBank.documentoConciliacion || primaryBank.documentoOperacion || extractedFolio;
+    const opDate = primaryBank.fechaDocumentoRef || entry.fecha;
+    const opDueDate = primaryBank.fechaVencimientoRef || opDate;
+
+    // Propagar el instrumento bancario (TEF / Cheque + fechas) a todas las líneas auxiliares pagadas/cobradas
+    auxLineIndices.forEach((aIdx) => {
+      const auxLine = enrichedLines[aIdx];
+      if (!auxLine.tipoDocumentoOperacion) auxLine.tipoDocumentoOperacion = opType;
+      if (!auxLine.documentoOperacion && opNum) auxLine.documentoOperacion = opNum;
+      if (!auxLine.fechaDocumentoOperacion && opDate) auxLine.fechaDocumentoOperacion = opDate;
+    });
+
+    // Consolidar referencia de los auxiliares y facturas hacia la(s) línea(s) de banco
+    const distinctRuts = Array.from(
+      new Set(auxLineIndices.map((i) => enrichedLines[i].rutAuxiliar).filter(Boolean))
+    ) as string[];
+    const distinctNames = Array.from(
+      new Set(auxLineIndices.map((i) => enrichedLines[i].nombreAuxiliar).filter(Boolean))
+    ) as string[];
+    const distinctFolios = Array.from(
+      new Set(
+        auxLineIndices
+          .map((i) => enrichedLines[i].folioDocumentoRef || enrichedLines[i].documentoRef)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    bankLineIndices.forEach((bIdx) => {
+      const bLine = enrichedLines[bIdx];
+      if (distinctRuts.length === 1) {
+        if (!bLine.rutAuxiliar) bLine.rutAuxiliar = distinctRuts[0];
+        if (!bLine.nombreAuxiliar && distinctNames[0]) bLine.nombreAuxiliar = distinctNames[0];
+      } else if (distinctRuts.length > 1) {
+        if (!bLine.rutAuxiliar) bLine.rutAuxiliar = `NOMINA-${distinctRuts.length}-RUTS`;
+        if (!bLine.nombreAuxiliar) {
+          bLine.nombreAuxiliar = `Varios Auxiliares (${distinctRuts.length} RUTs: ${distinctNames.slice(0, 3).join(', ')}${distinctNames.length > 3 ? '...' : ''})`;
+        }
+      }
+      if (distinctFolios.length === 1 && !bLine.folioDocumentoRef) {
+        bLine.folioDocumentoRef = distinctFolios[0];
+      } else if (distinctFolios.length > 1 && !bLine.folioDocumentoRef) {
+        bLine.folioDocumentoRef = distinctFolios.join(', ');
+      }
+      if (!bLine.documentoRef && distinctFolios.length > 0) {
+        bLine.documentoRef =
+          distinctFolios.length === 1
+            ? enrichedLines[auxLineIndices[0]].documentoRef || `Doc. ${distinctFolios[0]} (Venc: ${opDueDate})`
+            : `Pago Múltiple (${distinctFolios.length} docs: ${distinctFolios.join(', ')}) | Venc: ${opDueDate}`;
+      }
+    });
+  }
+
+  return {
+    ...entry,
+    lineas: enrichedLines,
+  };
+}
+
 /**
  * Generate Accounting Entry for Payroll Centralization
  */
@@ -408,51 +810,67 @@ export function createPayrollCentralizationEntry(
   const totalImpuestoUnico = payrolls.reduce((sum, p) => sum + p.impuestoUnicoMonto, 0);
   const totalSueldosLiquidos = payrolls.reduce((sum, p) => sum + p.sueldoLiquido, 0);
 
+  const fechaAsiento = fechaCustom || `${periodo}-28`;
+  const docLibro = `Libro de Remuneraciones Periodo ${periodo}`;
+  const folioRemun = `LREM-${periodo}`;
+  const folioPrevired = `PRV-${periodo}`;
+
   const lineas: AccountingEntryLine[] = [
-    // DEBE: Gastos de Personal
-    { cuentaCodigo: '5.2.01', cuentaNombre: 'Sueldos y Remuneraciones Base', debe: totalSueldoBase, haber: 0 },
-    { cuentaCodigo: '5.2.02', cuentaNombre: 'Gratificaciones Legales Art. 50', debe: totalGratificaciones, haber: 0 },
+    // DEBE: Gastos de Personal (con Centro de Costos y Documento Laboral)
+    { cuentaCodigo: '5.2.01', cuentaNombre: 'Sueldos y Remuneraciones Base', debe: totalSueldoBase, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento },
+    { cuentaCodigo: '5.2.02', cuentaNombre: 'Gratificaciones Legales Art. 50', debe: totalGratificaciones, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento },
   ];
 
   if (totalHorasExtras + totalBonos > 0) {
-    lineas.push({ cuentaCodigo: '5.2.03', cuentaNombre: 'Horas Extras y Bonos Imponibles', debe: totalHorasExtras + totalBonos, haber: 0 });
+    lineas.push({ cuentaCodigo: '5.2.03', cuentaNombre: 'Horas Extras y Bonos Imponibles', debe: totalHorasExtras + totalBonos, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento });
   }
   if (totalNoImponibles > 0) {
-    lineas.push({ cuentaCodigo: '5.2.05', cuentaNombre: 'Asignaciones No Imponibles (Colación/Mov.)', debe: totalNoImponibles, haber: 0 });
+    lineas.push({ cuentaCodigo: '5.2.05', cuentaNombre: 'Asignaciones No Imponibles (Colación/Mov.)', debe: totalNoImponibles, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento });
   }
   if (totalAportesPatronales > 0) {
-    lineas.push({ cuentaCodigo: '5.2.04', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Emp.)', debe: totalAportesPatronales, haber: 0 });
+    lineas.push({ cuentaCodigo: '5.2.04', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Emp.)', debe: totalAportesPatronales, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento });
   }
 
-  // HABER: Pasivos y Retenciones por Pagar
+  // HABER: Pasivos y Retenciones por Pagar (con Auxiliar Institucional y Documento de Referencia)
   lineas.push(
-    { cuentaCodigo: '2.1.08', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: 0, haber: totalAfp },
-    { cuentaCodigo: '2.1.09', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: 0, haber: totalSalud },
-    { cuentaCodigo: '2.1.10', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador },
-    { cuentaCodigo: '2.1.11', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis }
+    { cuentaCodigo: '2.1.08', cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar', debe: 0, haber: totalAfp, rutAuxiliar: '96.919.050-8', nombreAuxiliar: 'PreviRed / AFP', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento },
+    { cuentaCodigo: '2.1.09', cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar', debe: 0, haber: totalSalud, rutAuxiliar: '61.603.000-0', nombreAuxiliar: 'FONASA / Isapres', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento },
+    { cuentaCodigo: '2.1.10', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador, rutAuxiliar: '76.265.736-8', nombreAuxiliar: 'AFC Chile', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento },
+    { cuentaCodigo: '2.1.11', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis, rutAuxiliar: '70.285.100-9', nombreAuxiliar: 'Mutual de Seguridad / SIS', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento }
   );
 
   if (totalImpuestoUnico > 0) {
-    lineas.push({ cuentaCodigo: '2.1.05', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico });
+    lineas.push({ cuentaCodigo: '2.1.05', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Impuesto Único ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: `F29-${periodo}`, fechaDocumentoRef: fechaAsiento });
   }
 
-  lineas.push({ cuentaCodigo: '2.1.07', cuentaNombre: 'Sueldos Líquidos por Pagar', debe: 0, haber: totalSueldosLiquidos });
+  lineas.push({
+    cuentaCodigo: '2.1.07',
+    cuentaNombre: 'Sueldos Líquidos por Pagar',
+    debe: 0,
+    haber: totalSueldosLiquidos,
+    rutAuxiliar: payrolls.length === 1 ? payrolls[0].rut : 'NOMINA-RRHH',
+    nombreAuxiliar: payrolls.length === 1 ? payrolls[0].nombreCompleto : `Nómina Personal (${payrolls.length} colaboradores)`,
+    documentoRef: docLibro,
+    tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+    folioDocumentoRef: folioRemun,
+    fechaDocumentoRef: fechaAsiento,
+  });
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-payroll-${Date.now()}`,
-    fecha: fechaCustom || `${periodo}-28`,
+    fecha: fechaAsiento,
     concepto: `Centralización de Remuneraciones Mes de ${periodo} (${payrolls.length} colaboradores)`,
-    documento: `Libro de Remuneraciones Periodo ${periodo}`,
+    documento: docLibro,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: Math.abs(totalDebe - totalHaber) < 1,
     origen: 'REMUNERACIONES',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -466,6 +884,11 @@ export function createPayrollDisbursementEntry(
   fechaCustom?: string
 ): AccountingEntry {
   const totalSueldosLiquidos = payrolls.reduce((sum, p) => sum + p.sueldoLiquido, 0);
+  const fechaPago = fechaCustom || new Date().toISOString().split('T')[0];
+  const folioTefNomina = `TEF-NOM-${periodo.replace(/-/g, '')}`;
+  const folioLibro = `LREM-${periodo}`;
+  const auxRut = payrolls.length === 1 ? payrolls[0].rut : 'NOMINA-RRHH';
+  const auxNom = payrolls.length === 1 ? payrolls[0].nombreCompleto : `Nómina Personal (${payrolls.length} colaboradores)`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -473,27 +896,44 @@ export function createPayrollDisbursementEntry(
       cuentaNombre: 'Sueldos Líquidos por Pagar',
       debe: totalSueldosLiquidos,
       haber: 0,
+      rutAuxiliar: auxRut,
+      nombreAuxiliar: auxNom,
+      documentoRef: `Libro de Remuneraciones Periodo ${periodo}`,
+      tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+      folioDocumentoRef: folioLibro,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTefNomina,
+      fechaDocumentoOperacion: fechaPago,
     },
     {
       cuentaCodigo: bancoCuentaCodigo,
       cuentaNombre: `${bancoNombre} (Dispersión Nómina ${payrolls.length} Colaboradores)`,
       debe: 0,
       haber: totalSueldosLiquidos,
+      rutAuxiliar: auxRut,
+      nombreAuxiliar: auxNom,
+      tipoDocumentoConciliacion: 'TRANSFERENCIA',
+      documentoConciliacion: folioTefNomina,
+      documentoRef: `Nómina Transferencia ${periodo} (${folioLibro})`,
+      folioDocumentoRef: folioLibro,
+      fechaDocumentoRef: fechaPago,
+      fechaVencimientoRef: fechaPago,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-payroll-pay-${Date.now()}`,
-    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    fecha: fechaPago,
     concepto: `Pago y Dispersión de Nómina Bancaria Mes de ${periodo} (${payrolls.length} colaboradores)`,
-    documento: `Nómina Transferencia ${periodo}`,
+    documento: `Nómina Transferencia ${periodo} (${folioTefNomina})`,
     lineas,
     totalDebe: totalSueldosLiquidos,
     totalHaber: totalSueldosLiquidos,
     balanceado: true,
     origen: 'REMUNERACIONES',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -511,6 +951,9 @@ export function createPreviredPaymentEntry(
   const totalAfc = payrolls.reduce((sum, p) => sum + (p.afcTrabajadorMonto + p.afcEmpleadorMonto), 0);
   const totalMutualSis = payrolls.reduce((sum, p) => sum + (p.mutualEmpleadorMonto + p.sisEmpleadorMonto), 0);
   const totalPreviRed = totalAfp + totalSalud + totalAfc + totalMutualSis;
+  const fechaPago = fechaCustom || new Date().toISOString().split('T')[0];
+  const folioPlanilla = `PRV-${periodo.replace(/-/g, '')}`;
+  const folioTef = `TEF-PRV-${periodo.replace(/-/g, '')}`;
 
   const lineas: AccountingEntryLine[] = [];
 
@@ -520,6 +963,15 @@ export function createPreviredPaymentEntry(
       cuentaNombre: 'Instituciones Previsionales (AFP) por Pagar',
       debe: totalAfp,
       haber: 0,
+      rutAuxiliar: '96.919.050-8',
+      nombreAuxiliar: 'PreviRed / AFP',
+      documentoRef: `Planilla PreviRed Folio ${folioPlanilla}`,
+      tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+      folioDocumentoRef: folioPlanilla,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTef,
+      fechaDocumentoOperacion: fechaPago,
     });
   }
   if (totalSalud > 0) {
@@ -528,6 +980,15 @@ export function createPreviredPaymentEntry(
       cuentaNombre: 'Salud (Fonasa / Isapres) por Pagar',
       debe: totalSalud,
       haber: 0,
+      rutAuxiliar: '61.603.000-0',
+      nombreAuxiliar: 'FONASA / Isapres',
+      documentoRef: `Planilla PreviRed Folio ${folioPlanilla}`,
+      tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+      folioDocumentoRef: folioPlanilla,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTef,
+      fechaDocumentoOperacion: fechaPago,
     });
   }
   if (totalAfc > 0) {
@@ -536,6 +997,15 @@ export function createPreviredPaymentEntry(
       cuentaNombre: 'AFC Seguro de Cesantía por Pagar',
       debe: totalAfc,
       haber: 0,
+      rutAuxiliar: '76.265.736-8',
+      nombreAuxiliar: 'AFC Chile',
+      documentoRef: `Planilla PreviRed Folio ${folioPlanilla}`,
+      tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+      folioDocumentoRef: folioPlanilla,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTef,
+      fechaDocumentoOperacion: fechaPago,
     });
   }
   if (totalMutualSis > 0) {
@@ -544,6 +1014,15 @@ export function createPreviredPaymentEntry(
       cuentaNombre: 'Mutual de Seguridad / SIS por Pagar',
       debe: totalMutualSis,
       haber: 0,
+      rutAuxiliar: '70.285.100-9',
+      nombreAuxiliar: 'Mutual de Seguridad / SIS',
+      documentoRef: `Planilla PreviRed Folio ${folioPlanilla}`,
+      tipoDocumentoRef: 'DOCUMENTO_LABORAL',
+      folioDocumentoRef: folioPlanilla,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTef,
+      fechaDocumentoOperacion: fechaPago,
     });
   }
 
@@ -552,20 +1031,28 @@ export function createPreviredPaymentEntry(
     cuentaNombre: `${bancoNombre} (Pago Electrónico PreviRed ${periodo})`,
     debe: 0,
     haber: totalPreviRed,
+    rutAuxiliar: '96.919.050-8',
+    nombreAuxiliar: 'PreviRed (AFP, Salud, AFC, Mutual)',
+    tipoDocumentoConciliacion: 'TRANSFERENCIA',
+    documentoConciliacion: folioTef,
+    documentoRef: `Planilla PreviRed Folio ${folioPlanilla}`,
+    folioDocumentoRef: folioPlanilla,
+    fechaDocumentoRef: fechaPago,
+    fechaVencimientoRef: fechaPago,
   });
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-previred-pay-${Date.now()}`,
-    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    fecha: fechaPago,
     concepto: `Pago Leyes Sociales e Imposiciones PreviRed Período ${periodo}`,
-    documento: `Planilla PreviRed Folio ${periodo}`,
+    documento: `Planilla PreviRed Folio ${folioPlanilla} (${folioTef})`,
     lineas,
     totalDebe: totalPreviRed,
     totalHaber: totalPreviRed,
     balanceado: true,
     origen: 'REMUNERACIONES',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -587,6 +1074,31 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
     };
   }
 
+  const docTipoDesc =
+    dte.tipoDte === '34' ? 'Factura No Afecta o Exenta (DTE 34)' :
+    dte.tipoDte === '61' ? 'Nota de Crédito (DTE 61)' :
+    dte.tipoDte === '56' ? 'Nota de Débito (DTE 56)' :
+    dte.tipoDte === '39' ? 'Boleta Electrónica (DTE 39)' :
+    dte.tipoDte === '41' ? 'Boleta Exenta (DTE 41)' :
+    dte.tipoDte === '110' ? 'Factura de Exportación (DTE 110)' :
+    `Factura Electrónica (DTE ${dte.tipoDte})`;
+
+  const docLabel = `${docTipoDesc} N° ${dte.folio}`;
+  const folioStr = String(dte.folio);
+  const ccDefault = dte.centroCostoCodigo || dte.centroCostoNombre || 'COMERCIAL_VENTAS';
+  const fechaVenc = dte.fechaVencimiento || dte.fechaEmision;
+
+  const baseDocProps = {
+    rutAuxiliar: dte.rutContraparte,
+    nombreAuxiliar: dte.razonSocialContraparte,
+    documentoRef: docLabel,
+    tipoDocumentoRef: 'DTE_SII',
+    folioDocumentoRef: folioStr,
+    fechaDocumentoRef: dte.fechaEmision,
+    fechaVencimientoRef: fechaVenc,
+    dteIdAsociado: dte.id,
+  };
+
   const lineas: AccountingEntryLine[] = [];
 
   // CASO 1: NOTA DE CRÉDITO DE VENTA (DTE 61)
@@ -597,6 +1109,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Devoluciones y Descuentos en Ventas (Art. 21 DL 825)',
         debe: dte.montoNeto,
         haber: 0,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
     if (dte.montoIva > 0) {
@@ -605,6 +1119,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'IVA Débito Fiscal (Rebaja por NC Emitida)',
         debe: dte.montoIva,
         haber: 0,
+        ...baseDocProps,
       });
     }
     if (dte.montoExento > 0) {
@@ -613,6 +1128,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Rebaja Ventas Exentas por NC',
         debe: dte.montoExento,
         haber: 0,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
     lineas.push({
@@ -620,8 +1137,11 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
       debe: 0,
       haber: dte.montoTotal,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
-  } 
+  }
   // CASO 2: FACTURA DE EXPORTACIÓN (DTE 110)
   else if (dte.tipoDte === '110') {
     lineas.push({
@@ -629,8 +1149,9 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes del Exterior / Exportación (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
-      rutAuxiliar: dte.rutContraparte,
-      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
 
     if (dte.items && dte.items.length > 0) {
@@ -640,8 +1161,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: it.cuentaNombre || `Exportación - ${it.nombre}`,
           debe: 0,
           haber: it.montoTotal,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else {
@@ -650,8 +1171,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Ingresos por Exportaciones (Art. 12 Letra D DL 825)',
         debe: 0,
         haber: dte.montoTotal,
-        rutAuxiliar: dte.rutContraparte,
-        centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
   }
@@ -662,8 +1183,9 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Boletas / Venta Menor (${dte.razonSocialContraparte || 'Consumidor Final'})`,
       debe: dte.montoTotal,
       haber: 0,
-      rutAuxiliar: dte.rutContraparte,
-      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
     if (dte.tipoDte === '41' || (dte.montoExento > 0 && dte.montoIva === 0)) {
       if (dte.items && dte.items.length > 0) {
@@ -673,8 +1195,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
             cuentaNombre: it.cuentaNombre || `Ingresos Boleta Exenta - ${it.nombre}`,
             debe: 0,
             haber: it.montoTotal,
-            rutAuxiliar: dte.rutContraparte,
-            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+            ...baseDocProps,
           });
         });
       } else {
@@ -683,8 +1205,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: 'Ingresos por Ventas Exentas con Boleta',
           debe: 0,
           haber: dte.montoTotal,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
     } else {
@@ -699,8 +1221,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
             cuentaNombre: it.cuentaNombre || `Ingresos Boleta - ${it.nombre}`,
             debe: 0,
             haber: montoIngreso,
-            rutAuxiliar: dte.rutContraparte,
-            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+            centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+            ...baseDocProps,
           });
         });
       } else if (dte.montoNeto > 0) {
@@ -709,8 +1231,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: 'Ingresos por Ventas con Boleta Electrónica',
           debe: 0,
           haber: dte.montoNeto,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
       if (dte.montoIva > 0) {
@@ -719,6 +1241,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: 'IVA Débito Fiscal Boletas',
           debe: 0,
           haber: dte.montoIva,
+          ...baseDocProps,
         });
       }
     }
@@ -730,8 +1253,9 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
-      rutAuxiliar: dte.rutContraparte,
-      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
 
     if (dte.items && dte.items.length > 0) {
@@ -741,8 +1265,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: it.cuentaNombre || `Ingresos Servicios Exentos - ${it.nombre}`,
           debe: 0,
           haber: it.montoTotal,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else {
@@ -751,8 +1275,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Ingresos por Servicios Exentos y No Afectos a IVA',
         debe: 0,
         haber: dte.montoExento || dte.montoTotal,
-        rutAuxiliar: dte.rutContraparte,
-        centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
   }
@@ -763,8 +1287,9 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Clientes Nacionales (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
-      rutAuxiliar: dte.rutContraparte,
-      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
 
     // Desglose por Ítems de la Factura Electrónica vinculados a Centro de Costo
@@ -781,8 +1306,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: ctaNom,
           debe: 0,
           haber: montoIngreso,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
@@ -792,8 +1317,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: p.cuentaNombre || `Venta - ${p.concepto}`,
           debe: 0,
           haber: (p.montoNeto || 0) + (p.montoExento || 0),
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else {
@@ -803,8 +1328,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: dte.tipoDte === '56' ? 'Otros Ingresos / Recargos ND Emitida' : 'Ingresos por Ventas Afectas a IVA',
           debe: 0,
           haber: dte.montoNeto,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
 
@@ -814,8 +1339,8 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: 'Ingresos por Servicios Exentos',
           debe: 0,
           haber: dte.montoExento,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
     }
@@ -826,6 +1351,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'IVA Débito Fiscal',
         debe: 0,
         haber: dte.montoIva,
+        ...baseDocProps,
       });
     }
   }
@@ -833,27 +1359,18 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  const docTipoDesc = 
-    dte.tipoDte === '34' ? 'Factura No Afecta o Exenta (DTE 34)' :
-    dte.tipoDte === '61' ? 'Nota de Crédito (DTE 61)' :
-    dte.tipoDte === '56' ? 'Nota de Débito (DTE 56)' :
-    dte.tipoDte === '39' ? 'Boleta Electrónica (DTE 39)' :
-    dte.tipoDte === '41' ? 'Boleta Exenta (DTE 41)' :
-    dte.tipoDte === '110' ? 'Factura de Exportación (DTE 110)' :
-    `Factura Electrónica (DTE ${dte.tipoDte})`;
-
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-dte-sale-${dte.id}`,
     fecha: dte.fechaEmision,
     concepto: `Venta ${docTipoDesc} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
-    documento: `${docTipoDesc} N° ${dte.folio}`,
+    documento: docLabel,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: totalDebe === totalHaber,
     origen: 'RCV_VENTA',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseDocProps);
 }
 
 /**
@@ -875,6 +1392,23 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
     };
   }
 
+  const docDesc = dte.tipoDte === '61' ? 'Nota de Crédito Proveedor (DTE 61)' : `Factura Proveedor (DTE ${dte.tipoDte})`;
+  const docLabel = `${docDesc} N° ${dte.folio}`;
+  const folioStr = String(dte.folio);
+  const ccDefault = dte.centroCostoCodigo || dte.centroCostoNombre || 'OPERACIONES';
+  const fechaVenc = dte.fechaVencimiento || dte.fechaEmision;
+
+  const baseDocProps = {
+    rutAuxiliar: dte.rutContraparte,
+    nombreAuxiliar: dte.razonSocialContraparte,
+    documentoRef: docLabel,
+    tipoDocumentoRef: 'DTE_SII',
+    folioDocumentoRef: folioStr,
+    fechaDocumentoRef: dte.fechaEmision,
+    fechaVencimientoRef: fechaVenc,
+    dteIdAsociado: dte.id,
+  };
+
   const lineas: AccountingEntryLine[] = [];
 
   // CASO NOTA DE CRÉDITO DE COMPRA (DTE 61 de Proveedor)
@@ -884,6 +1418,9 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Proveedores Nacionales (${dte.razonSocialContraparte})`,
       debe: dte.montoTotal,
       haber: 0,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
 
     if (dte.montoNeto > 0) {
@@ -892,6 +1429,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Costo de Ventas / Rebaja Compras por NC',
         debe: 0,
         haber: dte.montoNeto,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
 
@@ -901,6 +1440,7 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'IVA Crédito Fiscal (Rebaja por NC Recibida)',
         debe: 0,
         haber: dte.montoIva,
+        ...baseDocProps,
       });
     }
 
@@ -910,6 +1450,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'Gastos Exentos / Rebaja por NC',
         debe: 0,
         haber: dte.montoExento,
+        centroCosto: ccDefault,
+        ...baseDocProps,
       });
     }
   } else {
@@ -928,8 +1470,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: ctaNom,
           debe: montoGasto,
           haber: 0,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: it.centroCostoCodigo || it.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else if (dte.partidasDesglosadas && dte.partidasDesglosadas.length > 0) {
@@ -939,8 +1481,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: p.cuentaNombre || `Compra - ${p.concepto}`,
           debe: (p.montoNeto || 0) + (p.montoExento || 0),
           haber: 0,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: p.centroCostoCodigo || p.centroCostoNombre || ccDefault,
+          ...baseDocProps,
         });
       });
     } else {
@@ -950,8 +1492,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: 'Gastos Exentos / Otros Servicios',
           debe: dte.montoExento,
           haber: 0,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
 
@@ -961,8 +1503,8 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
           cuentaNombre: dte.cuentaNombreAsignada || 'Costo de Ventas / Gastos Operacionales',
           debe: dte.montoNeto,
           haber: 0,
-          rutAuxiliar: dte.rutContraparte,
-          centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+          centroCosto: ccDefault,
+          ...baseDocProps,
         });
       }
     }
@@ -973,6 +1515,7 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
         cuentaNombre: 'IVA Crédito Fiscal',
         debe: dte.montoIva,
         haber: 0,
+        ...baseDocProps,
       });
     }
 
@@ -981,28 +1524,27 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
       cuentaNombre: `Proveedores Nacionales (${dte.razonSocialContraparte})`,
       debe: 0,
       haber: dte.montoTotal,
-      rutAuxiliar: dte.rutContraparte,
-      centroCosto: dte.centroCostoCodigo || dte.centroCostoNombre,
+      centroCosto: ccDefault,
+      montoDocumentoRef: dte.montoTotal,
+      ...baseDocProps,
     });
   }
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  const docDesc = dte.tipoDte === '61' ? 'Nota de Crédito Proveedor (DTE 61)' : `Factura Proveedor (DTE ${dte.tipoDte})`;
-
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-dte-purch-${dte.id}`,
     fecha: dte.fechaEmision,
     concepto: `Compra ${docDesc} Folio ${dte.folio} - ${dte.razonSocialContraparte}`,
-    documento: `${docDesc} N° ${dte.folio}`,
+    documento: docLabel,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: totalDebe === totalHaber,
     origen: 'RCV_COMPRA',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseDocProps);
 }
 
 /**
@@ -1026,6 +1568,21 @@ export function createHonorariosEntry(bhe: DteDocument): AccountingEntry {
 
   const retencion = bhe.retencionMonto || Math.round((bhe.montoTotal || 0) * (bhe.retencionTasa || 0.145));
   const liquidoPorPagar = (bhe.montoTotal || 0) - retencion;
+  const docLabel = `BHE N° ${bhe.folio}`;
+  const folioStr = String(bhe.folio);
+  const ccDefault = bhe.centroCostoCodigo || bhe.centroCostoNombre || 'ADMINISTRACION';
+  const fechaVenc = bhe.fechaVencimiento || bhe.fechaEmision;
+
+  const baseBheProps = {
+    rutAuxiliar: bhe.rutContraparte,
+    nombreAuxiliar: bhe.razonSocialContraparte,
+    documentoRef: docLabel,
+    tipoDocumentoRef: 'BOLETA_HONORARIOS',
+    folioDocumentoRef: folioStr,
+    fechaDocumentoRef: bhe.fechaEmision,
+    fechaVencimientoRef: fechaVenc,
+    dteIdAsociado: bhe.id,
+  };
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1033,36 +1590,42 @@ export function createHonorariosEntry(bhe: DteDocument): AccountingEntry {
       cuentaNombre: 'Gastos de Honorarios Profesionales',
       debe: bhe.montoTotal || 0,
       haber: 0,
+      centroCosto: ccDefault,
+      ...baseBheProps,
     },
     {
       cuentaCodigo: '2.1.04',
       cuentaNombre: 'Retención Honorarios 2da Categoría por Pagar (F29)',
       debe: 0,
       haber: retencion,
+      ...baseBheProps,
     },
     {
       cuentaCodigo: '2.1.02',
       cuentaNombre: `Honorarios por Pagar (${bhe.razonSocialContraparte || 'Honorarios'})`,
       debe: 0,
       haber: liquidoPorPagar,
+      centroCosto: ccDefault,
+      montoDocumentoRef: liquidoPorPagar,
+      ...baseBheProps,
     },
   ];
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-bhe-${bhe.id}`,
     fecha: bhe.fechaEmision,
     concepto: `Boleta de Honorarios N° ${bhe.folio} - ${bhe.razonSocialContraparte} (${((bhe.retencionTasa || 0.145) * 100).toFixed(2)}% Retención)`,
-    documento: `BHE N° ${bhe.folio}`,
+    documento: docLabel,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: totalDebe === totalHaber,
     origen: 'HONORARIOS',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseBheProps);
 }
 
 /**
@@ -1079,6 +1642,21 @@ export function createF29PaymentEntry(
     return createF29TgrPaymentEntry(f29OrPeriodo, montoAPagar || 0, bancoCuentaCodigo, bancoNombre, fechaCustom);
   }
   const f29 = f29OrPeriodo;
+  const fechaPago = f29.fechaPago || `${f29.periodo}-20`;
+  const folioTgr = String(f29.folioTgr || `F29-${f29.periodo.replace(/-/g, '')}`);
+  const docLabel = `F29 Periodo ${f29.periodo} (Folio TGR ${folioTgr})`;
+  const folioTef = `TEF-TGR-${folioTgr}`;
+
+  const baseF29Props = {
+    rutAuxiliar: '60.803.000-K',
+    nombreAuxiliar: 'Tesorería General de la República (TGR)',
+    documentoRef: docLabel,
+    tipoDocumentoRef: 'TRIBUTARIO_TGR',
+    folioDocumentoRef: folioTgr,
+    fechaDocumentoRef: fechaPago,
+    fechaVencimientoRef: fechaPago,
+  };
+
   const lineas: AccountingEntryLine[] = [];
 
   // Saldar IVA Débito Fiscal
@@ -1088,6 +1666,7 @@ export function createF29PaymentEntry(
       cuentaNombre: 'IVA Débito Fiscal',
       debe: f29.debitoFiscalIva,
       haber: 0,
+      ...baseF29Props,
     });
   }
 
@@ -1098,6 +1677,7 @@ export function createF29PaymentEntry(
       cuentaNombre: 'IVA Crédito Fiscal',
       debe: 0,
       haber: Math.min(f29.creditoFiscalIva, f29.debitoFiscalIva),
+      ...baseF29Props,
     });
   }
 
@@ -1108,6 +1688,7 @@ export function createF29PaymentEntry(
       cuentaNombre: 'Remanente de Crédito Fiscal Mes Siguiente',
       debe: f29.nuevoRemanenteCredito,
       haber: 0,
+      ...baseF29Props,
     });
   }
 
@@ -1118,6 +1699,7 @@ export function createF29PaymentEntry(
       cuentaNombre: 'PPM Pagos Provisorios Mensuales por Recuperar',
       debe: f29.montoPpm,
       haber: 0,
+      ...baseF29Props,
     });
   }
 
@@ -1128,6 +1710,7 @@ export function createF29PaymentEntry(
       cuentaNombre: 'Retención Honorarios 2da Categoría por Pagar (F29)',
       debe: f29.retencionHonorariosSegundaCat,
       haber: 0,
+      ...baseF29Props,
     });
   }
 
@@ -1138,32 +1721,36 @@ export function createF29PaymentEntry(
       cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)',
       debe: f29.retencionImpuestoUnicoSueldos,
       haber: 0,
+      ...baseF29Props,
     });
   }
 
   // Pago TGR Banco
   lineas.push({
     cuentaCodigo: '1.1.01',
-    cuentaNombre: 'Banco Santander (Pago TGR Folio ' + (f29.folioTgr || 'F29') + ')',
+    cuentaNombre: 'Banco Santander (Pago TGR Folio ' + folioTgr + ')',
     debe: 0,
     haber: f29.totalAPagar,
+    ...baseF29Props,
+    tipoDocumentoConciliacion: 'TRANSFERENCIA',
+    documentoConciliacion: folioTef,
   });
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-f29-${f29.id}`,
-    fecha: f29.fechaPago || `${f29.periodo}-20`,
+    fecha: fechaPago,
     concepto: `Declaración y Pago Formulario 29 Periodo ${f29.periodo} en Tesorería General de la República`,
-    documento: `F29 Periodo ${f29.periodo} (Folio TGR ${f29.folioTgr || '1849204'})`,
+    documento: docLabel,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: Math.abs(totalDebe - totalHaber) < 1,
     origen: 'F29_TRIBUTARIO',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseF29Props);
 }
 
 /**
@@ -1175,8 +1762,24 @@ export function createLeaseEntry(contract: any, indicators: ChileIndicators = DE
   const canonCLP = moneda === 'UF' ? Math.round(canonMonto * indicators.uf) : canonMonto;
   const nombreBien = contract.nombreBien || contract.inmuebleDescripcion || 'Inmueble Arrendado';
   const arrendadorNombre = contract.arrendadorNombre || 'Arrendador';
-  const codigoContrato = contract.codigoContrato || contract.id || 'ARR-01';
+  const arrendadorRut = contract.arrendadorRut || '76.440.110-2';
+  const codigoContrato = String(contract.codigoContrato || contract.id || 'ARR-01');
   const esIfrs16 = contract.tratamientoContable === 'IFRS_16' || contract.esIfrs16;
+  const fechaAsiento = new Date().toISOString().split('T')[0];
+  const docContrato = `Contrato Arriendo N° ${codigoContrato}`;
+  const folioTef = `TEF-${codigoContrato}-${fechaAsiento.replace(/-/g, '')}`;
+  const ccArriendo = contract.centroCostoCodigo || contract.centroCostoNombre || 'ADMINISTRACION';
+
+  const baseLeaseProps = {
+    rutAuxiliar: arrendadorRut,
+    nombreAuxiliar: arrendadorNombre,
+    centroCosto: ccArriendo,
+    documentoRef: docContrato,
+    tipoDocumentoRef: 'CONTRATO',
+    folioDocumentoRef: codigoContrato,
+    fechaDocumentoRef: fechaAsiento,
+    fechaVencimientoRef: fechaAsiento,
+  };
 
   if (esIfrs16) {
     const amort = contract.amortizacionMensual || Math.round(canonCLP * 0.8);
@@ -1189,48 +1792,58 @@ export function createLeaseEntry(contract: any, indicators: ChileIndicators = DE
         cuentaNombre: 'Amortización Activo por Derecho de Uso (IFRS 16)',
         debe: amort,
         haber: 0,
+        ...baseLeaseProps,
       },
       {
         cuentaCodigo: '5.2.09',
         cuentaNombre: 'Gastos Financieros por Arrendamiento (IFRS 16)',
         debe: fin,
         haber: 0,
+        ...baseLeaseProps,
       },
       {
         cuentaCodigo: '2.1.12',
         cuentaNombre: 'Pasivo por Arrendamiento (Disminución Principal)',
         debe: Math.max(0, pagoPrincipal),
         haber: 0,
+        ...baseLeaseProps,
+        tipoDocumentoOperacion: 'TRANSFERENCIA',
+        documentoOperacion: folioTef,
+        fechaDocumentoOperacion: fechaAsiento,
       },
       {
         cuentaCodigo: '1.2.02',
         cuentaNombre: 'Depreciación Acumulada Activo Derecho de Uso',
         debe: 0,
         haber: amort,
+        ...baseLeaseProps,
       },
       {
         cuentaCodigo: '1.1.01',
         cuentaNombre: `Banco Santander (Pago Canon Mensual a ${arrendadorNombre})`,
         debe: 0,
         haber: canonCLP,
+        ...baseLeaseProps,
+        tipoDocumentoConciliacion: 'TRANSFERENCIA',
+        documentoConciliacion: folioTef,
       },
     ];
 
     const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
     const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-    return {
+    return enrichEntryWithChartAttributes({
       id: `entry-lease-${contract.id || Date.now()}`,
-      fecha: new Date().toISOString().split('T')[0],
+      fecha: fechaAsiento,
       concepto: `Reconocimiento Mensual IFRS 16 - ${nombreBien} (${arrendadorNombre})`,
-      documento: `Contrato Arriendo N° ${codigoContrato}`,
+      documento: docContrato,
       lineas,
       totalDebe,
       totalHaber,
       balanceado: Math.abs(totalDebe - totalHaber) < 2,
       origen: 'ARRIENDOS_IFRS16' as any,
       creadoEn: new Date().toISOString(),
-    };
+    }, undefined, baseLeaseProps);
   } else {
     // Gasto simple mensual
     const lineas: AccountingEntryLine[] = [
@@ -1239,27 +1852,31 @@ export function createLeaseEntry(contract: any, indicators: ChileIndicators = DE
         cuentaNombre: `Gasto por Arriendo Comercial (${nombreBien})`,
         debe: canonCLP,
         haber: 0,
+        ...baseLeaseProps,
       },
       {
         cuentaCodigo: '1.1.01',
         cuentaNombre: `Banco Santander (Pago Arriendo a ${arrendadorNombre})`,
         debe: 0,
         haber: canonCLP,
+        ...baseLeaseProps,
+        tipoDocumentoConciliacion: 'TRANSFERENCIA',
+        documentoConciliacion: folioTef,
       },
     ];
 
-    return {
+    return enrichEntryWithChartAttributes({
       id: `entry-lease-simple-${contract.id || Date.now()}`,
-      fecha: new Date().toISOString().split('T')[0],
+      fecha: fechaAsiento,
       concepto: `Pago Canon de Arriendo Mensual - ${nombreBien}`,
-      documento: `Contrato Arriendo N° ${codigoContrato}`,
+      documento: docContrato,
       lineas,
       totalDebe: canonCLP,
       totalHaber: canonCLP,
       balanceado: true,
       origen: 'ARRIENDOS_IFRS16' as any,
       creadoEn: new Date().toISOString(),
-    };
+    }, undefined, baseLeaseProps);
   }
 }
 
@@ -1283,7 +1900,21 @@ export function createLeaseInitialRecognitionEntry(
   const valorPresente = lease.valorPresenteContrato || lease.valorActivoDerechoUso || Math.round(canonCLP * plazoMeses * 0.88);
   const nombreBien = lease.nombreBien || lease.inmuebleDescripcion || 'Inmueble Arrendado';
   const arrendadorNombre = lease.arrendadorNombre || 'Arrendador';
-  const codigoContrato = lease.codigoContrato || lease.id || 'ARR-01';
+  const arrendadorRut = lease.arrendadorRut || '76.440.110-2';
+  const codigoContrato = String(lease.codigoContrato || lease.id || 'ARR-01');
+  const fechaAlta = fechaCustom || lease.fechaInicio || new Date().toISOString().split('T')[0];
+  const docContrato = `Contrato Arriendo N° ${codigoContrato}`;
+  const ccArriendo = lease.centroCostoCodigo || lease.centroCostoNombre || 'ADMINISTRACION';
+
+  const baseProps = {
+    rutAuxiliar: arrendadorRut,
+    nombreAuxiliar: arrendadorNombre,
+    centroCosto: ccArriendo,
+    documentoRef: docContrato,
+    tipoDocumentoRef: 'CONTRATO',
+    folioDocumentoRef: codigoContrato,
+    fechaDocumentoRef: fechaAlta,
+  };
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1291,27 +1922,29 @@ export function createLeaseInitialRecognitionEntry(
       cuentaNombre: `Activo por Derecho de Uso - ${nombreBien} (IFRS 16)`,
       debe: valorPresente,
       haber: 0,
+      ...baseProps,
     },
     {
       cuentaCodigo: '2.2.01',
       cuentaNombre: `Pasivo por Arrendamiento Financiero (IFRS 16 - ${arrendadorNombre})`,
       debe: 0,
       haber: valorPresente,
+      ...baseProps,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-lease-initial-${lease.id || Date.now()}`,
-    fecha: fechaCustom || lease.fechaInicio || new Date().toISOString().split('T')[0],
+    fecha: fechaAlta,
     concepto: `Reconocimiento Inicial IFRS 16: Alta Activo por Derecho de Uso (${nombreBien}) - ${arrendadorNombre}`,
-    documento: `Contrato Arriendo N° ${codigoContrato}`,
+    documento: docContrato,
     lineas,
     totalDebe: valorPresente,
     totalHaber: valorPresente,
     balanceado: true,
     origen: 'ARRIENDOS_IFRS16' as any,
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseProps);
 }
 
 /**
@@ -1325,6 +1958,10 @@ export function createF29TgrPaymentEntry(
   fechaCustom?: string
 ): AccountingEntry {
   const monto = Math.round(montoAPagar);
+  const fechaPago = fechaCustom || new Date().toISOString().split('T')[0];
+  const folioF29 = `F29-${periodo.replace(/-/g, '')}`;
+  const folioTef = `TEF-TGR-${periodo.replace(/-/g, '')}`;
+  const docLabel = `Comprobante Pago PAC / TGR F29 ${periodo} (Folio ${folioF29})`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1332,27 +1969,44 @@ export function createF29TgrPaymentEntry(
       cuentaNombre: `Impuestos por Pagar (F29 TGR Período ${periodo})`,
       debe: monto,
       haber: 0,
+      rutAuxiliar: '60.803.000-K',
+      nombreAuxiliar: 'Tesorería General de la República (TGR)',
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'TRIBUTARIO_TGR',
+      folioDocumentoRef: folioF29,
+      fechaDocumentoRef: fechaPago,
+      tipoDocumentoOperacion: 'TRANSFERENCIA',
+      documentoOperacion: folioTef,
+      fechaDocumentoOperacion: fechaPago,
     },
     {
       cuentaCodigo: bancoCuentaCodigo,
       cuentaNombre: `${bancoNombre} (Pago F29 en Tesorería General de la República)`,
       debe: 0,
       haber: monto,
+      rutAuxiliar: '60.803.000-K',
+      nombreAuxiliar: 'Tesorería General de la República (TGR)',
+      tipoDocumentoConciliacion: 'TRANSFERENCIA',
+      documentoConciliacion: folioTef,
+      documentoRef: docLabel,
+      folioDocumentoRef: folioF29,
+      fechaDocumentoRef: fechaPago,
+      fechaVencimientoRef: fechaPago,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-f29-pay-${periodo}-${Date.now()}`,
-    fecha: fechaCustom || new Date().toISOString().split('T')[0],
+    fecha: fechaPago,
     concepto: `Pago Electrónico F29 a Tesorería General (TGR) - Período ${periodo}`,
-    documento: `Comprobante Pago PAC / TGR F29 ${periodo}`,
+    documento: docLabel,
     lineas,
     totalDebe: monto,
     totalHaber: monto,
     balanceado: true,
     origen: 'F29_CENTRALIZACION' as any,
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -1408,12 +2062,13 @@ export function createBankNovedadEntry(
   tipoCambio: number = 955.20
 ): AccountingEntry {
   const accountMoneda = movement.moneda || moneda;
-  const tc = movement.tipoCambio || (accountMoneda === 'EUR' ? 1042.80 : 955.20);
+  const tc = movement.tipoCambio || tipoCambio || (accountMoneda === 'EUR' ? 1042.80 : 955.20);
   const esExtranjera = accountMoneda !== 'CLP';
 
   const lineas: AccountingEntryLine[] = [];
   const fecha = movement.fecha;
-  const doc = `Cartola Bancaria Ref: ${movement.numeroReferencia || movement.id}`;
+  const refNum = String(movement.numeroReferencia || movement.id || 'CARTOLA');
+  const doc = `Cartola Bancaria Ref: ${refNum}`;
 
   const montoNominal = movement.abono > 0 ? movement.abono : movement.cargo;
   const montoContableCLP = esExtranjera ? Math.round(montoNominal * tc) : Math.round(montoNominal);
@@ -1426,6 +2081,16 @@ export function createBankNovedadEntry(
     ? `${bancoNombre} Moneda Extranjera (${accountMoneda})`
     : `${bancoNombre} (Cta. Cte. M/N)`;
 
+  const fxProps = esExtranjera
+    ? {
+        monedaOriginal: accountMoneda as 'USD' | 'EUR',
+        montoMonedaOriginal: montoNominal,
+        tipoCambio: tc,
+      }
+    : {};
+
+  const tipoConcil = movement.abono > 0 ? ('DEPOSITO' as const) : ('CARGO_AUTOMATICO' as const);
+
   if (movement.abono > 0) {
     // Abono recibido en la cuenta bancaria (Debe Banco / Haber Contrapartida)
     lineas.push({
@@ -1433,12 +2098,27 @@ export function createBankNovedadEntry(
       cuentaNombre: cuentaBancoNombre,
       debe: montoContableCLP,
       haber: 0,
+      tipoDocumentoConciliacion: tipoConcil,
+      documentoConciliacion: refNum,
+      documentoRef: doc,
+      folioDocumentoRef: refNum,
+      fechaDocumentoRef: fecha,
+      fechaVencimientoRef: fecha,
+      ...fxProps,
     });
     lineas.push({
       cuentaCodigo: movement.cuentaContableSugerida?.haberCodigo || '2.1.08',
       cuentaNombre: movement.cuentaContableSugerida?.haberNombre || 'Anticipos de Clientes / Partidas por Aplicar',
       debe: 0,
       haber: montoContableCLP,
+      centroCosto: 'TESORERIA',
+      documentoRef: doc,
+      folioDocumentoRef: refNum,
+      fechaDocumentoRef: fecha,
+      tipoDocumentoOperacion: tipoConcil,
+      documentoOperacion: refNum,
+      fechaDocumentoOperacion: fecha,
+      ...fxProps,
     });
   } else {
     // Cargo debitado por el banco (Debe Gasto/Costo / Haber Banco)
@@ -1447,16 +2127,28 @@ export function createBankNovedadEntry(
       cuentaNombre: movement.cuentaContableSugerida?.debeNombre || 'Gastos y Comisiones Bancarias',
       debe: montoContableCLP,
       haber: 0,
+      centroCosto: 'FINANZAS_TESORERIA',
+      documentoRef: doc,
+      folioDocumentoRef: refNum,
+      fechaDocumentoRef: fecha,
+      ...fxProps,
     });
     lineas.push({
       cuentaCodigo: cuentaBancoCodigo,
       cuentaNombre: cuentaBancoNombre,
       debe: 0,
       haber: montoContableCLP,
+      tipoDocumentoConciliacion: tipoConcil,
+      documentoConciliacion: refNum,
+      documentoRef: doc,
+      folioDocumentoRef: refNum,
+      fechaDocumentoRef: fecha,
+      fechaVencimientoRef: fecha,
+      ...fxProps,
     });
   }
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-bank-nov-${movement.id}-${Date.now()}`,
     fecha,
     concepto: `Registro Novedad Bancaria: ${movement.glosaBancaria}${glosaSufijo}`,
@@ -1467,7 +2159,15 @@ export function createBankNovedadEntry(
     balanceado: true,
     origen: 'CAJA_BANCO',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, {
+    documentoRef: doc,
+    folioDocumentoRef: refNum,
+    fechaDocumentoRef: fecha,
+    centroCosto: 'FINANZAS_TESORERIA',
+    tipoDocumentoConciliacion: tipoConcil,
+    documentoConciliacion: refNum,
+    ...fxProps,
+  });
 }
 
 // ========================================================
@@ -1493,33 +2193,45 @@ export function calculateCoverageDays(stockGeneral: number, consumoMensualPromed
  * Haber: 1.1.04.01 Existencias Bodega Origen
  */
 export function createWarehouseTransferEntry(transfer: WarehouseTransfer): AccountingEntry {
+  const docLabel = `Guía de Despacho Electrónica (DTE 52) N° ${transfer.folioGuiaDespacho52}`;
+  const folioGuia = String(transfer.folioGuiaDespacho52);
   const lineas: AccountingEntryLine[] = [
     {
       cuentaCodigo: '1.1.04.99',
       cuentaNombre: `Existencias en Tránsito (Guía DTE 52 N° ${transfer.folioGuiaDespacho52})`,
       debe: transfer.valorTotalTraslado,
       haber: 0,
+      centroCosto: transfer.bodegaDestinoNombre || 'LOGISTICA_TRANSITO',
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'DTE_SII',
+      folioDocumentoRef: folioGuia,
+      fechaDocumentoRef: transfer.fechaDespacho,
     },
     {
       cuentaCodigo: '1.1.04.01',
       cuentaNombre: `Existencias - ${transfer.bodegaOrigenNombre}`,
       debe: 0,
       haber: transfer.valorTotalTraslado,
+      centroCosto: transfer.bodegaOrigenNombre || 'BODEGA_ORIGEN',
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'DTE_SII',
+      folioDocumentoRef: folioGuia,
+      fechaDocumentoRef: transfer.fechaDespacho,
     }
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-transfer-${transfer.id}-${Date.now()}`,
     fecha: transfer.fechaDespacho,
     concepto: `Traslado Interno sin Venta (SII Cód 5) desde ${transfer.bodegaOrigenNombre} hacia ${transfer.bodegaDestinoNombre}`,
-    documento: `Guía de Despacho Electrónica (DTE 52) N° ${transfer.folioGuiaDespacho52}`,
+    documento: docLabel,
     lineas,
     totalDebe: transfer.valorTotalTraslado,
     totalHaber: transfer.valorTotalTraslado,
     balanceado: true,
     origen: 'INVENTARIO',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -1528,33 +2240,46 @@ export function createWarehouseTransferEntry(transfer: WarehouseTransfer): Accou
  * Haber: 1.1.04.99 Existencias en Tránsito
  */
 export function createWarehouseReceiptEntry(transfer: WarehouseTransfer): AccountingEntry {
+  const fechaRec = transfer.fechaRecepcionReal || new Date().toISOString().split('T')[0];
+  const docLabel = `Recepción Conforme DTE 52 N° ${transfer.folioGuiaDespacho52}`;
+  const folioGuia = String(transfer.folioGuiaDespacho52);
   const lineas: AccountingEntryLine[] = [
     {
       cuentaCodigo: '1.1.04.02',
       cuentaNombre: `Existencias - ${transfer.bodegaDestinoNombre}`,
       debe: transfer.valorTotalTraslado,
       haber: 0,
+      centroCosto: transfer.bodegaDestinoNombre || 'BODEGA_DESTINO',
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'DTE_SII',
+      folioDocumentoRef: folioGuia,
+      fechaDocumentoRef: fechaRec,
     },
     {
       cuentaCodigo: '1.1.04.99',
       cuentaNombre: `Existencias en Tránsito (Guía DTE 52 N° ${transfer.folioGuiaDespacho52})`,
       debe: 0,
       haber: transfer.valorTotalTraslado,
+      centroCosto: transfer.bodegaOrigenNombre || 'LOGISTICA_TRANSITO',
+      documentoRef: docLabel,
+      tipoDocumentoRef: 'DTE_SII',
+      folioDocumentoRef: folioGuia,
+      fechaDocumentoRef: fechaRec,
     }
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-receipt-${transfer.id}-${Date.now()}`,
-    fecha: transfer.fechaRecepcionReal || new Date().toISOString().split('T')[0],
+    fecha: fechaRec,
     concepto: `Recepción Conforme de Traslado Interno DTE 52 N° ${transfer.folioGuiaDespacho52} en ${transfer.bodegaDestinoNombre}`,
-    documento: `Recepción Conforme DTE 52 N° ${transfer.folioGuiaDespacho52}`,
+    documento: docLabel,
     lineas,
     totalDebe: transfer.valorTotalTraslado,
     totalHaber: transfer.valorTotalTraslado,
     balanceado: true,
     origen: 'INVENTARIO',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -1631,6 +2356,18 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
   const iva = Math.round(neto * 0.19); // IVA Crédito Fiscal Activo Fijo (Código 524 F29)
   const total = neto + iva;
   const fecha = asset.fechaAdquisicion || new Date().toISOString().split('T')[0];
+  const folioStr = String(asset.folioDteCompra || asset.codigoPlaca || 'AF-ALTA');
+  const docLabel = `DTE 33 Folio ${folioStr}`;
+  const ccAsset = asset.centroCostoCodigo || asset.centroCostoNombre || asset.ubicacionFisica || 'ADMINISTRACION';
+  const baseAfProps = {
+    rutAuxiliar: asset.proveedorRut,
+    nombreAuxiliar: asset.proveedorRazonSocial || 'Proveedor Activo Fijo',
+    centroCosto: ccAsset,
+    documentoRef: docLabel,
+    tipoDocumentoRef: 'DTE_SII',
+    folioDocumentoRef: folioStr,
+    fechaDocumentoRef: fecha,
+  };
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1638,30 +2375,30 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
       cuentaNombre: `${asset.nombre} (${asset.codigoPlaca})`,
       debe: neto,
       haber: 0,
-      rutAuxiliar: asset.proveedorRut,
-      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre || asset.ubicacionFisica,
+      ...baseAfProps,
     },
     {
       cuentaCodigo: '1.1.05',
       cuentaNombre: 'IVA Crédito Fiscal (Activo Fijo Art. 23 DL 825)',
       debe: iva,
       haber: 0,
+      ...baseAfProps,
     },
     {
       cuentaCodigo: '2.1.01',
       cuentaNombre: `Proveedores Nacionales (${asset.proveedorRazonSocial || 'Adquisición AF'})`,
       debe: 0,
       haber: total,
-      rutAuxiliar: asset.proveedorRut,
-      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+      montoDocumentoRef: total,
+      ...baseAfProps,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-af-alta-${asset.id}-${Date.now()}`,
     fecha,
-    concepto: `Alta Activo Fijo: ${asset.nombre} - Placa ${asset.codigoPlaca} (Folio DTE ${asset.folioDteCompra || 'S/F'})`,
-    documento: `DTE 33 Folio ${asset.folioDteCompra || 'AF-ALTA'}`,
+    concepto: `Alta Activo Fijo: ${asset.nombre} - Placa ${asset.codigoPlaca} (Folio DTE ${folioStr})`,
+    documento: docLabel,
     lineas,
     totalDebe: total,
     totalHaber: total,
@@ -1669,7 +2406,7 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
     origen: 'ACTIVO_FIJO',
     creadoEn: new Date().toISOString(),
     supervisorSignature: `AF-AUTO-${asset.codigoPlaca}`,
-  };
+  }, undefined, baseAfProps);
 }
 
 /**
@@ -1686,6 +2423,8 @@ export function createFixedAssetDepreciationEntry(
   fechaCustom?: string
 ): AccountingEntry {
   const fecha = fechaCustom || `${periodo}-28`;
+  const docLabel = `Cuadro AF Periodo ${periodo}`;
+  const folioDep = `DEP-AF-${periodo}`;
   let totalDepAcum = 0;
 
   // Agrupación de la cuota de depreciación por Centro de Costo
@@ -1733,6 +2472,9 @@ export function createFixedAssetDepreciationEntry(
         debe: adminRound,
         haber: 0,
         centroCosto: cc.codigo,
+        documentoRef: docLabel,
+        folioDocumentoRef: folioDep,
+        fechaDocumentoRef: fecha,
       });
     }
 
@@ -1743,6 +2485,10 @@ export function createFixedAssetDepreciationEntry(
         debe: cifRound,
         haber: 0,
         centroCosto: cc.codigo,
+        proyecto: cc.codigo,
+        documentoRef: docLabel,
+        folioDocumentoRef: folioDep,
+        fechaDocumentoRef: fecha,
       });
     }
   });
@@ -1752,6 +2498,10 @@ export function createFixedAssetDepreciationEntry(
     cuentaNombre: 'Depreciación Acumulada Activo Fijo (NIC 16)',
     debe: 0,
     haber: totalDepAcum,
+    centroCosto: 'ACTIVO_FIJO',
+    documentoRef: docLabel,
+    folioDocumentoRef: folioDep,
+    fechaDocumentoRef: fecha,
   });
 
   // Ajuste fino de centavos para garantizar partida doble matemática exacta
@@ -1767,11 +2517,11 @@ export function createFixedAssetDepreciationEntry(
   const realTotalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const realTotalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-af-dep-${periodo}-${Date.now()}`,
     fecha,
     concepto: `Depreciación Activo Fijo Período ${periodo} (${depreciaciones.length} activos procesados)`,
-    documento: `Cuadro AF Periodo ${periodo}`,
+    documento: docLabel,
     lineas,
     totalDebe: realTotalDebe,
     totalHaber: realTotalHaber,
@@ -1779,7 +2529,7 @@ export function createFixedAssetDepreciationEntry(
     origen: 'ACTIVO_FIJO',
     creadoEn: new Date().toISOString(),
     supervisorSignature: `DEP-AUTO-${periodo}`,
-  };
+  });
 }
 
 /**
@@ -1795,6 +2545,7 @@ export function createFixedAssetMonetaryCorrectionEntry(
   const cmActivo = Math.round(totalCmActivo);
   const cmDep = Math.round(totalCmDep);
   const efectoNeto = cmActivo - cmDep;
+  const docLabel = `CM-IPC-${periodo}`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1802,35 +2553,47 @@ export function createFixedAssetMonetaryCorrectionEntry(
       cuentaNombre: 'Reajuste IPC Activo Fijo (Art. 41 N° 2 LIR)',
       debe: cmActivo,
       haber: 0,
+      centroCosto: 'ACTIVO_FIJO',
+      documentoRef: docLabel,
+      folioDocumentoRef: docLabel,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '1.2.99',
       cuentaNombre: 'Reajuste IPC Depreciación Acumulada',
       debe: 0,
       haber: cmDep,
+      centroCosto: 'ACTIVO_FIJO',
+      documentoRef: docLabel,
+      folioDocumentoRef: docLabel,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '6.1.01',
       cuentaNombre: 'Corrección Monetaria Ejercicio (Resultado Neto)',
       debe: efectoNeto < 0 ? Math.abs(efectoNeto) : 0,
       haber: efectoNeto > 0 ? efectoNeto : 0,
+      centroCosto: 'FINANZAS_TRIBUTARIO',
+      documentoRef: docLabel,
+      folioDocumentoRef: docLabel,
+      fechaDocumentoRef: fecha,
     },
   ];
 
   const total = Math.max(cmActivo, cmDep + Math.max(0, efectoNeto));
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-af-cm-${periodo}-${Date.now()}`,
     fecha,
     concepto: `Corrección Monetaria IPC Activo Fijo y Dep. Acumulada Período ${periodo} (Art. 41 LIR)`,
-    documento: `CM-IPC-${periodo}`,
+    documento: docLabel,
     lineas,
     totalDebe: total,
     totalHaber: total,
     balanceado: true,
     origen: 'ACTIVO_FIJO',
     creadoEn: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -1849,6 +2612,16 @@ export function createFixedAssetDisposalEntry(
   const iva = Math.round(precio * 0.19);
   const totalCobrar = precio + iva;
   const resultado = precio - valorLibro; // Positivo = Ganancia, Negativo = Pérdida
+  const docLabel = `Acta de Baja / Venta ${asset.codigoPlaca}`;
+  const ccAsset = asset.centroCostoCodigo || asset.centroCostoNombre || 'ADMINISTRACION';
+  const baseBajaProps = {
+    rutAuxiliar: asset.proveedorRut || '76.999.000-1',
+    nombreAuxiliar: asset.proveedorRazonSocial || `Adquirente / Baja AF (${asset.codigoPlaca})`,
+    centroCosto: ccAsset,
+    documentoRef: docLabel,
+    folioDocumentoRef: asset.codigoPlaca,
+    fechaDocumentoRef: fecha,
+  };
 
   const lineas: AccountingEntryLine[] = [];
 
@@ -1858,7 +2631,8 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: `Clientes / Cuentas por Cobrar Venta AF (${asset.codigoPlaca})`,
       debe: totalCobrar,
       haber: 0,
-      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+      montoDocumentoRef: totalCobrar,
+      ...baseBajaProps,
     });
   }
 
@@ -1867,7 +2641,7 @@ export function createFixedAssetDisposalEntry(
     cuentaNombre: 'Depreciación Acumulada Activo Fijo (Eliminación por Baja)',
     debe: depAcum,
     haber: 0,
-    centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+    ...baseBajaProps,
   });
 
   if (resultado < 0) {
@@ -1876,7 +2650,7 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: 'Pérdida en Retiro o Enajenación de Activo Fijo',
       debe: Math.abs(resultado),
       haber: 0,
-      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+      ...baseBajaProps,
     });
   }
 
@@ -1885,7 +2659,7 @@ export function createFixedAssetDisposalEntry(
     cuentaNombre: `${asset.nombre} (Baja de Costo Histórico)`,
     debe: 0,
     haber: costoHist,
-    centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+    ...baseBajaProps,
   });
 
   if (iva > 0) {
@@ -1894,6 +2668,7 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: 'IVA Débito Fiscal Venta Activo Fijo',
       debe: 0,
       haber: iva,
+      ...baseBajaProps,
     });
   }
 
@@ -1903,25 +2678,25 @@ export function createFixedAssetDisposalEntry(
       cuentaNombre: 'Utilidad en Enajenación de Activo Fijo',
       debe: 0,
       haber: resultado,
-      centroCosto: asset.centroCostoCodigo || asset.centroCostoNombre,
+      ...baseBajaProps,
     });
   }
 
   const totalDebe = lineas.reduce((s, l) => s + l.debe, 0);
   const totalHaber = lineas.reduce((s, l) => s + l.haber, 0);
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-af-baja-${asset.id}-${Date.now()}`,
     fecha,
     concepto: `Baja / Enajenación de Activo Fijo: ${asset.nombre} - Placa ${asset.codigoPlaca}`,
-    documento: `Acta de Baja / Venta ${asset.codigoPlaca}`,
+    documento: docLabel,
     lineas,
     totalDebe,
     totalHaber,
     balanceado: totalDebe === totalHaber,
     origen: 'ACTIVO_FIJO',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, baseBajaProps);
 }
 
 // ============================================================================
@@ -1937,6 +2712,8 @@ export function createProductionMpdConsumptionEntry(
 ): AccountingEntry {
   const monto = Math.round(consumption.costoTotalConsumo);
   const fecha = consumption.fecha || new Date().toISOString().split('T')[0];
+  const docLabel = consumption.folioGuiaDespacho52 ? `Guía DTE 52 N° ${consumption.folioGuiaDespacho52}` : `Consumo Interno ${op.folioOP}`;
+  const folioRef = String(consumption.folioGuiaDespacho52 || op.folioOP);
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1945,28 +2722,36 @@ export function createProductionMpdConsumptionEntry(
       debe: monto,
       haber: 0,
       centroCosto: op.folioOP,
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: folioRef,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '1.1.08.01',
       cuentaNombre: `Existencias - Materias Primas (${consumption.insumoNombre})`,
       debe: 0,
       haber: monto,
-      centroCosto: consumption.bodegaOrigenNombre,
+      centroCosto: consumption.bodegaOrigenNombre || op.folioOP,
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: folioRef,
+      fechaDocumentoRef: fecha,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-cost-mpd-${consumption.id}-${Date.now()}`,
     fecha,
     concepto: `Consumo MPD para ${op.folioOP}: ${consumption.cantidadConsumida} ${consumption.unidadMedida} de ${consumption.insumoNombre}`,
-    documento: consumption.folioGuiaDespacho52 ? `Guía DTE 52 N° ${consumption.folioGuiaDespacho52}` : `Consumo Interno ${op.folioOP}`,
+    documento: docLabel,
     lineas,
     totalDebe: monto,
     totalHaber: monto,
     balanceado: true,
     origen: 'COSTEO_PRODUCCION',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, { proyecto: op.folioOP, centroCosto: op.folioOP, documentoRef: docLabel, folioDocumentoRef: folioRef });
 }
 
 /**
@@ -1978,6 +2763,7 @@ export function createProductionModAllocationEntry(
 ): AccountingEntry {
   const monto = Math.round(labor.costoTotalMOD);
   const fecha = labor.fecha || new Date().toISOString().split('T')[0];
+  const docLabel = `Parte Diario HH ${op.folioOP}`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -1986,28 +2772,40 @@ export function createProductionModAllocationEntry(
       debe: monto,
       haber: 0,
       centroCosto: op.folioOP,
+      proyecto: op.folioOP,
+      rutAuxiliar: labor.trabajadorRut,
+      nombreAuxiliar: labor.trabajadorNombre,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '5.1.03',
       cuentaNombre: `Mano de Obra Directa Fabril (${labor.etapaProceso})`,
       debe: 0,
       haber: monto,
+      centroCosto: op.folioOP,
+      proyecto: op.folioOP,
       rutAuxiliar: labor.trabajadorRut,
+      nombreAuxiliar: labor.trabajadorNombre,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-cost-mod-${labor.id}-${Date.now()}`,
     fecha,
     concepto: `Imputación MOD a ${op.folioOP}: ${labor.horasTrabajadas} HH de ${labor.trabajadorNombre} en ${labor.etapaProceso}`,
-    documento: `Parte Diario HH ${op.folioOP}`,
+    documento: docLabel,
     lineas,
     totalDebe: monto,
     totalHaber: monto,
     balanceado: true,
     origen: 'COSTEO_PRODUCCION',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, { proyecto: op.folioOP, centroCosto: op.folioOP, rutAuxiliar: labor.trabajadorRut, nombreAuxiliar: labor.trabajadorNombre, documentoRef: docLabel, folioDocumentoRef: op.folioOP });
 }
 
 /**
@@ -2020,6 +2818,7 @@ export function createProductionCifAllocationEntry(
 ): AccountingEntry {
   const monto = Math.round(montoCif);
   const fecha = fechaCustom || new Date().toISOString().split('T')[0];
+  const docLabel = `Liquidación CIF ${op.folioOP}`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -2028,6 +2827,10 @@ export function createProductionCifAllocationEntry(
       debe: monto,
       haber: 0,
       centroCosto: op.folioOP,
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '5.1.05',
@@ -2035,21 +2838,25 @@ export function createProductionCifAllocationEntry(
       debe: 0,
       haber: monto,
       centroCosto: 'PLANTA_PRODUCTIVA',
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-cost-cif-${op.id}-${Date.now()}`,
     fecha,
     concepto: `Aplicación de CIF a ${op.folioOP} (Base Prorrateo: ${op.baseProrrateoCif}, Tasa: ${op.tasaCifAplicada})`,
-    documento: `Liquidación CIF ${op.folioOP}`,
+    documento: docLabel,
     lineas,
     totalDebe: monto,
     totalHaber: monto,
     balanceado: true,
     origen: 'COSTEO_PRODUCCION',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, { proyecto: op.folioOP, centroCosto: op.folioOP, documentoRef: docLabel, folioDocumentoRef: op.folioOP });
 }
 
 /**
@@ -2061,6 +2868,7 @@ export function createProductionFinishedLiquidationEntry(
 ): AccountingEntry {
   const costoTotal = Math.round(op.costoTotalProduccion);
   const fecha = fechaCustom || op.fechaRealTermino || new Date().toISOString().split('T')[0];
+  const docLabel = `Cierre OP ${op.folioOP}`;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -2069,6 +2877,10 @@ export function createProductionFinishedLiquidationEntry(
       debe: costoTotal,
       haber: 0,
       centroCosto: op.bodegaDestinoNombre || 'BODEGA_PRODUCTO_TERMINADO',
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '1.1.08.02',
@@ -2076,21 +2888,25 @@ export function createProductionFinishedLiquidationEntry(
       debe: 0,
       haber: costoTotal,
       centroCosto: op.folioOP,
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: op.folioOP,
+      fechaDocumentoRef: fecha,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-cost-liq-${op.id}-${Date.now()}`,
     fecha,
     concepto: `Liquidación Producción Terminada ${op.folioOP}: ${op.cantidadProducidaReal} ${op.unidadMedida} de ${op.productoNombre} (Costo Unitario: $${Math.round(op.costoUnitarioReal)}/${op.unidadMedida})`,
-    documento: `Cierre OP ${op.folioOP}`,
+    documento: docLabel,
     lineas,
     totalDebe: costoTotal,
     totalHaber: costoTotal,
     balanceado: true,
     origen: 'COSTEO_PRODUCCION',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, { proyecto: op.folioOP, centroCosto: op.folioOP, documentoRef: docLabel, folioDocumentoRef: op.folioOP });
 }
 
 /**
@@ -2104,6 +2920,8 @@ export function createProductionCogsEntry(
 ): AccountingEntry {
   const costoTotalVendido = Math.round(cantidadVendida * op.costoUnitarioReal);
   const fecha = fechaCustom || new Date().toISOString().split('T')[0];
+  const docLabel = dteFolio ? `Factura DTE 33 N° ${dteFolio}` : `Despacho Venta ${op.folioOP}`;
+  const folioRef = dteFolio ? String(dteFolio) : op.folioOP;
 
   const lineas: AccountingEntryLine[] = [
     {
@@ -2112,27 +2930,36 @@ export function createProductionCogsEntry(
       debe: costoTotalVendido,
       haber: 0,
       centroCosto: 'VENTAS_OPERACIONALES',
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: folioRef,
+      fechaDocumentoRef: fecha,
     },
     {
       cuentaCodigo: '1.1.08.03',
       cuentaNombre: `Existencias - Productos Terminados (${op.productoNombre})`,
       debe: 0,
       haber: costoTotalVendido,
+      centroCosto: op.bodegaDestinoNombre || 'BODEGA_PRODUCTO_TERMINADO',
+      proyecto: op.folioOP,
+      documentoRef: docLabel,
+      folioDocumentoRef: folioRef,
+      fechaDocumentoRef: fecha,
     },
   ];
 
-  return {
+  return enrichEntryWithChartAttributes({
     id: `entry-cogs-${op.id}-${Date.now()}`,
     fecha,
     concepto: `Costo de Ventas (CMV) por entrega de ${cantidadVendida} ${op.unidadMedida} de ${op.productoNombre} (Factura DTE ${dteFolio || 'S/F'})`,
-    documento: dteFolio ? `Factura DTE 33 N° ${dteFolio}` : `Despacho Venta ${op.folioOP}`,
+    documento: docLabel,
     lineas,
     totalDebe: costoTotalVendido,
     totalHaber: costoTotalVendido,
     balanceado: true,
     origen: 'COSTEO_PRODUCCION',
     creadoEn: new Date().toISOString(),
-  };
+  }, undefined, { proyecto: op.folioOP, centroCosto: 'VENTAS_OPERACIONALES', documentoRef: docLabel, folioDocumentoRef: folioRef });
 }
 
 
