@@ -16,6 +16,7 @@ import { HrAgentModule } from './components/HrAgentModule';
 import { FixedAssetAgentModule } from './components/FixedAssetAgentModule';
 import { ProductionCostingAgentModule } from './components/ProductionCostingAgentModule';
 import { BillingAutonomousAgent } from './components/BillingAutonomousAgent';
+import { CommercialProcurementAgentModule } from './components/CommercialProcurementAgentModule';
 import { UserManualModal } from './components/UserManualModal';
 import { ErpPremiaLogo } from './components/ErpPremiaLogo';
 import { CostCenterModule } from './components/CostCenterModule';
@@ -154,6 +155,7 @@ import {
   CreditCard,
   Smartphone,
   Key,
+  ShoppingCart,
 } from 'lucide-react';
 
 export default function App() {
@@ -1200,6 +1202,7 @@ export default function App() {
     { id: 'security_admin', label: 'Seguridad, Roles & Empresas', subtitle: 'Usuarios, Roles RBAC, Empresas Anclas & Vera', icon: Key },
     { id: 'agents', label: 'Agentes & Clientes', subtitle: 'Estudio, Claves SII & RCV', icon: Sliders },
     { id: 'billing_agent', label: 'Facturación & Cobranza', subtitle: 'DTE, Playwright SII & Boletas', icon: Bot },
+    { id: 'commercial_procurement', label: 'Gestión Comercial & Compras', subtitle: 'Forecasting, Márgenes & Abastecimiento Sr.', icon: ShoppingCart },
     { id: 'rcv', label: 'Registro Compras, Ventas / Honorarios', subtitle: 'DTEs 33, 34, 61, BHE & Boletas', icon: Receipt },
     { id: 'reconciliation', label: 'Conciliación Bancaria', subtitle: 'APIs Bancos, Cartolas & Novedades', icon: Landmark },
     { id: 'f29', label: 'Agente Fiscal F29 & SII', subtitle: 'Motor F29, Art. 64 & Patente CPT', icon: FileSpreadsheet },
@@ -1236,9 +1239,15 @@ export default function App() {
       (!activeCompanySecurity || activeCompanySecurity.estadoCuenta === 'ACTIVA')
   );
 
+  const isMasterOrAdminRole =
+    currentRole?.tipoSistema === 'SUPERADMIN' ||
+    currentRole?.tipoSistema === 'ADMIN' ||
+    currentRole?.id === 'role-superadmin' ||
+    currentRole?.id === 'role-admin';
+
   const allowedModules: ErpModuleId[] = !currentRole
     ? []
-    : currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN'
+    : isMasterOrAdminRole
     ? [...ALL_ERP_MODULE_IDS]
     : currentRole.modulosPermitidos;
 
@@ -1486,6 +1495,21 @@ export default function App() {
               productionBudgets={productionBudgets}
               bankAccounts={bankAccounts}
               costCenters={costCenters}
+            />
+          )}
+
+          {activeTab === 'commercial_procurement' && (
+            <CommercialProcurementAgentModule
+              company={company}
+              activeClientId={activeClientId}
+              clients={clients}
+              productionBudgets={productionBudgets}
+              productionOrders={productionOrders}
+              onNavigateToTab={(tabId) => setActiveTab(tabId)}
+              onOpenVoiceDialogue={(personaId) => {
+                if (personaId) setVoiceDialoguePersonaId(personaId);
+                setIsVoiceDialogueOpen(true);
+              }}
             />
           )}
 
@@ -1772,31 +1796,33 @@ export default function App() {
       />
 
       {/* Voice Agent Dialogue Modal - Personas a Cargo con Interfaz de Voz */}
-      <VoiceAgentDialogueModal
-        isOpen={isVoiceDialogueOpen}
-        onClose={() => setIsVoiceDialogueOpen(false)}
-        activeClientId={activeClientId}
-        company={company}
-        initialPersonaId={voiceDialoguePersonaId}
-        onOpenConfig={() => setActiveTab('agents')}
-        onCentralizePurchases={handleVoiceCentralizePurchases}
-        onCentralizeSales={handleVoiceCentralizeSales}
-        onReconcileBank={handleVoiceReconcileBank}
-        onCalculateF29={handleVoiceCalculateF29}
-        onCentralizeExpenses={handleVoiceCentralizeExpenses}
-        onNavigateToTab={(tabId) => setActiveTab(tabId)}
-        dtes={dtes}
-        bankAccounts={bankAccounts}
-        bankMovements={bankMovements}
-        f29={f29}
-        payrolls={payrolls}
-        inventoryItems={inventoryItems}
-        productionOrders={productionOrders}
-        productionBudgets={productionBudgets}
-        employeesCount={payrolls.length}
-        inventoryCount={inventoryItems.length}
-        expensesCount={expenseReports.length}
-      />
+      {isVoiceDialogueOpen && (
+        <VoiceAgentDialogueModal
+          isOpen={isVoiceDialogueOpen}
+          onClose={() => setIsVoiceDialogueOpen(false)}
+          activeClientId={activeClientId}
+          company={company}
+          initialPersonaId={voiceDialoguePersonaId}
+          onOpenConfig={() => setActiveTab('agents')}
+          onCentralizePurchases={handleVoiceCentralizePurchases}
+          onCentralizeSales={handleVoiceCentralizeSales}
+          onReconcileBank={handleVoiceReconcileBank}
+          onCalculateF29={handleVoiceCalculateF29}
+          onCentralizeExpenses={handleVoiceCentralizeExpenses}
+          onNavigateToTab={(tabId) => setActiveTab(tabId)}
+          dtes={dtes}
+          bankAccounts={bankAccounts}
+          bankMovements={bankMovements}
+          f29={f29}
+          payrolls={payrolls}
+          inventoryItems={inventoryItems}
+          productionOrders={productionOrders}
+          productionBudgets={productionBudgets}
+          employeesCount={payrolls.length}
+          inventoryCount={inventoryItems.length}
+          expensesCount={expenseReports.length}
+        />
+      )}
     </div>
   );
 }

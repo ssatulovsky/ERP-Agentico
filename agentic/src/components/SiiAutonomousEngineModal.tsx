@@ -62,6 +62,7 @@ import {
   generateLibroVentas, 
   generateLibroHonorarios, 
   generateMonthlyCentralizationEntry, 
+  generateDetailedCentralizationEntries,
   generatePaymentEntry, 
   generateCollectionEntry, 
   parseSiiRcvCsv,
@@ -508,34 +509,64 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
     showToast(`¡Factura Folio ${updated.folio} desglosada exitosamente en ${splitPartidas.length} partidas!`);
   };
 
-  // Ejecución de Centralización Mensual de Compras
+  // Ejecución de Centralización de Compras o Ventas (Resumen o Detallado)
   const handleGenerateCentralization = async (tipo: 'COMPRA' | 'VENTA') => {
     try {
-      const result = generateMonthlyCentralizationEntry(
-        selectedPeriod,
-        tipo,
-        safeDtes,
-        centralizationConfig,
-        company,
-        supplierRules
-      );
+      const isDetailed = centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO';
 
-      // Esperar persistencia atómica en el backend / MySQL
-      await Promise.resolve(onAddAccountingEntry(result.asiento));
+      if (isDetailed) {
+        const result = generateDetailedCentralizationEntries(
+          selectedPeriod,
+          tipo,
+          safeDtes,
+          centralizationConfig,
+          company,
+          supplierRules
+        );
 
-      // Marcar los DTEs involucrados como centralizados
-      result.dtesAfectadosIds.forEach(id => {
-        const doc = safeDtes.find(d => d.id === id);
-        if (doc) {
-          onUpdateDte({
-            ...doc,
-            imputacionEstado: 'CENTRALIZADO',
-            asientoCentralizacionId: result.asiento.id
-          });
+        for (const entry of result.asientos) {
+          await Promise.resolve(onAddAccountingEntry(entry));
         }
-      });
 
-      showToast(`¡Asiento de Centralización de ${tipo === 'COMPRA' ? 'Compras' : 'Ventas'} (${selectedPeriod}) generado e incorporado al Libro Diario!`);
+        result.dtesAfectadosIds.forEach(id => {
+          const doc = safeDtes.find(d => d.id === id);
+          if (doc) {
+            onUpdateDte({
+              ...doc,
+              imputacionEstado: 'CENTRALIZADO',
+              asientoCentralizacionId: `centraliz-det-${selectedPeriod}-${doc.folio}`
+            });
+          }
+        });
+
+        showToast(`¡Se han generado exitosamente ${result.asientos.length} asientos contables individuales (movimiento a movimiento) para ${tipo === 'COMPRA' ? 'Compras' : 'Ventas'} (${selectedPeriod}) en el Libro Diario!`);
+      } else {
+        const result = generateMonthlyCentralizationEntry(
+          selectedPeriod,
+          tipo,
+          safeDtes,
+          centralizationConfig,
+          company,
+          supplierRules
+        );
+
+        // Esperar persistencia atómica en el backend / MySQL
+        await Promise.resolve(onAddAccountingEntry(result.asiento));
+
+        // Marcar los DTEs involucrados como centralizados
+        result.dtesAfectadosIds.forEach(id => {
+          const doc = safeDtes.find(d => d.id === id);
+          if (doc) {
+            onUpdateDte({
+              ...doc,
+              imputacionEstado: 'CENTRALIZADO',
+              asientoCentralizacionId: result.asiento.id
+            });
+          }
+        });
+
+        showToast(`¡Asiento de Centralización Resumen de ${tipo === 'COMPRA' ? 'Compras' : 'Ventas'} (${selectedPeriod}) generado e incorporado al Libro Diario!`);
+      }
     } catch (err: any) {
       console.error('[SiiAutonomousEngineModal] Error al centralizar:', err);
       alert(`Error al generar centralización: ${err?.message || String(err)}`);
@@ -1504,6 +1535,63 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   Define contra qué cuentas contables se centralizan las compras (Proveedores) y las ventas (Clientes).
                 </p>
 
+                {/* SELECTOR: MODO DE REGISTRO CONTABLE (RESUMEN VS DETALLADO) */}
+                <div className="bg-white border-2 border-indigo-200/90 rounded-xl p-4 mb-5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">
+                          Modalidad de Registro en Libro Diario
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                          centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                            ? 'bg-indigo-100 text-indigo-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                            ? 'Movimiento a Movimiento (DTE a DTE)'
+                            : 'Asiento Resumen Global'}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-900 mt-1">
+                        {centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                          ? 'Registro Movimiento a Movimiento (Individual por cada DTE del SII)'
+                          : 'Asiento Global Resumen Mensual (Consolidado Período)'}
+                      </h4>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                          ? 'Crea un asiento contable independiente por cada factura, nota de crédito o débito del SII con su RUT auxiliar, folio DTE, fecha de emisión y desglose neto/IVA.'
+                          : 'Consolida todos los documentos del período en un único asiento mensual de compras o ventas (resumen reglamentario Art. 56 DL 825).'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-lg border border-slate-200 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setCentralizationConfig(prev => ({ ...prev, modoRegistroContable: 'RESUMEN_GLOBAL' }))}
+                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          centralizationConfig.modoRegistroContable !== 'DETALLADO_DOCUMENTO'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Asiento Resumen Global
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCentralizationConfig(prev => ({ ...prev, modoRegistroContable: 'DETALLADO_DOCUMENTO' }))}
+                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Movimiento a Movimiento
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">
@@ -1633,10 +1721,14 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   </div>
                   <button
                     onClick={() => handleGenerateCentralization('COMPRA')}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Sliders className="w-3.5 h-3.5" />
-                    Generar Asiento Centralización Compras ({selectedPeriod})
+                    <span>
+                      {centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                        ? `Generar ${libroCompras.totalDocumentos} Asientos Detallados (Movimiento a Movimiento Compras)`
+                        : `Generar Asiento Centralización Resumen Compras (${selectedPeriod})`}
+                    </span>
                   </button>
                 </div>
 
@@ -1676,10 +1768,14 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                   </div>
                   <button
                     onClick={() => handleGenerateCentralization('VENTA')}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Sliders className="w-3.5 h-3.5" />
-                    Generar Asiento Centralización Ventas ({selectedPeriod})
+                    <span>
+                      {centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO'
+                        ? `Generar ${libroVentas.totalDocumentos} Asientos Detallados (Movimiento a Movimiento Ventas)`
+                        : `Generar Asiento Centralización Resumen Ventas (${selectedPeriod})`}
+                    </span>
                   </button>
                 </div>
               </div>

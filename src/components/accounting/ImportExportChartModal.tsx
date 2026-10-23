@@ -13,51 +13,59 @@ import {
 interface ImportExportChartModalProps {
   isOpen: boolean;
   onClose: () => void;
-  chart: HierarchicalAccountItem[];
+  chart?: HierarchicalAccountItem[];
+  accounts?: HierarchicalAccountItem[];
   onImport: (importedAccounts: HierarchicalAccountItem[]) => void;
-  empresaNombre: string;
-  empresaRut: string;
+  empresaNombre?: string;
+  empresaRut?: string;
+  company?: any;
 }
 
 export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
   isOpen,
   onClose,
   chart,
+  accounts,
   onImport,
   empresaNombre,
   empresaRut,
+  company,
 }) => {
   const [activeTab, setActiveTab] = useState<'EXPORT' | 'IMPORT'>('EXPORT');
   const [importJsonText, setImportJsonText] = useState('');
   const [importStatus, setImportStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const actualChart = chart || accounts || [];
+  const actualRut = empresaRut || company?.rut || '';
+  const actualNombre = empresaNombre || company?.razonSocial || company?.nombreFantasia || 'Empresa';
+
   if (!isOpen) return null;
 
   const handleDownloadCSV = () => {
-    const csvContent = exportChartToCSV(chart);
+    const csvContent = exportChartToCSV(actualChart);
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Plan_Cuentas_${empresaRut.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `Plan_Cuentas_${actualRut.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
 
   const handleDownloadJSON = () => {
-    const jsonStr = JSON.stringify(chart, null, 2);
+    const jsonStr = JSON.stringify(actualChart, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Plan_Cuentas_${empresaRut.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
+    link.download = `Plan_Cuentas_${actualRut.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
 
   const handleCopyJSON = () => {
-    navigator.clipboard.writeText(JSON.stringify(chart, null, 2));
+    navigator.clipboard.writeText(JSON.stringify(actualChart, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
@@ -119,7 +127,7 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
           agrupacionFiscal: item.agrupacionFiscal,
           agrupacionMatrizExtranjera: item.agrupacionMatrizExtranjera,
           agrupacionPersonalizada: item.agrupacionPersonalizada,
-          empresaRut,
+          empresaRut: actualRut,
         };
       });
 
@@ -156,7 +164,7 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
               Importar / Exportar Plan de Cuentas
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Empresa: <strong>{empresaNombre}</strong> ({empresaRut})
+              Empresa: <strong>{actualNombre}</strong> ({actualRut})
             </p>
           </div>
           <button
@@ -178,7 +186,7 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
             }`}
           >
             <Download className="w-4 h-4" />
-            <span>Exportar Plan ({chart.length} cuentas)</span>
+            <span>Exportar Plan ({actualChart?.length || 0} cuentas)</span>
           </button>
           <button
             onClick={() => setActiveTab('IMPORT')}

@@ -26,9 +26,10 @@ import {
   DownloadCloud,
   ShieldAlert,
   Target,
-  Layers
+  Layers,
+  Sliders
 } from 'lucide-react';
-import { DteDocument, DteItemDetail, DteType, AccountingEntry, CompanyProfile, ClientCompany, CostCenterMaster } from '../types';
+import { DteDocument, DteItemDetail, DteType, AccountingEntry, CompanyProfile, ClientCompany, CostCenterMaster, RcvAccountingRegistrationMode } from '../types';
 import { SEED_COST_CENTERS } from '../data/seedCostCenters';
 import { 
   formatCLP, 
@@ -210,6 +211,22 @@ export const DteManager: React.FC<DteManagerProps> = ({
   const isCompanyExento = Boolean((company as any)?.exentoIvaGiro);
   const [isConnectingSii, setIsConnectingSii] = useState(false);
 
+  // Configuración de Modalidad de Registro Contable del RCV: Resumen Global vs Movimiento a Movimiento
+  const [rcvAccountingMode, setRcvAccountingMode] = useState<RcvAccountingRegistrationMode>(() => {
+    try {
+      return (localStorage.getItem(`rcv_accounting_mode_${company.rut}`) as RcvAccountingRegistrationMode) || 'RESUMEN_GLOBAL';
+    } catch {
+      return 'RESUMEN_GLOBAL';
+    }
+  });
+
+  const handleToggleRcvAccountingMode = (mode: RcvAccountingRegistrationMode) => {
+    setRcvAccountingMode(mode);
+    try {
+      localStorage.setItem(`rcv_accounting_mode_${company.rut}`, mode);
+    } catch {}
+  };
+
   // Consulta directa y verídica al Servicio de Impuestos Internos
   const handleLoadVentasFromSii = async () => {
     setIsConnectingSii(true);
@@ -238,10 +255,19 @@ export const DteManager: React.FC<DteManagerProps> = ({
         } else {
           receivedDocs.forEach(doc => {
             onAddDte(doc);
-            if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
           });
         }
-        setSyncAlert(`¡Registro de Ventas obtenido desde el SII! Se sincronizaron ${receivedDocs.length} documentos oficiales.`);
+
+        // Si el modo configurado es DETALLADO_DOCUMENTO, se registra movimiento a movimiento
+        if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
+          receivedDocs.forEach(doc => {
+            if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
+            else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc));
+            else onAddEntry(createHonorariosEntry(doc));
+          });
+        }
+
+        setSyncAlert(`¡Registro de Ventas obtenido desde el SII! Se sincronizaron ${receivedDocs.length} documentos oficiales (${rcvAccountingMode === 'DETALLADO_DOCUMENTO' ? 'Movimiento a Movimiento' : 'Modo Resumen Global'}).`);
       } else {
         if (isCompanyExento) {
           setSyncAlert(`Consulta oficial al SII completada: ${company.razonSocial} es un contribuyente NO AFECTO A IVA (Art. 12 Letra E / DL 825). El SII certifica $0 ventas afectas con IVA (DTE 33: 0, Débito Fiscal: $0 CLP) y 0 facturas exentas emitidas en el período. Cero datos inventados.`);
@@ -389,13 +415,18 @@ export const DteManager: React.FC<DteManagerProps> = ({
     } else {
       newDocs.forEach((doc) => {
         onAddDte(doc);
+      });
+    }
+
+    if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
+      newDocs.forEach((doc) => {
         if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
         else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc));
         else onAddEntry(createHonorariosEntry(doc));
       });
     }
 
-    setSyncAlert(`¡${newDocs.length} documentos DTE sincronizados exitosamente con el RCV y Asientos Contables!`);
+    setSyncAlert(`¡${newDocs.length} documentos DTE sincronizados exitosamente con el RCV (${rcvAccountingMode === 'DETALLADO_DOCUMENTO' ? 'Asientos Movimiento a Movimiento' : 'Modo Asiento Resumen Global'})!`);
     setTimeout(() => setSyncAlert(null), 4000);
   };
 
@@ -450,10 +481,12 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
         onAddDte(dte);
 
-        // Generate normalized accounting entry
-        if (dte.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(dte));
-        else if (dte.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(dte));
-        else onAddEntry(createHonorariosEntry(dte));
+        // Generate normalized accounting entry if configured in DETALLADO_DOCUMENTO mode
+        if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
+          if (dte.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(dte));
+          else if (dte.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(dte));
+          else onAddEntry(createHonorariosEntry(dte));
+        }
 
         addedCount++;
       }
@@ -632,6 +665,59 @@ export const DteManager: React.FC<DteManagerProps> = ({
           >
             <Trash2 className="w-3.5 h-3.5 text-white" />
             <span>Vaciar Base {dtes.length > 0 ? `(${dtes.length})` : '(0)'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Configuración de Modalidad de Registro Contable del RCV */}
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-3.5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm border border-indigo-400/20">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600/60 border border-indigo-400/40 flex items-center justify-center shrink-0">
+            <Sliders className="w-4 h-4 text-indigo-200" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">
+                Modalidad de Contabilización RCV en Libro Diario:
+              </span>
+              <span className={`px-2 py-0.2 rounded text-[10px] font-extrabold ${
+                rcvAccountingMode === 'DETALLADO_DOCUMENTO'
+                  ? 'bg-indigo-400/30 text-indigo-200 border border-indigo-400/40'
+                  : 'bg-blue-400/30 text-blue-200 border border-blue-400/40'
+              }`}>
+                {rcvAccountingMode === 'DETALLADO_DOCUMENTO' ? 'Movimiento a Movimiento' : 'Asiento Resumen Global'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              {rcvAccountingMode === 'DETALLADO_DOCUMENTO'
+                ? 'El sistema genera un asiento individual por cada DTE importado (desglose por RUT, Folio y fecha específica).'
+                : 'El sistema consolida todos los DTEs en un único asiento mensual de compras/ventas (Art. 56 DL 825).'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-slate-800/90 p-1 rounded-lg border border-slate-700/80 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleToggleRcvAccountingMode('RESUMEN_GLOBAL')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+              rcvAccountingMode === 'RESUMEN_GLOBAL'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Asiento Resumen Global
+          </button>
+          <button
+            type="button"
+            onClick={() => handleToggleRcvAccountingMode('DETALLADO_DOCUMENTO')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+              rcvAccountingMode === 'DETALLADO_DOCUMENTO'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Movimiento a Movimiento (Detallado)
           </button>
         </div>
       </div>

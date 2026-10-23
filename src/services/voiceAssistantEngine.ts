@@ -233,13 +233,16 @@ class VoiceAssistantEngine {
   public async speakWithPiper(
     cleanText: string,
     persona: AgentPersona,
-    callbacks?: VoicePlaybackCallbacks
+    callbacks?: VoicePlaybackCallbacks,
+    targetSessionId?: number
   ): Promise<boolean> {
     if (typeof window === 'undefined') return false;
 
     try {
-      this.stopSpeaking();
-      const sessionId = ++this.currentPlaybackSessionId;
+      const sessionId = targetSessionId ?? ++this.currentPlaybackSessionId;
+      if (!targetSessionId) {
+        this.stopSpeaking();
+      }
 
       const voiceId =
         persona.voz.piperVoiceId ||
@@ -271,7 +274,7 @@ class VoiceAssistantEngine {
 
       // 1. Sintetizar inmediatamente el primer fragmento para arrancar rápido
       const firstAudioSrc = await fetchChunkAudio(chunks[0]);
-      if (this.currentPlaybackSessionId !== sessionId) return false;
+      if (this.currentPlaybackSessionId !== sessionId) return true; // Cancelado por una sesión posterior; no activar fallback
 
       if (!firstAudioSrc) {
         // Fallback al sintetizador nativo si Piper no está instalado o falló
@@ -309,6 +312,10 @@ class VoiceAssistantEngine {
         this.currentAudioElement = audio;
 
         audio.onplay = () => {
+          if (this.currentPlaybackSessionId !== sessionId) {
+            audio.pause();
+            return;
+          }
           if (!hasStarted) {
             hasStarted = true;
             callbacks?.onStart?.();
@@ -340,20 +347,23 @@ class VoiceAssistantEngine {
         };
 
         try {
+          if (this.currentPlaybackSessionId !== sessionId) return;
           await audio.play();
         } catch (err) {
           console.warn('[VoiceAssistantEngine] Error en audio.play():', err);
           this.currentAudioElement = null;
-          callbacks?.onEnd?.();
-          // Fallback al sintetizador nativo si el navegador bloquea audio HTML5
-          this.speakBrowser(cleanText, persona, callbacks);
+          // SOLO si esta sesión sigue siendo la activa y no fue cancelada, activar fallback
+          if (this.currentPlaybackSessionId === sessionId) {
+            callbacks?.onEnd?.();
+            this.speakBrowser(cleanText, persona, callbacks, sessionId);
+          }
         }
       };
 
       await playSequential(0, firstAudioSrc);
       return true;
     } catch (err) {
-      console.warn('[VoiceAssistantEngine] Falló Piper TTS en backend, usando fallback navegador:', err);
+      console.warn('[VoiceAssistantEngine] Falló Piper TTS en backend:', err);
       return false;
     }
   }
@@ -367,6 +377,10 @@ class VoiceAssistantEngine {
     persona: AgentPersona, 
     callbacks?: VoicePlaybackCallbacks
   ): void {
+    // Detener de inmediato cualquier síntesis o audio activo anterior
+    this.stopSpeaking();
+    const sessionId = this.currentPlaybackSessionId;
+
     // Limpiar texto de formato markdown y asteriscos para que suene natural
     const cleanText = text
       .replace(/[*#_`~>]/g, '')
@@ -382,15 +396,16 @@ class VoiceAssistantEngine {
     // Si la persona usa Piper o es Vera, intentar síntesis neuronal Piper con fallback al navegador
     const usesPiper = persona.voz.neuralModel === 'piper' || persona.id === 'AGENTE_GENERAL_VERA';
     if (usesPiper) {
-      this.speakWithPiper(cleanText, persona, callbacks).then((played) => {
-        if (!played) {
-          this.speakBrowser(cleanText, persona, callbacks);
+      this.speakWithPiper(cleanText, persona, callbacks, sessionId).then((played) => {
+        // Fallback al navegador ÚNICAMENTE si Piper falló y la sesión NO fue cancelada por otra persona
+        if (!played && this.currentPlaybackSessionId === sessionId) {
+          this.speakBrowser(cleanText, persona, callbacks, sessionId);
         }
       });
       return;
     }
 
-    this.speakBrowser(cleanText, persona, callbacks);
+    this.speakBrowser(cleanText, persona, callbacks, sessionId);
   }
 
   /**
@@ -399,15 +414,23 @@ class VoiceAssistantEngine {
   public speakBrowser(
     cleanText: string,
     persona: AgentPersona,
-    callbacks?: VoicePlaybackCallbacks
+    callbacks?: VoicePlaybackCallbacks,
+    sessionId?: number
   ): void {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       callbacks?.onEnd?.();
       return;
     }
 
+    // Si la sesión ya fue cancelada por otro agente o stopSpeaking(), abortar
+    if (sessionId !== undefined && this.currentPlaybackSessionId !== sessionId) {
+      return;
+    }
+
     // Cancelar cualquier síntesis anterior
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     const chosenVoice = this.getBestVoiceForPersona(persona);
@@ -437,6 +460,12 @@ class VoiceAssistantEngine {
     utterance.volume = persona.voz.volume ?? 1.0;
 
     utterance.onstart = () => {
+      if (sessionId !== undefined && this.currentPlaybackSessionId !== sessionId) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {}
+        return;
+      }
       callbacks?.onStart?.();
     };
 

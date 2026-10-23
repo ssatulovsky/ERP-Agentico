@@ -672,7 +672,7 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                         <p className="text-xs text-slate-600 mt-1">{role.descripcion}</p>
                       </div>
 
-                      {role.esEditable && (
+                      {(role.esEditable || isSuperAdmin || role.tipoSistema === 'ADMIN') && (
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
@@ -682,14 +682,16 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteRole(role)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                            title="Eliminar rol"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {role.esEditable && role.tipoSistema === 'CUSTOM' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRole(role)}
+                              className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                              title="Eliminar rol"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -700,9 +702,9 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                         Módulos ERP Habilitados ({role.modulosPermitidos.length} de {ERP_MODULES_CATALOG.length}):
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {role.tipoSistema === 'SUPERADMIN' || role.tipoSistema === 'ADMIN' ? (
+                        {role.tipoSistema === 'SUPERADMIN' ? (
                           <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold">
-                            ✅ Acceso Total a Todos los Módulos del ERP (18/18)
+                            ✅ Acceso Total a Todos los Módulos del ERP ({ERP_MODULES_CATALOG.length}/{ERP_MODULES_CATALOG.length})
                           </span>
                         ) : (
                           role.modulosPermitidos.map((modId) => {
@@ -748,7 +750,7 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                     <span>
                       Usuarios con este rol: <strong className="text-slate-800">{assignedCount}</strong>
                     </span>
-                    {role.esEditable ? (
+                    {role.esEditable || isSuperAdmin || role.tipoSistema === 'ADMIN' ? (
                       <button
                         type="button"
                         onClick={() => openEditRoleModal(role)}
@@ -757,7 +759,7 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                         Configurar Módulos →
                       </button>
                     ) : (
-                      <span className="text-slate-400 italic">Rol base del sistema</span>
+                      <span className="text-slate-400 italic">Rol base del sistema (Acceso Total)</span>
                     )}
                   </div>
                 </div>
@@ -1262,12 +1264,12 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                   {ERP_MODULES_CATALOG.map((mod) => {
                     const checked = roleModules.includes(mod.id);
                     return (
-                      <label
+                      <div
                         key={mod.id}
                         onClick={() => toggleRoleModule(mod.id)}
-                        className={`p-2.5 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                        className={`p-2.5 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all select-none ${
                           checked
-                            ? 'bg-indigo-50/90 border-indigo-400 text-indigo-950'
+                            ? 'bg-indigo-50/90 border-indigo-400 text-indigo-950 shadow-xs'
                             : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
                         }`}
                       >
@@ -1275,13 +1277,17 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                           type="checkbox"
                           checked={checked}
                           onChange={() => {}}
-                          className="mt-0.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleRoleModule(mod.id);
+                          }}
+                          className="mt-0.5 cursor-pointer"
                         />
-                        <div className="text-xs">
+                        <div className="text-xs flex-1">
                           <div className="font-bold">{mod.nombre}</div>
                           <div className="text-[10px] text-slate-500">{mod.agenteNombre}</div>
                         </div>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>

@@ -225,7 +225,7 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
     if (isOpen) {
       const list = agentPersonasStorage.getPersonas(activeClientId);
       setPersonas(list);
-      if (initialPersonaId) {
+      if (initialPersonaId && initialPersonaId !== selectedPersonaId) {
         setSelectedPersonaId(initialPersonaId);
       }
     }
@@ -234,6 +234,9 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
   // Inicializar conversación cuando cambia la persona seleccionada
   useEffect(() => {
     if (!isOpen || !selectedPersona) return;
+
+    // Si se especificó una persona inicial al abrir el modal y aún no coincide el estado, esperar sincronización
+    if (initialPersonaId && selectedPersonaId !== initialPersonaId) return;
 
     // Detener cualquier audio previo
     clearSilenceTimer();
@@ -263,7 +266,7 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
         onError: () => setIsSpeaking(false),
       });
     }
-  }, [selectedPersonaId, isOpen]);
+  }, [selectedPersonaId, isOpen, initialPersonaId]);
 
   // Cleanup al cerrar el modal o desmontar componente
   useEffect(() => {

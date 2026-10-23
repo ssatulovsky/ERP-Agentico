@@ -10,7 +10,8 @@ export type AgentModuleArea =
   | 'BODEGA_INVENTARIO'
   | 'PRODUCCION_COSTOS'
   | 'ACTIVO_FIJO'
-  | 'RENDICION_GASTOS';
+  | 'RENDICION_GASTOS'
+  | 'COMERCIAL_APROVISIONAMIENTO';
 
 export interface AgentVoiceConfig {
   voiceURI?: string;

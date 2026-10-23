@@ -31,6 +31,7 @@ import {
 import { piperTtsService, PIPER_SPANISH_VOICES } from "./src/services/piperTtsService";
 import { whatsappBridgeService } from "./src/services/whatsappBridgeService";
 import { aiRouterService } from "./src/services/aiRouterService";
+import { commercialProcurementService } from "./src/services/commercialProcurementService";
 
 dotenv.config({ override: true });
 
@@ -197,6 +198,142 @@ app.post("/api/admin/ai-company-override", (req, res) => {
     if (!empresaId) return res.status(400).json({ success: false, error: "empresaId es requerido" });
     aiRouterService.setCompanyOverride(empresaId, override);
     res.json({ success: true, config: aiRouterService.getConfig() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =======================================================
+// AGENTE DE GESTIÓN COMERCIAL & APROVISIONAMIENTO SENIOR
+// =======================================================
+app.get("/api/commercial-procurement/state", (req, res) => {
+  try {
+    const empresaId = (req.query.empresaId as string) || "client-retail-01";
+    const state = commercialProcurementService.getState(empresaId);
+    res.json({ success: true, state });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/commercial-procurement/adjust-price", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", sku, nuevoPrecioVenta, motivo } = req.body;
+    if (!sku || nuevoPrecioVenta === undefined) {
+      return res.status(400).json({ success: false, error: "sku y nuevoPrecioVenta son requeridos" });
+    }
+    const result = commercialProcurementService.adjustSellingPrice(
+      empresaId,
+      sku,
+      Number(nuevoPrecioVenta),
+      motivo || "Ajuste de margen target por Agente Sr."
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/commercial-procurement/purchase-order", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", ...orderData } = req.body;
+    if (!orderData.proveedorRut || !orderData.items || !orderData.items.length) {
+      return res.status(400).json({ success: false, error: "Datos de orden de compra incompletos" });
+    }
+    const newOrder = commercialProcurementService.createPurchaseOrder(empresaId, orderData);
+    res.json({ success: true, order: newOrder });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/commercial-procurement/quote", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", ...quoteData } = req.body;
+    if (!quoteData.clienteRut || !quoteData.items || !quoteData.items.length) {
+      return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
+    }
+    const newQuote = commercialProcurementService.createCommercialQuote(empresaId, quoteData);
+    res.json({ success: true, quote: newQuote });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/commercial-procurement/ai-advisor", async (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", prompt, companyProfile } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: "prompt es requerido" });
+    }
+    const result = await commercialProcurementService.runSeniorConsultation(
+      empresaId,
+      prompt,
+      companyProfile
+    );
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Error en /api/commercial-procurement/ai-advisor:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Emisión de Solicitudes de Cotización de Compra (RFQ)
+app.post("/api/commercial-procurement/rfq", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", titulo, diasPlazoRespuesta, items, proveedorRuts } = req.body;
+    if (!titulo || !items || !items.length || !proveedorRuts || !proveedorRuts.length) {
+      return res.status(400).json({ success: false, error: "Título, items y lista de proveedores son requeridos" });
+    }
+    const newRfq = commercialProcurementService.createRfq(empresaId, {
+      titulo,
+      diasPlazoRespuesta: Number(diasPlazoRespuesta) || 5,
+      items,
+      proveedorRuts,
+    });
+    res.json({ success: true, rfq: newRfq });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reiteración de Recordatorio a Proveedor (Seguimiento Activo)
+app.post("/api/commercial-procurement/rfq/reminder", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", rfqId, supplierRut } = req.body;
+    if (!rfqId || !supplierRut) {
+      return res.status(400).json({ success: false, error: "rfqId y supplierRut son requeridos" });
+    }
+    const result = commercialProcurementService.sendSupplierReminder(empresaId, rfqId, supplierRut);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Registro / Simulación de Oferta de Proveedor
+app.post("/api/commercial-procurement/rfq/quote", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", rfqId, supplierRut, quoteData } = req.body;
+    if (!rfqId || !supplierRut || !quoteData || quoteData.montoNetoOfertado === undefined) {
+      return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
+    }
+    const result = commercialProcurementService.submitSupplierQuote(empresaId, rfqId, supplierRut, quoteData);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Adjudicación de RFQ al Mejor Proveedor y Emisión Automática de Orden de Compra (OC)
+app.post("/api/commercial-procurement/rfq/award", (req, res) => {
+  try {
+    const { empresaId = "client-retail-01", rfqId, winningSupplierRut, motivoAdjudicacion } = req.body;
+    if (!rfqId || !winningSupplierRut) {
+      return res.status(400).json({ success: false, error: "rfqId y winningSupplierRut son requeridos" });
+    }
+    const result = commercialProcurementService.awardRfq(empresaId, rfqId, winningSupplierRut, motivoAdjudicacion);
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

@@ -391,6 +391,8 @@ export interface SupplierAccountRule {
   esFrecuente: boolean;
 }
 
+export type RcvAccountingRegistrationMode = 'RESUMEN_GLOBAL' | 'DETALLADO_DOCUMENTO';
+
 export interface SiiCentralizationConfig {
   cuentaComprasPasivo: { codigo: string; nombre: string }; // Ej: 2.1.01 Proveedores Nacionales
   cuentaVentasActivo: { codigo: string; nombre: string }; // Ej: 1.1.03 Clientes Nacionales
@@ -403,6 +405,7 @@ export interface SiiCentralizationConfig {
   cuentaRetencionHonorarios: { codigo: string; nombre: string }; // 2.1.06 Retención Honorarios
   cuentaBancoPago: { codigo: string; nombre: string }; // 1.1.01 Banco Santander
   cuentaBancoCobro: { codigo: string; nombre: string }; // 1.1.01 Banco Santander
+  modoRegistroContable?: RcvAccountingRegistrationMode; // 'RESUMEN_GLOBAL' (asiento resumen mensual) | 'DETALLADO_DOCUMENTO' (asiento individual por cada DTE)
 }
 
 export interface SiiPendingPeriodDiagnostic {

@@ -17,6 +17,10 @@ import {
   expenseItems,
   expenseProjects,
   bankTransactions,
+  rfqRequests as dbRfqRequests,
+  rfqSupplierResponses as dbRfqSupplierResponses,
+  purchaseOrders as dbPurchaseOrders,
+  commercialQuotes as dbCommercialQuotes,
 } from '../db/mysqlSchema';
 
 export interface DiskDataStore {
@@ -45,6 +49,10 @@ export interface DiskDataStore {
   groups?: Record<string, any[]>;
   financialNotes?: Record<string, any[]>;
   clientStates?: Record<string, any>;
+  rfqRequests?: any[];
+  rfqSupplierResponses?: any[];
+  purchaseOrders?: any[];
+  commercialQuotes?: any[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -77,6 +85,10 @@ class DiskPersistenceService {
     groups: {},
     financialNotes: {},
     clientStates: {},
+    rfqRequests: [],
+    rfqSupplierResponses: [],
+    purchaseOrders: [],
+    commercialQuotes: [],
   };
 
   private isInitialized = false;
@@ -1436,6 +1448,248 @@ class DiskPersistenceService {
     const tenantKey = `${empresaId}__${key}`;
     this.store.clientStates[tenantKey] = data;
     this.scheduleFlush();
+  }
+
+  // ============================================================================
+  // GESTIÓN COMERCIAL, APROVISIONAMIENTO Y SOLICITUDES DE COTIZACIÓN (RFQ)
+  // ============================================================================
+  public getRfqRequests(empresaId?: string): any[] {
+    if (!this.store.rfqRequests) this.store.rfqRequests = [];
+    if (empresaId) {
+      return this.store.rfqRequests.filter((r: any) => r.empresaId === empresaId);
+    }
+    return this.store.rfqRequests;
+  }
+
+  public saveRfqRequest(rfq: any): void {
+    if (!this.store.rfqRequests) this.store.rfqRequests = [];
+    const idx = this.store.rfqRequests.findIndex((r: any) => r.id === rfq.id);
+    if (idx >= 0) {
+      this.store.rfqRequests[idx] = { ...this.store.rfqRequests[idx], ...rfq };
+    } else {
+      this.store.rfqRequests.unshift(rfq);
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb
+            .insert(dbRfqRequests)
+            .values({
+              id: rfq.id,
+              empresaId: rfq.empresaId,
+              folioRfq: rfq.folioRfq,
+              titulo: rfq.titulo,
+              fechaEmision: rfq.fechaEmision,
+              fechaLimiteRespuesta: rfq.fechaLimiteRespuesta,
+              diasPlazoRespuesta: rfq.diasPlazoRespuesta || 3,
+              estado: rfq.estado || 'ENVIADA',
+              itemsJson: rfq.itemsJson || rfq.items,
+              proveedorGanadorRut: rfq.proveedorGanadorRut || null,
+              proveedorGanadorNombre: rfq.proveedorGanadorNombre || null,
+              ordenCompraGeneradaId: rfq.ordenCompraGeneradaId || null,
+              folioOrdenCompra: rfq.folioOrdenCompra || null,
+              motivoAdjudicacion: rfq.motivoAdjudicacion || null,
+              recomendacionAgenteSr: rfq.recomendacionAgenteSr || null,
+              createdAt: new Date(rfq.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                estado: rfq.estado,
+                proveedorGanadorRut: rfq.proveedorGanadorRut || null,
+                proveedorGanadorNombre: rfq.proveedorGanadorNombre || null,
+                ordenCompraGeneradaId: rfq.ordenCompraGeneradaId || null,
+                folioOrdenCompra: rfq.folioOrdenCompra || null,
+                motivoAdjudicacion: rfq.motivoAdjudicacion || null,
+                recomendacionAgenteSr: rfq.recomendacionAgenteSr || null,
+              },
+            });
+        } catch (e: any) {
+          console.warn(`[DiskPersistence] Error al sincronizar RFQ a MySQL: ${e.message}`);
+        }
+      })();
+    }
+  }
+
+  public getRfqSupplierResponses(rfqId?: string): any[] {
+    if (!this.store.rfqSupplierResponses) this.store.rfqSupplierResponses = [];
+    if (rfqId) {
+      return this.store.rfqSupplierResponses.filter((r: any) => r.rfqId === rfqId);
+    }
+    return this.store.rfqSupplierResponses;
+  }
+
+  public saveRfqSupplierResponse(resp: any): void {
+    if (!this.store.rfqSupplierResponses) this.store.rfqSupplierResponses = [];
+    const idx = this.store.rfqSupplierResponses.findIndex((r: any) => r.id === resp.id);
+    if (idx >= 0) {
+      this.store.rfqSupplierResponses[idx] = { ...this.store.rfqSupplierResponses[idx], ...resp };
+    } else {
+      this.store.rfqSupplierResponses.unshift(resp);
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb
+            .insert(dbRfqSupplierResponses)
+            .values({
+              id: resp.id,
+              rfqId: resp.rfqId,
+              empresaId: resp.empresaId,
+              proveedorRut: resp.proveedorRut,
+              proveedorRazonSocial: resp.proveedorRazonSocial,
+              emailContacto: resp.emailContacto,
+              telefonoContacto: resp.telefonoContacto || null,
+              estadoSeguimiento: resp.estadoSeguimiento || 'ENVIADA',
+              fechaEnvio: new Date(resp.fechaEnvio || Date.now()),
+              fechaLectura: resp.fechaLectura ? new Date(resp.fechaLectura) : null,
+              fechaRespuesta: resp.fechaRespuesta ? new Date(resp.fechaRespuesta) : null,
+              cantidadReiteraciones: resp.cantidadReiteraciones || 0,
+              ultimoRecordatorioAt: resp.ultimoRecordatorioAt ? new Date(resp.ultimoRecordatorioAt) : null,
+              montoNetoOfertado: resp.montoNetoOfertado != null ? String(resp.montoNetoOfertado) : null,
+              plazoEntregaDiasOfertado: resp.plazoEntregaDiasOfertado || null,
+              condicionPagoOfertada: resp.condicionPagoOfertada || null,
+              costoFleteClp: resp.costoFleteClp != null ? String(resp.costoFleteClp) : '0.00',
+              scoringPonderadoTotal: resp.scoringPonderadoTotal != null ? String(resp.scoringPonderadoTotal) : null,
+              itemsCotizadosJson: resp.itemsCotizadosJson || resp.itemsCotizados || null,
+              observacionesProveedor: resp.observacionesProveedor || null,
+              esOfertaGanadora: Boolean(resp.esOfertaGanadora),
+              createdAt: new Date(resp.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                estadoSeguimiento: resp.estadoSeguimiento,
+                cantidadReiteraciones: resp.cantidadReiteraciones,
+                ultimoRecordatorioAt: resp.ultimoRecordatorioAt ? new Date(resp.ultimoRecordatorioAt) : null,
+                montoNetoOfertado: resp.montoNetoOfertado != null ? String(resp.montoNetoOfertado) : null,
+                plazoEntregaDiasOfertado: resp.plazoEntregaDiasOfertado || null,
+                condicionPagoOfertada: resp.condicionPagoOfertada || null,
+                costoFleteClp: resp.costoFleteClp != null ? String(resp.costoFleteClp) : '0.00',
+                scoringPonderadoTotal: resp.scoringPonderadoTotal != null ? String(resp.scoringPonderadoTotal) : null,
+                itemsCotizadosJson: resp.itemsCotizadosJson || resp.itemsCotizados || null,
+                observacionesProveedor: resp.observacionesProveedor || null,
+                esOfertaGanadora: Boolean(resp.esOfertaGanadora),
+              },
+            });
+        } catch (e: any) {
+          console.warn(`[DiskPersistence] Error al sincronizar RFQ Supplier Response a MySQL: ${e.message}`);
+        }
+      })();
+    }
+  }
+
+  public getPurchaseOrders(empresaId?: string): any[] {
+    if (!this.store.purchaseOrders) this.store.purchaseOrders = [];
+    if (empresaId) {
+      return this.store.purchaseOrders.filter((o: any) => o.empresaId === empresaId);
+    }
+    return this.store.purchaseOrders;
+  }
+
+  public savePurchaseOrder(po: any): void {
+    if (!this.store.purchaseOrders) this.store.purchaseOrders = [];
+    const idx = this.store.purchaseOrders.findIndex((o: any) => o.id === po.id);
+    if (idx >= 0) {
+      this.store.purchaseOrders[idx] = { ...this.store.purchaseOrders[idx], ...po };
+    } else {
+      this.store.purchaseOrders.unshift(po);
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb
+            .insert(dbPurchaseOrders)
+            .values({
+              id: po.id,
+              empresaId: po.empresaId,
+              folioOc: po.folioOc || po.folio,
+              rfqOrigenId: po.rfqOrigenId || null,
+              proveedorRut: po.proveedorRut,
+              proveedorRazonSocial: po.proveedorRazonSocial,
+              fechaEmision: po.fechaEmision,
+              fechaEntregaPactada: po.fechaEntregaPactada || po.fechaEmision,
+              condicionPago: po.condicionPago || 'Crédito 30 días',
+              itemsJson: po.itemsJson || po.items,
+              montoNeto: String(po.montoNeto || po.totalNetoCLP || '0.00'),
+              montoIva: String(po.montoIva || po.iva19CLP || '0.00'),
+              montoTotal: String(po.montoTotal || po.totalBrutoCLP || '0.00'),
+              estado: po.estado || 'EMITIDA',
+              aprobadoPorAgente: po.aprobadoPorAgente ?? true,
+              firmaAgente: po.firmaAgente || 'Esteban Morales (Gerente Comercial & Aprovisionamiento Sr.)',
+              motivoGeneracion: po.motivoGeneracion || null,
+              asientoContableRefId: po.asientoContableRefId || null,
+              createdAt: new Date(po.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                estado: po.estado,
+                montoTotal: String(po.montoTotal || po.totalBrutoCLP || '0.00'),
+              },
+            });
+        } catch (e: any) {
+          console.warn(`[DiskPersistence] Error al sincronizar Purchase Order a MySQL: ${e.message}`);
+        }
+      })();
+    }
+  }
+
+  public getCommercialQuotes(empresaId?: string): any[] {
+    if (!this.store.commercialQuotes) this.store.commercialQuotes = [];
+    if (empresaId) {
+      return this.store.commercialQuotes.filter((q: any) => q.empresaId === empresaId);
+    }
+    return this.store.commercialQuotes;
+  }
+
+  public saveCommercialQuote(quote: any): void {
+    if (!this.store.commercialQuotes) this.store.commercialQuotes = [];
+    const idx = this.store.commercialQuotes.findIndex((q: any) => q.id === quote.id);
+    if (idx >= 0) {
+      this.store.commercialQuotes[idx] = { ...this.store.commercialQuotes[idx], ...quote };
+    } else {
+      this.store.commercialQuotes.unshift(quote);
+    }
+    this.scheduleFlush();
+
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          await mysqlDb
+            .insert(dbCommercialQuotes)
+            .values({
+              id: quote.id,
+              empresaId: quote.empresaId,
+              folioCotizacion: quote.folioCotizacion || quote.folio,
+              clienteRut: quote.clienteRut,
+              clienteRazonSocial: quote.clienteRazonSocial,
+              fechaEmision: quote.fechaEmision,
+              fechaVencimiento: quote.fechaVencimiento || quote.fechaEmision,
+              validezDias: quote.validezDias || 15,
+              itemsJson: quote.itemsJson || quote.items,
+              montoNeto: String(quote.montoNeto || quote.totalNetoCLP || '0.00'),
+              montoIva: String(quote.montoIva || quote.iva19CLP || '0.00'),
+              montoTotal: String(quote.montoTotal || quote.totalBrutoCLP || '0.00'),
+              margenBrutoPromedioPorcentaje: String(quote.margenBrutoPromedioPorcentaje || quote.margenBrutoTotalPorcentaje || '0.00'),
+              estado: quote.estado || 'ENVIADA',
+              stockValidado: quote.stockValidado ?? true,
+              createdAt: new Date(quote.createdAt || Date.now()),
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                estado: quote.estado,
+                montoTotal: String(quote.montoTotal || quote.totalBrutoCLP || '0.00'),
+              },
+            });
+        } catch (e: any) {
+          console.warn(`[DiskPersistence] Error al sincronizar Commercial Quote a MySQL: ${e.message}`);
+        }
+      })();
+    }
   }
 
   public initExpenseSeeds() {

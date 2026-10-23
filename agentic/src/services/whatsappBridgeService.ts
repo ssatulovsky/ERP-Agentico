@@ -361,7 +361,9 @@ export class WhatsAppBridgeService {
         const raw = fs.readFileSync(this.rbacStorePath, 'utf-8');
         const parsed = JSON.parse(raw) as SecurityRbacStoreState;
         if (parsed && Array.isArray(parsed.roles) && Array.isArray(parsed.users)) {
-          return parsed;
+          const merged = mergeSecurityRbacStates(parsed, DEFAULT_SECURITY_RBAC_STATE);
+          this.saveRbacStore(merged);
+          return merged;
         }
       }
     } catch (e) {

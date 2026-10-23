@@ -148,6 +148,7 @@ import { ProjectManagerModal } from './accounting/ProjectManagerModal';
 import type { ExpenseProject } from '../types';
 import { GroupManagerModal } from './accounting/GroupManagerModal';
 import { ImportExportChartModal } from './accounting/ImportExportChartModal';
+import { MassJournalEntryImportModal } from './accounting/MassJournalEntryImportModal';
 import { GroupedBalanceView } from './accounting/GroupedBalanceView';
 import { seedF29 } from '../data/seedData';
 import { AccountingEventAssistant } from './accounting/AccountingEventAssistant';
@@ -486,6 +487,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [subaccountParentCode, setSubaccountParentCode] = useState<string | undefined>(undefined);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [importExportModalOpen, setImportExportModalOpen] = useState(false);
+  const [isMassImportModalOpen, setIsMassImportModalOpen] = useState(false);
 
   // Modal de Edición de Asientos del Libro Diario
   const [editingEntry, setEditingEntry] = useState<AccountingEntry | null>(null);
@@ -1542,6 +1544,37 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     setChartOfAccounts(imported);
     saveCompanyChartOfAccounts(company.rut, imported);
     showToast(`Plan de cuentas importado (${imported.length} cuentas cargadas).`, 'success');
+  };
+
+  // Importación y registro masivo de asientos contables (Migración de sistemas)
+  const handleMassCommitEntries = async (importedEntries: AccountingEntry[]) => {
+    let successCount = 0;
+    let failedCount = 0;
+    for (const entry of importedEntries) {
+      try {
+        await dispatchEntry(entry, {
+          agenteNombre: 'MIGRACION_MASIVA_SISTEMAS',
+          accion: 'ASIENTO_MIGRACION_HISTORICA',
+          payloadInput: { totalLineas: entry.lineas?.length, glosa: entry.glosa, numero: entry.numero },
+        });
+        successCount++;
+      } catch (err) {
+        failedCount++;
+        console.error('[MassImport] Error registrando asiento migrado:', entry.numero, err);
+      }
+    }
+    if (refetchLedger) {
+      try {
+        await refetchLedger();
+      } catch {
+        // Refetch silencioso
+      }
+    }
+    if (failedCount === 0) {
+      showToast(`Migración masiva completada: ${successCount} asientos registrados con éxito en el Libro Diario.`, 'success');
+    } else {
+      showToast(`Migración masiva parcial: ${successCount} registrados, ${failedCount} con error o período bloqueado.`, 'warning');
+    }
   };
 
   // Filtered Chart of Accounts
@@ -3368,6 +3401,16 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             >
               <Coins className="w-4 h-4 text-amber-300" />
               <span>Multimoneda & T/C (NIC 21)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsMassImportModalOpen(true)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              title="Importador Masivo de Asientos Contables desde Excel/CSV (Migración de Softland, Defontana, ERPs históricos)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+              <span>Importación Masiva (Migración)</span>
             </button>
 
             <button
@@ -8298,9 +8341,27 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
         <ImportExportChartModal
           isOpen={importExportModalOpen}
           onClose={() => setImportExportModalOpen(false)}
+          chart={chartOfAccounts}
           accounts={chartOfAccounts}
           company={company}
+          empresaNombre={company?.razonSocial || company?.nombreFantasia || 'Empresa'}
+          empresaRut={company?.rut || ''}
           onImport={handleImportChart}
+        />
+      )}
+
+      {/* MODAL: IMPORTACIÓN MASIVA DE ASIENTOS CONTABLES (MIGRACIÓN ERP HISTÓRICO) */}
+      {isMassImportModalOpen && (
+        <MassJournalEntryImportModal
+          isOpen={isMassImportModalOpen}
+          onClose={() => setIsMassImportModalOpen(false)}
+          company={effectiveCompany}
+          chartOfAccounts={chartOfAccounts}
+          onCommitEntries={handleMassCommitEntries}
+          onAutoAddAccounts={(newAccounts) => {
+            const updated = [...chartOfAccounts, ...newAccounts];
+            handleImportChart(updated);
+          }}
         />
       )}
 

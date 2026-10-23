@@ -116,6 +116,7 @@ export const WHATSAPP_AGENT_SCOPES_CATALOG: WhatsAppAgentScopeMeta[] = [
 export type ErpModuleId =
   | 'executive_dashboard'
   | 'agents'
+  | 'commercial_procurement'
   | 'billing_agent'
   | 'rcv'
   | 'reconciliation'
@@ -164,6 +165,14 @@ export const ERP_MODULES_CATALOG: ErpModuleMeta[] = [
     agenteNombre: 'Orquestador Multi-Agente & SII',
     descripcion: 'Configuración de empresas, credenciales SII, automatizaciones y vinculación WhatsApp.',
     whatsappScopes: ['PANORAMA_DIRECTORIO'],
+  },
+  {
+    id: 'commercial_procurement',
+    nombre: 'Gestión Comercial & Aprovisionamiento',
+    categoria: 'COMERCIAL_SII',
+    agenteNombre: 'Esteban Morales (Gerente Comercial & Aprovisionamiento Sr.)',
+    descripcion: 'Equilibrio de márgenes, pronóstico de demanda, abastecimiento estratégico, anti-quiebres de stock y ventas.',
+    whatsappScopes: ['PRESUPUESTOS_COMERCIAL', 'BODEGA_INVENTARIO'],
   },
   {
     id: 'billing_agent',
@@ -470,7 +479,7 @@ export const DEFAULT_SECURITY_ROLES: SecurityRole[] = [
       'Administrador de la empresa seleccionada. Si es cliente ERP, administra su empresa principal, sus empresas anclas, sus usuarios y crea roles personalizados.',
     modulosPermitidos: [...ALL_ERP_MODULE_IDS],
     whatsappScopesPermitidos: deriveWhatsappScopesFromModules(ALL_ERP_MODULE_IDS, 'ADMIN'),
-    esEditable: false,
+    esEditable: true,
     creadoPor: 'SISTEMA',
     fechaActualizacion: '2026-01-01',
   },
@@ -495,10 +504,11 @@ export const DEFAULT_SECURITY_ROLES: SecurityRole[] = [
     tipoSistema: 'CUSTOM',
     empresaScopeId: 'GLOBAL',
     descripcion:
-      'Acceso a Agente Contable Senior, Libros Auxiliares, RCV SII, F29, Conciliación Bancaria, Activo Fijo y Arriendos IFRS 16.',
+      'Acceso a Agente Contable Senior, Libros Auxiliares, RCV SII, F29, Conciliación Bancaria, Gestión Comercial & Compras, Activo Fijo y Arriendos IFRS 16.',
     modulosPermitidos: [
       'ledger',
       'rcv',
+      'commercial_procurement',
       'f29',
       'reconciliation',
       'cashflow',
@@ -511,10 +521,35 @@ export const DEFAULT_SECURITY_ROLES: SecurityRole[] = [
       'TRIBUTARIO_F29',
       'BANCOS_CONCILIACION',
       'FLUJO_CAJA',
+      'PRESUPUESTOS_COMERCIAL',
     ],
     esEditable: true,
     creadoPor: 'Admin',
     fechaActualizacion: '2026-03-01',
+  },
+  {
+    id: 'role-compras-comercial',
+    nombre: 'Gestión Comercial & Aprovisionamiento',
+    codigo: 'COMERCIAL_COMPRAS',
+    tipoSistema: 'CUSTOM',
+    empresaScopeId: 'GLOBAL',
+    descripcion:
+      'Acceso exclusivo al Agente de Gestión Comercial y Aprovisionamiento Senior (Esteban Morales), Costos PMP, Cotizaciones, Licitaciones RFQ, Órdenes de Compra y Facturación.',
+    modulosPermitidos: [
+      'commercial_procurement',
+      'billing_agent',
+      'rcv',
+      'inventory',
+      'cost_centers',
+    ],
+    whatsappScopesPermitidos: [
+      'PRESUPUESTOS_COMERCIAL',
+      'BODEGA_INVENTARIO',
+      'FACTURACION_DTE',
+    ],
+    esEditable: true,
+    creadoPor: 'Admin',
+    fechaActualizacion: '2026-10-21',
   },
   {
     id: 'role-bodega-produccion',
@@ -621,6 +656,20 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-innovagile',
     empresasAnclasPermitidas: ['client-retail-logistics', 'client-agro-valle'],
     recibirAudioWhatsapp: false,
+  },
+  {
+    id: 'usr-compras-01',
+    username: 'compras',
+    password: 'compras123',
+    nombreCompleto: 'Esteban Morales (Jefe Comercial & Aprovisionamiento)',
+    cargo: 'Encargado de Gestión Comercial, Forecasting y Compras',
+    email: 'compras@innovagile.cl',
+    telefonoWhatsapp: '56991122334',
+    estado: 'ACTIVO',
+    rolId: 'role-compras-comercial',
+    empresaPrincipalId: 'client-retail-logistics',
+    empresasAnclasPermitidas: ['client-agro-valle'],
+    recibirAudioWhatsapp: true,
   },
   {
     id: 'usr-minera-suspendida',
@@ -1145,7 +1194,7 @@ export function loadSecurityRbacStateFromStorage(): SecurityRbacStoreState {
     if (raw) {
       const parsed = JSON.parse(raw) as SecurityRbacStoreState;
       if (parsed && Array.isArray(parsed.roles) && Array.isArray(parsed.users)) {
-        return parsed;
+        return mergeSecurityRbacStates(parsed, DEFAULT_SECURITY_RBAC_STATE);
       }
     }
   } catch (e) {
@@ -1196,6 +1245,40 @@ export function mergeSecurityRbacStates(
   for (const r of DEFAULT_SECURITY_ROLES) rolesMap.set(r.id, r);
   for (const r of localState.roles || []) rolesMap.set(r.id, r);
   for (const r of serverState.roles || []) rolesMap.set(r.id, r);
+
+  // Asegurar que roles estándar nuevos o actualizados no queden huérfanos ni desactualizados:
+  for (const defaultRole of DEFAULT_SECURITY_ROLES) {
+    if (!rolesMap.has(defaultRole.id)) {
+      rolesMap.set(defaultRole.id, defaultRole);
+    }
+  }
+
+  // Garantizar que SuperAdmin y Admin siempre contengan todos los módulos del catálogo actual
+  const superadminRole = rolesMap.get('role-superadmin');
+  if (superadminRole) {
+    superadminRole.modulosPermitidos = [...ALL_ERP_MODULE_IDS];
+    superadminRole.whatsappScopesPermitidos = deriveWhatsappScopesFromModules(ALL_ERP_MODULE_IDS, 'SUPERADMIN');
+  }
+
+  const adminRole = rolesMap.get('role-admin');
+  if (adminRole) {
+    if (!adminRole.modulosPermitidos.includes('commercial_procurement')) {
+      adminRole.modulosPermitidos = [...ALL_ERP_MODULE_IDS];
+    }
+    adminRole.esEditable = true;
+    adminRole.whatsappScopesPermitidos = deriveWhatsappScopesFromModules(adminRole.modulosPermitidos, 'ADMIN');
+  }
+
+  const contabilidadRole = rolesMap.get('role-contabilidad');
+  if (contabilidadRole && !contabilidadRole.modulosPermitidos.includes('commercial_procurement')) {
+    contabilidadRole.modulosPermitidos = [
+      ...contabilidadRole.modulosPermitidos,
+      'commercial_procurement',
+    ];
+    if (!contabilidadRole.whatsappScopesPermitidos.includes('PRESUPUESTOS_COMERCIAL')) {
+      contabilidadRole.whatsappScopesPermitidos.push('PRESUPUESTOS_COMERCIAL');
+    }
+  }
 
   // 2. Fusionar Usuarios (por username en minúsculas para evitar duplicados y preservar altas nuevas de cualquier sesión)
   const usersByUsername = new Map<string, SecurityUser>();

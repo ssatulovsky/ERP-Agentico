@@ -9,7 +9,7 @@ import {
   CompanyProfile,
   ClientCompany
 } from '../types';
-import { formatCLP } from './chileanAccounting';
+import { formatCLP, createPurchaseDteEntry, createSalesDteEntry, createHonorariosEntry } from './chileanAccounting';
 
 // Catálogo inicial de memoria contable por RUT para proveedores y servicios habituales en Chile
 export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
@@ -126,7 +126,8 @@ export const DEFAULT_CENTRALIZATION_CONFIG: SiiCentralizationConfig = {
   cuentaHonorariosGasto: { codigo: '5.1.20', nombre: 'Honorarios Profesionales' },
   cuentaRetencionHonorarios: { codigo: '2.1.06', nombre: 'Retenciones Impuesto 2da Categoría (14.5%)' },
   cuentaBancoPago: { codigo: '1.1.01', nombre: 'Banco Santander - Cuenta Corriente' },
-  cuentaBancoCobro: { codigo: '1.1.01', nombre: 'Banco Santander - Cuenta Corriente' }
+  cuentaBancoCobro: { codigo: '1.1.01', nombre: 'Banco Santander - Cuenta Corriente' },
+  modoRegistroContable: 'RESUMEN_GLOBAL'
 };
 
 // Plan de cuentas auxiliar para sugerencias y desgloses
@@ -884,6 +885,51 @@ export function generateMonthlyCentralizationEntry(
   return {
     asiento,
     dtesAfectadosIds: dtesFiltrados.map(d => d.id)
+  };
+}
+
+/**
+ * Genera Asientos Contables Individuales (Movimiento a Movimiento)
+ * para cada documento (DTE) del RCV en el período especificado.
+ */
+export function generateDetailedCentralizationEntries(
+  periodo: string,
+  tipo: 'COMPRA' | 'VENTA',
+  dtes: DteDocument[],
+  config: SiiCentralizationConfig = DEFAULT_CENTRALIZATION_CONFIG,
+  company: CompanyProfile,
+  supplierRules: SupplierAccountRule[] = DEFAULT_SUPPLIER_RULES
+): {
+  asientos: AccountingEntry[];
+  dtesAfectadosIds: string[];
+} {
+  const dtesFiltrados = dtes.filter(d => d.tipoOperacion === tipo && d.fechaEmision.startsWith(periodo));
+  if (dtesFiltrados.length === 0) {
+    throw new Error(`No existen documentos de ${tipo} registrados en el período ${periodo} para centralizar.`);
+  }
+
+  const asientos: AccountingEntry[] = [];
+  const dtesAfectadosIds: string[] = [];
+
+  dtesFiltrados.forEach((dte) => {
+    let entry: AccountingEntry;
+    if (tipo === 'COMPRA') {
+      entry = createPurchaseDteEntry(dte);
+    } else {
+      entry = createSalesDteEntry(dte);
+    }
+
+    // Asegurar metadatos reglamentarios
+    entry.periodo = periodo;
+    entry.empresaId = company?.rut;
+
+    asientos.push(entry);
+    dtesAfectadosIds.push(dte.id);
+  });
+
+  return {
+    asientos,
+    dtesAfectadosIds
   };
 }
 

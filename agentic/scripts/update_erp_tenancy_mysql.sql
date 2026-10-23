@@ -923,6 +923,106 @@ ALTER TABLE `bank_transactions` ADD COLUMN `partida_contable_detalle` JSON NULL;
 ALTER TABLE `bank_transactions` ADD COLUMN `es_ambiguo` BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE `bank_transactions` ADD COLUMN `candidatos_matches_count` INT NULL DEFAULT 0;
 
+-- ============================================================================
+-- 15. GESTIÓN COMERCIAL, APROVISIONAMIENTO, RFQ Y COTIZACIONES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `rfq_requests` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_rfq` VARCHAR(50) NOT NULL,
+  `titulo` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_limite_respuesta` DATE NOT NULL,
+  `dias_plazo_respuesta` INT NOT NULL DEFAULT 3,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'ENVIADA',
+  `items_json` JSON NOT NULL,
+  `proveedor_ganador_rut` VARCHAR(20) NULL,
+  `proveedor_ganador_nombre` VARCHAR(255) NULL,
+  `orden_compra_generada_id` VARCHAR(64) NULL,
+  `folio_orden_compra` VARCHAR(50) NULL,
+  `motivo_adjudicacion` TEXT NULL,
+  `recomendacion_agente_sr` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_rfq_folio_empresa` (`empresa_id`, `folio_rfq`),
+  KEY `idx_rfq_empresa_estado` (`empresa_id`, `estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `rfq_supplier_responses` (
+  `id` VARCHAR(64) NOT NULL,
+  `rfq_id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `proveedor_rut` VARCHAR(20) NOT NULL,
+  `proveedor_razon_social` VARCHAR(255) NOT NULL,
+  `email_contacto` VARCHAR(150) NOT NULL,
+  `telefono_contacto` VARCHAR(50) NULL,
+  `estado_seguimiento` VARCHAR(40) NOT NULL DEFAULT 'ENVIADA',
+  `fecha_envio` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `fecha_lectura` DATETIME(3) NULL,
+  `fecha_respuesta` DATETIME(3) NULL,
+  `cantidad_reiteraciones` INT NOT NULL DEFAULT 0,
+  `ultimo_recordatorio_at` DATETIME(3) NULL,
+  `monto_neto_ofertado` DECIMAL(15,2) NULL,
+  `plazo_entrega_dias_ofertado` INT NULL,
+  `condicion_pago_ofertada` VARCHAR(100) NULL,
+  `costo_flete_clp` DECIMAL(15,2) DEFAULT 0.00,
+  `scoring_ponderado_total` DECIMAL(5,2) NULL,
+  `items_cotizados_json` JSON NULL,
+  `observaciones_proveedor` TEXT NULL,
+  `es_oferta_ganadora` BOOLEAN NOT NULL DEFAULT FALSE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_rfq_supplier` (`rfq_id`, `proveedor_rut`),
+  KEY `idx_rfq_supplier_estado` (`estado_seguimiento`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `purchase_orders` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_oc` VARCHAR(50) NOT NULL,
+  `rfq_origen_id` VARCHAR(64) NULL,
+  `proveedor_rut` VARCHAR(20) NOT NULL,
+  `proveedor_razon_social` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_entrega_pactada` DATE NOT NULL,
+  `condicion_pago` VARCHAR(100) NOT NULL DEFAULT 'Crédito 30 días',
+  `items_json` JSON NOT NULL,
+  `monto_neto` DECIMAL(15,2) NOT NULL,
+  `monto_iva` DECIMAL(15,2) NOT NULL,
+  `monto_total` DECIMAL(15,2) NOT NULL,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'EMITIDA',
+  `aprobado_por_agente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `firma_agente` VARCHAR(100) DEFAULT 'Esteban Morales (Gerente Comercial & Aprovisionamiento Sr.)',
+  `motivo_generacion` TEXT NULL,
+  `asiento_contable_ref_id` VARCHAR(64) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_oc_folio_empresa` (`empresa_id`, `folio_oc`),
+  KEY `idx_oc_empresa_fecha` (`empresa_id`, `fecha_emision`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `commercial_quotes` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_cotizacion` VARCHAR(50) NOT NULL,
+  `cliente_rut` VARCHAR(20) NOT NULL,
+  `cliente_razon_social` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_vencimiento` DATE NOT NULL,
+  `validez_dias` INT NOT NULL DEFAULT 15,
+  `items_json` JSON NOT NULL,
+  `monto_neto` DECIMAL(15,2) NOT NULL,
+  `monto_iva` DECIMAL(15,2) NOT NULL,
+  `monto_total` DECIMAL(15,2) NOT NULL,
+  `margen_bruto_promedio_porcentaje` DECIMAL(5,2) NOT NULL,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'ENVIADA',
+  `stock_validado` BOOLEAN NOT NULL DEFAULT TRUE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cotizacion_folio_empresa` (`empresa_id`, `folio_cotizacion`),
+  KEY `idx_cotizacion_cliente` (`cliente_rut`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================================================
 -- FIN DEL SCRIPT DE ACTUALIZACIÓN MYSQL ERP
