@@ -188,7 +188,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h1 className="text-xl font-extrabold tracking-tight text-white leading-tight">
-                        ERP<span className="text-sky-400">premIA</span>{' '}
+                        ERP<span className="text-sky-400">remIA</span>{' '}
                         <span className="text-emerald-400 font-bold text-base">Agentic ERP</span>
                       </h1>
                       <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Calendar, DollarSign, Building2, Briefcase, User, Mail, CreditCard, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
 import { ExpenseReport, ExpenseProject, CostCenterMaster } from '../../types';
 import { formatCLP } from '../../utils/expenseManagementAgent';
+import { loadCompanyAuxiliaries, CompanyAuxiliaryItem } from '../../utils/companyAuxiliariesService';
+import { loadCompanyProjects } from '../../utils/companyProjectsService';
 
 interface CreateExpenseReportModalProps {
   isOpen: boolean;
@@ -28,8 +30,11 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
   const [rendidorEmail, setRendidorEmail] = useState('gonzalo.silva@maraustral.cl');
   const [rendidorCargo, setRendidorCargo] = useState('Supervisor Comercial & Operaciones');
 
+  const [auxiliaries, setAuxiliaries] = useState<CompanyAuxiliaryItem[]>([]);
+  const activeProjects = (projects && projects.length > 0) ? projects : loadCompanyProjects(empresaId);
+
   const [centroCostoId, setCentroCostoId] = useState(costCenters[0]?.id || '');
-  const [proyectoId, setProyectoId] = useState(projects[0]?.id || '');
+  const [proyectoId, setProyectoId] = useState(activeProjects[0]?.id || '');
   
   // Importe sin spinup / spindown: almacenamos valor numérico y permitimos entrada limpia
   const [fondoAsignadoClp, setFondoAsignadoClp] = useState<number>(150000);
@@ -44,14 +49,18 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
   useEffect(() => {
     if (isOpen) {
       setErrorMessage(null);
+      const loadedAux = loadCompanyAuxiliaries(empresaId);
+      // Priorizar auxiliares tipo EMPLEADO o con datos completos
+      setAuxiliaries(loadedAux);
+
       if (!centroCostoId && costCenters.length > 0) {
         setCentroCostoId(costCenters[0].id);
       }
-      if (!proyectoId && projects.length > 0) {
-        setProyectoId(projects[0].id);
+      if (!proyectoId && activeProjects.length > 0) {
+        setProyectoId(activeProjects[0].id);
       }
     }
-  }, [isOpen, costCenters, projects]);
+  }, [isOpen, costCenters, projects, empresaId]);
 
   if (!isOpen) return null;
 
@@ -67,7 +76,7 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
 
     try {
       const selectedCc = costCenters.find((c) => c.id === centroCostoId);
-      const selectedPry = projects.find((p) => p.id === proyectoId);
+      const selectedPry = activeProjects.find((p) => p.id === proyectoId);
       const folioStr = `RDG-2026-${String(nextFolioNumber).padStart(3, '0')}`;
 
       await onCreate({
@@ -160,13 +169,52 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
 
           {/* Datos del Colaborador */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
-            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-blue-600" />
-              Datos del Rendidor (Trabajador)
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-blue-600" />
+                Datos del Rendidor (Trabajador)
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">
+                Auxiliar Contable Registrado
+              </span>
+            </div>
+
+            {/* Selector de Auxiliares Registrados (Rendiciones / Empleados) */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                Seleccionar Rendidor desde Auxiliares Registrados
+              </label>
+              <select
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  const aux = auxiliaries.find(
+                    (a) => a.id === val || a.rut === val || a.rutCompleto === val
+                  );
+                  if (aux) {
+                    setRendidorNombre(aux.razonSocial || aux.nombreContacto || '');
+                    setRendidorRut(aux.rutCompleto || aux.rut || '');
+                    setRendidorEmail(aux.emailContacto || aux.emailDte || '');
+                    setRendidorCargo(aux.giroComercial || (aux.tipo === 'EMPLEADO' ? 'Colaborador' : 'Rendidor Autorizado'));
+                  }
+                }}
+                className="w-full px-3 py-1.5 text-xs bg-white border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              >
+                <option value="">-- Proponer desde Auxiliares Registrados (Personal / Rendiciones) --</option>
+                {auxiliaries.map((aux, idx) => (
+                  <option key={aux.id || aux.rut || idx} value={aux.id || aux.rutCompleto || aux.rut}>
+                    {aux.razonSocial} ({aux.rutCompleto || aux.rut}) {aux.tipo ? `• [${aux.tipo}]` : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500 mt-0.5 block">
+                Seleccione un auxiliar registrado para autocompletar o ingrese/modifique los datos manualmente a continuación.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nombre Completo</label>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nombre Completo <span className="text-rose-500">*</span></label>
                 <input
                   type="text"
                   required
@@ -176,7 +224,7 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">RUT Chileno</label>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">RUT Chileno <span className="text-rose-500">*</span></label>
                 <input
                   type="text"
                   required
@@ -237,7 +285,7 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               >
                 <option value="">-- Sin Proyecto Específico (Gasto General) --</option>
-                {projects.map((pry) => (
+                {activeProjects.map((pry) => (
                   <option key={pry.id} value={pry.id}>
                     {pry.codigo} - {pry.nombre}
                   </option>

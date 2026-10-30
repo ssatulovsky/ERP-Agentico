@@ -57,6 +57,7 @@ import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
 import { CentralizeExpenseModal } from './CentralizeExpenseModal';
 import { CollaboratorExpenseMobileApp } from './mobile/CollaboratorExpenseMobileApp';
 import { ProjectManagerModal } from '../accounting/ProjectManagerModal';
+import { loadCompanyProjects, saveCompanyProjects } from '../../utils/companyProjectsService';
 
 interface ExpenseReportsModuleProps {
   company?: CompanyProfile;
@@ -78,7 +79,8 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   // ESTADO REAL DESDE MYSQL 8.0 (Sin datos falsos dibujados en memoria)
   const [reports, setReports] = useState<ExpenseReport[]>([]);
   const [items, setItems] = useState<ExpenseItem[]>([]);
-  const [projects, setProjects] = useState<ExpenseProject[]>([]);
+  const [projects, setProjects] = useState<ExpenseProject[]>(() => loadCompanyProjects(empresaId));
+  const [editingExpenseItem, setEditingExpenseItem] = useState<ExpenseItem | null>(null);
   const [dbStatus, setDbStatus] = useState<ExpenseDbStatus | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -125,7 +127,11 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
       setDbStatus(status);
       setReports(fetchedReports);
       onReportsChange?.(fetchedReports);
-      setProjects(fetchedProjects);
+
+      const initialPrys = loadCompanyProjects(empresaId);
+      const resolvedProjects = (fetchedProjects && fetchedProjects.length > 0) ? fetchedProjects : initialPrys;
+      setProjects(resolvedProjects);
+      saveCompanyProjects(empresaId, resolvedProjects);
 
       // Aplanar comprobantes vinculados
       const allComprobantes = fetchedReports.flatMap((r) => r.comprobantes || []);
@@ -326,6 +332,19 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
     }
   };
 
+  // Acción: Modificar Comprobante en MySQL 8.0
+  const handleUpdateExpenseItem = async (updatedItem: ExpenseItem) => {
+    try {
+      await expenseApiService.updateExpenseItem(updatedItem.id, updatedItem);
+      setEditingExpenseItem(null);
+      setShowAddItemModal(false);
+      await fetchRealData();
+    } catch (err: any) {
+      console.error('[ExpenseReportsModule] Error al modificar comprobante:', err);
+      alert('Error al modificar comprobante: ' + (err?.message || 'Error desconocido'));
+    }
+  };
+
   // Acción: Eliminar Comprobante de MySQL 8.0
   const handleDeleteExpenseItem = async (itemId: string) => {
     const ok = await expenseApiService.deleteExpenseItem(itemId);
@@ -338,15 +357,17 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const handleUpdateReportStatus = async (
     reportId: string,
     newStatus: ExpenseReport['estado'],
-    observations?: string
+    observations?: string,
+    aprobadorNombre?: string
   ) => {
+    const approver = aprobadorNombre || 'Carla Morales Troncoso';
     // 1. Actualización optimista inmediata en pantalla
     setReports((prev) =>
-      prev.map((r) => (r.id === reportId ? { ...r, estado: newStatus, observacionesAprobador: observations || r.observacionesAprobador } : r))
+      prev.map((r) => (r.id === reportId ? { ...r, estado: newStatus, observacionesAprobador: observations || r.observacionesAprobador, aprobadorNombre: approver } : r))
     );
     if (selectedReportDetail && selectedReportDetail.id === reportId) {
       setSelectedReportDetail((prev) =>
-        prev ? { ...prev, estado: newStatus, observacionesAprobador: observations || prev.observacionesAprobador } : null
+        prev ? { ...prev, estado: newStatus, observacionesAprobador: observations || prev.observacionesAprobador, aprobadorNombre: approver } : null
       );
     }
 
@@ -354,7 +375,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
       reportId,
       newStatus,
       observations,
-      'Carla Morales Troncoso'
+      approver
     );
     if (ok) {
       await fetchRealData();
@@ -1138,10 +1159,20 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
       {selectedReportDetail && (
         <ExpenseReportDetailModal
           isOpen={!!selectedReportDetail}
-          onClose={() => setSelectedReportDetail(null)}
+          onClose={() => {
+            setSelectedReportDetail(null);
+            setEditingExpenseItem(null);
+          }}
           report={selectedReportDetail}
           comprobantes={items.filter((i) => i.expenseReportId === selectedReportDetail.id)}
-          onAddComprobanteClick={() => setShowAddItemModal(true)}
+          onAddComprobanteClick={() => {
+            setEditingExpenseItem(null);
+            setShowAddItemModal(true);
+          }}
+          onEditComprobante={(item) => {
+            setEditingExpenseItem(item);
+            setShowAddItemModal(true);
+          }}
           onDeleteComprobante={handleDeleteExpenseItem}
           onUpdateReportStatus={handleUpdateReportStatus}
           onCommitAccountingEntry={onAddEntry}
@@ -1152,8 +1183,13 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
       {showAddItemModal && selectedReportDetail && (
         <AddExpenseItemModal
           isOpen={showAddItemModal}
-          onClose={() => setShowAddItemModal(false)}
+          onClose={() => {
+            setShowAddItemModal(false);
+            setEditingExpenseItem(null);
+          }}
           onAdd={handleAddExpenseItem}
+          onUpdate={handleUpdateExpenseItem}
+          itemToEdit={editingExpenseItem}
           report={selectedReportDetail}
           costCenters={costCenters}
           projects={projects}

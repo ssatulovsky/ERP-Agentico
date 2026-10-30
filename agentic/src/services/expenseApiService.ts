@@ -158,6 +158,32 @@ export const expenseApiService = {
   },
 
   /**
+   * Modifica un comprobante existente en MySQL 8.0 / Disco Persistente
+   */
+  async updateExpenseItem(
+    itemId: string,
+    item: Partial<ExpenseItem>
+  ): Promise<ExpenseItem> {
+    const res = await fetch(`/api/expenses/items/${encodeURIComponent(itemId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      throw new Error(json?.error || `Error ${res.status}: ${res.statusText}`);
+    }
+
+    if (json?.success && json?.data) {
+      return json.data;
+    }
+
+    throw new Error(json?.error || 'No se pudo actualizar el comprobante en la base de datos.');
+  },
+
+  /**
    * Obtiene los proyectos vigentes desde MySQL 8.0
    */
   async getExpenseProjects(empresaId: string): Promise<ExpenseProject[]> {

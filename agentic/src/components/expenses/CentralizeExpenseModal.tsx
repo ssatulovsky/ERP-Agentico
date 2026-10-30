@@ -47,6 +47,9 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
   const [cuentaAnticipoCodigo, setCuentaAnticipoCodigo] = useState('1.1.03.002');
   const [cuentaReembolsoCodigo, setCuentaReembolsoCodigo] = useState('2.1.02.001');
   const [cuentaReintegroCodigo, setCuentaReintegroCodigo] = useState('1.1.02.001');
+  const [cuentaProveedoresCodigo, setCuentaProveedoresCodigo] = useState('2.1.01.001');
+  const [contabilizarFacturasContraProveedores, setContabilizarFacturasContraProveedores] = useState(true);
+  const [incluirReintegroBanco, setIncluirReintegroBanco] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Helpers para obtener nombre de cuenta
@@ -58,6 +61,7 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
   const ctaAnticipoNom = getAccountName(cuentaAnticipoCodigo, 'Gastos por Rendir / Anticipos al Personal');
   const ctaReembolsoNom = getAccountName(cuentaReembolsoCodigo, 'Cuentas por Pagar al Personal (Reembolso de Gastos)');
   const ctaReintegroNom = getAccountName(cuentaReintegroCodigo, 'Banco Santander Chile - Reintegro Sobrante de Fondo');
+  const ctaProveedoresNom = getAccountName(cuentaProveedoresCodigo, 'Proveedores Nacionales (RCV SII)');
 
   // Configuración actual
   const currentConfig: ExpenseAccountingConfig = useMemo(() => {
@@ -69,6 +73,10 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
       cuentaReembolsoNombre: ctaReembolsoNom,
       cuentaReintegroCodigo,
       cuentaReintegroNombre: ctaReintegroNom,
+      cuentaProveedoresCodigo,
+      cuentaProveedoresNombre: ctaProveedoresNom,
+      contabilizarFacturasContraProveedores,
+      incluirReintegroBanco,
     };
   }, [
     fechaContable,
@@ -78,6 +86,10 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
     ctaReembolsoNom,
     cuentaReintegroCodigo,
     ctaReintegroNom,
+    cuentaProveedoresCodigo,
+    ctaProveedoresNom,
+    contabilizarFacturasContraProveedores,
+    incluirReintegroBanco,
   ]);
 
   // Generar asiento contable proyectado en tiempo real
@@ -263,27 +275,47 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
                   <span className="text-[10px] text-slate-500 mt-1 block">Pasivo por saldo adeudado al colaborador</span>
                 </div>
               ) : saldoReintegro > 0 ? (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Cuenta Banco / Caja Reintegro Sobrante
-                  </label>
-                  <select
-                    value={cuentaReintegroCodigo}
-                    onChange={(e) => setCuentaReintegroCodigo(e.target.value)}
-                    className="w-full text-xs font-semibold px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="1.1.02.001">1.1.02.001 - Banco Santander Chile (Cta Cte)</option>
-                    <option value="1.1.02.002">1.1.02.002 - Banco de Chile (Cta Cte)</option>
-                    <option value="1.1.01.001">1.1.01.001 - Caja Central (Efectivo)</option>
-                    {bancoOptions.map((a) => (
-                      !['1.1.02.001', '1.1.02.002', '1.1.01.001'].includes(a.codigo) ? (
-                        <option key={a.codigo} value={a.codigo}>
-                          {a.codigo} - {a.nombre}
-                        </option>
-                      ) : null
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-slate-500 mt-1 block">Cuenta receptora de la devolución</span>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="toggleReintegro"
+                      checked={incluirReintegroBanco}
+                      onChange={(e) => setIncluirReintegroBanco(e.target.checked)}
+                      className="w-4 h-4 text-indigo-600 rounded-md border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <label htmlFor="toggleReintegro" className="text-xs font-bold text-slate-700 cursor-pointer">
+                      Reintegrar sobrante a Banco/Caja (${saldoReintegro.toLocaleString('es-CL')})
+                    </label>
+                  </div>
+
+                  {incluirReintegroBanco ? (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Cuenta Receptora de Devolución
+                      </label>
+                      <select
+                        value={cuentaReintegroCodigo}
+                        onChange={(e) => setCuentaReintegroCodigo(e.target.value)}
+                        className="w-full text-xs font-semibold px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <option value="1.1.02.001">1.1.02.001 - Banco Santander Chile (Cta Cte)</option>
+                        <option value="1.1.02.002">1.1.02.002 - Banco de Chile (Cta Cte)</option>
+                        <option value="1.1.01.001">1.1.01.001 - Caja Central (Efectivo)</option>
+                        {bancoOptions.map((a) => (
+                          !['1.1.02.001', '1.1.02.002', '1.1.01.001'].includes(a.codigo) ? (
+                            <option key={a.codigo} value={a.codigo}>
+                              {a.codigo} - {a.nombre}
+                            </option>
+                          ) : null
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-500 bg-slate-100 p-2 rounded-lg">
+                      El saldo de ${saldoReintegro.toLocaleString('es-CL')} permanece como anticipo abierto en la cuenta del colaborador (sin forzar reintegro bancario inmediato).
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center text-xs text-slate-500 p-2 bg-slate-50 rounded-lg">
@@ -291,6 +323,24 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
                   <span>Sin saldo a reembolsar ni reintegrar.</span>
                 </div>
               )}
+            </div>
+
+            {/* Opciones Avanzadas Normativas SII */}
+            <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={contabilizarFacturasContraProveedores}
+                  onChange={(e) => setContabilizarFacturasContraProveedores(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded-md border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700">
+                  Contabilizar facturas contra Proveedores Nacionales (2.1.01.001 - Afecta RCV SII)
+                </span>
+              </label>
+              <span className="text-[10px] text-slate-500">
+                Garantiza cruce con el Registro de Compras y Ventas del SII
+              </span>
             </div>
           </div>
 
@@ -330,6 +380,7 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
                     <th className="py-2.5 px-3">Auxiliar (RUT)</th>
                     <th className="py-2.5 px-3">Referencia</th>
                     <th className="py-2.5 px-3">Centro Costo</th>
+                    <th className="py-2.5 px-3">Proyecto</th>
                     <th className="py-2.5 px-3 text-right">Debe ($)</th>
                     <th className="py-2.5 px-3 text-right">Haber ($)</th>
                   </tr>
@@ -352,6 +403,9 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
                       <td className="py-2 px-3 text-slate-600 text-[11px]">
                         {l.centroCosto || '-'}
                       </td>
+                      <td className="py-2 px-3 font-mono text-[11px] text-slate-700 font-medium">
+                        {l.proyecto || '-'}
+                      </td>
                       <td className="py-2 px-3 font-mono text-right font-bold text-slate-900">
                         {l.debe > 0 ? `$${Number(l.debe).toLocaleString('es-CL')}` : '-'}
                       </td>
@@ -363,7 +417,7 @@ export const CentralizeExpenseModal: React.FC<CentralizeExpenseModalProps> = ({
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-100/80 font-black border-t-2 border-slate-300 text-slate-900 text-xs">
-                    <td colSpan={5} className="py-2.5 px-3 text-right uppercase tracking-wider">
+                    <td colSpan={6} className="py-2.5 px-3 text-right uppercase tracking-wider">
                       Totales Asiento:
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono text-indigo-900">

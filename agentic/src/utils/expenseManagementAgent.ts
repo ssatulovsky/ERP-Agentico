@@ -309,7 +309,11 @@ export interface ExpenseAccountingConfig {
   cuentaReembolsoNombre?: string;
   cuentaReintegroCodigo?: string;
   cuentaReintegroNombre?: string;
+  cuentaProveedoresCodigo?: string;
+  cuentaProveedoresNombre?: string;
   fechaContable?: string;
+  incluirReintegroBanco?: boolean;
+  contabilizarFacturasContraProveedores?: boolean;
 }
 
 /**
@@ -326,8 +330,25 @@ export function generateExpenseAccountingEntry(
   const rendidorRut = report.rendidorRut && report.rendidorRut !== 'SIN_RUT' ? report.rendidorRut : '15.342.119-4';
   const rendidorNombre = report.rendidorNombre || 'Colaborador Rendidor';
   const docLabel = `Rendición Gastos ${report.folio}`;
+  const defaultProyecto = report.proyectoCodigo || undefined;
 
-  // 1. Agrupar gastos por cuenta contable y centro de costo
+  const contabilizarContraProveedores = config?.contabilizarFacturasContraProveedores !== false;
+  const incluirReintegroBanco = config?.incluirReintegroBanco === true;
+
+  // Cuentas contables parametrizadas
+  const ctaAnticipoCod = config?.cuentaAnticipoCodigo || '1.1.03.002';
+  const ctaAnticipoNom = config?.cuentaAnticipoNombre || chartOfAccounts.find(a => a.codigo === ctaAnticipoCod)?.nombre || 'Gastos por Rendir / Anticipos al Personal';
+
+  const ctaReembolsoCod = config?.cuentaReembolsoCodigo || '2.1.02.001';
+  const ctaReembolsoNom = config?.cuentaReembolsoNombre || chartOfAccounts.find(a => a.codigo === ctaReembolsoCod)?.nombre || 'Cuentas por Pagar al Personal (Reembolso de Gastos)';
+
+  const ctaReintegroCod = config?.cuentaReintegroCodigo || '1.1.02.001';
+  const ctaReintegroNom = config?.cuentaReintegroNombre || chartOfAccounts.find(a => a.codigo === ctaReintegroCod)?.nombre || 'Banco Santander Chile - Reintegro Sobrante de Fondo';
+
+  const ctaProvCod = config?.cuentaProveedoresCodigo || '2.1.01.001';
+  const ctaProvNom = config?.cuentaProveedoresNombre || chartOfAccounts.find(a => a.codigo === ctaProvCod)?.nombre || 'Proveedores Nacionales (RCV SII)';
+
+  // 1. Agrupar gastos por cuenta contable, centro de costo y proyecto
   const mapaGastos: Record<
     string,
     {
@@ -347,6 +368,7 @@ export function generateExpenseAccountingEntry(
 
   let totalIvaCredito = 0;
   let totalGastosMonto = 0;
+  const facturasList: ExpenseItem[] = [];
 
   const itemsToProcess = (comprobantes && comprobantes.length > 0)
     ? comprobantes
@@ -376,7 +398,7 @@ export function generateExpenseAccountingEntry(
       : [];
 
   itemsToProcess.forEach((item) => {
-    // Si es Factura con IVA, el gasto es el Neto y el IVA va a la cuenta 1.1.04.001 / 1.1.05.001
+    const isFactura = item.tipoDocumento === 'FACTURA_ELECTRONICA_33' || item.tipoDocumento === 'FACTURA_EXENTA_34';
     const gastoAfecto = item.tipoDocumento === 'FACTURA_ELECTRONICA_33' && item.montoNeto > 0 ? item.montoNeto : item.montoTotalClp;
 
     totalGastosMonto += item.montoTotalClp;
@@ -384,8 +406,13 @@ export function generateExpenseAccountingEntry(
       totalIvaCredito += item.montoIva;
     }
 
+    if (isFactura) {
+      facturasList.push(item);
+    }
+
     const ctaCodigo = item.cuentaContableCodigo || '6.1.04.007';
-    const key = `${ctaCodigo}_${item.centroCostoId || report.centroCostoId || ''}_${item.proyectoId || report.proyectoId || ''}`;
+    const itemPry = item.proyectoCodigo || defaultProyecto || '';
+    const key = `${ctaCodigo}_${item.centroCostoId || report.centroCostoId || ''}_${itemPry}`;
     if (!mapaGastos[key]) {
       const acc = chartOfAccounts.find((a) => a.codigo === ctaCodigo);
       mapaGastos[key] = {
@@ -395,7 +422,7 @@ export function generateExpenseAccountingEntry(
         centroCostoId: item.centroCostoId || report.centroCostoId,
         centroCostoCodigo: item.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
         proyectoId: item.proyectoId || report.proyectoId,
-        proyectoCodigo: item.proyectoCodigo || report.proyectoCodigo,
+        proyectoCodigo: item.proyectoCodigo || defaultProyecto,
         proveedorRut: item.proveedorRut && item.proveedorRut !== 'SIN_RUT' ? item.proveedorRut : rendidorRut,
         proveedorRazonSocial: item.proveedorRazonSocial || rendidorNombre,
         folioComprobante: item.folioDocumento || report.folio,
@@ -405,7 +432,7 @@ export function generateExpenseAccountingEntry(
     mapaGastos[key].montoNeto += gastoAfecto;
   });
 
-  // 2. Líneas de Cargo (DEBE): Gastos
+  // 2. Líneas de Cargo (DEBE): Gastos Netos / Brutos
   Object.values(mapaGastos).forEach((gasto) => {
     lineas.push({
       cuentaCodigo: gasto.cuentaCodigo,
@@ -419,7 +446,7 @@ export function generateExpenseAccountingEntry(
       folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
       centroCosto: gasto.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
-      proyecto: gasto.proyectoCodigo || report.proyectoCodigo,
+      proyecto: gasto.proyectoCodigo || defaultProyecto,
     });
   });
 
@@ -430,29 +457,67 @@ export function generateExpenseAccountingEntry(
       cuentaNombre: 'IVA Crédito Fiscal (DL 825)',
       debe: Math.round(totalIvaCredito),
       haber: 0,
-      rutAuxiliar: rendidorRut,
-      nombreAuxiliar: rendidorNombre,
-      documentoRef: docLabel,
-      tipoDocumentoRef: 'RENDICION_GASTOS',
-      folioDocumentoRef: report.folio,
+      rutAuxiliar: facturasList[0]?.proveedorRut || rendidorRut,
+      nombreAuxiliar: facturasList[0]?.proveedorRazonSocial || rendidorNombre,
+      documentoRef: facturasList.length === 1 ? `Factura ${facturasList[0].folioDocumento}` : docLabel,
+      tipoDocumentoRef: 'FACTURA_ELECTRONICA_33',
+      folioDocumentoRef: facturasList.length === 1 ? facturasList[0].folioDocumento : report.folio,
       fechaDocumentoRef: fechaAsiento,
+      centroCosto: report.centroCostoCodigo || 'OPERACIONES',
+      proyecto: defaultProyecto,
     });
   }
 
-  // Cuentas de contrapartida según configuración o Plan de Cuentas oficial
-  const ctaAnticipoCod = config?.cuentaAnticipoCodigo || '1.1.03.002';
-  const ctaAnticipoNom = config?.cuentaAnticipoNombre || chartOfAccounts.find(a => a.codigo === ctaAnticipoCod)?.nombre || 'Gastos por Rendir / Anticipos al Personal';
+  // 4. Si se activa contabilización contra Proveedores Nacionales (para afectar RCV SII):
+  // Se registra el pasivo con el Proveedor (Haber) y la inmediata cancelación por pago con el fondo (Debe)
+  if (contabilizarContraProveedores && facturasList.length > 0) {
+    facturasList.forEach((fac) => {
+      // Abono a Proveedores (Reconoce la obligación fiscal con el emisor en RCV)
+      lineas.push({
+        cuentaCodigo: ctaProvCod,
+        cuentaNombre: ctaProvNom,
+        debe: 0,
+        haber: Math.round(fac.montoTotalClp),
+        rutAuxiliar: fac.proveedorRut || rendidorRut,
+        nombreAuxiliar: fac.proveedorRazonSocial || 'Proveedor Factura',
+        documentoRef: `Factura ${fac.folioDocumento}`,
+        tipoDocumentoRef: 'FACTURA_ELECTRONICA_33',
+        folioDocumentoRef: fac.folioDocumento,
+        fechaDocumentoRef: fac.fecha || fechaAsiento,
+        centroCosto: fac.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
+        proyecto: fac.proyectoCodigo || defaultProyecto,
+      });
 
-  const ctaReembolsoCod = config?.cuentaReembolsoCodigo || '2.1.02.001';
-  const ctaReembolsoNom = config?.cuentaReembolsoNombre || chartOfAccounts.find(a => a.codigo === ctaReembolsoCod)?.nombre || 'Cuentas por Pagar al Personal (Reembolso de Gastos)';
+      // Cargo a Proveedores (Cancela el documento pagado mediante la rendición)
+      lineas.push({
+        cuentaCodigo: ctaProvCod,
+        cuentaNombre: `${ctaProvNom} (Liquidación Rendición)`,
+        debe: Math.round(fac.montoTotalClp),
+        haber: 0,
+        rutAuxiliar: fac.proveedorRut || rendidorRut,
+        nombreAuxiliar: fac.proveedorRazonSocial || 'Proveedor Factura',
+        documentoRef: `Pago RDG ${report.folio}`,
+        tipoDocumentoRef: 'RENDICION_GASTOS',
+        folioDocumentoRef: report.folio,
+        fechaDocumentoRef: fechaAsiento,
+        centroCosto: fac.centroCostoCodigo || report.centroCostoCodigo || 'OPERACIONES',
+        proyecto: fac.proyectoCodigo || defaultProyecto,
+      });
+    });
+  }
 
-  const ctaReintegroCod = config?.cuentaReintegroCodigo || '1.1.02.001';
-  const ctaReintegroNom = config?.cuentaReintegroNombre || chartOfAccounts.find(a => a.codigo === ctaReintegroCod)?.nombre || 'Banco Santander Chile - Reintegro Sobrante de Fondo';
-
-  // 4. Línea de Abono (HABER): Fondos por Rendir (Anticipo previo)
+  // 5. Liquidación de Fondos por Rendir (HABER)
   const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
+  const saldoReintegrar = Math.max(0, fondoAnticipo - totalGastosMonto);
+  const saldoReembolsar = Math.max(0, totalGastosMonto - fondoAnticipo);
+
   if (fondoAnticipo > 0) {
-    const anticipoLiquidado = Math.min(fondoAnticipo, totalGastosMonto);
+    // Si el usuario marcó incluir reintegro inmediato a banco, se liquida el 100% del fondo ($150.000)
+    // Si NO se incluye reintegro a banco, se liquida estrictamente lo gastado ($139.000) para no generar descuadre
+    const anticipoLiquidado = (incluirReintegroBanco && saldoReintegrar > 0)
+      ? fondoAnticipo
+      : Math.min(fondoAnticipo, totalGastosMonto);
+
     lineas.push({
       cuentaCodigo: ctaAnticipoCod,
       cuentaNombre: ctaAnticipoNom,
@@ -465,12 +530,11 @@ export function generateExpenseAccountingEntry(
       folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
       centroCosto: report.centroCostoCodigo || 'OPERACIONES',
-      proyecto: report.proyectoCodigo,
+      proyecto: defaultProyecto,
     });
   }
 
-  // 5. Línea de Abono (HABER): Reembolso por Pagar al Empleado (si gastó más de lo anticipado)
-  const saldoReembolsar = Math.max(0, totalGastosMonto - fondoAnticipo);
+  // 6. Si hubo más gastos que fondo anticipado: Reembolso por Pagar al Empleado (HABER)
   if (saldoReembolsar > 0) {
     lineas.push({
       cuentaCodigo: ctaReembolsoCod,
@@ -484,14 +548,13 @@ export function generateExpenseAccountingEntry(
       folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
       centroCosto: report.centroCostoCodigo || 'OPERACIONES',
-      proyecto: report.proyectoCodigo,
+      proyecto: defaultProyecto,
       montoDocumentoRef: Math.round(saldoReembolsar),
     });
   }
 
-  // 6. Si sobró anticipo y el colaborador reintegra a Banco/Caja:
-  const saldoReintegrar = Math.max(0, fondoAnticipo - totalGastosMonto);
-  if (saldoReintegrar > 0) {
+  // 7. Si sobró anticipo y se activó explícitamente el reintegro a Banco/Caja (DEBE):
+  if (incluirReintegroBanco && saldoReintegrar > 0) {
     const folioDep = `DEP-${report.folio}`;
     lineas.unshift({
       cuentaCodigo: ctaReintegroCod,
@@ -500,13 +563,15 @@ export function generateExpenseAccountingEntry(
       haber: 0,
       rutAuxiliar: rendidorRut,
       nombreAuxiliar: rendidorNombre,
-      documentoRef: docLabel,
+      documentoRef: `Reintegro Sobrante ${docLabel}`,
       tipoDocumentoRef: 'RENDICION_GASTOS',
       folioDocumentoRef: report.folio,
       fechaDocumentoRef: fechaAsiento,
       fechaVencimientoRef: fechaAsiento,
       tipoDocumentoConciliacion: 'DEPOSITO',
       documentoConciliacion: folioDep,
+      centroCosto: report.centroCostoCodigo || 'OPERACIONES',
+      proyecto: defaultProyecto,
     });
   }
 

@@ -579,6 +579,87 @@ expenseReportsRouter.post('/reports/:id/items', async (req: Request, res: Respon
 });
 
 // ============================================================================
+// 6. MODIFICAR COMPROBANTE
+// ============================================================================
+expenseReportsRouter.put('/items/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    const db = getMysqlDb();
+
+    let reportId = updateData.expenseReportId;
+
+    if (isRealMysqlConnected) {
+      if (!reportId) {
+        const [existing] = await db.select().from(expenseItems).where(eq(expenseItems.id, id));
+        reportId = existing?.expenseReportId;
+      }
+
+      await db
+        .update(expenseItems)
+        .set({
+          fecha: updateData.fecha,
+          tipoDocumento: updateData.tipoDocumento,
+          folioDocumento: updateData.folioDocumento,
+          proveedorRut: updateData.proveedorRut,
+          proveedorRazonSocial: updateData.proveedorRazonSocial,
+          categoria: updateData.categoria,
+          descripcionGlosa: updateData.descripcionGlosa,
+          montoNeto: updateData.montoNeto != null ? String(updateData.montoNeto) : undefined,
+          montoIva: updateData.montoIva != null ? String(updateData.montoIva) : undefined,
+          montoExento: updateData.montoExento != null ? String(updateData.montoExento) : undefined,
+          montoTotalClp: updateData.montoTotalClp != null ? String(updateData.montoTotalClp) : undefined,
+          centroCostoId: updateData.centroCostoId,
+          centroCostoCodigo: updateData.centroCostoCodigo,
+          proyectoId: updateData.proyectoId,
+          proyectoCodigo: updateData.proyectoCodigo,
+          cuentaContableCodigo: updateData.cuentaContableCodigo,
+          cuentaContableNombre: updateData.cuentaContableNombre,
+          comprobanteArchivoNombre: updateData.comprobanteArchivoNombre,
+          esGastoRechazadoArt21: updateData.esGastoRechazadoArt21 != null ? Boolean(updateData.esGastoRechazadoArt21) : undefined,
+        })
+        .where(eq(expenseItems.id, id));
+
+      if (reportId) {
+        const allItems = await db.select().from(expenseItems).where(eq(expenseItems.expenseReportId, reportId));
+        const totalRendido = allItems.reduce((acc, it) => acc + Number(it.montoTotalClp || 0), 0);
+        const [reportRow] = await db.select().from(expenseReports).where(eq(expenseReports.id, reportId));
+        const fondoAnticipo = Number(reportRow?.fondoAsignadoClp || 0);
+        const saldoReembolsar = Math.max(0, totalRendido - fondoAnticipo);
+        const saldoReintegrar = Math.max(0, fondoAnticipo - totalRendido);
+
+        await db
+          .update(expenseReports)
+          .set({
+            montoTotalRendidoClp: String(totalRendido),
+            saldoReembolsarClp: String(saldoReembolsar),
+            saldoReintegrarClp: String(saldoReintegrar),
+            updatedAt: new Date(),
+          })
+          .where(eq(expenseReports.id, reportId));
+      }
+    }
+
+    diskPersistence.addExpenseItem({
+      id,
+      ...updateData,
+      montoNeto: Number(updateData.montoNeto || 0),
+      montoIva: Number(updateData.montoIva || 0),
+      montoExento: Number(updateData.montoExento || 0),
+      montoTotalClp: Number(updateData.montoTotalClp || 0),
+    });
+
+    res.json({
+      success: true,
+      message: 'Comprobante actualizado y totales recalculados.',
+      data: { id, ...updateData },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
 // 6. ELIMINAR COMPROBANTE
 // ============================================================================
 expenseReportsRouter.delete('/items/:id', async (req: Request, res: Response) => {

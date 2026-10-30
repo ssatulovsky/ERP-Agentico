@@ -572,7 +572,7 @@ export const AuxiliaryManagerModal: React.FC<AuxiliaryManagerModalProps> = ({
                         <option value="CLIENTE">CLIENTE (Cuentas por Cobrar / Activo Circulante 1.1.03)</option>
                         <option value="AMBOS">AMBOS (Opera como Cliente y como Proveedor)</option>
                         <option value="HONORARIO">HONORARIO (Prestador de Servicios Profesionales)</option>
-                        <option value="EMPLEADO">EMPLEADO (Personal / Rendiciones de Gastos)</option>
+                        <option value="EMPLEADO">EMPLEADO / RENDICIONES (Personal, Rendiciones de Gastos & Anticipos 1.1.03.002)</option>
                       </select>
                       <span className="text-[10px] text-slate-500 mt-0.5 block">
                         Determina en qué cuentas contables y selectores aparecerá este auxiliar.
@@ -875,6 +875,15 @@ export const AuxiliaryManagerModal: React.FC<AuxiliaryManagerModalProps> = ({
                     }`}
                   >
                     Ambos ({stats.ambos})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRoleFilter('EMPLEADO')}
+                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                      roleFilter === 'EMPLEADO' ? 'bg-purple-600 text-white shadow-2xs font-bold' : 'hover:text-purple-900'
+                    }`}
+                  >
+                    Rendiciones / Personal
                   </button>
                 </div>
 

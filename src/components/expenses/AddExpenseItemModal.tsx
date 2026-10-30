@@ -23,10 +23,14 @@ import {
 } from '../../types';
 import { EXPENSE_CATEGORIES_CONFIG, validateChileanRut, formatCLP } from '../../utils/expenseManagementAgent';
 
+import { loadCompanyProjects } from '../../utils/companyProjectsService';
+
 interface AddExpenseItemModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (item: Omit<ExpenseItem, 'id' | 'createdAt'>) => void;
+  onUpdate?: (item: ExpenseItem) => void;
+  itemToEdit?: ExpenseItem | null;
   report: ExpenseReport;
   costCenters: CostCenterMaster[];
   projects: ExpenseProject[];
@@ -36,10 +40,14 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
   isOpen,
   onClose,
   onAdd,
+  onUpdate,
+  itemToEdit,
   report,
   costCenters,
   projects,
 }) => {
+  const activeProjects = (projects && projects.length > 0) ? projects : loadCompanyProjects(report.empresaId);
+
   const [fecha, setFecha] = useState(new Date().toISOString().substring(0, 10));
   const [tipoDocumento, setTipoDocumento] = useState<ExpenseDocumentType>('BOLETA_ELECTRONICA');
   const [folioDocumento, setFolioDocumento] = useState('');
@@ -60,6 +68,44 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
   // Vista previa de imagen / ticket digital
   const [previewName, setPreviewName] = useState('');
   const [isOcrScanning, setIsOcrScanning] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (itemToEdit) {
+        setFecha(itemToEdit.fecha || new Date().toISOString().substring(0, 10));
+        setTipoDocumento(itemToEdit.tipoDocumento);
+        setFolioDocumento(itemToEdit.folioDocumento);
+        setProveedorRut(itemToEdit.proveedorRut && itemToEdit.proveedorRut !== 'SIN_RUT' ? itemToEdit.proveedorRut : '');
+        setProveedorRazonSocial(itemToEdit.proveedorRazonSocial);
+        setCategoria(itemToEdit.categoria);
+        setDescripcionGlosa(itemToEdit.descripcionGlosa);
+        setMontoTotalClp(itemToEdit.montoTotalClp);
+        setMontoNeto(itemToEdit.montoNeto);
+        setMontoIva(itemToEdit.montoIva);
+        setMontoExento(itemToEdit.montoExento);
+        setCentroCostoId(itemToEdit.centroCostoId || report.centroCostoId || costCenters[0]?.id || '');
+        setProyectoId(itemToEdit.proyectoId || report.proyectoId || '');
+        setEsGastoRechazadoArt21(Boolean(itemToEdit.esGastoRechazadoArt21));
+        setPreviewName(itemToEdit.comprobanteArchivoNombre || '');
+      } else {
+        setFecha(new Date().toISOString().substring(0, 10));
+        setTipoDocumento('BOLETA_ELECTRONICA');
+        setFolioDocumento('');
+        setProveedorRut('');
+        setProveedorRazonSocial('');
+        setCategoria('ALIMENTACION');
+        setDescripcionGlosa('');
+        setMontoTotalClp(0);
+        setMontoNeto(0);
+        setMontoIva(0);
+        setMontoExento(0);
+        setCentroCostoId(report.centroCostoId || costCenters[0]?.id || '');
+        setProyectoId(report.proyectoId || '');
+        setEsGastoRechazadoArt21(false);
+        setPreviewName('');
+      }
+    }
+  }, [isOpen, itemToEdit, report, costCenters]);
 
   if (!isOpen) return null;
 
@@ -141,9 +187,9 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
 
     const catConfig = EXPENSE_CATEGORIES_CONFIG[categoria];
     const selectedCc = costCenters.find((c) => c.id === centroCostoId);
-    const selectedPry = projects.find((p) => p.id === proyectoId);
+    const selectedPry = activeProjects.find((p) => p.id === proyectoId);
 
-    onAdd({
+    const itemPayload = {
       expenseReportId: report.id,
       empresaId: report.empresaId,
       fecha,
@@ -170,7 +216,16 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
       esGastoRechazadoArt21,
       validadoPorAgente: true,
       observacionAgente: 'Comprobante verificado preliminarmente por Agente RindeGastos.',
-    });
+    };
+
+    if (itemToEdit && onUpdate) {
+      onUpdate({
+        ...itemToEdit,
+        ...itemPayload,
+      });
+    } else {
+      onAdd(itemPayload);
+    }
 
     onClose();
   };
@@ -188,13 +243,13 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                Ingresar Comprobante / Gasto
+                {itemToEdit ? 'Modificar Comprobante / Gasto' : 'Ingresar Comprobante / Gasto'}
                 <span className="text-xs bg-emerald-500/40 text-emerald-100 font-mono px-2 py-0.5 rounded-full border border-emerald-300/30">
                   {report.folio}
                 </span>
               </h3>
               <p className="text-xs text-emerald-200">
-                Captura digital de boletas, facturas y tickets con imputación contable
+                {itemToEdit ? 'Edite los datos de folio, proveedor, montos o imputación del gasto' : 'Captura digital de boletas, facturas y tickets con imputación contable'}
               </p>
             </div>
           </div>
@@ -447,7 +502,7 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
               >
                 <option value="">-- Mismo de la Rendición ({report.proyectoCodigo || 'General'}) --</option>
-                {projects.map((pry) => (
+                {activeProjects.map((pry) => (
                   <option key={pry.id} value={pry.id}>
                     {pry.codigo} - {pry.nombre}
                   </option>
@@ -496,8 +551,17 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
               type="submit"
               className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
-              Agregar Comprobante
+              {itemToEdit ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  Guardar Cambios
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  Agregar Comprobante
+                </>
+              )}
             </button>
           </div>
         </form>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Navbar } from './components/Navbar';
 import { DteManager } from './components/DteManager';
 import { F29SeniorAgent } from './components/F29SeniorAgent';
@@ -156,6 +156,8 @@ import {
   Smartphone,
   Key,
   ShoppingCart,
+  ChevronDown,
+  Search,
 } from 'lucide-react';
 
 export default function App() {
@@ -163,6 +165,17 @@ export default function App() {
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
   const [isVoiceDialogueOpen, setIsVoiceDialogueOpen] = useState<boolean>(false);
   const [voiceDialoguePersonaId, setVoiceDialoguePersonaId] = useState<string>('AGENTE_GENERAL_VERA');
+  
+  // Sidebar Search & Group Collapse State
+  const [sidebarSearch, setSidebarSearch] = useState<string>('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const toggleGroupCollapse = (groupId: string) => {
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  };
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
   const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
@@ -1197,6 +1210,65 @@ export default function App() {
     }
   };
 
+  interface NavGroupMeta {
+    id: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    color: string;
+    moduleIds: string[];
+  }
+
+  const NAV_MODULE_GROUPS: NavGroupMeta[] = [
+    {
+      id: 'estrategia',
+      label: 'Visión Ejecutiva & Control',
+      icon: LayoutDashboard,
+      color: 'text-sky-500',
+      moduleIds: ['executive_dashboard'],
+    },
+    {
+      id: 'contabilidad_finanzas',
+      label: 'Contabilidad, Fiscal & Finanzas',
+      icon: Scale,
+      color: 'text-indigo-500',
+      moduleIds: ['ledger', 'rcv', 'reconciliation', 'cashflow', 'f29'],
+    },
+    {
+      id: 'comercial_operaciones',
+      label: 'Comercial & Operaciones',
+      icon: ShoppingCart,
+      color: 'text-emerald-500',
+      moduleIds: [
+        'commercial_procurement',
+        'billing_agent',
+        'inventory',
+        'production',
+        'fixed_assets',
+        'leases',
+      ],
+    },
+    {
+      id: 'personas_gastos',
+      label: 'Personas, Nómina & Rendiciones',
+      icon: Users,
+      color: 'text-amber-500',
+      moduleIds: [
+        'payroll',
+        'hr_agent',
+        'expense_reports',
+        'expense_mobile',
+        'cost_centers',
+      ],
+    },
+    {
+      id: 'configuracion_sistema',
+      label: 'Configuración & Gobierno',
+      icon: Sliders,
+      color: 'text-slate-500',
+      moduleIds: ['security_admin', 'agents'],
+    },
+  ];
+
   const allNavLinks = [
     { id: 'executive_dashboard', label: 'Dashboard Ejecutivo', subtitle: 'Evolución de Agentes & KPIs 360°', icon: LayoutDashboard },
     { id: 'security_admin', label: 'Seguridad, Roles & Empresas', subtitle: 'Usuarios, Roles RBAC, Empresas Anclas & Vera', icon: Key },
@@ -1273,6 +1345,53 @@ export default function App() {
   const navLinks = allNavLinks.filter((link) =>
     allowedModules.includes(link.id as ErpModuleId)
   );
+
+  // Agrupamiento dinámico y búsqueda inteligente para la barra lateral
+  const groupedNav = useMemo(() => {
+    const term = sidebarSearch.trim().toLowerCase();
+
+    const filteredNav = navLinks.filter((link) => {
+      if (!term) return true;
+      return (
+        link.label.toLowerCase().includes(term) ||
+        link.subtitle.toLowerCase().includes(term)
+      );
+    });
+
+    const groups = NAV_MODULE_GROUPS.map((grp) => {
+      const linksInGroup = grp.moduleIds
+        .map((mId) => filteredNav.find((l) => l.id === mId))
+        .filter((l): l is typeof allNavLinks[number] => Boolean(l));
+
+      const totalAuthorizedInGroup = grp.moduleIds.filter((mId) =>
+        navLinks.some((l) => l.id === mId)
+      ).length;
+
+      return {
+        ...grp,
+        links: linksInGroup,
+        totalAuthorizedInGroup,
+      };
+    }).filter((g) => g.links.length > 0 || (term === '' && g.totalAuthorizedInGroup > 0));
+
+    // Módulos no categorizados en los grupos anteriores (reserva para futuros módulos)
+    const categorizedModuleIds = new Set(NAV_MODULE_GROUPS.flatMap((g) => g.moduleIds));
+    const extraLinks = filteredNav.filter((l) => !categorizedModuleIds.has(l.id));
+
+    if (extraLinks.length > 0) {
+      groups.push({
+        id: 'otros_modulos',
+        label: 'Módulos Adicionales',
+        icon: Boxes,
+        color: 'text-purple-500',
+        moduleIds: extraLinks.map((l) => l.id),
+        links: extraLinks,
+        totalAuthorizedInGroup: extraLinks.length,
+      });
+    }
+
+    return groups;
+  }, [navLinks, sidebarSearch]);
 
   const handleLoginSuccess = (result: LoginValidationResult, selectedEmpresaId: string) => {
     if (!result.ok || !result.user || !result.role) return;
@@ -1352,53 +1471,140 @@ export default function App() {
 
       {/* Main Two-Column Layout */}
       <div className="flex-1 flex flex-col md:flex-row w-full max-w-[1600px] mx-auto">
-        {/* Geometric Sidebar Navigation */}
-        <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-[1px_0_3px_rgba(0,0,0,0.02)]">
-
-          <div className="py-3 space-y-1">
-            <div className="px-5 pb-2 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              <span>Módulos Autorizados</span>
-              <span className="text-indigo-600 font-extrabold">{navLinks.length}</span>
+        {/* Geometric Sidebar Navigation - Agrupado Lógicamente */}
+        <aside className="w-full md:w-72 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-[1px_0_3px_rgba(0,0,0,0.02)]">
+          {/* Header del Sidebar: Título, Contador & Buscador Rápido */}
+          <div className="pt-3.5 pb-2.5 px-4 border-b border-slate-100 bg-slate-50/60 shrink-0">
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+              <span className="flex items-center gap-1.5 text-slate-700">
+                <LayoutDashboard className="w-3.5 h-3.5 text-blue-600" />
+                <span>Módulos del ERP</span>
+              </span>
+              <span className="bg-blue-100/70 text-blue-800 font-extrabold px-2 py-0.5 rounded-full text-[10px]">
+                {navLinks.length} activos
+              </span>
             </div>
-            {navLinks.map((link) => {
-              const Icon = link.icon;
-              const isActive = activeTab === link.id;
-              return (
+
+            {/* Buscador Rápido de Módulos */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+              <input
+                type="text"
+                value={sidebarSearch}
+                onChange={(e) => setSidebarSearch(e.target.value)}
+                placeholder="Buscar módulo o función..."
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 shadow-2xs transition-all"
+              />
+              {sidebarSearch && (
                 <button
-                  key={link.id}
-                  id={`sidebar-link-${link.id}`}
-                  onClick={() => setActiveTab(link.id)}
-                  className={`w-full text-left px-5 py-3 text-xs flex items-center justify-between border-l-4 transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-[#eff6ff] text-[#2563eb] border-l-[#2563eb] font-semibold shadow-[inset_-2px_0_0_rgba(37,99,235,0.1)]'
-                      : 'text-slate-600 border-l-transparent hover:bg-slate-50 hover:text-slate-900 font-medium'
-                  }`}
+                  type="button"
+                  onClick={() => setSidebarSearch('')}
+                  className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs w-4 h-4 rounded-full flex items-center justify-center cursor-pointer"
+                  title="Limpiar búsqueda"
                 >
-                  <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-[#2563eb]' : 'text-slate-400'}`} />
-                    <div>
-                      <div className={isActive ? 'text-[#2563eb] font-bold' : 'text-slate-800'}>
-                        {link.label}
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-normal">
-                        {link.subtitle}
-                      </div>
-                    </div>
-                  </div>
-                  {isActive && <ChevronRight className="w-3.5 h-3.5 text-[#2563eb]" />}
+                  ✕
                 </button>
+              )}
+            </div>
+          </div>
+
+          {/* Lista de Grupos y Módulos con Scroll */}
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-2.5">
+            {groupedNav.map((group) => {
+              const GroupIcon = group.icon;
+              const hasActiveModule = group.moduleIds.includes(activeTab);
+              // Abierto si se está buscando, si tiene el módulo activo, o si no está explícitamente colapsado
+              const isOpen = sidebarSearch.trim() !== '' || hasActiveModule || !collapsedGroups[group.id];
+
+              return (
+                <div key={group.id} className="rounded-lg overflow-hidden border border-slate-100 bg-white shadow-2xs">
+                  {/* Encabezado del Grupo (Acordeón) */}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupCollapse(group.id)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-slate-50/70 hover:bg-slate-100/70 transition-colors cursor-pointer text-left group border-b border-slate-100/60"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <GroupIcon className={`w-3.5 h-3.5 shrink-0 ${group.color}`} />
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 truncate group-hover:text-slate-900">
+                        {group.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded-full bg-slate-200/60 text-slate-600">
+                        {group.links.length}
+                      </span>
+                      <ChevronDown
+                        className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${
+                          isOpen ? '' : '-rotate-90'
+                        }`}
+                      />
+                    </div>
+                  </button>
+
+                  {/* Módulos dentro del Grupo */}
+                  {isOpen && (
+                    <div className="p-1 space-y-0.5">
+                      {group.links.map((link) => {
+                        const Icon = link.icon;
+                        const isActive = activeTab === link.id;
+                        return (
+                          <button
+                            key={link.id}
+                            id={`sidebar-link-${link.id}`}
+                            onClick={() => setActiveTab(link.id)}
+                            className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center justify-between transition-all cursor-pointer border ${
+                              isActive
+                                ? 'bg-blue-50 text-blue-700 border-blue-200 font-bold shadow-2xs'
+                                : 'text-slate-700 border-transparent hover:bg-slate-50 hover:text-slate-900 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
+                                  isActive
+                                    ? 'bg-blue-600 text-white shadow-2xs'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                <Icon className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className={`truncate leading-snug ${isActive ? 'text-blue-900 font-bold' : 'text-slate-800'}`}>
+                                  {link.label}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-normal truncate leading-tight">
+                                  {link.subtitle}
+                                </div>
+                              </div>
+                            </div>
+                            {isActive && (
+                              <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0 ml-1" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
+
+            {groupedNav.length === 0 && (
+              <div className="p-6 text-center text-xs text-slate-400">
+                No se encontraron módulos coincidentes con &quot;{sidebarSearch}&quot;.
+              </div>
+            )}
           </div>
 
           {/* Sidebar Bottom: Compliance & Health Card */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50/70 space-y-2">
-            <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+          <div className="p-3.5 border-t border-slate-200 bg-slate-50/80 space-y-2 shrink-0">
+            <div className="bg-white border border-slate-200 rounded-lg p-2.5 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-500 uppercase">Sesión & Rol RBAC</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Sesión & Rol RBAC</span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               </div>
-              <div className="mt-1 font-bold text-xs text-indigo-700">
+              <div className="mt-1 font-bold text-xs text-indigo-700 truncate">
                 {currentRole.nombre} ({currentUser.username})
               </div>
               <div className="mt-0.5 text-[10px] text-slate-500 truncate">
@@ -1411,7 +1617,7 @@ export default function App() {
 
             <button
               onClick={() => setIsManualOpen(true)}
-              className="w-full flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 py-1.5 px-3 rounded-md text-xs font-bold shadow-2xs transition-colors cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 py-1.5 px-3 rounded-lg text-xs font-bold shadow-2xs transition-colors cursor-pointer"
             >
               <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
               <span>Manual & Guía de Pruebas</span>
@@ -1419,7 +1625,7 @@ export default function App() {
 
             <button
               onClick={() => setIsAiModalOpen(true)}
-              className="w-full flex items-center justify-center gap-2 bg-[#0f172a] hover:bg-slate-800 text-white py-2 px-3 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 bg-[#0f172a] hover:bg-slate-800 text-white py-2 px-3 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
             >
               <Bot className="w-3.5 h-3.5 text-blue-400" />
               <span>Auditor Contable Senior</span>

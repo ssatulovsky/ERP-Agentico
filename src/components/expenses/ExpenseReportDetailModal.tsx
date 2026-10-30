@@ -18,6 +18,7 @@ import {
   Calendar,
   Eye,
   Trash2,
+  Pencil,
   Clock,
   Sparkles,
   Download,
@@ -47,8 +48,9 @@ interface ExpenseReportDetailModalProps {
   report: ExpenseReport;
   comprobantes: ExpenseItem[];
   onAddComprobanteClick: () => void;
+  onEditComprobante?: (item: ExpenseItem) => void;
   onDeleteComprobante: (itemId: string) => void;
-  onUpdateReportStatus: (reportId: string, newStatus: ExpenseReport['estado'], observations?: string) => void;
+  onUpdateReportStatus: (reportId: string, newStatus: ExpenseReport['estado'], observations?: string, aprobadorNombre?: string) => void;
   onCommitAccountingEntry?: (entry: AccountingEntry) => void;
   chartOfAccounts?: HierarchicalAccountItem[];
 }
@@ -59,6 +61,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
   report,
   comprobantes,
   onAddComprobanteClick,
+  onEditComprobante,
   onDeleteComprobante,
   onUpdateReportStatus,
   onCommitAccountingEntry,
@@ -69,6 +72,8 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [accountingSuccessToast, setAccountingSuccessToast] = useState(false);
   const [showCentralizeModal, setShowCentralizeModal] = useState(false);
+  const [aprobadorSeleccionado, setAprobadorSeleccionado] = useState(report.aprobadorNombre || 'Carla Morales Troncoso');
+  const [isCustomApprover, setIsCustomApprover] = useState(false);
 
   if (!isOpen) return null;
 
@@ -396,14 +401,24 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                           </button>
                         </td>
                         <td className="py-2.5 px-3 text-center print:hidden">
-                          <button
-                            type="button"
-                            onClick={() => onDeleteComprobante(item.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
-                            title="Eliminar comprobante"
-                          >
-                            <Trash2 className="w-4 h-4 mx-auto" />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => onEditComprobante?.(item)}
+                              className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-md transition-colors cursor-pointer"
+                              title="Modificar datos del comprobante"
+                            >
+                              <Pencil className="w-4 h-4 mx-auto" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteComprobante(item.id)}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                              title="Eliminar comprobante"
+                            >
+                              <Trash2 className="w-4 h-4 mx-auto" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -437,6 +452,42 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
               Flujo de Aprobación & Centralización Contable
             </h4>
 
+            {/* Responsable / Aprobador Configurable */}
+            <div className="bg-white p-3 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span className="font-bold text-slate-700">Responsable / Aprobador:</span>
+              </div>
+              <div className="flex items-center gap-2 flex-1 max-w-lg justify-end">
+                <select
+                  value={isCustomApprover ? '__CUSTOM__' : aprobadorSeleccionado}
+                  onChange={(e) => {
+                    if (e.target.value === '__CUSTOM__') {
+                      setIsCustomApprover(true);
+                    } else {
+                      setIsCustomApprover(false);
+                      setAprobadorSeleccionado(e.target.value);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="Carla Morales Troncoso">Carla Morales Troncoso (Jefa de Administración)</option>
+                  <option value="Mario Vargas Da Silva">Mario Vargas Da Silva (Gerente de Operaciones)</option>
+                  <option value="Gonzalo Silva Valenzuela">Gonzalo Silva Valenzuela (Supervisor Comercial)</option>
+                  <option value="__CUSTOM__">-- Otro Responsable (Supervisor / Gerente) --</option>
+                </select>
+                {isCustomApprover && (
+                  <input
+                    type="text"
+                    value={aprobadorSeleccionado}
+                    onChange={(e) => setAprobadorSeleccionado(e.target.value)}
+                    placeholder="Nombre del supervisor o gerente..."
+                    className="px-2.5 py-1.5 bg-white border border-indigo-400 rounded-lg text-xs font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 w-48"
+                  />
+                )}
+              </div>
+            </div>
+
             {showRejectInput ? (
               <div className="space-y-2 bg-rose-50 p-3 rounded-lg border border-rose-200">
                 <label className="block text-xs font-bold text-rose-900">
@@ -460,7 +511,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                   <button
                     type="button"
                     onClick={() => {
-                      onUpdateReportStatus(report.id, 'OBJETADA_RECHAZADA', rejectFeedback);
+                      onUpdateReportStatus(report.id, 'OBJETADA_RECHAZADA', rejectFeedback, aprobadorSeleccionado);
                       setShowRejectInput(false);
                     }}
                     className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm"
@@ -475,7 +526,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                   {report.estado === 'BORRADOR' && (
                     <button
                       type="button"
-                      onClick={() => onUpdateReportStatus(report.id, 'PENDIENTE_APROBACION')}
+                      onClick={() => onUpdateReportStatus(report.id, 'PENDIENTE_APROBACION', undefined, aprobadorSeleccionado)}
                       className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <ArrowRight className="w-4 h-4" />
@@ -487,7 +538,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                     <>
                       <button
                         type="button"
-                        onClick={() => onUpdateReportStatus(report.id, 'APROBADA', 'Aprobado conforme por jefatura directa.')}
+                        onClick={() => onUpdateReportStatus(report.id, 'APROBADA', 'Aprobado conforme por jefatura directa.', aprobadorSeleccionado)}
                         className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                       >
                         <CheckCircle2 className="w-4 h-4" />
@@ -525,7 +576,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
                 </div>
 
                 <div className="text-[11px] text-slate-500">
-                  {report.aprobadorNombre ? `Aprobador: ${report.aprobadorNombre}` : 'Pendiente de firma de jefatura'}
+                  Aprobador asignado: <strong className="text-slate-800">{aprobadorSeleccionado}</strong>
                 </div>
               </div>
             )}

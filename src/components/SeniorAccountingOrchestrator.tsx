@@ -145,6 +145,7 @@ import {
 import { AccountEditModal } from './accounting/AccountEditModal';
 import { CreateProjectModal } from './accounting/CreateProjectModal';
 import { ProjectManagerModal } from './accounting/ProjectManagerModal';
+import { loadCompanyProjects, saveCompanyProjects } from '../utils/companyProjectsService';
 import type { ExpenseProject } from '../types';
 import { GroupManagerModal } from './accounting/GroupManagerModal';
 import { ImportExportChartModal } from './accounting/ImportExportChartModal';
@@ -346,28 +347,9 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [selectedNoteNumber, setSelectedNoteNumber] = useState<number | null>(null);
 
   // Centros de Proyectos / Obras vigentes (WIP / IFRS / Art. 31)
-  const [availableProjects, setAvailableProjects] = useState<ExpenseProject[]>([
-    {
-      id: 'pry-01',
-      empresaId: company.rut || 'default',
-      codigo: 'PRY-QUELLON-26',
-      nombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
-      clienteNombre: 'Salmones Antártica S.A.',
-      presupuestoTotalClp: 45000000,
-      activo: true,
-      descripcion: 'Servicio integral de instalación de fondeos y redes loberas.',
-    },
-    {
-      id: 'pry-02',
-      empresaId: company.rut || 'default',
-      codigo: 'PRY-STGO-EXP',
-      nombre: 'Expansión Comercial & Distribución Retail Santiago',
-      clienteNombre: 'Cencosud / Walmart Chile',
-      presupuestoTotalClp: 25000000,
-      activo: true,
-      descripcion: 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.',
-    },
-  ]);
+  const [availableProjects, setAvailableProjects] = useState<ExpenseProject[]>(() =>
+    loadCompanyProjects(company.rut || 'default')
+  );
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isProjectManagerModalOpen, setIsProjectManagerModalOpen] = useState(false);
   const [activeProjectLineIdx, setActiveProjectLineIdx] = useState<number | null>(null);
@@ -378,6 +360,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     setChartOfAccounts(loadedChart);
     setChartGroups(loadCompanyGroups(company.rut));
     setFinancialNotes(loadCompanyFinancialNotes(company.rut, loadedChart));
+    setAvailableProjects(loadCompanyProjects(company.rut || 'default'));
 
     let isMounted = true;
 
@@ -385,6 +368,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     expenseApiService.getExpenseProjects(company.rut).then((prys) => {
       if (isMounted && Array.isArray(prys) && prys.length > 0) {
         setAvailableProjects(prys);
+        saveCompanyProjects(company.rut || 'default', prys);
       }
     }).catch(() => {});
 
@@ -8486,9 +8470,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           }}
           empresaId={effectiveCompany?.rut || company?.rut || 'default'}
           onSave={(newProject) => {
+            const companyTarget = effectiveCompany?.rut || company?.rut || 'default';
             setAvailableProjects((prev) => {
               const exists = prev.some((p) => p.codigo === newProject.codigo);
-              return exists ? prev : [newProject, ...prev];
+              const updated = exists ? prev : [newProject, ...prev];
+              saveCompanyProjects(companyTarget, updated);
+              return updated;
             });
             if (activeProjectLineIdx !== null) {
               handleUpdateManualLine(activeProjectLineIdx, 'proyecto', newProject.codigo);
@@ -8504,7 +8491,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           isOpen={isProjectManagerModalOpen}
           onClose={() => setIsProjectManagerModalOpen(false)}
           projects={availableProjects}
-          onProjectsChange={(updated) => setAvailableProjects(updated)}
+          onProjectsChange={(updated) => {
+            setAvailableProjects(updated);
+            saveCompanyProjects(effectiveCompany?.rut || company?.rut || 'default', updated);
+          }}
           empresaId={effectiveCompany?.rut || company?.rut || 'default'}
         />
       )}

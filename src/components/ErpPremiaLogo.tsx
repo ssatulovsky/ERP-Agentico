@@ -225,7 +225,7 @@ export const ErpPremiaLogo: React.FC<ErpPremiaLogoProps> = ({
             ERP
           </span>
           <span className={`font-medium text-xl ${primaryTextColor}`}>
-            prem
+            rem
           </span>
           <span className={`font-black text-xl tracking-tight ${accentTextColor}`}>
             IA
@@ -233,7 +233,7 @@ export const ErpPremiaLogo: React.FC<ErpPremiaLogoProps> = ({
         </div>
         {variant === 'full' && (
           <span className={`text-[9px] font-bold tracking-[0.2em] uppercase mt-0.5 ${subtitleColor}`}>
-            ERP PREMIUM AGÉNTICO CON IA
+            ERP AGÉNTICO CON IA
           </span>
         )}
       </div>
@@ -250,7 +250,7 @@ export const ErpPremiaLogo: React.FC<ErpPremiaLogoProps> = ({
             ERP
           </span>
           <span className={`font-semibold text-lg sm:text-xl ${primaryTextColor}`}>
-            prem
+            rem
           </span>
           <span className={`font-black text-lg sm:text-xl tracking-tight ${accentTextColor}`}>
             IA
@@ -258,7 +258,7 @@ export const ErpPremiaLogo: React.FC<ErpPremiaLogoProps> = ({
         </div>
         {variant === 'full' && (
           <span className={`text-[8.5px] sm:text-[9px] font-bold tracking-[0.16em] uppercase mt-0.5 ${subtitleColor}`}>
-            ERP PREMIUM AGÉNTICO CON IA
+            ERP AGÉNTICO CON IA
           </span>
         )}
       </div>
