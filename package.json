@@ -17,7 +17,7 @@
     "download:voices:node": "node ./node_modules/tsx/dist/cli.mjs src/scripts/downloadPiperVoices.ts",
     "setup:install": "node ./node_modules/tsx/dist/cli.mjs src/scripts/installSystem.ts",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "test": "node ./node_modules/tsx/dist/cli.mjs tests/agent_tools.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/e2e_audit_verification.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_security_rbac.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_route_perimeter.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/autonomous_agents_modules.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/phase0_repository.test.ts"
+    "test": "node ./node_modules/tsx/dist/cli.mjs tests/agent_tools.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/e2e_audit_verification.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_security_rbac.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_route_perimeter.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/autonomous_agents_modules.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/phase0_repository.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/phase1_regressions.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

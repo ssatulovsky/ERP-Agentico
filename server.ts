@@ -32,6 +32,7 @@ import { IndicatorSyncService } from "./src/services/indicatorSyncService";
 import { checkMySqlConnection, ensureMysqlSchemaInitialized, isRealMysqlConnected } from "./src/db/mysqlClient";
 import { diskPersistence } from "./src/services/diskPersistenceService";
 import { getDemoClients } from "./src/data/seedData";
+import { assertDteSimulationPolicy } from "./src/config/dteSimulationPolicy";
 import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
   normalizeAndValidateJournalEntry,
@@ -2360,6 +2361,8 @@ app.post("/api/persistence/sync-all", async (_req, res) => {
 
 // Vite middleware setup for development and production
 async function startServer() {
+  // 1.4: Con NODE_ENV=production (o DTE_AMBIENTE=2) y ALLOW_OFFLINE_DTE_SIMULATION=true el servidor no arranca.
+  assertDteSimulationPolicy();
   // Verificación de conectividad con MySQL 8.0 y auto-inicialización de tablas DDL
   checkMySqlConnection()
     .then(async (isConnected) => {
@@ -2437,5 +2440,8 @@ const isMainScript = Boolean(
 );
 
 if (process.env.NODE_ENV !== 'test' && isMainScript) {
-  startServer();
+  startServer().catch((err) => {
+    console.error(`[Arranque] ${err?.message || err}`);
+    process.exit(1);
+  });
 }

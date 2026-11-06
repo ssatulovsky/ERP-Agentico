@@ -547,9 +547,10 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
         centroCostoId: draft.items[0]?.centroCostoId,
         centroCostoCodigo: draft.items[0]?.centroCostoCodigo,
         centroCostoNombre: draft.items[0]?.centroCostoNombre,
-        estadoSii: 'ACEPTADO',
+        // El servidor informa ENVIADO (pendiente de consulta del Track ID) o SIMULADO (sin validez tributaria).
+        estadoSii: data.estadoSii === 'SIMULADO' || data.simulated ? 'SIMULADO' : 'ENVIADO',
         estadoPago: draft.condicionVenta === 'CONTADO' ? 'COBRADO' : 'PENDIENTE',
-        glosa: `Emisión HTTP-DTE (LibreDTE) Folio ${assignedFolio} a ${draft.razonSocialReceptor} | TrackID: ${data.trackId || 'N/A'}`,
+        glosa: `${data.simulated ? '[SIMULADO - SIN VALIDEZ TRIBUTARIA] ' : ''}Emisión HTTP-DTE (LibreDTE) Folio ${assignedFolio} a ${draft.razonSocialReceptor} | TrackID: ${data.trackId || 'N/A'}`,
         trackId: data.trackId,
         tedXml: data.ted,
         xmlTimbrado: data.xmlTimbrado,

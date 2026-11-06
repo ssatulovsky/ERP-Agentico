@@ -1080,10 +1080,26 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
                       {/* Estado SII */}
                       <td className="px-4 py-3 text-center font-sans">
-                        <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>{doc.estadoSii}</span>
-                        </span>
+                        {doc.estadoSii === 'ACEPTADO' || doc.estadoSii === 'ACEPTADO_CON_REPAROS' ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <span>{doc.estadoSii}</span>
+                          </span>
+                        ) : doc.estadoSii === 'SIMULADO' ? (
+                          <span
+                            title="DTE simulado en desarrollo: sin validez tributaria, no se declara"
+                            className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full text-[10px] font-extrabold"
+                          >
+                            <span>SIMULADO</span>
+                          </span>
+                        ) : (
+                          <span
+                            title={doc.estadoSii === 'ENVIADO' ? 'Enviado al SII; pendiente de consultar el Track ID' : undefined}
+                            className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                          >
+                            <span>{doc.estadoSii}</span>
+                          </span>
+                        )}
                       </td>
 
                       {/* Estado Pago */}

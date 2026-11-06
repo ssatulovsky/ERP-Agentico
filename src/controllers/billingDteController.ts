@@ -23,7 +23,8 @@ billingDteRouter.get('/http-dte/status', async (req: Request, res: Response) => 
       ambiente: Number(process.env.DTE_AMBIENTE) === 2 ? 'Producción (2)' : 'Certificación (1)',
       ambienteCodigo: Number(process.env.DTE_AMBIENTE) === 2 ? 2 : 1,
       health,
-      certificadoConfigurado: Boolean(cert.base64 && cert.base64.length > 20),
+      certificadoConfigurado: Boolean(cert && cert.source !== 'SIMULATED_DEVELOPMENT' && cert.base64.length > 20),
+      certificadoOrigen: cert?.source || 'NO_ENCONTRADO',
       certPasswordConfigurado: Boolean(process.env.DTE_CERT_PASSWORD),
       cafConfigurado: Boolean(process.env.DTE_CAF_PATH || process.env.DTE_CAF_DIR),
     });

@@ -20,6 +20,7 @@ import { companyCredentialsVault } from '../db/schema/tenancySchema';
 import { diskPersistence } from './diskPersistenceService';
 import { createSalesDteEntry } from '../utils/chileanAccounting';
 import { encryptVaultSecret, decryptVaultSecret } from '../utils/vaultCrypto';
+import { isOfflineDteSimulationAllowed, SIMULATED_TED_SIGNATURE } from '../config/dteSimulationPolicy';
 
 /**
  * Servicio Especializado de Facturación Electrónica para Chile (SII / LibreDTE)
@@ -54,7 +55,7 @@ export class HttpDteBillingService {
   public static loadDigitalCertificate(
     customPath?: string,
     options?: { rut?: string; useMandatoEstudio?: boolean }
-  ): { base64: string; password: string; source: string } {
+  ): { base64: string; password: string; source: string } | null {
     const variants = this.getRutVariants(options?.rut || '');
     let password = process.env.DTE_CERT_PASSWORD || '123456';
 
@@ -154,13 +155,17 @@ export class HttpDteBillingService {
       }
     }
 
-    // 5. Fallback demo
-    const fallbackBuffer = Buffer.from(`MIIK_CERTIFICADO_DIGITAL_DEMO_SII_${Date.now()}_PKCS12`);
-    return {
-      base64: fallbackBuffer.toString('base64'),
-      password,
-      source: 'SIMULATED_DEVELOPMENT',
-    };
+    // 5. Certificado de demostración: SOLO en desarrollo con ALLOW_OFFLINE_DTE_SIMULATION=true.
+    //    En cualquier otro caso no hay certificado y quien lo pida debe informarlo como faltante.
+    if (isOfflineDteSimulationAllowed()) {
+      const fallbackBuffer = Buffer.from(`MIIK_CERTIFICADO_DIGITAL_DEMO_SII_${Date.now()}_PKCS12`);
+      return {
+        base64: fallbackBuffer.toString('base64'),
+        password,
+        source: 'SIMULATED_DEVELOPMENT',
+      };
+    }
+    return null;
   }
 
   /**
@@ -769,7 +774,7 @@ export class HttpDteBillingService {
       : this.loadDigitalCertificate(undefined, { rut: cleanRutEmisor });
 
     const cafXml = overrides?.cafXml || this.loadCafXml(tipoDteNum, undefined, { rut: cleanRutEmisor });
-    if (!cafXml && process.env.ALLOW_OFFLINE_DTE_SIMULATION !== 'true') {
+    if (!cafXml && !isOfflineDteSimulationAllowed()) {
       throw new Error(`Archivo CAF no disponible para DTE tipo ${tipoDteNum}. Cargue el archivo CAF (.xml) emitido por el SII en la bóveda criptográfica del contribuyente.`);
     }
 
@@ -780,6 +785,13 @@ export class HttpDteBillingService {
           `Bloqueo tributario estricto: El archivo CAF para DTE tipo ${tipoDteNum} no cuenta con certificación oficial válida del SII (${cafVerification.status}: ${cafVerification.reason}). Emisión DTE abortada para prevenir timbrado apócrifo.`
         );
       }
+    }
+
+    // Sin certificado real (y sin simulación de desarrollo) no se emite.
+    if (!certInfo) {
+      throw new Error(
+        `Certificado digital no disponible para el emisor ${cleanRutEmisor}. Cargue el certificado (.p12/.pfx) en la bóveda criptográfica del contribuyente.`
+      );
     }
 
     // 6. Ambiente: 1 (Certificación) o 2 (Producción)
@@ -966,7 +978,7 @@ export class HttpDteBillingService {
           `Bloqueo tributario estricto: El CAF adjunto para DTE tipo ${payload.tipoDte} no cuenta con certificación oficial válida del SII (${cafVerification.status}: ${cafVerification.reason}). No se permite la emisión legal de documentos tributarios con folios o timbres no certificados por el SII.`
         );
       }
-    } else if (process.env.ALLOW_OFFLINE_DTE_SIMULATION !== 'true') {
+    } else if (!isOfflineDteSimulationAllowed()) {
       throw new Error(`Bloqueo tributario: No se proporcionó el archivo CAF (.xml) para DTE tipo ${payload.tipoDte}.`);
     }
 
@@ -1069,15 +1081,17 @@ export class HttpDteBillingService {
 
     // SEGURIDAD & INTEGRIDAD TRIBUTARIA: Por defecto la simulación está DESACTIVADA.
     // Solo si el usuario configura explícitamente ALLOW_OFFLINE_DTE_SIMULATION=true se admite contingencia.
-    if (process.env.ALLOW_OFFLINE_DTE_SIMULATION === 'true') {
-      console.warn(`[HttpDteBillingService] Retornando timbrado de contingencia/simulación (ALLOW_OFFLINE_DTE_SIMULATION=true explícito).`);
+    if (isOfflineDteSimulationAllowed()) {
+      console.warn(`[HttpDteBillingService] DTE SIMULADO sin validez tributaria (ALLOW_OFFLINE_DTE_SIMULATION=true, entorno de desarrollo).`);
       const assignedFolio = payload.folio || (await this.getOrAllocateNextFolio(payload.emisor.rut, payload.tipoDte, payload.ambiente || 1));
       const generatedTrackId = `TRK-${Date.now().toString().slice(-8)}`;
-      const generatedTed = `<TED version="1.0"><DD><RE>${payload.emisor.rut}</RE><TD>${payload.tipoDte}</TD><F>${assignedFolio}</F><FE>${payload.fechaEmision}</FE><RR>${payload.receptor.rut}</RR><RSR>${payload.receptor.razonSocial.slice(0, 40)}</RSR><MNT>${payload.totales?.montoTotal || 0}</MNT><IT1>${payload.detalles[0]?.NmbItem || 'VENTA'}</IT1><CAF version="1.0"><DA><RE>${payload.emisor.rut}</RE><RS>${payload.emisor.razonSocial}</RS><TD>${payload.tipoDte}</TD><RNG><D>1</D><H>5000</H></RNG><FA>2026-01-15</FA></DA></CAF></DD><FRMT algoritmo="SHA1withRSA">SIMULATED_TED_KEY_OK</FRMT></TED>`;
+      const generatedTed = `<TED version="1.0"><DD><RE>${payload.emisor.rut}</RE><TD>${payload.tipoDte}</TD><F>${assignedFolio}</F><FE>${payload.fechaEmision}</FE><RR>${payload.receptor.rut}</RR><RSR>${payload.receptor.razonSocial.slice(0, 40)}</RSR><MNT>${payload.totales?.montoTotal || 0}</MNT><IT1>${payload.detalles[0]?.NmbItem || 'VENTA'}</IT1><CAF version="1.0"><DA><RE>${payload.emisor.rut}</RE><RS>${payload.emisor.razonSocial}</RS><TD>${payload.tipoDte}</TD><RNG><D>1</D><H>5000</H></RNG><FA>2026-01-15</FA></DA></CAF></DD><FRMT algoritmo="SHA1withRSA">${SIMULATED_TED_SIGNATURE}</FRMT></TED>`;
       const generatedXml = `<?xml version="1.0" encoding="ISO-8859-1"?><DTE version="1.0"><Documento ID="F${payload.tipoDte}T${assignedFolio}"><Encabezado><IdDoc><TipoDTE>${payload.tipoDte}</TipoDTE><Folio>${assignedFolio}</Folio><FchEmis>${payload.fechaEmision}</FchEmis></IdDoc><Emisor><RUTEmisor>${payload.emisor.rut}</RUTEmisor><RznSoc>${payload.emisor.razonSocial}</RznSoc></Emisor><Receptor><RUTRecep>${payload.receptor.rut}</RUTRecep><RznSocRecep>${payload.receptor.razonSocial}</RznSocRecep></Receptor></Encabezado></Documento></DTE>`;
 
       return {
         success: true,
+        simulated: true,
+        estadoSii: 'SIMULADO',
         folio: assignedFolio,
         tipoDte: payload.tipoDte,
         trackId: generatedTrackId,
@@ -1110,6 +1124,10 @@ export class HttpDteBillingService {
     const dteId = `dte-http-emitted-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const folio = emissionRes.folio || payload.folio || (await this.getOrAllocateNextFolio(payload.emisor.rut, payload.tipoDte, payload.ambiente || 1));
     const periodo = payload.fechaEmision.slice(0, 7);
+    // Un DTE recién enviado queda ENVIADO hasta consultar su Track ID en el SII; nunca ACEPTADO de inmediato.
+    // Un DTE simulado queda SIMULADO y no cuenta para el libro de ventas ni para el F29.
+    const simulado = Boolean(emissionRes.simulated || emissionRes.rawResponse?.simulatedOffline || (emissionRes.ted || '').includes(SIMULATED_TED_SIGNATURE));
+    const estadoSii: 'ENVIADO' | 'SIMULADO' = simulado ? 'SIMULADO' : 'ENVIADO';
 
     // Guardar PDF en disco si vino en base64
     let savedPdfPath: string | undefined;
@@ -1159,9 +1177,9 @@ export class HttpDteBillingService {
       centroCostoId: payload.detalles[0]?.centroCostoId,
       centroCostoCodigo: payload.detalles[0]?.centroCostoCodigo,
       centroCostoNombre: payload.detalles[0]?.centroCostoNombre,
-      estadoSii: 'ACEPTADO',
+      estadoSii,
       estadoPago: payload.formaPago === 1 ? 'COBRADO' : 'PENDIENTE',
-      glosa: `Emisión HTTP-DTE (LibreDTE) Folio ${folio} a ${payload.receptor.razonSocial} | TrackID: ${emissionRes.trackId || 'N/A'}`,
+      glosa: `${simulado ? '[SIMULADO - SIN VALIDEZ TRIBUTARIA] ' : ''}Emisión HTTP-DTE (LibreDTE) Folio ${folio} a ${payload.receptor.razonSocial} | TrackID: ${emissionRes.trackId || 'N/A'}`,
       trackId: emissionRes.trackId,
       tedXml: emissionRes.ted,
       xmlTimbrado: emissionRes.xmlTimbrado,
@@ -1194,7 +1212,7 @@ export class HttpDteBillingService {
             montoIvaRecuperable: String(payload.totales?.montoIva || 0),
             montoIvaNoRecuperable: '0.00',
             montoTotal: String(payload.totales?.montoTotal || 0),
-            estadoAcuse: 'ACEPTADO_SII',
+            estadoAcuse: simulado ? 'SIMULADO' : 'ENVIADO_SII',
             estadoContable: 'PENDIENTE',
             glosa: newDteDoc.glosa,
             centroCostoId: newDteDoc.centroCostoId || null,
@@ -1280,6 +1298,7 @@ export class HttpDteBillingService {
     if (emissionRes.success) {
       const dteId = await this.persistEmittedDte(emissionRes, payload, draft);
       emissionRes.dteId = dteId;
+      emissionRes.estadoSii = emissionRes.simulated ? 'SIMULADO' : 'ENVIADO';
     }
 
     return emissionRes;

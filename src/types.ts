@@ -452,7 +452,8 @@ export interface DteDocument {
   montoTotal: number;
   retencionTasa?: number; // Para Boletas de Honorarios (ej: 14.5%)
   retencionMonto?: number;
-  estadoSii: 'ACEPTADO' | 'ACEPTADO_CON_REPAROS' | 'RECLAMADO' | 'PENDIENTE';
+  // ENVIADO: timbrado y enviado, a la espera de consultar el Track ID. SIMULADO: sin validez tributaria (solo desarrollo).
+  estadoSii: 'ACEPTADO' | 'ACEPTADO_CON_REPAROS' | 'RECLAMADO' | 'PENDIENTE' | 'ENVIADO' | 'SIMULADO';
   estadoPago: 'PENDIENTE' | 'PAGADO' | 'COBRADO' | 'ABONADO' | 'VENCIDO';
   cuentaContableDebe?: string;
   cuentaContableHaber?: string;
@@ -3277,6 +3278,8 @@ export interface HttpDteEmissionResponse {
   pdfBase64?: string; // PDF generado en base64
   pdfUrl?: string; // Ruta local o URL del PDF almacenado
   dteId?: string; // ID asignado en la base de datos del ERP
+  simulated?: boolean; // true solo con ALLOW_OFFLINE_DTE_SIMULATION en desarrollo: sin validez tributaria
+  estadoSii?: 'ENVIADO' | 'SIMULADO';
   ambiente?: 1 | 2;
   timestamp?: string;
   error?: string;

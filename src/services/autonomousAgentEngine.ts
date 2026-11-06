@@ -1781,7 +1781,7 @@ export class AutonomousAgentEngine {
         const vault = diskPersistence.getVaultEntry(rutEmpresa);
         const hasClaveSii = Boolean(vault?.claveSiiEncrypted || vault?.claveSii);
         const cert = HttpDteBillingService.loadDigitalCertificate(undefined, { rut: rutEmpresa });
-        const hasCert = Boolean(cert?.base64);
+        const hasCert = Boolean(cert?.base64) && cert?.source !== 'SIMULATED_DEVELOPMENT';
 
         return {
           status: 'SUCCESS',

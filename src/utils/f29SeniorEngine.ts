@@ -1,3 +1,4 @@
+import { isSimulatedDte } from '../config/dteSimulationPolicy';
 import {
   F29SeniorResult,
   F29SeniorMapeo,
@@ -36,7 +37,8 @@ export function calculatePreF29(
   indicators: ChileIndicators,
   options: PreF29Options = {}
 ): F29SeniorResult {
-  const safeDtes = Array.isArray(dtes) ? dtes : [];
+  // 1.4: los DTE simulados (sin validez tributaria) nunca se declaran en el F29.
+  const safeDtes = (Array.isArray(dtes) ? dtes : []).filter((d) => !isSimulatedDte(d as any));
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   const periodo = options.periodo || '2026-08';
   const utmActual = options.utmActual || indicators?.utm || 68320;
