@@ -1,5 +1,20 @@
 # CHANGELOG — ERPremIA
 
+## Plan de corrección · Cierre de fases 0–2 y verificación 4.4 (6 nov 2026)
+
+| Tarea | Cambio | Verificación |
+| :--- | :--- | :--- |
+| **Cierre 2.4** Empresa por defecto | Se eliminan `76.892.410-K`, `client-retail-01` y `client-default` como empresa por defecto en rutas, servicios, pantallas y WhatsApp. `agentContextBuilderService` ya no inyecta el perfil inventado "Distribuidora y Comercializadora del Pacífico SpA" ni régimen 14 D3/PPM 0,25 % ni la cuenta 00-123-45678-90. Las rendiciones de ejemplo ya no se insertan en MySQL salvo con `DEMO_MODE`. Los comprobantes y proyectos de la empresa de ejemplo ya no aparecen en otras empresas. WhatsApp conservaba mal la empresa de cada número (siempre consultaba la de ejemplo): corregido. | `phase2_regressions` (3 pruebas nuevas) |
+| **1.6** Modo demostración explícito | Franja "DEMOSTRACIÓN · Datos de ejemplo sin validez tributaria ni contable" en toda la UI con `DEMO_MODE=true`. | `phase1_regressions` |
+| **Cierre 0.2** Cartera y estudio | Sin `DEMO_MODE`, la app parte sin empresas (pantalla "Registrar primera empresa") y sin el estudio "Siex Consultores"; sin períodos cerrados inventados. | `phase1_regressions` + prueba en navegador |
+| **Cierre** App compilada | `npm run build` producía una pantalla en blanco (node:crypto en el navegador). Corregido. | Prueba en navegador con y sin `DEMO_MODE` |
+| **4.4** Marcadores | Sin `Math.random` en folios, contraseñas ni salt; sin esperas simuladas (prueba SII, OCR, autollenado "desde SII", "recalcular", "re-auditar"); sin folios oficiales inventados (certificado DT, REL, licencias); sin montos de respaldo (cierre de período con devengos de $1.250.000, US$8.500, 45 UF, activo fijo $45.000.000 y rendición $50.000; proyecciones con sueldos de $14.850.000 y ventas de $48.500.000; centralizaciones de depreciación y producción con montos supuestos; CPT $85.400.000; PPM 1 %). Folios internos correlativos (`src/utils/folioInterno.ts`). | `tests/phase4_markers.test.ts` (7 pruebas) |
+| **Textos** | README, metadatos y UI dicen "asistentes con herramientas" hasta completar la Fase 3. La copia duplicada `agentic/` deja de versionarse. | — |
+
+Pendiente (requiere decisión de producto, no es una simulación): el estado RBAC inicial asigna a los usuarios las empresas de ejemplo; una instalación productiva necesita un flujo de alta del primer SuperAdmin y de la primera empresa.
+
+---
+
 ## Plan de corrección · Fase 2: motor y herramientas honestos (6 nov 2026)
 
 | Tarea | Hallazgo | Cambio | Verificación |
