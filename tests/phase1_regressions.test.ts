@@ -4,12 +4,17 @@
  */
 import assert from 'node:assert';
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { HttpDteBillingService } from '../src/services/httpDteBillingService';
 import { diskPersistence } from '../src/services/diskPersistenceService';
 import { assertDteSimulationPolicy, isOfflineDteSimulationAllowed } from '../src/config/dteSimulationPolicy';
 import { calculatePreF29 } from '../src/utils/f29SeniorEngine';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import { expenseReportsRouter } from '../src/controllers/expenseReportsController';
+import { parseReceiptOcrResponse } from '../src/services/receiptOcrService';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -161,6 +166,62 @@ async function run() {
     const company: any = { rut: '76999888-1', razonSocial: 'EMISOR PRUEBA SPA', tasaPpm: 0.01 };
     const r = calculatePreF29(company, dtes, [], DEFAULT_INDICATORS as any, { periodo: '2026-10' });
     assert.strictEqual(r.detalle_debito?.debitoFacturasIva, 19000);
+  });
+
+  // ---------------------------------------------------------------- Hallazgo #2 (tarea 1.1)
+  await test('#2 OCR: sin IA disponible el endpoint responde 503 OCR_UNAVAILABLE y ningún monto', async () => {
+    const prevKey = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = '';
+    const app = express();
+    app.use(express.json({ limit: '5mb' }));
+    app.use('/api/expenses', expenseReportsRouter);
+    const server = app.listen(0);
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const resp = await fetch(`http://127.0.0.1:${port}/api/expenses/scan-receipt-ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U',
+          mimeType: 'image/jpeg',
+          fileName: 'copec.jpg',
+        }),
+      });
+      const body: any = await resp.json();
+      assert.strictEqual(resp.status, 503);
+      assert.strictEqual(body.success, false);
+      assert.strictEqual(body.code, 'OCR_UNAVAILABLE');
+      assert.strictEqual(body.data, undefined, 'No debe devolver datos');
+      assert.ok(!JSON.stringify(body).includes('35000'), 'No debe aparecer el monto heurístico de COPEC');
+    } finally {
+      server.close();
+      process.env.GEMINI_API_KEY = prevKey;
+    }
+  });
+
+  await test('#2 OCR: respuestas inválidas de la IA se rechazan y los campos ausentes no se inventan', () => {
+    assert.strictEqual(parseReceiptOcrResponse('no es json').ok, false);
+    assert.strictEqual(parseReceiptOcrResponse('{"error":"ILEGIBLE"}').ok, false);
+    assert.strictEqual(parseReceiptOcrResponse('{"tipoDocumento":"BOLETA_ELECTRONICA","montoTotalClp":null}').ok, false);
+    const ok = parseReceiptOcrResponse(
+      JSON.stringify({
+        tipoDocumento: 'BOLETA_ELECTRONICA', proveedorRut: null, proveedorRazonSocial: 'COPEC', folioDocumento: null,
+        fecha: null, montoTotalClp: 41990, montoNeto: null, montoIva: null, montoExento: null, categoria: 'COMBUSTIBLE',
+        descripcionGlosa: null, cuentaContableCodigo: null, cuentaContableNombre: null, esGastoRechazadoArt21: null,
+        diagnosticoAgente: null, confianzaScore: 71,
+      })
+    );
+    assert.strictEqual(ok.ok, true);
+    const data = (ok as any).data;
+    assert.strictEqual(data.montoTotalClp, 41990);
+    assert.strictEqual(data.proveedorRut, null);
+    assert.strictEqual(data.folioDocumento, null);
+    assert.strictEqual(data.fecha, null);
+  });
+
+  await test('#2 OCR: el controlador ya no contiene la heurística de respaldo', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'src/controllers/expenseReportsController.ts'), 'utf8');
+    assert.ok(!/Heurística de respaldo|totalSim|Math\.random\(\) \* 900000/.test(src));
   });
 
   console.log(`\nRESULTADO FASE 1: ${passed} de ${total} pruebas pasaron.`);

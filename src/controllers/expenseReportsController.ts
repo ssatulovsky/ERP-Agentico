@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { eq, desc, sql, or, and, inArray } from 'drizzle-orm';
 import { GoogleGenAI } from '@google/genai';
 import { aiRouterService } from '../services/aiRouterService';
+import { scanReceiptWithAi, type ReceiptOcrResult } from '../services/receiptOcrService';
 import { getMysqlDb, isRealMysqlConnected, pool } from '../db/mysqlClient';
 import {
   expenseReports,
@@ -1312,103 +1313,26 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
 // ============================================================================
 expenseReportsRouter.post('/scan-receipt-ai', async (req: Request, res: Response) => {
   try {
-    const { imageBase64, mimeType = 'image/jpeg', fileName } = req.body;
+    const { imageBase64, mimeType = 'image/jpeg' } = req.body;
 
     if (!imageBase64) {
       return res.status(400).json({ success: false, error: 'Se requiere imageBase64 para el análisis de IA.' });
     }
 
-    // Limpiar cabecera Data URL si viene con data:image/...;base64,
-    let cleanBase64 = imageBase64;
-    let cleanMime = mimeType;
-    const match = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-    if (match) {
-      cleanMime = match[1];
-      cleanBase64 = match[2];
-    }
-
-    let scannedData: any = null;
-
-    try {
-      const prompt = `Eres el Agente Auditor Tributario y Contable Chileno especializado en Rendición de Gastos (RindeGastos AI).
-Analiza detalladamente esta fotografía o documento de comprobante de gasto chileno (boleta electrónica, factura electrónica 33, voucher Transbank / POS, ticket de peaje, boleta de honorarios, o recibo de combustible/traslado).
-
-Extrae con total precisión la información en formato JSON con la siguiente estructura:
-{
-  "tipoDocumento": "BOLETA_ELECTRONICA" | "FACTURA_ELECTRONICA_33" | "FACTURA_EXENTA_34" | "BOLETA_HONORARIOS" | "TICKET_PEAJE" | "RECIBO_MOVILIZACION" | "OTRO",
-  "proveedorRut": "RUT chileno del emisor con guión y dígito verificador (ej: 99.520.000-7 o 76.128.490-2). Si no aparece, '76.000.000-0'",
-  "proveedorRazonSocial": "Nombre o razón social del comercio/proveedor (ej: COPEC S.A., Hotel Castro, Restaurant Rincón Chilote, etc.)",
-  "folioDocumento": "Número o folio del comprobante (ej: 481920, 91283). Si no aparece, usar número de operación",
-  "fecha": "Fecha de emisión en formato AAAA-MM-DD. Si no tiene año, inferir el año 2026",
-  "montoTotalClp": número entero sin decimales (monto final pagado en CLP),
-  "montoNeto": número entero (si es factura con IVA, el valor neto; si es boleta sin desglose, total / 1.19 redondeado o igual a total si es exento),
-  "montoIva": número entero (IVA 19% si aplica o se desglosa),
-  "montoExento": número entero (si el gasto es exento de IVA como peajes o transporte),
-  "categoria": "ALIMENTACION" | "ALOJAMIENTO" | "COMBUSTIBLE" | "PEAJES_ESTACIONAMIENTOS" | "TRANSPORTE_MOVILIZACION" | "MATERIALES_INSUMOS" | "REPRESENTACION_CLIENTES" | "TELECOMUNICACIONES" | "OTROS",
-  "descripcionGlosa": "Descripción sintética y profesional del gasto para el libro de gastos contable",
-  "cuentaContableCodigo": "Código contable sugerido (ej: 4.2.01.009 para combustibles, 4.2.01.007 para alojamiento, 4.2.01.006 para alimentación, 4.2.01.010 para peajes, 4.1.02.001 para materiales)",
-  "cuentaContableNombre": "Nombre de la cuenta contable",
-  "esGastoRechazadoArt21": boolean (true si es un gasto no deducible según Art. 21 LIR, como alcohol o gastos personales ajenos al negocio),
-  "diagnosticoAgente": "Explicación breve del auditor sobre la validez del comprobante, cumplimiento tributario e imputación",
-  "confianzaScore": número entre 80 y 100
-}
-
-Responde ÚNICAMENTE con el objeto JSON válido, sin backticks (\`\`\`json) ni texto introductorio.`;
-
-      const aiResult = await aiRouterService.executeAiTask({
-        capability: 'VISION_OCR',
-        prompt,
-        inlineData: {
-          mimeType: cleanMime,
-          data: cleanBase64,
-        },
-        temperature: 0.1,
-        empresaId: req.effectiveEmpresaId || (req.body.empresaId as string) || (req.query.empresaId as string) || 'client-retail-01',
-        modulo: 'RINDE_GASTOS_OCR',
-      });
-
-      const rawText = aiResult.text || '';
-      const cleanedJsonText = rawText.replace(/```(?:json)?/gi, '').trim();
-      scannedData = JSON.parse(cleanedJsonText);
-    } catch (aiErr: any) {
-      console.warn('[AI Vision] Aviso al procesar comprobante con AiRouter:', aiErr.message);
-    }
-
-    // Heurística de respaldo inteligente si la API no está configurada o falló
-    if (!scannedData) {
-      const isFactura = (fileName || '').toLowerCase().includes('factura') || (fileName || '').toLowerCase().includes('dte');
-      const isCombustible = (fileName || '').toLowerCase().includes('copec') || (fileName || '').toLowerCase().includes('shell') || (fileName || '').toLowerCase().includes('combustible');
-      const isHotel = (fileName || '').toLowerCase().includes('hotel') || (fileName || '').toLowerCase().includes('hospedaje');
-
-      const totalSim = isCombustible ? 35000 : isHotel ? 65000 : 22500;
-      const netoSim = Math.round(totalSim / 1.19);
-      const ivaSim = totalSim - netoSim;
-
-      scannedData = {
-        tipoDocumento: isFactura ? 'FACTURA_ELECTRONICA_33' : 'BOLETA_ELECTRONICA',
-        proveedorRut: isCombustible ? '99.520.000-7' : isHotel ? '76.128.490-2' : '77.819.200-5',
-        proveedorRazonSocial: isCombustible ? 'Compañía de Petróleos de Chile COPEC S.A.' : isHotel ? 'Hotel & Turismo del Sur SpA' : 'Comercial & Gastronomía Austral SpA',
-        folioDocumento: `B-${Math.floor(100000 + Math.random() * 900000)}`,
-        fecha: new Date().toISOString().substring(0, 10),
-        montoTotalClp: totalSim,
-        montoNeto: netoSim,
-        montoIva: ivaSim,
-        montoExento: 0,
-        categoria: isCombustible ? 'COMBUSTIBLE' : isHotel ? 'ALOJAMIENTO' : 'ALIMENTACION',
-        descripcionGlosa: isCombustible ? 'Carga de Combustible camioneta terreno' : isHotel ? 'Hospedaje comisión de servicio técnico' : 'Consumo alimentación en terreno',
-        cuentaContableCodigo: isCombustible ? '4.2.01.009' : isHotel ? '4.2.01.007' : '4.2.01.006',
-        cuentaContableNombre: isCombustible ? 'Combustibles & Lubricantes' : isHotel ? 'Alojamiento & Estadía Terreno' : 'Gastos de Alimentación & Viáticos',
-        esGastoRechazadoArt21: false,
-        diagnosticoAgente: 'Comprobante escaneado y auditado por Agente AI. Cumple requisitos Art. 31 LIR (gasto necesario para producir la renta).',
-        confianzaScore: 92,
-      };
-    }
-
-    res.json({
-      success: true,
-      data: scannedData,
-      previewBase64: `data:${cleanMime};base64,${cleanBase64.substring(0, 80)}...`,
+    // 1.1 (hallazgo #2): sin lectura válida de la IA no se devuelven datos. La app abre el formulario manual.
+    const result = await scanReceiptWithAi({
+      imageBase64,
+      mimeType,
+      empresaId: req.effectiveEmpresaId || (req.body.empresaId as string) || (req.query.empresaId as string) || undefined,
     });
+
+    if (result.ok !== true) {
+      const failure = result as Extract<ReceiptOcrResult, { ok: false }>;
+      console.warn(`[AI Vision] Lectura de comprobante no disponible: ${failure.reason}`);
+      return res.status(503).json({ success: false, code: failure.code, error: failure.reason });
+    }
+
+    res.json({ success: true, data: (result as Extract<ReceiptOcrResult, { ok: true }>).data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

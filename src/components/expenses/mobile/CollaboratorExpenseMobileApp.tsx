@@ -47,6 +47,7 @@ import {
   ExpenseDocumentType,
 } from '../../../types';
 import { expenseApiService } from '../../../services/expenseApiService';
+import { isDemoModeEnabled } from '../../../config/demoMode';
 import { formatCLP } from '../../../utils/expenseManagementAgent';
 import {
   downloadAndShareExpenseReportPDF,
@@ -111,6 +112,9 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
   const [isScanning, setIsScanning] = useState(false);
   const [scanStepMessage, setScanStepMessage] = useState('');
   const [aiScannedResult, setAiScannedResult] = useState<ScannedReceiptResult | null>(null);
+  // 1.1: si la lectura con IA no está disponible, se abre el formulario manual vacío (sin datos inventados)
+  const [manualEntryMode, setManualEntryMode] = useState(false);
+  const [ocrUnavailableReason, setOcrUnavailableReason] = useState<string | null>(null);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -265,26 +269,50 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
     }
   };
 
+  const emptyComprobante = () => ({
+    tipoDocumento: 'BOLETA_ELECTRONICA' as ExpenseDocumentType,
+    proveedorRut: '',
+    proveedorRazonSocial: '',
+    folioDocumento: '',
+    fecha: '',
+    montoTotalClp: 0,
+    montoNeto: 0,
+    montoIva: 0,
+    montoExento: 0,
+    categoria: 'OTROS' as ExpenseCategory,
+    descripcionGlosa: '',
+    centroCostoId: activeReport?.centroCostoId || activeCollaborator.centroCostoDefault,
+    proyectoId: activeReport?.proyectoId || (projects[0]?.id || ''),
+    cuentaContableCodigo: '',
+    cuentaContableNombre: '',
+    esGastoRechazadoArt21: false,
+  });
+
+  const openManualEntry = (reason: string) => {
+    setAiScannedResult(null);
+    setEditedComprobante(emptyComprobante());
+    setOcrUnavailableReason(reason);
+    setManualEntryMode(true);
+  };
+
   // Procesamiento de imagen seleccionada con IA
-  const handleProcessImage = async (file: File) => {
+  const handleProcessImage = (file: File) => {
     setIsScanning(true);
     setSubmissionSuccess(false);
     setSubmissionError(null);
-    setScanStepMessage('Comprimiendo y preparando comprobante...');
+    setManualEntryMode(false);
+    setOcrUnavailableReason(null);
+    setScanStepMessage('Leyendo comprobante con IA...');
 
-    try {
-      // 1. Convertir a Base64
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64String = reader.result as string;
-        setPreviewImage(base64String);
-
-        setScanStepMessage('Enviando a Agente Vision (Gemini 3.8 Flash)...');
-        await new Promise((r) => setTimeout(r, 400));
-
-        setScanStepMessage('Extrayendo RUT, Folio, Neto e IVA Crédito Fiscal...');
-        
-        // 2. Invocar endpoint inteligente
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setIsScanning(false);
+      setSubmissionError('No se pudo leer el archivo seleccionado.');
+    };
+    reader.onload = async () => {
+      const base64String = reader.result as string;
+      setPreviewImage(base64String);
+      try {
         const aiResponse = await expenseApiService.scanReceiptWithAI(
           base64String,
           file.type || 'image/jpeg',
@@ -293,39 +321,37 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
         );
 
         if (aiResponse.success && aiResponse.data) {
-          const data = aiResponse.data;
-          setAiScannedResult(data);
-
-          // Rellenar formulario editable
+          const data = aiResponse.data as any;
+          setAiScannedResult(aiResponse.data);
+          // Solo se precargan los datos leídos; lo que la IA no leyó queda vacío para que el usuario lo complete.
           setEditedComprobante({
+            ...emptyComprobante(),
             tipoDocumento: data.tipoDocumento || 'BOLETA_ELECTRONICA',
-            proveedorRut: data.proveedorRut || '',
-            proveedorRazonSocial: data.proveedorRazonSocial || 'Comercio Local',
-            folioDocumento: data.folioDocumento || `B-${Math.floor(100000 + Math.random() * 899999)}`,
-            fecha: data.fecha || new Date().toISOString().substring(0, 10),
-            montoTotalClp: data.montoTotalClp || 0,
-            montoNeto: data.montoNeto || Math.round((data.montoTotalClp || 0) / 1.19),
-            montoIva: data.montoIva || ((data.montoTotalClp || 0) - Math.round((data.montoTotalClp || 0) / 1.19)),
-            montoExento: data.montoExento || 0,
-            categoria: data.categoria || 'ALIMENTACION',
-            descripcionGlosa: data.descripcionGlosa || 'Gasto operacional en terreno',
-            centroCostoId: activeReport?.centroCostoId || activeCollaborator.centroCostoDefault,
-            proyectoId: activeReport?.proyectoId || (projects[0]?.id || ''),
-            cuentaContableCodigo: data.cuentaContableCodigo || '4.2.01.006',
-            cuentaContableNombre: data.cuentaContableNombre || 'Gastos Operacionales',
+            proveedorRut: data.proveedorRut ?? '',
+            proveedorRazonSocial: data.proveedorRazonSocial ?? '',
+            folioDocumento: data.folioDocumento ?? '',
+            fecha: data.fecha ?? '',
+            montoTotalClp: data.montoTotalClp ?? 0,
+            montoNeto: data.montoNeto ?? 0,
+            montoIva: data.montoIva ?? 0,
+            montoExento: data.montoExento ?? 0,
+            categoria: data.categoria ?? 'OTROS',
+            descripcionGlosa: data.descripcionGlosa ?? '',
+            cuentaContableCodigo: data.cuentaContableCodigo ?? '',
+            cuentaContableNombre: data.cuentaContableNombre ?? '',
             esGastoRechazadoArt21: Boolean(data.esGastoRechazadoArt21),
           });
         } else {
-          throw new Error(aiResponse.error || 'No se pudo extraer la información del comprobante.');
+          openManualEntry(aiResponse.error || 'La lectura automática no está disponible.');
         }
+      } catch (err: any) {
+        console.error('[MobileApp] Error al escanear comprobante:', err);
+        openManualEntry(err?.message || 'La lectura automática no está disponible.');
+      } finally {
         setIsScanning(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      console.error('[MobileApp] Error al escanear comprobante:', err);
-      setIsScanning(false);
-      setSubmissionError(err.message || 'Error al procesar la foto con el Agente de IA.');
-    }
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Manejo de input de archivos
@@ -439,6 +465,17 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
       return;
     }
 
+    // Sin monto, proveedor, folio y fecha no se registra el comprobante (no se completan con valores por defecto).
+    const faltantes: string[] = [];
+    if (!editedComprobante.montoTotalClp || editedComprobante.montoTotalClp <= 0) faltantes.push('monto total');
+    if (!editedComprobante.proveedorRut.trim()) faltantes.push('RUT del proveedor');
+    if (!editedComprobante.folioDocumento.trim()) faltantes.push('folio');
+    if (!editedComprobante.fecha) faltantes.push('fecha');
+    if (faltantes.length > 0) {
+      setSubmissionError(`Complete los datos obligatorios: ${faltantes.join(', ')}.`);
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmissionError(null);
 
@@ -472,7 +509,7 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
         comprobantePreviewBase64: previewImage || undefined,
         esGastoRechazadoArt21: editedComprobante.esGastoRechazadoArt21,
         validadoPorAgente: true,
-        observacionAgente: aiScannedResult?.diagnosticoAgente || 'Registrado desde Rinde Móvil AI.',
+        observacionAgente: aiScannedResult?.diagnosticoAgente || (manualEntryMode ? 'Ingreso manual (lectura con IA no disponible).' : 'Registrado desde Rinde Móvil.'),
       };
 
       const result = await expenseApiService.addExpenseItem(activeReport.id, newItem);
@@ -761,7 +798,8 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
                     <span>Subir desde Galería o Archivos</span>
                   </button>
 
-                  {/* Atajos de Prueba Rápida (para testing en navegador de escritorio) */}
+                  {/* Atajos de Prueba Rápida: solo en modo demostración */}
+                  {isDemoModeEnabled() && (
                   <div className="bg-slate-800/60 rounded-2xl p-3 border border-slate-800 mt-4">
                     <span className="text-[11px] font-bold text-slate-400 block mb-2 text-center uppercase tracking-wider">
                       Pruebas Rápidas de IA (Sin Cámara)
@@ -790,6 +828,7 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
                       </button>
                     </div>
                   </div>
+                  )}
                 </div>
               )}
 
@@ -820,25 +859,31 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
               )}
 
               {/* Estado: Datos Leídos por la IA listos para Confirmar y Enviar */}
-              {previewImage && !isScanning && aiScannedResult && (
+              {previewImage && !isScanning && (aiScannedResult || manualEntryMode) && (
                 <div className="space-y-4 animate-in fade-in duration-200">
+                  {manualEntryMode && (
+                    <div className="bg-amber-950/60 border border-amber-500/40 rounded-2xl p-3 text-[11px] text-amber-200">
+                      <div className="text-xs font-bold text-amber-300">Lectura automática no disponible</div>
+                      <p className="mt-0.5">Complete los datos del comprobante manualmente.</p>
+                      {ocrUnavailableReason && <p className="mt-1 text-amber-400/80">{ocrUnavailableReason}</p>}
+                    </div>
+                  )}
                   {/* Banner Diagnóstico del Agente IA */}
+                  {aiScannedResult && (
                   <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-3 flex items-start gap-2.5">
                     <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-emerald-300">
-                          Lectura Inteligente IA ({aiScannedResult.confianzaScore || 95}% Confianza)
-                        </span>
-                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-mono">
-                          Art. 31 LIR Conforme
+                          Lectura IA{typeof aiScannedResult.confianzaScore === 'number' ? ` (${aiScannedResult.confianzaScore}% confianza)` : ''} · revise los datos
                         </span>
                       </div>
-                      <p className="text-[11px] text-emerald-400/90 mt-0.5">
-                        {aiScannedResult.diagnosticoAgente}
-                      </p>
+                      {aiScannedResult.diagnosticoAgente && (
+                        <p className="text-[11px] text-emerald-400/90 mt-0.5">{aiScannedResult.diagnosticoAgente}</p>
+                      )}
                     </div>
                   </div>
+                  )}
 
                   {/* Miniatura de la Foto Capturada con Opción de Retomar */}
                   <div className="relative rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 h-32 flex items-center justify-center">
@@ -852,6 +897,8 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
                       onClick={() => {
                         setPreviewImage(null);
                         setAiScannedResult(null);
+                        setManualEntryMode(false);
+                        setOcrUnavailableReason(null);
                       }}
                       className="absolute top-2 right-2 bg-slate-900/80 hover:bg-rose-900/80 text-white p-1.5 rounded-full text-xs font-semibold backdrop-blur-xs transition-colors cursor-pointer"
                       title="Retomar foto"
@@ -925,6 +972,17 @@ export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileApp
                           className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
+                    </div>
+
+                    {/* Fecha del comprobante */}
+                    <div>
+                      <label className="text-[10px] text-slate-400 font-bold block mb-1">Fecha del comprobante</label>
+                      <input
+                        type="date"
+                        value={editedComprobante.fecha}
+                        onChange={(e) => setEditedComprobante({ ...editedComprobante, fecha: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono"
+                      />
                     </div>
 
                     {/* Folio y Tipo de Documento */}
