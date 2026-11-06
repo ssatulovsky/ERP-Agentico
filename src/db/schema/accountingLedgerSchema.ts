@@ -26,6 +26,8 @@ export const moduleSourceEnumValues = [
   'MARKETING',
   'CUSTOMER_SERVICE',
   'RENDICION_GASTOS',
+  'ACTIVO_FIJO',
+  'PRODUCCION_COSTOS',
   'MANUAL',
   'CIERRE',
 ] as const;

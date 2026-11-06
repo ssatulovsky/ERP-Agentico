@@ -20,7 +20,8 @@ export interface AgentVoiceConfig {
   pitch: number;  // 0.5 a 1.8 (ej: 1.15 para voces femeninas, 0.9 para masculinas)
   rate: number;   // 0.7 a 1.4 (1.0 normal)
   volume: number; // 0 a 1.0
-  neuralModel?: 'piper' | 'browser'; // Motor de voz: Piper Neural TTS o Síntesis del Navegador
+  neuralModel?: 'gemini' | 'piper' | 'browser'; // Motor de voz: Gemini Ultra-Natural, Piper VITS o Navegador
+  geminiVoiceName?: 'Aoede' | 'Fenrir' | 'Kore' | 'Puck' | 'Charon' | string;
   piperVoiceId?: 'es_AR-daniela-high' | 'es_MX-ald-medium' | 'es_ES-sharvard-medium' | 'es_ES-davefx-medium' | 'es_ES-carlfm-x_low' | string;
 }
 

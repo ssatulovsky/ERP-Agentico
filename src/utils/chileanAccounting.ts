@@ -21,11 +21,12 @@ export const DEFAULT_INDICATORS: ChileIndicators = {
   utm: 68320,
   dolar: 955.20,
   imm: 500000,
-  topeImponibleAfpUf: 84.3,
-  topeImponibleAfcUf: 126.6,
-  retencionHonorariosTasa: 0.145, // 14.5%
+  topeImponibleAfpUf: 90.0, // Vigente Chile 2026 (anterior 84.3 UF)
+  topeImponibleAfcUf: 135.2, // Vigente Chile 2026 (anterior 126.6 UF)
+  retencionHonorariosTasa: 0.145, // 14.5% vigente en 2026
   sisTasa: 0.0149, // 1.49%
   mutualBaseTasa: 0.0093, // 0.93%
+  ley21735AportePatronalTasa: 0.010, // 1.0% Ley 21.735 Reforma Previsional
   fecha: new Date().toISOString().split('T')[0],
 };
 
@@ -147,6 +148,65 @@ export function formatNumberCL(amount: number, decimals: number = 0): string {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   }).format(amount || 0);
+}
+
+/**
+ * Convierte montos en pesos chilenos a texto formal para liquidaciones legales DT
+ */
+export function formatNumberToWordsCLP(amount: number): string {
+  const n = Math.round(Math.abs(amount || 0));
+  if (n === 0) return 'CERO PESOS M/CTE';
+
+  const unidades = ['', 'UN', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
+  const decenas = ['', 'DIEZ', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
+  const diezY = ['DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE'];
+  const veinti = ['VEINTE', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO', 'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
+  const centenas = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
+
+  function readGroup(num: number): string {
+    if (num === 0) return '';
+    if (num === 100) return 'CIEN';
+    let res = '';
+    const c = Math.floor(num / 100);
+    const d = Math.floor((num % 100) / 10);
+    const u = num % 10;
+    if (c > 0) res += centenas[c] + ' ';
+    const du = num % 100;
+    if (du >= 10 && du <= 19) {
+      res += diezY[du - 10] + ' ';
+    } else if (du >= 20 && du <= 29) {
+      res += veinti[du - 20] + ' ';
+    } else {
+      if (d > 0) res += decenas[d] + (u > 0 ? ' Y ' : ' ');
+      if (u > 0) res += unidades[u] + ' ';
+    }
+    return res.trim();
+  }
+
+  const millones = Math.floor(n / 1000000);
+  const miles = Math.floor((n % 1000000) / 1000);
+  const unidadesResto = n % 1000;
+
+  let texto = '';
+  if (millones > 0) {
+    if (millones === 1) {
+      texto += 'UN MILLÓN ';
+    } else {
+      texto += readGroup(millones) + ' MILLONES ';
+    }
+  }
+  if (miles > 0) {
+    if (miles === 1) {
+      texto += 'MIL ';
+    } else {
+      texto += readGroup(miles) + ' MIL ';
+    }
+  }
+  if (unidadesResto > 0) {
+    texto += readGroup(unidadesResto) + ' ';
+  }
+
+  return `${texto.trim()} PESOS M/CTE`;
 }
 
 /**
@@ -282,8 +342,10 @@ export function calculatePayroll(
   const viaticos = employee.viaticosAsignacionFamiliar || 0;
   const diasTrabajados = employee.diasTrabajados || 30;
 
-  // Valor Hora Extra (Base / 30 * 28 / 44 * 1.5)
-  const factorHoraExtra = (1 / 30) * (28 / 44) * 1.5;
+  // Jornada Laboral (Ley 21.561 40 Horas en Chile)
+  const jornadaHoras = (employee as any).jornadaHorasSemanales || 40;
+  // Factor hora extra según dictámenes DT: (1/30) * (28 / jornadaHoras) * 1.5
+  const factorHoraExtra = (1 / 30) * (28 / jornadaHoras) * 1.5;
   const valorHoraExtra = Math.round(sueldoBase * factorHoraExtra);
   const horasExtrasMonto = horasExtrasCant * valorHoraExtra;
 
@@ -301,9 +363,9 @@ export function calculatePayroll(
   const totalHaberesNoImponibles = colacion + movilizacion + viaticos;
   const totalHaberesBrutos = totalHaberesImponibles + totalHaberesNoImponibles;
 
-  // Topes imponibles en pesos
-  const topeAfpSaludCLP = Math.round(indicators.topeImponibleAfpUf * indicators.uf);
-  const topeAfcCLP = Math.round(indicators.topeImponibleAfcUf * indicators.uf);
+  // Topes imponibles en pesos (2026: AFP 90.0 UF, AFC 135.2 UF)
+  const topeAfpSaludCLP = Math.round((indicators.topeImponibleAfpUf || 90.0) * indicators.uf);
+  const topeAfcCLP = Math.round((indicators.topeImponibleAfcUf || 135.2) * indicators.uf);
 
   const baseAfpSalud = Math.min(totalHaberesImponibles, topeAfpSaludCLP);
   const baseAfc = Math.min(totalHaberesImponibles, topeAfcCLP);
@@ -341,7 +403,16 @@ export function calculatePayroll(
   const afcEmpleadorTasa = tipoContrato === 'INDEFINIDO' ? 0.024 : 0.030;
   const afcEmpleadorMonto = Math.round(baseAfc * afcEmpleadorTasa);
 
-  const costoTotalEmpresa = totalHaberesBrutos + sisEmpleadorMonto + mutualEmpleadorMonto + afcEmpleadorMonto;
+  // Ley 21.735: Aporte Previsional Patronal 1.0% (vigente desde agosto 2025/2026)
+  const reformaPrevisionalLey21735Tasa = indicators.ley21735AportePatronalTasa ?? 0.010;
+  const reformaPrevisionalLey21735Monto = Math.round(baseAfpSalud * reformaPrevisionalLey21735Tasa);
+
+  const costoTotalEmpresa =
+    totalHaberesBrutos +
+    sisEmpleadorMonto +
+    mutualEmpleadorMonto +
+    afcEmpleadorMonto +
+    reformaPrevisionalLey21735Monto;
 
   return {
     id: employee.id || `emp-${Date.now()}`,
@@ -378,7 +449,15 @@ export function calculatePayroll(
     sisEmpleadorMonto,
     mutualEmpleadorMonto,
     afcEmpleadorMonto,
+    reformaPrevisionalLey21735Tasa,
+    reformaPrevisionalLey21735Monto,
     costoTotalEmpresa,
+    periodo: employee.periodo || new Date().toISOString().substring(0, 7),
+    empresaId: employee.empresaId,
+    esReliquidacion: employee.esReliquidacion || false,
+    reliquidacionPeriodoOrigen: employee.reliquidacionPeriodoOrigen,
+    diferencialImponible: employee.diferencialImponible || 0,
+    diferencialImpuestoUnico: employee.diferencialImpuestoUnico || 0,
   };
 }
 
@@ -801,6 +880,7 @@ export function createPayrollCentralizationEntry(
   const totalSis = payrolls.reduce((sum, p) => sum + p.sisEmpleadorMonto, 0);
   const totalMutual = payrolls.reduce((sum, p) => sum + p.mutualEmpleadorMonto, 0);
   const totalAfcEmpleador = payrolls.reduce((sum, p) => sum + p.afcEmpleadorMonto, 0);
+  const totalLey21735 = payrolls.reduce((sum, p) => sum + (p.reformaPrevisionalLey21735Monto || 0), 0);
   const totalAportesPatronales = totalSis + totalMutual + totalAfcEmpleador;
 
   // Haberes / Cuentas de Pasivo
@@ -830,6 +910,9 @@ export function createPayrollCentralizationEntry(
   if (totalAportesPatronales > 0) {
     lineas.push({ cuentaCodigo: '5.2.04', cuentaNombre: 'Aportes Patronales (SIS, Mutual, AFC Emp.)', debe: totalAportesPatronales, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento });
   }
+  if (totalLey21735 > 0) {
+    lineas.push({ cuentaCodigo: '5.2.06', cuentaNombre: 'Aporte Previsional Patronal Ley 21.735 (1%)', debe: totalLey21735, haber: 0, centroCosto: 'RECURSOS_HUMANOS', documentoRef: docLibro, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioRemun, fechaDocumentoRef: fechaAsiento });
+  }
 
   // HABER: Pasivos y Retenciones por Pagar (con Auxiliar Institucional y Documento de Referencia)
   lineas.push(
@@ -838,6 +921,10 @@ export function createPayrollCentralizationEntry(
     { cuentaCodigo: '2.1.10', cuentaNombre: 'AFC Seguro de Cesantía por Pagar', debe: 0, haber: totalAfcTrabajador + totalAfcEmpleador, rutAuxiliar: '76.265.736-8', nombreAuxiliar: 'AFC Chile', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento },
     { cuentaCodigo: '2.1.11', cuentaNombre: 'Mutual de Seguridad / SIS por Pagar', debe: 0, haber: totalMutual + totalSis, rutAuxiliar: '70.285.100-9', nombreAuxiliar: 'Mutual de Seguridad / SIS', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento }
   );
+
+  if (totalLey21735 > 0) {
+    lineas.push({ cuentaCodigo: '2.1.12', cuentaNombre: 'Aporte Previsional Ley 21.735 por Pagar (PreviRed)', debe: 0, haber: totalLey21735, rutAuxiliar: '96.919.050-8', nombreAuxiliar: 'PreviRed / Fondo Previsional', documentoRef: `Planilla PreviRed ${periodo}`, tipoDocumentoRef: 'DOCUMENTO_LABORAL', folioDocumentoRef: folioPrevired, fechaDocumentoRef: fechaAsiento });
+  }
 
   if (totalImpuestoUnico > 0) {
     lineas.push({ cuentaCodigo: '2.1.05', cuentaNombre: 'Impuesto Único 2da Categoría por Pagar (F29)', debe: 0, haber: totalImpuestoUnico, rutAuxiliar: '60.803.000-K', nombreAuxiliar: 'Tesorería General de la República (TGR)', documentoRef: `F29 Impuesto Único ${periodo}`, tipoDocumentoRef: 'TRIBUTARIO_TGR', folioDocumentoRef: `F29-${periodo}`, fechaDocumentoRef: fechaAsiento });
@@ -1376,7 +1463,7 @@ export function createSalesDteEntry(dte: DteDocument): AccountingEntry {
 /**
  * Generate Accounting Entry for Purchase Invoice DTE 33 / DTE 61
  */
-export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
+export function createPurchaseDteEntry(dte: DteDocument, isCompanyExento: boolean = false): AccountingEntry {
   if (!dte) {
     return {
       id: `entry-dte-purch-default-${Date.now()}`,
@@ -1397,6 +1484,15 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
   const folioStr = String(dte.folio);
   const ccDefault = dte.centroCostoCodigo || dte.centroCostoNombre || 'OPERACIONES';
   const fechaVenc = dte.fechaVencimiento || dte.fechaEmision;
+
+  // Si la empresa es exenta de IVA o el documento tiene marca de no recuperable,
+  // el IVA es 100% IVA No Recuperable (Costo/Gasto Art. 23 DL 825) y jamás IVA Crédito Fiscal.
+  const isExentoBuyer = Boolean(isCompanyExento || dte.ivaNoRecuperable || (dte.montoIvaNoRecuperable && dte.montoIvaNoRecuperable > 0));
+  const totalIva = dte.montoIva || ((dte.montoIvaRecuperable || 0) + (dte.montoIvaNoRecuperable || 0));
+  const ivaRecuperable = isExentoBuyer ? 0 : (dte.montoIvaRecuperable ?? totalIva);
+  const ivaNoRecuperable = isExentoBuyer
+    ? (dte.montoIvaNoRecuperable || totalIva)
+    : (dte.montoIvaNoRecuperable || 0);
 
   const baseDocProps = {
     rutAuxiliar: dte.rutContraparte,
@@ -1434,12 +1530,23 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
       });
     }
 
-    if (dte.montoIva > 0) {
+    if (ivaRecuperable > 0) {
       lineas.push({
         cuentaCodigo: '1.1.05',
         cuentaNombre: 'IVA Crédito Fiscal (Rebaja por NC Recibida)',
         debe: 0,
-        haber: dte.montoIva,
+        haber: ivaRecuperable,
+        ...baseDocProps,
+      });
+    }
+
+    if (ivaNoRecuperable > 0) {
+      lineas.push({
+        cuentaCodigo: '5.2.11',
+        cuentaNombre: 'IVA No Recuperable (Rebaja Costo/Gasto por NC Recibida Art. 23 DL 825)',
+        debe: 0,
+        haber: ivaNoRecuperable,
+        centroCosto: ccDefault,
         ...baseDocProps,
       });
     }
@@ -1509,12 +1616,23 @@ export function createPurchaseDteEntry(dte: DteDocument): AccountingEntry {
       }
     }
 
-    if (dte.montoIva > 0) {
+    if (ivaRecuperable > 0) {
       lineas.push({
         cuentaCodigo: '1.1.05',
         cuentaNombre: 'IVA Crédito Fiscal',
-        debe: dte.montoIva,
+        debe: ivaRecuperable,
         haber: 0,
+        ...baseDocProps,
+      });
+    }
+
+    if (ivaNoRecuperable > 0) {
+      lineas.push({
+        cuentaCodigo: '5.2.11',
+        cuentaNombre: 'IVA No Recuperable (Costo / Gasto Operacional Art. 23 DL 825)',
+        debe: ivaNoRecuperable,
+        haber: 0,
+        centroCosto: ccDefault,
         ...baseDocProps,
       });
     }

@@ -12,12 +12,16 @@ export type DteType =
   | 'BHE'; // Boleta de Honorarios Recibida
 
 export interface CompanyProfile {
+  id?: string;
   rut: string;
   razonSocial: string;
   giro: string;
   direccion: string;
   comuna: string;
   ciudad: string;
+  region?: string;
+  telefono?: string;
+  email?: string;
   regimenTributario: '14D3_PROPYME_GENERAL' | '14D8_PROPYME_TRANSPARENTE' | '14A_SEMI_INTEGRADO';
   tasaPpm: number; // ej: 0.25%, 0.50%, 1.0%, etc.
   tasaPpmVoluntaria?: number; // Tasa voluntaria adicional para resguardo de renta anual
@@ -29,9 +33,11 @@ export interface CompanyProfile {
   capitalPropioTributarioSimplificado?: number; // Base para Patente Municipal (DL 3.063 Art. 24)
   patenteMunicipalTasaPorMil?: number; // Tasa por mil municipal (2.5 a 5 por mil)
   baseRliProyectada?: number; // Base Renta Líquida Imponible para F22
-  afpMutualTasa: number; // ej: 0.93% base + adicional
-  bancoPrincipal: string;
-  numeroCuenta: string;
+  afpMutualTasa?: number; // ej: 0.93% base + adicional
+  bancoPrincipal?: string;
+  numeroCuenta?: string;
+  esExportador?: boolean;
+  retencionCambioSujeto?: boolean;
   // Parámetros de Ejercicio Fiscal y Cierre Contable (Art. 16 Código Tributario)
   mesCierreEjercicio?: number; // 12 = Diciembre (regla general SII), 6 = Junio (temporadas/agro/filiales extranjeras), etc.
   diaCierreEjercicio?: number; // 31, 30, etc.
@@ -176,6 +182,9 @@ export interface TenantCafItem {
   fechaAutorizacion?: string;
   foliosDisponibles?: number;
   folioActualSugerido?: number;
+  firmaValida?: boolean;
+  cafStatus?: 'VALID_OFFICIAL' | 'SAMPLE_STAGING' | 'INVALID_CORRUPT' | 'NOT_FOUND' | 'UNVERIFIED_NO_SII_KEY';
+  firmaAlgoritmo?: string;
 }
 
 export interface TaxCryptographicVaultStatus {
@@ -424,6 +433,8 @@ export interface SiiPendingPeriodDiagnostic {
 
 export interface DteDocument {
   id: string;
+  empresaId?: string;
+  periodo?: string;
   tipoDte: DteType;
   folio: number;
   tipoOperacion: 'VENTA' | 'COMPRA' | 'HONORARIOS';
@@ -435,6 +446,9 @@ export interface DteDocument {
   montoExento: number;
   montoNeto: number;
   montoIva: number;
+  montoIvaRecuperable?: number;
+  montoIvaNoRecuperable?: number;
+  ivaNoRecuperable?: boolean;
   montoTotal: number;
   retencionTasa?: number; // Para Boletas de Honorarios (ej: 14.5%)
   retencionMonto?: number;
@@ -639,8 +653,225 @@ export interface EmployeePayroll {
   // Costos Empleador (Aporte Patronal)
   sisEmpleadorMonto: number;
   mutualEmpleadorMonto: number;
+  sisMonto?: number;
+  mutualMonto?: number;
   afcEmpleadorMonto: number;
+  // Reforma Previsional Ley 21.735 (Aporte Patronal 1.0% vigente desde agosto 2025/2026)
+  reformaPrevisionalLey21735Tasa?: number;
+  reformaPrevisionalLey21735Monto?: number;
   costoTotalEmpresa: number;
+  // Período y metadatos
+  periodo?: string; // Formato YYYY-MM
+  empresaId?: string;
+  // Campos de reliquidación retroactiva
+  esReliquidacion?: boolean;
+  reliquidacionPeriodoOrigen?: string;
+  diferencialImponible?: number;
+  diferencialImpuestoUnico?: number;
+}
+
+export interface PayrollHistoricalRecord extends EmployeePayroll {
+  periodo: string; // YYYY-MM
+  fechaCalculo: string;
+  cerrado: boolean;
+  asientoId?: string;
+  reliquidado?: boolean;
+}
+
+export interface PayrollReliquidationAdjustment {
+  id: string;
+  empresaId: string;
+  employeeId: string;
+  rutEmpleado: string;
+  nombreEmpleado: string;
+  periodoDevengado: string; // Mes original (ej: "2026-01")
+  periodoPago: string; // Mes en que se reliquida y paga (ej: "2026-03")
+  motivoAjuste: 'AUMENTO_SUELDO_RETROACTIVO' | 'BONO_RETROACTIVO' | 'CORRECCION_HORAS_EXTRAS' | 'CORRECCION_DIAS_TRABAJADOS' | 'DIFERENCIAL_COMISIONES' | 'ERROR_CALCULO' | 'RESOLUCION_DT_TRIBUNAL' | 'OTRO';
+  detalleMotivo: string;
+  diferencialSueldoBase: number;
+  diferencialHorasExtras: number;
+  diferencialComisiones: number;
+  diferencialGratificacion: number;
+  diferencialTotalImponible: number;
+  // Cotizaciones previsionales sobre la diferencia
+  diferencialAfp: number;
+  diferencialSalud: number;
+  diferencialAfcTrabajador: number;
+  diferencialAfcEmpleador: number;
+  diferencialSis: number;
+  diferencialMutual: number;
+  diferencialLey21735: number;
+  // Reliquidación de Impuesto Único (Art. 46 LIR con UTM del período devengado)
+  utmPeriodoDevengado: number;
+  impuestoUnicoOriginal: number;
+  impuestoUnicoRecalculado: number;
+  diferencialImpuestoUnico: number;
+  // Resultado neto
+  totalDiferencialLiquido: number;
+  totalCostoEmpresaAjuste: number;
+  // Estado y gobernanza
+  estado: 'BORRADOR' | 'PENDIENTE_APROBACION_HUMANA' | 'APROBADO_Y_PAGADO' | 'RECHAZADO';
+  solicitadoPorAgente: string;
+  aprobadoPorUsuario?: string;
+  fechaAprobacion?: string;
+  asientoAjusteId?: string;
+  createdAt: string;
+}
+
+export interface PayrollConceptBreakdownItem {
+  codigo: string;
+  nombre: string;
+  categoria: 'HABER_IMPONIBLE' | 'HABER_NO_IMPONIBLE' | 'DESCUENTO_PREVISIONAL' | 'DESCUENTO_TRIBUTARIO' | 'DESCUENTO_VARIOS' | 'APORTE_PATRONAL';
+  monto: number;
+  montoAnterior?: number;
+  variacionPesos?: number;
+  variacionPorcentaje?: number;
+  observacion?: string;
+}
+
+export interface PayrollConceptEvolutionPoint {
+  periodo: string; // YYYY-MM
+  employeeId: string;
+  rut: string;
+  nombreCompleto: string;
+  cargo: string;
+  departamento: string;
+  // Haberes Imponibles
+  sueldoBase: number;
+  gratificacionLegal: number;
+  horasExtrasCantidad: number;
+  horasExtrasMonto: number;
+  comisionesBonos: number;
+  totalImponible: number;
+  // Haberes No Imponibles
+  colacion: number;
+  movilizacion: number;
+  viaticos: number;
+  totalNoImponible: number;
+  totalHaberes: number;
+  // Descuentos Legales
+  afpNombre: string;
+  afpMonto: number;
+  saludTipo: string;
+  saludMonto: number;
+  afcTrabajador: number;
+  impuestoUnico: number;
+  otrosDescuentos: number;
+  totalDescuentos: number;
+  // Líquido
+  sueldoLiquido: number;
+  // Aportes Patronales
+  sisMonto: number;
+  mutualMonto: number;
+  afcEmpleador: number;
+  ley21735Monto: number;
+  costoTotalEmpresa: number;
+  // Variación comparativa respecto al mes previo
+  variacionMesAnterior?: {
+    imponibleDiff: number;
+    imponibleDiffPct: number;
+    liquidoDiff: number;
+    liquidoDiffPct: number;
+    sueldoBaseDiff: number;
+    sueldoBaseDiffPct: number;
+    costoEmpresaDiff: number;
+    costoEmpresaDiffPct: number;
+    conceptosConCambio: string[];
+  };
+}
+
+export interface SocialSecurityEmployeeDetail {
+  employeeId: string;
+  rut: string;
+  nombreCompleto: string;
+  cargo: string;
+  totalImponible: number;
+  afpNombre: string;
+  afpMonto: number;
+  saludTipo: string;
+  saludMonto: number;
+  afcTrabajador: number;
+  afcEmpleador: number;
+  sisMonto: number;
+  mutualMonto: number;
+  ley21735Monto: number; // 1.0% aporte patronal
+  totalImposicionesColaborador: number;
+}
+
+export interface SocialSecurityHistoricalPayment {
+  id: string; // ej: 'prev-2026-08'
+  empresaId: string;
+  rutEmpresa: string;
+  razonSocial: string;
+  periodo: string; // YYYY-MM
+  folioPrevired: string; // CPE o Nro Planilla PreviRed ej: 'PREV-202608-8849102'
+  fechaPago: string; // ISO String
+  medioPago: 'TRANSFERENCIA_ELECTRONICA' | 'CPE_BANCO_CHILE' | 'CPE_BANCO_ESTADO' | 'BOTON_PAGO_PREVIRED';
+  banco: string;
+  nroTransaccion: string;
+  estado: 'PAGADO_Y_ACREDITADO' | 'DECLARADO_NO_PAGADO_DNP' | 'EN_PROCESO';
+  totalTrabajadores: number;
+  // Desglose por Institución
+  montoAfpTotal: number;
+  montoSaludTotal: number;
+  montoAfcTotal: number;
+  montoMutualTotal: number;
+  montoSisTotal: number;
+  montoLey21735Total: number; // 1% Ley 21.735
+  montoCajaCompensacionTotal: number;
+  montoTotalPagado: number;
+  asientoPagoId?: string;
+  detallesPorTrabajador: SocialSecurityEmployeeDetail[];
+  comprobanteHash: string;
+  certificadoF30Url?: string;
+  createdAt: string;
+}
+
+export interface HrClimateSurvey {
+  id: string;
+  empresaId: string;
+  titulo: string;
+  periodo: string; // YYYY-Q1, YYYY-MM
+  dimensiones: {
+    liderazgo: number; // 1-100
+    remuneracionesBeneficios: number;
+    ambienteLaboral: number;
+    balanceVidaTrabajo: number;
+    desarrolloCarrera: number;
+  };
+  indiceEnpsLaboral: number; // -100 a +100
+  participacionPorcentaje: number;
+  alertasDetectadas: string[];
+  recomendacionesAgenteClima: string[];
+  fechaPublicacion: string;
+}
+
+export interface ModuleAgentApprovalRequest {
+  id: string;
+  empresaId: string;
+  modulo: 'RRHH' | 'CONTABILIDAD' | 'TRIBUTARIO_SII' | 'TESORERIA' | 'COMERCIAL_COMPRAS' | 'INVENTARIO' | 'ACTIVO_FIJO' | 'FLUJO_CAJA' | 'COSTOS_PRODUCCION' | 'CONCILIACION' | 'RENDICIONES' | string;
+  agenteNombre: string;
+  operacionTipo: string;
+  titulo: string;
+  descripcion: string;
+  datosOperacion: Record<string, any>;
+  impactoFinanciero?: number;
+  impactoFinancieroClp?: number;
+  riesgoNivel?: 'BAJO' | 'MEDIO' | 'ALTO' | 'CRITICO';
+  nivelRiesgo?: 'BAJO' | 'MEDIO' | 'ALTO' | 'CRITICO';
+  estado: 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | 'EJECUTADO' | 'ERROR_EJECUCION';
+  solicitadoEn: string;
+  solicitadoPor?: string;
+  solicitadoPorUserId?: string;
+  resueltoPor?: string;
+  resueltoEn?: string;
+  asientoContableId?: string;
+  resultadoEjecucion?: string;
+  trackId?: string;
+  ted?: string;
+  folioEmitido?: number;
+  montoAprobadoClp?: number;
+  montoEjecutadoClp?: number;
 }
 
 export interface LeaseContract {
@@ -713,7 +944,8 @@ export type CashFlowOriginModule =
   | 'CHEQUES_CARTERA'
   | 'CHEQUES_EMITIDOS'
   | 'DEUDA_FINANCIERA'
-  | 'PROVISIONES';
+  | 'PROVISIONES'
+  | 'CONTABILIDAD';
 
 // Cheques en Cartera por Cobrar (Custodia de cheques a fecha de clientes)
 export interface ChequeCartera {
@@ -1175,6 +1407,10 @@ export interface AccountingEntry {
   origen?: 'RCV_VENTA' | 'RCV_COMPRA' | 'HONORARIOS' | 'REMUNERACIONES' | 'F29_TRIBUTARIO' | 'ARRIENDO_IFRS16' | 'CAJA_BANCO' | 'INVENTARIO' | 'MANUAL' | 'AJUSTE_DIF_CAMBIO' | string;
   creadoEn?: string;
   supervisorSignature?: string;
+  empresaId?: string;
+  periodo?: string;
+  glosa?: string;
+  numero?: number | string;
 }
 
 export interface AccountPlanItem {
@@ -1593,6 +1829,7 @@ export interface ChileIndicators {
   retencionHonorariosTasa: number;
   sisTasa: number;
   mutualBaseTasa: number;
+  ley21735AportePatronalTasa?: number; // 0.010 (1.0% Ley 21.735 Reforma Previsional)
   fecha: string;
 }
 
@@ -1658,7 +1895,7 @@ export interface InventoryItem {
   // Distribución física por bodega
   stockPorBodega: WarehouseStockDetail[];
   // Proveedor sugerido de reposición
-  proveedorPrincipal: {
+  proveedorPrincipal?: {
     rut: string;
     razonSocial: string;
     plazoEntregaDias: number;
@@ -1941,12 +2178,14 @@ export interface DisciplinarySanction {
   articuloRiohs: string; // ej: "Art. 18 RIOHS sobre puntualidad y asistencia", "Art. 45 sobre uso de EPP"
   montoMulta?: number; // Máximo legal 25% de la remuneración diaria (Art. 157 Código del Trabajo)
   destinatarioMulta?: string; // Fondo de bienestar de los trabajadores (mandato legal Art. 157)
-  notificadoAlTrabajador: boolean;
+  notificadoAlTrabajador?: boolean;
   fechaNotificacion?: string;
-  remitidoInspeccionDelTrabajo: boolean;
+  remitidoInspeccionDelTrabajo?: boolean;
   folioConstanciaDt?: string;
-  estado: 'BORRADOR' | 'NOTIFICADO' | 'REGISTRADO_DT';
-  textoCartaFormal: string;
+  estado: 'BORRADOR' | 'NOTIFICADO' | 'REGISTRADO_DT' | 'FIRMADA_TRABAJADOR';
+  textoCartaFormal?: string;
+  compromisoMejora?: string;
+  observaciones?: string;
 }
 
 export interface LegalBookDTReport {
@@ -2839,12 +3078,12 @@ export interface ClientAuxiliaryMasterRecord {
   telefonoPrincipal: string;
   emailContacto: string;
   nombreContacto: string;
-  emailDte: string;
+  emailDte?: string;
   direccion?: string;
   region?: string;
   ciudad?: string;
   comuna?: string;
-  tipoAuxiliar?: 'CLIENTE' | 'PROVEEDOR' | 'AMBOS';
+  tipoAuxiliar?: 'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'EMPLEADO' | 'HONORARIO' | 'RENDICION' | 'RENDICIONES';
   sucursales?: { id: string; nombre: string; direccion: string; comuna: string }[];
   limiteCredito?: number;
   terminosPago?: string;

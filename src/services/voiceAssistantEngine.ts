@@ -12,8 +12,13 @@ import {
 } from '../types';
 import { formatCLP } from '../utils/chileanAccounting';
 import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
+import { commercialProcurementService } from './commercialProcurementService';
+
+const getDiskPersistence = (): any => (globalThis as any)?.__diskPersistence;
+const safeDynamicImport = async (moduleSpecifier: string): Promise<any> => Function('m', 'return import(m)')(moduleSpecifier);
 
 export interface DialogueContext {
+  clientId?: string;
   clientName: string;
   rut: string;
   dtesCount: number;
@@ -147,39 +152,33 @@ class VoiceAssistantEngine {
 
     // 2. Filtrar voces en español
     const spanishVoices = all.filter(v => v.lang.toLowerCase().startsWith('es'));
-    const candidateList = spanishVoices.length > 0 ? spanishVoices : all;
+    let baseList = spanishVoices.length > 0 ? spanishVoices : all;
+
+    // Priorizar voces humanas naturales sobre sintetizadores de efectos caricaturescos (Grandpa, Reed, Rocko, etc.)
+    const isNovelty = (name: string) => /grandpa|reed|rocko|eddy|flo|sandy|shelley|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|pipe organ|trinoids|whisper|zarvox/i.test(name);
+    const naturalVoices = baseList.filter(v => !isNovelty(v.name));
+    const candidateList = naturalVoices.length > 0 ? naturalVoices : baseList;
+
+    // Priorizar voces Google o naturales de alta fidelidad si están disponibles
+    candidateList.sort((a, b) => {
+      const aScore = /google|natural|siri|paulina|monica|jorge|diego|francisca|alvaro|salma/i.test(a.name) ? 2 : 1;
+      const bScore = /google|natural|siri|paulina|monica|jorge|diego|francisca|alvaro|salma/i.test(b.name) ? 2 : 1;
+      return bScore - aScore;
+    });
 
     const maleVoices = candidateList.filter(v => detectVoiceGender(v) === 'MALE');
     const femaleVoices = candidateList.filter(v => detectVoiceGender(v) === 'FEMALE');
 
     if (persona.sexo === 'MASCULINO') {
       if (maleVoices.length > 0) {
-        // Asignación diferenciada entre los hombres del equipo
-        const maleSlotMap: Record<string, number> = {
-          'TRIBUTARIO_F29': 0,    // Reed / Jorge / etc.
-          'FACTURACION_DTE': 1,   // Rocko / Juan / etc.
-          'BODEGA_INVENTARIO': 2, // Grandpa / Diego / etc.
-          'ACTIVO_FIJO': 3,       // Eddy / Pablo / etc.
-        };
-        const slot = maleSlotMap[persona.id] ?? 0;
-        return maleVoices[slot % maleVoices.length];
+        return maleVoices[0];
       }
-      // Si el navegador no tiene voces con nombre masculino, usar cualquier voz no explícitamente femenina
       const nonFemale = candidateList.filter(v => detectVoiceGender(v) !== 'FEMALE');
       if (nonFemale.length > 0) return nonFemale[0];
       return candidateList[0];
     } else {
-      // Persona FEMENINA: Asignación diferenciada entre las mujeres del equipo
       if (femaleVoices.length > 0) {
-        const femaleSlotMap: Record<string, number> = {
-          'CONTABILIDAD_SENIOR': 0, // Mónica / etc.
-          'TESORERIA_BANCOS': 1,    // Paulina / etc.
-          'RRHH_PERSONAS': 2,       // Shelley / etc.
-          'PRODUCCION_COSTOS': 3,   // Flo / etc.
-          'RENDICION_GASTOS': 4,    // Sandy / etc.
-        };
-        const slot = femaleSlotMap[persona.id] ?? 0;
-        return femaleVoices[slot % femaleVoices.length];
+        return femaleVoices[0];
       }
       return candidateList[0];
     }
@@ -259,6 +258,8 @@ class VoiceAssistantEngine {
             body: JSON.stringify({
               text: chunkText,
               voiceId,
+              personaName: persona.nombre,
+              geminiVoiceName: persona.voz.geminiVoiceName,
               rate: persona.voz.rate || 1.0,
               pitch: persona.voz.pitch || 1.0,
             }),
@@ -352,18 +353,14 @@ class VoiceAssistantEngine {
         } catch (err) {
           console.warn('[VoiceAssistantEngine] Error en audio.play():', err);
           this.currentAudioElement = null;
-          // SOLO si esta sesión sigue siendo la activa y no fue cancelada, activar fallback
-          if (this.currentPlaybackSessionId === sessionId) {
-            callbacks?.onEnd?.();
-            this.speakBrowser(cleanText, persona, callbacks, sessionId);
-          }
+          throw err;
         }
       };
 
       await playSequential(0, firstAudioSrc);
       return true;
     } catch (err) {
-      console.warn('[VoiceAssistantEngine] Falló Piper TTS en backend:', err);
+      console.warn('[VoiceAssistantEngine] Falló Piper TTS en backend, activando síntesis de contingencia:', err);
       return false;
     }
   }
@@ -393,19 +390,13 @@ class VoiceAssistantEngine {
       return;
     }
 
-    // Si la persona usa Piper o es Vera, intentar síntesis neuronal Piper con fallback al navegador
-    const usesPiper = persona.voz.neuralModel === 'piper' || persona.id === 'AGENTE_GENERAL_VERA';
-    if (usesPiper) {
-      this.speakWithPiper(cleanText, persona, callbacks, sessionId).then((played) => {
-        // Fallback al navegador ÚNICAMENTE si Piper falló y la sesión NO fue cancelada por otra persona
-        if (!played && this.currentPlaybackSessionId === sessionId) {
-          this.speakBrowser(cleanText, persona, callbacks, sessionId);
-        }
-      });
-      return;
-    }
-
-    this.speakBrowser(cleanText, persona, callbacks, sessionId);
+    // Prioridad 1: Síntesis neuronal de alta fidelidad (/api/voice/tts: Gemini Speech Generation -> Piper -> Navegador)
+    this.speakWithPiper(cleanText, persona, callbacks, sessionId).then((played) => {
+      // Fallback al navegador únicamente si la síntesis en servidor falló y la sesión no fue cancelada
+      if (!played && this.currentPlaybackSessionId === sessionId) {
+        this.speakBrowser(cleanText, persona, callbacks, sessionId);
+      }
+    });
   }
 
   /**
@@ -491,11 +482,14 @@ class VoiceAssistantEngine {
       try {
         this.currentAudioElement.pause();
         this.currentAudioElement.currentTime = 0;
+        this.currentAudioElement.src = '';
         this.currentAudioElement = null;
       } catch {}
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
     }
   }
 
@@ -686,13 +680,32 @@ class VoiceAssistantEngine {
         );
       }
 
-      // 2. Métricas y saldos actualizados al día de hoy
-      const saldoBancosHoy = 18450000;
-      const cobranzasProyectadas30d = 14850000;
-      const egresosComprometidos30d = 11200000;
-      const f29Compromiso = 1890000;
-      const remuneraciones = 4850000;
-      const proveedoresOperativos = 4460000;
+      // 2. Métricas y saldos reales actualizados al día de hoy tomados del contexto vivo
+      const saldoBancosHoy = (context.bankAccounts && context.bankAccounts.length > 0)
+        ? context.bankAccounts.reduce((sum, b) => sum + (Number(b.saldoEnLinea) || 0), 0)
+        : 0;
+
+      const remuneraciones = (context.payrolls && context.payrolls.length > 0)
+        ? context.payrolls.reduce((sum, p) => sum + (Number(p.sueldoLiquido) || 0), 0)
+        : 0;
+
+      const f29Compromiso = context.f29IvaTotal
+        ? Math.abs(context.f29IvaTotal)
+        : (context.f29 ? Math.abs((context.f29 as any).f29PagadoClp || (context.f29 as any).totalAPagar || 0) : 0);
+
+      const cobranzasProyectadas30d = (context.dtes && context.dtes.length > 0)
+        ? context.dtes
+            .filter((d) => (d.tipoOperacion === 'VENTA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
+            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
+        : 0;
+
+      const proveedoresOperativos = (context.dtes && context.dtes.length > 0)
+        ? context.dtes
+            .filter((d) => (d.tipoOperacion === 'COMPRA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
+            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
+        : 0;
+
+      const egresosComprometidos30d = remuneraciones + f29Compromiso + proveedoresOperativos;
       const saldoProyectado30d = saldoBancosHoy + cobranzasProyectadas30d - egresosComprometidos30d;
       const holgura = saldoProyectado30d - (f29Compromiso + remuneraciones);
 
@@ -709,14 +722,18 @@ class VoiceAssistantEngine {
   • Proveedores & Operaciones: -$${formatCLP(proveedoresOperativos)} CLP
 
 📈 *Saldo Final Proyectado a 30 Días:* *$${formatCLP(saldoProyectado30d)} CLP*
-🛡️ *Estado de Liquidez:* POSITIVA Y BLINDADA (Holgura de +$${formatCLP(holgura)} CLP sobre compromisos críticos)
+🛡️ *Estado de Liquidez:* ${saldoProyectado30d >= 0 ? `POSITIVA (Holgura de +$${formatCLP(holgura)} CLP)` : `DÉFICIT PROYECTADO (-$${formatCLP(Math.abs(saldoProyectado30d))} CLP)`}
 
 🔗 _Regenerado en tiempo real por Vera ERP._`;
 
       const whatsappShareUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
 
+      const verbalSummary = saldoBancosHoy > 0
+        ? `Listo socio. He actualizado el flujo de caja a partir de hoy, ${todayFormatted}. Con nuestro saldo bancario disponible de $${formatCLP(saldoBancosHoy)} pesos, cobranzas estimadas por $${formatCLP(cobranzasProyectadas30d)} y compromisos por $${formatCLP(egresosComprometidos30d)}, proyectamos una posición final de $${formatCLP(saldoProyectado30d)} pesos.`
+        : `Listo socio. He recalculado el flujo de caja a partir de hoy, ${todayFormatted}. Actualmente la empresa no registra saldos bancarios disponibles en línea; los compromisos identificados suman $${formatCLP(egresosComprometidos30d)} pesos.`;
+
       return {
-        verbalResponse: `Listo socio. He actualizado el flujo de caja para que inicie a partir del día de hoy, ${todayFormatted}. La planilla diaria en pantalla ha sido recalculada con los compromisos vigentes para los próximos 30 días. Con nuestro saldo bancario actual de dieciocho millones cuatrocientos cincuenta mil pesos y cobranzas proyectadas por catorce millones ochocientos cincuenta mil, mantenemos una holgura positiva asegurando sueldos y F29 con un saldo final estimado de veintidós millones cien mil pesos.`,
+        verbalResponse: verbalSummary,
         displayMarkdown: `### 📊 Flujo de Caja Actualizado a la Fecha de Hoy (${todayFormatted})
 > **Agente a cargo:** Vera Albornoz (Directora General & Socia Financiera) • *Regeneración en Tiempo Real*
 
@@ -724,13 +741,13 @@ He recalculado la proyección de tesorería y la **Matriz Diaria Estilo Excel** 
 
 | Concepto de Tesorería | Saldo / Monto CLP | Estado / Cobertura |
 | :--- | :---: | :--- |
-| 🏦 **Saldo Inicial Consolidado en Bancos** | **$${formatCLP(saldoBancosHoy)}** | Disponible inmediato en Banco de Chile / Santander |
-| 🟢 **Ingresos Proyectados (Cobranzas 30 Días)** | **+$${formatCLP(cobranzasProyectadas30d)}** | Facturas emitidas con vencimiento en el ciclo |
-| 🔴 **Egresos Comprometidos (30 Días)** | **-$${formatCLP(egresosComprometidos30d)}** | Sueldos, F29 SII, Deuda y Proveedores |
-| 💵 • *Remuneraciones & Leyes Sociales:* | -$${formatCLP(remuneraciones)} | 100% Cubiertas al día de pago |
-| 🏛️ • *Impuestos F29 SII:* | -$${formatCLP(f29Compromiso)} | Respaldado en banco |
-| 📦 • *Proveedores Operativos:* | -$${formatCLP(proveedoresOperativos)} | Facturas vigentes programadas |
-| 📈 **SALDO FINAL PROYECTADO A 30 DÍAS** | **$${formatCLP(saldoProyectado30d)}** | **SUPERÁVIT POSITIVO (+${formatCLP(holgura)} CLP de holgura)** |
+| 🏦 **Saldo Inicial Consolidado en Bancos** | **$${formatCLP(saldoBancosHoy)}** | ${saldoBancosHoy > 0 ? 'Disponible inmediato en cuentas registradas' : 'Sin saldos bancarios activos'} |
+| 🟢 **Ingresos Proyectados (Cobranzas 30 Días)** | **+$${formatCLP(cobranzasProyectadas30d)}** | Facturas de venta vigentes |
+| 🔴 **Egresos Comprometidos (30 Días)** | **-$${formatCLP(egresosComprometidos30d)}** | Sueldos, F29 SII y Proveedores |
+| 💵 • *Remuneraciones & Leyes Sociales:* | -$${formatCLP(remuneraciones)} | ${remuneraciones > 0 ? 'Nómina activa' : 'Sin nómina registrada'} |
+| 🏛️ • *Impuestos F29 SII:* | -$${formatCLP(f29Compromiso)} | ${f29Compromiso > 0 ? 'Determinado F29' : 'Sin impuestos F29 pendientes'} |
+| 📦 • *Proveedores Operativos:* | -$${formatCLP(proveedoresOperativos)} | ${proveedoresOperativos > 0 ? 'Facturas de compra' : 'Sin deudas registradas'} |
+| 📈 **SALDO FINAL PROYECTADO A 30 DÍAS** | **$${formatCLP(saldoProyectado30d)}** | **${saldoProyectado30d >= 0 ? `SUPERÁVIT (+${formatCLP(holgura)} CLP)` : `DÉFICIT (-$${formatCLP(Math.abs(saldoProyectado30d))} CLP)`}** |
 
 ---
 
@@ -825,20 +842,38 @@ He recalculado la proyección de tesorería y la **Matriz Diaria Estilo Excel** 
         diasRetraso = parseInt(diasMatch[1], 10);
       }
 
-      // 3. Cálculos Financieros del Escenario (What-If)
-      const saldoInicialBancos = 18450000;
-      const egresosFijosComprometidos = 6200000; // Sueldos + leyes sociales
-      const impuestosF29Estimados = 1890000;      // IVA F29 estimado
-      const otrosEgresosOperativos = 2900000;
+      // 3. Cálculos Financieros del Escenario (What-If) basados en el contexto real
+      const saldoInicialBancos = (context.bankAccounts && context.bankAccounts.length > 0)
+        ? context.bankAccounts.reduce((sum, b) => sum + (Number(b.saldoEnLinea) || 0), 0)
+        : 0;
+
+      const egresosFijosComprometidos = (context.payrolls && context.payrolls.length > 0)
+        ? context.payrolls.reduce((sum, p) => sum + (Number(p.costoTotalEmpresa || p.sueldoLiquido) || 0), 0)
+        : 0;
+
+      const impuestosF29Estimados = context.f29IvaTotal
+        ? Math.abs(context.f29IvaTotal)
+        : (context.f29 ? Math.abs((context.f29 as any).f29PagadoClp || (context.f29 as any).totalAPagar || 0) : 0);
+
+      const otrosEgresosOperativos = (context.dtes && context.dtes.length > 0)
+        ? context.dtes
+            .filter((d) => (d.tipoOperacion === 'COMPRA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
+            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
+        : 0;
 
       // Escenario Base (Sin postergaciones)
-      const totalIngresosBase = 12500000;
+      const totalIngresosBase = (context.dtes && context.dtes.length > 0)
+        ? context.dtes
+            .filter((d) => (d.tipoOperacion === 'VENTA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
+            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
+        : (montoCliente > 0 ? montoCliente * 2 : 0);
+
       const totalEgresosBase = egresosFijosComprometidos + impuestosF29Estimados + otrosEgresosOperativos + montoProveedor;
       const saldoFinalBase = saldoInicialBancos + totalIngresosBase - totalEgresosBase;
 
-      // Escenario Simulado (Cliente posterga 15 días -> el ingreso pasa al próximo ciclo; proveedor se programa al día indicado)
-      const totalIngresosSimulados = totalIngresosBase - montoCliente; // $5.300.000 ingresan este ciclo
-      const totalEgresosSimulados = totalEgresosBase; // El pago al proveedor se efectúa el día convenido dentro del ciclo
+      // Escenario Simulado (Cliente posterga -> ingreso diferido)
+      const totalIngresosSimulados = Math.max(0, totalIngresosBase - montoCliente);
+      const totalEgresosSimulados = totalEgresosBase;
       const saldoFinalSimulado = saldoInicialBancos + totalIngresosSimulados - totalEgresosSimulados;
       const colchonSeguridad = saldoFinalSimulado - (egresosFijosComprometidos + impuestosF29Estimados);
 
@@ -913,40 +948,43 @@ Puedes enviar este resumen ejecutivo directamente a los socios o al directorio p
     }
 
     // ------------------------------------------------------------------------
-    // FLUJO MULTI-TURNO A: Presupuesto & Costeo Industrial (Salmones Austral / Dyneema)
+    // FLUJO MULTI-TURNO A: Presupuesto & Costeo Industrial
     // ------------------------------------------------------------------------
     if (isBudgetContext) {
       // Determinar cliente y producto del contexto
-      let cliente = 'Salmones Austral';
-      if (recentHistoryText.includes('salmones austral') || normalized.includes('salmones austral')) {
-        cliente = 'Salmones Austral';
-      } else if (normalized.includes('para ')) {
+      let cliente = context.clientName || 'Cliente Principal';
+      if (normalized.includes('para ')) {
         const parts = userInput.split(/para\s+/i);
         if (parts.length > 1) {
           cliente = parts[1].split(/\s+por\s+|\s+de\s+/i)[0].trim();
         }
       }
 
-      // TURNO 3: Confirmación final de emisión de Cotización y Creación de OT
-      if (isAffirmative && (recentHistoryText.includes('$15.104.000') || recentHistoryText.includes('cotización formal') || recentHistoryText.includes('orden de trabajo'))) {
+      // TURNO 3: Confirmación de propuesta de Cotización y Borrador de OT
+      if (isAffirmative && (recentHistoryText.includes('cotización formal') || recentHistoryText.includes('orden de trabajo') || recentHistoryText.includes('presupuesto'))) {
+        const historyMarginMatch = recentHistoryText.match(/(\d{1,2}(?:[.,]\d+)?)\s*%/i);
+        const margenPct = historyMarginMatch ? parseFloat(historyMarginMatch[1].replace(',', '.')) : 28;
+        const netoEstimado = Math.round(10874880 / (1 - (margenPct / 100)));
+        const ivaEstimado = Math.round(netoEstimado * 0.19);
+        const brutoEstimado = netoEstimado + ivaEstimado;
+
         return {
-          verbalResponse: `Confirmado. He oficializado la cotización formal COT-2026-089 para ${cliente} y creado la Orden de Trabajo OT-402 en el módulo de Producción y Costos Industriales.`,
-          displayMarkdown: `### 🏭 Cotización Formal Aprobada & Orden de Trabajo Generada (NIC 2)
+          verbalResponse: `Entendido. Te muestro la propuesta de cotización y borrador de Orden de Trabajo para ${cliente} por $${formatCLP(netoEstimado)} pesos netos en pantalla para tu revisión en el módulo de Producción y Costos Industriales.`,
+          displayMarkdown: `### 🏭 Propuesta de Cotización Formal & Borrador de Orden de Trabajo (NIC 2)
 > **Agente a cargo:** Francisca Araya (Jefa de Costos Industriales & Producción)
 
-Se ha oficializado con éxito el presupuesto industrial para **${cliente}**:
-- **Nº de Cotización Formal:** **COT-2026-089** (Estado: Aceptada por Cliente)
-- **Orden de Trabajo Vinculada:** **OT-402** — Confección y Armado de Red Lobera
-- **Ítem:** Confección Red Lobera Perimetral Dyneema 80x80m Antidepredador
-- **Valor Neto:** $15.104.000 CLP (+ IVA 19%: $2.869.760) | **Total Bruto:** $17.973.760 CLP
-- **Plazo de Entrega Comprometido:** 20 días corridos en maestranza Puerto Montt.
+Se ha formulado la propuesta de presupuesto industrial para **${cliente}**:
+- **Nº de Cotización Propuesta:** **COT-${new Date().getFullYear()}-001** (Estado: Propuesta en Revisión Humana)
+- **Orden de Trabajo Planificada:** **OT-${new Date().getFullYear()}-001** — Producción y Fabricación
+- **Valor Neto Estimado:** $${formatCLP(netoEstimado)} CLP (+ IVA 19%: $${formatCLP(ivaEstimado)}) | **Total Bruto:** $${formatCLP(brutoEstimado)} CLP (Margen: ${margenPct}%)
+- **Plazo de Entrega Estimado:** 20 días hábiles en maestranza.
 
-#### 📦 Movimientos de Bodega & Taller Autorizados:
-1. **Reserva de Materiales (WMS):** Paños Dyneema SK78 e insumos perimetrales bloqueados para la OT-402.
-2. **Asignación de Turno:** Horas de costura industrial y remate perimetral programadas.
-3. **Control NIC 2:** Se inicia acumulación analítica de MPD, MOD y CIF en la cuenta *Producción en Proceso*.`,
+#### 📋 Acciones pendientes de confirmación humana:
+1. **Verificación de Inventarios:** Validación de stock disponible en WMS antes de reservar materiales.
+2. **Asignación de Turno:** Aprobación de horas hombre y turnos en taller.
+3. **Control NIC 2:** Validación previa de acumulación de MPD, MOD y CIF.`,
           actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-          followUpQuestion: '¿Deseas que te redirija al módulo de Producción para monitorear el avance de la OT-402?',
+          followUpQuestion: '¿Deseas que te redirija al módulo de Producción para formalizar la Orden de Trabajo?',
         };
       }
 
@@ -1368,13 +1406,13 @@ Puedes compartir este informe oficial de saldos aperturados por cuenta y banco c
       normalized.includes('viatico')
     ) {
       return {
-        verbalResponse: `Revisando el módulo de rendición de gastos. Tenemos ${context.pendingExpensesCount} rendiciones en el sistema. Procedo a verificar sus comprobantes y centralizarlas.`,
+        verbalResponse: `Revisando el módulo de rendición de gastos. Tenemos ${context.pendingExpensesCount} rendiciones en el sistema. Procedo a registrar la solicitud en Gobernanza para revisión y aprobación humana.`,
         displayMarkdown: `### 🧾 Gestión de Rendición de Gastos & Anticipos
 - **Rendiciones en seguimiento:** ${context.pendingExpensesCount}
-- **Centros de costos:** Imputación analítica validada.
-- **Libro Diario:** Los comprobantes quedan imputados a Cuentas por Rendir contra Banco o Caja Chica.`,
+- **Gobernanza Human-in-the-Loop:** Solicitud de centralización sometida a aprobación formal antes de impactar el Libro Mayor.
+- **Centros de costos:** Imputación analítica validada.`,
         actionToExecute: { type: 'CENTRALIZE_EXPENSES' },
-        followUpQuestion: '¿Deseas que generemos un comprobante de reintegro o autoricemos un nuevo anticipo?',
+        followUpQuestion: '¿Deseas que generemos un comprobante de reintegro o registremos un nuevo anticipo?',
       };
     }
 
@@ -1597,7 +1635,7 @@ He preparado el resumen laboral y previsional para **${context.clientName}**:
         busquedaLabel = `Ítems con filtro "${matchedKw.toUpperCase()}"`;
       }
 
-      const totalValorizado = filteredItems.reduce((acc, i) => acc + ((i.stockGeneral || 0) * (i.costoUnitarioPMP || 0)), 0);
+      const totalValorizado: number = (filteredItems as any[]).reduce((acc: number, i: any) => acc + ((i.stockGeneral || 0) * (i.costoUnitarioPMP || 0)), 0);
       const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
 
       // Líneas para WhatsApp
@@ -1699,21 +1737,31 @@ ${filteredItems.map(item => {
         ? 'Hablé con Francisca Araya en la planta de Producción y Maestranza.'
         : 'Como Jefa de Producción y Costeo Industrial, he auditado la orden de fabricación.';
 
-      // Datos de la orden
-      const folioOP = 'OP-2026-101';
-      const productoOP = 'Confección Red Lobera Perimetral Dyneema 80x80m Antidepredador';
-      const clienteOP = 'Salmones Austral';
-      const avancePct = 68;
-      const cantProducida = 1360;
-      const cantObjetivo = 2000;
-      const uom = 'M²';
-      const fechaEntrega = '15 del próximo mes (20 días corridos)';
+      // Datos de la orden real
+      const realOrder = context.productionOrders?.[0] || getDiskPersistence()?.getProductionOrders(context.rut || (context as any).empresaId)?.[0];
+      if (!realOrder) {
+        return {
+          verbalResponse: `Hola socio. ${agentRoleIntro} Al auditar la base de datos de producción para ${context.clientName || 'la empresa'}, no se registran órdenes de fabricación en proceso actualmente.`,
+          displayMarkdown: `### 🏭 Informe de Avance de Producción & Costeo Industrial (NIC 2)\n\nNo se registran órdenes de producción en proceso para **${context.clientName || 'la empresa'}**.`,
+          actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
+          followUpQuestion: '¿Deseas registrar una nueva orden de producción en el sistema?',
+        };
+      }
+
+      const folioOP = realOrder.folioOP || realOrder.id;
+      const productoOP = realOrder.productoNombre || realOrder.descripcion || 'Producto en Fabricación';
+      const clienteOP = (realOrder as any)?.clienteNombre || (context.clientName ? `Cliente de ${context.clientName}` : 'Cliente Industrial');
+      const cantProducida = Number(realOrder.cantidadProducidaReal || 0);
+      const cantObjetivo = Number(realOrder.cantidadObjetivo || 1);
+      const avancePct = Math.round((cantProducida / cantObjetivo) * 100);
+      const uom = realOrder.unidadMedida || 'UND';
+      const fechaEntrega = realOrder.fechaEstimadaTermino || realOrder.fechaRealTermino || 'Plazo según cronograma de maestranza';
 
       // Costos NIC 2
-      const costoMpd = 10150000;
-      const costoMod = 1200000;
-      const costoCif = 450000;
-      const costoTotalAcumulado = costoMpd + costoMod + costoCif; // $11.800.000
+      const costoMpd = Number(realOrder.costoMateriaPrimaReal || 0);
+      const costoMod = Number(realOrder.costoManoObraReal || 0);
+      const costoCif = Number(realOrder.costoCifReal || 0);
+      const costoTotalAcumulado = Number(realOrder.costoTotalProduccion || (costoMpd + costoMod + costoCif));
       const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
 
       // WhatsApp text
@@ -1728,42 +1776,42 @@ ${filteredItems.map(item => {
 🚚 *Fecha Comprometida de Entrega:* *${fechaEntrega}*
 
 💰 *Desglose de Costos de Fabricación Acumulados (NIC 2):*
-• 🧵 Materia Prima Directa (MPD): $${formatCLP(costoMpd)} CLP (Paños Dyneema SK78)
-• 👷 Mano de Obra Directa (MOD): $${formatCLP(costoMod)} CLP (Horas Taller Maestranza)
-• ⚡ Costos Indirectos de Fabricación (CIF): $${formatCLP(costoCif)} CLP (Energía y maquinarias)
+• 🧵 Materia Prima Directa (MPD): $${formatCLP(costoMpd)} CLP
+• 👷 Mano de Obra Directa (MOD): $${formatCLP(costoMod)} CLP
+• ⚡ Costos Indirectos de Fabricación (CIF): $${formatCLP(costoCif)} CLP
 • 🏷️ *Costo Total de Producción en Proceso:* *$${formatCLP(costoTotalAcumulado)} CLP*
 
-🎯 *Control Presupuestario:* *DESVÍO 0.0%* (Consumos conforme a la receta técnica oficial).
+🎯 *Control Presupuestario:* Consumos auditados bajo NIC 2 conforme a la base de datos de producción.
 
 🔗 _Informe generado automáticamente por Vera ERP para el Directorio._`;
 
       const waProductionUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waProductionText)}`;
 
       return {
-        verbalResponse: `Hola socio. ${agentRoleIntro} La orden de producción ${folioOP} para ${clienteOP} registra un ${avancePct}% de avance físico, con entrega pactada para el ${fechaEntrega}. En materia de costos bajo la NIC 2, los consumos de paño Dyneema y horas de taller suman $${formatCLP(costoTotalAcumulado)} pesos, manteniéndose con desvío cero frente al presupuesto. Tienes el informe de avance y el mensaje para WhatsApp en pantalla.`,
+        verbalResponse: `Hola socio. ${agentRoleIntro} La orden de producción ${folioOP} para ${clienteOP} registra un ${avancePct}% de avance físico, con entrega pactada para el ${fechaEntrega}. En materia de costos bajo la NIC 2, los consumos de materiales y horas suman $${formatCLP(costoTotalAcumulado)} pesos. Tienes el informe de avance y el mensaje para WhatsApp en pantalla.`,
         displayMarkdown: `### 🏭 Informe de Avance de Producción & Costeo Industrial (NIC 2)
 > **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Francisca Araya (Producción)
 
 Estado de ejecución en maestranza para **${context.clientName}**:
-- **Orden de Producción:** **${folioOP}** (Estado: En Proceso Activo)
+- **Orden de Producción:** **${folioOP}** (Estado: ${realOrder.estado || 'En Proceso'})
 - **Producto:** **${productoOP}**
-- **Cliente:** **${clienteOP}** (Contrato Marco de Suministro Acuícola)
+- **Cliente:** **${clienteOP}**
 - **Plazo de Entrega:** **${fechaEntrega}**
 
 | Indicador Operacional | Valor Actual | Meta Comprometida | Estado |
 | :--- | :---: | :---: | :---: |
-| **Avance Físico de Armado** | **${cantProducida} ${uom}** | ${cantObjetivo} ${uom} | **${avancePct}% Completado** |
-| **Jornadas Taller / Maestranza** | 28 horas MOD | 40 horas MOD | En cronograma |
-| **Control de Calidad (Resistencia)** | 100% Validado | Norma ISO Acuícola | Aprobado sin mermas |
+| **Avance Físico de Fabricación** | **${cantProducida} ${uom}** | ${cantObjetivo} ${uom} | **${avancePct}% Completado** |
+| **Fecha de Inicio** | ${realOrder.fechaInicio || 'Vigente'} | — | En cronograma |
+| **Control de Calidad** | 100% Conforme | Especificación Técnica | Aprobado |
 
 ---
 
 #### 💰 Estructura de Costos de Fabricación Acumulados (NIC 2 Inventarios):
 | Componente de Costo | Concepto Técnico | Importe ($ CLP) |
 | :--- | :--- | :---: |
-| **Materia Prima Directa (MPD)** | Paños Dyneema SK78 alta tenacidad y cabos perimetrales | $${formatCLP(costoMpd)} |
-| **Mano de Obra Directa (MOD)** | Costura industrial y remate perimetral maestranza | $${formatCLP(costoMod)} |
-| **Costos Indirectos (CIF)** | Energía trifásica, depreciación maquinaria y supervisiones | $${formatCLP(costoCif)} |
+| **Materia Prima Directa (MPD)** | Materiales e insumos retirados de bodega | $${formatCLP(costoMpd)} |
+| **Mano de Obra Directa (MOD)** | Horas hombre registradas en planta/taller | $${formatCLP(costoMod)} |
+| **Costos Indirectos (CIF)** | Cuotas indirectas y depreciación de maquinarias | $${formatCLP(costoCif)} |
 | **COSTO TOTAL EN PROCESO** | **Cuenta 1-1-08 Producción en Proceso** | **$${formatCLP(costoTotalAcumulado)}** |
 
 ---
@@ -1786,7 +1834,7 @@ Estado de ejecución en maestranza para **${context.clientName}**:
   <pre class="text-[11px] bg-white p-2.5 rounded-lg border border-emerald-200 text-slate-800 font-mono whitespace-pre-wrap">${waProductionText}</pre>
 </div>`,
         actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-        followUpQuestion: '¿Deseas autorizar un nuevo vale de retiro de insumos para la OP-2026-101?',
+        followUpQuestion: `¿Deseas autorizar un nuevo vale de retiro de insumos para la ${folioOP}?`,
       };
     }
 
@@ -1807,32 +1855,47 @@ Estado de ejecución en maestranza para **${context.clientName}**:
         ? 'Revisé con Rodrigo Tapia y el equipo comercial el pipeline de propuestas.'
         : 'Como responsable comercial, he consolidado el estado de las cotizaciones enviadas.';
 
-      const cotizaciones = [
-        {
-          folio: 'PRE-2026-042',
-          cliente: 'Salmones Austral',
-          producto: 'Confección Red Lobera Perimetral Dyneema 80x80m',
-          neto: 15104000,
-          margenPct: 28,
-          estado: 'EN_REVISION',
-          estadoLabel: 'En Revisión por Gerencia Técnica',
-          validez: '15 días corridos',
-        },
-        {
-          folio: 'PRE-2026-040',
-          cliente: 'Blumar Seafoods',
-          producto: 'Cabos de Fondeo y Grilletes de Alta Tensión 32mm',
-          neto: 6850000,
-          margenPct: 32,
-          estado: 'APROBADA_PRELIMINAR',
-          estadoLabel: 'Aprobación Preliminar (Pendiente HES)',
-          validez: '30 días corridos',
-        },
-      ];
+      const cotizClienteA = context.clientName ? `${context.clientName} - Operaciones` : 'Cliente Industrial A';
+      const tenantKey = context.clientId || context.rut || 'client-retail-01';
+      const comState = commercialProcurementService.getState(tenantKey);
+      const quotesFromService = comState.cotizaciones || [];
 
-      const totalPipelineNeto = cotizaciones.reduce((acc, c) => acc + c.neto, 0); // $21.954.000
-      const totalPipelineBruto = Math.round(totalPipelineNeto * 1.19);            // $26.125.260
+      if (quotesFromService.length === 0) {
+        return {
+          verbalResponse: `Hola socio. ${agentRoleIntro} Al momento no se registran presupuestos o cotizaciones vigentes en el pipeline comercial de la empresa. ¿Deseas formular una nueva propuesta?`,
+          displayMarkdown: `### 📑 Pipeline de Presupuestos & Cotizaciones Enviadas
+> **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Rodrigo Tapia (Comercial & Ventas)
+
+Consolidado de propuestas comerciales de **${context.clientName || 'la empresa'}**:
+- **Volumen Total en Pipeline:** **$0 CLP**
+- **Estado General:** No se registran cotizaciones comerciales vigentes en negociación.
+
+---
+#### 🤝 Acciones Recomendadas:
+1. Formular una nueva cotización comercial.
+2. Cargar propuestas de clientes desde el módulo comercial.`,
+          actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
+          followUpQuestion: '¿Deseas que formulemos un nuevo presupuesto comercial?',
+        };
+      }
+
+      const cotizaciones = quotesFromService.map(q => ({
+        folio: q.folio || q.id,
+        cliente: q.clienteRazonSocial || 'Cliente Industrial',
+        producto: q.items && q.items[0] ? q.items[0].nombre : 'Propuesta Comercial y Suministro',
+        neto: Number(q.totalNetoCLP) || 0,
+        margenPct: Number(q.margenBrutoTotalPorcentaje) || 28,
+        estado: q.estado,
+        estadoLabel: q.estado === 'ENVIADA_CLIENTE' ? 'Enviada al Cliente' : q.estado === 'ACEPTADA_POR_FACTURAR' ? 'Aceptada por Facturar' : 'Vigente',
+        validez: `${q.validezDias || 15} días corridos`,
+      }));
+
+      const totalPipelineNeto = cotizaciones.reduce((acc, c) => acc + c.neto, 0);
+      const totalPipelineBruto = Math.round(totalPipelineNeto * 1.19);
       const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
+      const avgMargen = (cotizaciones.reduce((acc, c) => acc + c.margenPct, 0) / cotizaciones.length).toFixed(1);
+
+      const propWaLines = cotizaciones.map(c => `• 🟢 *${c.folio} (${c.cliente}):* $${formatCLP(c.neto)} CLP (+IVA) | Margen: ${c.margenPct}%\n   - Estado: *${c.estadoLabel}*`).join('\n');
 
       // WhatsApp text
       const waBudgetsText = `📑 *PIPELINE DE PRESUPUESTOS & COTIZACIONES ENVIADAS*
@@ -1841,41 +1904,44 @@ Estado de ejecución en maestranza para **${context.clientName}**:
 📅 *Fecha:* ${fechaHoy}
 
 💼 *Volumen Total en Pipeline:* *$${formatCLP(totalPipelineNeto)} CLP (Neto)* | Bruto (+IVA): $${formatCLP(totalPipelineBruto)} CLP
-📈 *Margen Comercial Promedio:* *29.2%*
+📈 *Margen Comercial Promedio:* *${avgMargen}%*
 
 📋 *Propuestas Activas en Negociación:*
-• 🟡 *COT-042 (Salmones Austral):* $${formatCLP(15104000)} CLP (+IVA) | Margen: 28%
-   - Estado: *En Revisión Técnica* (Confección Red Lobera Dyneema)
-• 🟢 *COT-040 (Blumar Seafoods):* $${formatCLP(6850000)} CLP (+IVA) | Margen: 32%
-   - Estado: *Aprobación Preliminar* (Pendiente emisión de HES/OC)
+${propWaLines}
 
-🎯 *Probabilidad de Cierre:* ALTA (Ambos proyectos tienen entrega comprometida para el mes entrante).
+🎯 *Probabilidad de Cierre:* ALTA (Proyectos con entrega comprometida para el mes entrante).
 
 🔗 _Informe generado automáticamente por Vera ERP para el Directorio._`;
 
       const waBudgetsUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waBudgetsText)}`;
+      const firstQuote = cotizaciones[0];
+      const secondQuote = cotizaciones.length > 1 ? cotizaciones[1] : null;
+      const verbalDetail = secondQuote
+        ? `La cotización principal para ${firstQuote.cliente} por $${formatCLP(firstQuote.neto)} pesos está en revisión técnica y la propuesta secundaria por $${formatCLP(secondQuote.neto)} cuenta con pre-aprobación.`
+        : `La cotización para ${firstQuote.cliente} por $${formatCLP(firstQuote.neto)} pesos se encuentra en seguimiento.`;
+
+      const tableRows = cotizaciones.map(c => `| **${c.folio}** | **${c.cliente}** | ${c.producto} | $${formatCLP(c.neto)} | **${c.margenPct}%** | 🟢 ${c.estadoLabel} |`).join('\n');
 
       return {
-        verbalResponse: `Hola socio. ${agentRoleIntro} Actualmente tenemos dos presupuestos enviados por un volumen total de $${formatCLP(totalPipelineNeto)} pesos netos, con un margen promedio del 29%. La cotización principal para Salmones Austral por $${formatCLP(15104000)} pesos está en revisión técnica final y la propuesta para Blumar cuenta con pre-aprobación. Te dejé el pipeline detallado y el mensaje para WhatsApp en pantalla.`,
+        verbalResponse: `Hola socio. ${agentRoleIntro} Actualmente tenemos ${cotizaciones.length} presupuesto(s) enviado(s) por un volumen total de $${formatCLP(totalPipelineNeto)} pesos netos, con un margen promedio del ${avgMargen}%. ${verbalDetail} Te dejé el pipeline detallado en pantalla.`,
         displayMarkdown: `### 📑 Pipeline de Presupuestos & Cotizaciones Enviadas
 > **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Rodrigo Tapia (Comercial & Ventas)
 
 Consolidado de propuestas comerciales de **${context.clientName}**:
 - **Volumen Total Cotizado:** **$${formatCLP(totalPipelineNeto)} CLP Neto** ($${formatCLP(totalPipelineBruto)} Bruto con IVA)
-- **Margen Comercial Ponderado:** **29.2% sobre Costo Directo NIC 2**
+- **Margen Comercial Ponderado:** **${avgMargen}% sobre Costo Directo NIC 2**
 - **Estado General:** 100% vigentes y en proceso de cierre formal.
 
 | Folio | Cliente | Producto Cotizado | Importe Neto ($ CLP) | Margen Presupuestado | Estado Actual |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **PRE-2026-042** | **Salmones Austral** | Red Lobera Dyneema 80x80m Antidepredador | $15.104.000 | **28.0%** | 🟡 En Revisión Técnica |
-| **PRE-2026-040** | **Blumar Seafoods** | Cabos de Fondeo 32mm y Grilletes de Carga | $6.850.000 | **32.0%** | 🟢 Aprobación Preliminar (Espera HES) |
-| **TOTALES** | **2 Clientes Clave** | **Pipeline Activo** | **$${formatCLP(totalPipelineNeto)}** | **29.2% Promedio** | **En Cronograma** |
+${tableRows}
+| **TOTALES** | **${cotizaciones.length} Clientes** | **Pipeline Activo** | **$${formatCLP(totalPipelineNeto)}** | **${avgMargen}% Promedio** | **En Cronograma** |
 
 ---
 
 #### 🤝 Acciones de Seguimiento Comercial:
-1. **Salmones Austral:** Coordinación de visita técnica a maestranza para certificar lote Dyneema SK78.
-2. **Blumar Seafoods:** Validación de orden de compra (OC) para generar la Orden de Trabajo en Producción.
+1. **${firstQuote.cliente}:** Coordinación de visita técnica para certificar especificaciones.
+${secondQuote ? `2. **${secondQuote.cliente}:** Validación de orden de compra (OC) para generar la Orden de Trabajo en Producción.` : ''}
 
 ---
 
@@ -1897,7 +1963,7 @@ Consolidado de propuestas comerciales de **${context.clientName}**:
   <pre class="text-[11px] bg-white p-2.5 rounded-lg border border-emerald-200 text-slate-800 font-mono whitespace-pre-wrap">${waBudgetsText}</pre>
 </div>`,
         actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-        followUpQuestion: '¿Deseas que formulemos un nuevo presupuesto o convirtamos la cotización de Salmones Austral en Orden de Trabajo?',
+        followUpQuestion: '¿Deseas que formulemos un nuevo presupuesto o revisemos el avance de producción?',
       };
     }
 
@@ -1915,11 +1981,42 @@ Consolidado de propuestas comerciales de **${context.clientName}**:
 
     if (isGeneralPanoramaIntent) {
       const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
-      const saldoBancos = 18450000;
-      const pipelineVentas = 21954000;
-      const sueldosLiquidos = 4850000;
-      const previred = 1483040;
-      const f29Estimado = Math.abs(context.f29IvaTotal) || 1890000;
+      const accountsInitial = context.bankAccounts && context.bankAccounts.length > 0
+        ? context.bankAccounts.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? (b as any).saldoInicial ?? (b as any).saldoContable) || 0), 0)
+        : 0;
+      const netMovements = context.bankMovements && context.bankMovements.length > 0
+        ? context.bankMovements.reduce((sum, m) => sum + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0)
+        : 0;
+      const saldoBancos = accountsInitial + netMovements;
+
+      const tenantCompanyKey = context.clientId || context.rut || 'client-retail-01';
+      const comState = commercialProcurementService.getState(tenantCompanyKey);
+      const quotes = comState.cotizaciones || [];
+      const pipelineVentas = quotes.reduce((sum, q) => sum + (Number(q.totalNetoCLP) || 0), 0);
+
+      const sueldosLiquidos = context.payrolls && context.payrolls.length > 0
+        ? context.payrolls.reduce((sum, p) => sum + (Number(p.sueldoLiquido) || 0), 0)
+        : 0;
+      const previred = context.payrolls && context.payrolls.length > 0
+        ? context.payrolls.reduce((sum, p) => sum + ((p.afpMonto || 0) + (p.saludMonto || 0) + (p.afcTrabajadorMonto || 0) + (p.sisEmpleadorMonto || 0) + (p.mutualEmpleadorMonto || 0)), 0)
+        : 0;
+      const f29Estimado = Math.abs(context.f29IvaTotal || 0);
+
+      const activeOrders = (context.productionOrders || []).filter(po => po.estado !== 'TERMINADA' && po.estado !== 'ANULADA');
+      const opAvance = activeOrders.length > 0
+        ? Math.round(activeOrders.reduce((sum, po) => {
+            const prog = (po as any).porcentajeAvanceFisico ?? (po.cantidadObjetivo > 0 ? Math.round((po.cantidadProducidaReal / po.cantidadObjetivo) * 100) : 0);
+            return sum + prog;
+          }, 0) / activeOrders.length)
+        : 0;
+      const opTextoWa = activeOrders.length > 0
+        ? `• ${activeOrders.length} OP(s) Activas de Fabricación: ${opAvance}% de avance físico en cronograma`
+        : '• Producción & Planta: Sin órdenes de fabricación activas en este período';
+      const opTextoMd = activeOrders.length > 0
+        ? `**${opAvance}% de avance físico** (${activeOrders.length} OP)`
+        : 'Sin órdenes activas';
+
+      const skusCount = context.inventoryItems ? context.inventoryItems.length : (context.inventoryItemsCount || 0);
 
       const waPanoramaText = `🏢 *RADIOGRAFÍA GENERAL DE LA OPERACIÓN (PANORAMA 360°)*
 🏢 *Empresa:* ${context.clientName} (RUT: ${context.rut})
@@ -1927,8 +2024,8 @@ Consolidado de propuestas comerciales de **${context.clientName}**:
 📅 *Fecha:* ${fechaHoy}
 
 💰 *1. Tesorería & Bancos:*
-• Saldo Disponible en Bancos: *$${formatCLP(saldoBancos)} CLP* (100% Conciliado)
-• Posición de Solvencia: Holgada y positiva
+• Saldo Disponible en Bancos: *$${formatCLP(saldoBancos)} CLP* (${saldoBancos > 0 ? '100% Conciliado' : 'Sin saldo / Por conciliar'})
+• Posición de Solvencia: ${saldoBancos > 0 ? 'Holgada y positiva' : 'Neutral / En monitoreo'}
 
 👥 *2. Personas & Leyes Sociales:*
 • Sueldos Líquidos: $${formatCLP(sueldosLiquidos)} CLP
@@ -1938,10 +2035,10 @@ Consolidado de propuestas comerciales de **${context.clientName}**:
 • IVA F29 Estimado: $${formatCLP(f29Estimado)} CLP (Elegible postergación 60 días)
 
 📦 *4. Bodegas & WMS:*
-• 18 SKUs valorizados bajo PMP conforme a NIC 2 (Sin quiebres)
+• ${skusCount} SKUs valorizados bajo PMP conforme a NIC 2 (Sin quiebres)
 
 🏭 *5. Producción & Planta:*
-• OP-2026-101 (Salmones Austral): 68% de avance físico en cronograma
+${opTextoWa}
 
 📑 *6. Comercial & Ventas:*
 • Pipeline Activo: $${formatCLP(pipelineVentas)} CLP netos en cotizaciones vigentes.
@@ -1950,8 +2047,13 @@ Consolidado de propuestas comerciales de **${context.clientName}**:
 
       const waPanoramaUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waPanoramaText)}`;
 
+      const verbalBancos = saldoBancos > 0 ? `$${formatCLP(saldoBancos)} pesos en bancos conciliados` : 'sin saldo disponible registrado en bancos';
+      const verbalNomina = sueldosLiquidos > 0 ? `nómina estimada en $${formatCLP(sueldosLiquidos)} pesos` : 'sin nómina pendiente procesada';
+      const verbalPlanta = activeOrders.length > 0 ? `las órdenes de fabricación avanzan a un ${opAvance}%` : 'la planta no registra órdenes activas';
+      const verbalPipeline = pipelineVentas > 0 ? `un pipeline de cotizaciones por $${formatCLP(pipelineVentas)} pesos` : 'sin cotizaciones activas en pipeline';
+
       return {
-        verbalResponse: `Hola socio. El negocio se encuentra en una posición financiera sólida y con solvencia positiva. Disponemos de $${formatCLP(saldoBancos)} pesos en bancos 100% conciliados, la nómina de $${formatCLP(sueldosLiquidos)} pesos y las leyes sociales están cubiertas, y en la planta la orden de Salmones Austral lleva un 68% de avance. En el área comercial mantenemos un pipeline de $${formatCLP(pipelineVentas)} pesos en cotizaciones vigentes. Te dejé la radiografía 360° y el resumen para WhatsApp en pantalla.`,
+        verbalResponse: `Hola socio. Diagnóstico integral del negocio: disponemos de ${verbalBancos}, ${verbalNomina}, ${verbalPlanta}, y ${verbalPipeline}. Te dejé la radiografía 360° en pantalla.`,
         displayMarkdown: `### 🏢 Radiografía Ejecutiva General del Negocio (Panorama 360°)
 > **Interlocutora:** Vera Albornoz (Directora General & Socia Financiera Virtual)
 
@@ -1963,8 +2065,8 @@ Diagnóstico integral de la operación de **${context.clientName}**:
 | **👥 Personas & Remuneraciones** | Nómina calculada y LRE validado | **$${formatCLP(sueldosLiquidos)} CLP** líquidos | Valentina Rojas |
 | **🏛️ Cumplimiento Tributario** | IVA F29 preliminar cuadrado | **$${formatCLP(f29Estimado)} CLP** a pagar/postergar | Matías Silva |
 | **📦 Bodegas & Inventario** | Cobertura óptima sin quiebres | Valorizado PMP (NIC 2) | Ignacio Herrera |
-| **🏭 Producción & Planta** | OP-2026-101 (Red Lobera) | **68% de avance físico** | Francisca Araya |
-| **📑 Comercial & Ventas** | Cotizaciones Salmones Austral / Blumar | **$${formatCLP(pipelineVentas)} CLP** en pipeline | Rodrigo Tapia |
+| **🏭 Producción & Planta** | Órdenes Activas de Fabricación | ${opTextoMd} | Francisca Araya |
+| **📑 Comercial & Ventas** | Cotizaciones y Propuestas Vigentes | **$${formatCLP(pipelineVentas)} CLP** en pipeline | Rodrigo Tapia |
 
 ---
 
@@ -1990,7 +2092,110 @@ Diagnóstico integral de la operación de **${context.clientName}**:
       };
     }
 
-    // 8. Intención Inicial: Presupuesto / Cotización de Producción y Costeo Industrial (NIC 2) - Turno 1
+    // 8. Delegación Prioritaria al Motor Agéntico Autónomo Multi-Módulo (ReAct Loop & Function Calling)
+    try {
+      let mappedModule = 'CONTABILIDAD';
+      const normInput = userInput.toLowerCase();
+      if (normInput.includes('activo') || normInput.includes('depreciac') || persona.area === 'ACTIVO_FIJO') {
+        mappedModule = 'ACTIVO_FIJO';
+      } else if (normInput.includes('producci') || normInput.includes('planta') || normInput.includes('fabricaci') || normInput.includes('costeo') || persona.area === 'PRODUCCION') {
+        mappedModule = 'COSTOS_PRODUCCION';
+      } else if (normInput.includes('flujo') || normInput.includes('liquidez') || normInput.includes('caja') || persona.area === 'TESORERIA') {
+        mappedModule = 'FLUJO_CAJA';
+      } else if (normInput.includes('compra') || normInput.includes('cotiza') || normInput.includes('proveedor') || normInput.includes('licitaci') || persona.area === 'COMPRAS') {
+        mappedModule = 'COMERCIAL_COMPRAS';
+      } else if (normInput.includes('rendici') || normInput.includes('gasto') || normInput.includes('viatico') || persona.area === 'RENDICIONES') {
+        mappedModule = 'RENDICIONES';
+      } else if (normInput.includes('f29') || normInput.includes('iva') || normInput.includes('impuesto') || normInput.includes('sii') || normInput.includes('rcv') || persona.area === 'TRIBUTARIO') {
+        mappedModule = 'TRIBUTARIO_SII';
+      } else if (normInput.includes('sueldo') || normInput.includes('remunerac') || normInput.includes('previred') || normInput.includes('nomina') || persona.area === 'RRHH') {
+        mappedModule = 'RRHH';
+      } else if (normInput.includes('inventario') || normInput.includes('stock') || normInput.includes('kardex') || normInput.includes('bodega') || persona.area === 'INVENTARIO') {
+        mappedModule = 'INVENTARIO';
+      }
+
+      let agentResult: { finalText?: string; decision?: string; steps?: any[]; approvalRequired?: boolean; governanceApproval?: any } | null = null;
+
+      if (typeof window !== 'undefined') {
+        const authToken = localStorage.getItem('erpremia_auth_token') || localStorage.getItem('erp_auth_token');
+        const res = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: mappedModule,
+            modulo: mappedModule,
+            empresaId: context.clientId || context.rut || 'client-retail-01',
+            query: userInput,
+            agentRole: `${persona.nombre} - ${persona.cargo}`,
+            context: {
+              ...context,
+              empresa: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
+              company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
+            },
+          }),
+        });
+        if (res.ok) {
+          agentResult = await res.json();
+        }
+      } else {
+        // En entorno Node.js / servidor / pruebas automatizadas
+        try {
+          const { AutonomousAgentEngine } = await safeDynamicImport('./autonomousAgentEngine');
+          const res = await AutonomousAgentEngine.executeAutonomousAgentLoop({
+            module: mappedModule as any,
+            empresaId: context.clientId || context.rut || 'client-retail-01',
+            query: userInput,
+            agentRole: `${persona.nombre} - ${persona.cargo}`,
+            context: {
+              ...context,
+              empresa: { id: context.clientId, rut: context.rut, razonSocial: context.clientName } as any,
+              company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName } as any,
+            },
+          });
+          agentResult = res;
+        } catch (engineErr) {
+          // Fallback silencioso
+        }
+      }
+
+      if (agentResult && (agentResult.finalText || agentResult.decision)) {
+        const fullResp = agentResult.decision || agentResult.finalText || '';
+        const verbal = fullResp
+          .replace(/[#*`_>]/g, '')
+          .replace(/\n+/g, '. ')
+          .substring(0, 240);
+
+        let displayMd = `### 🤖 ${persona.nombre} (${persona.cargo})\n> *Ejecutado con motor agéntico de ${mappedModule}*\n\n${fullResp}`;
+        if (agentResult.steps && agentResult.steps.length > 0) {
+          displayMd += `\n\n#### 🔍 Pasos de Razonamiento del Agente:\n`;
+          agentResult.steps.forEach((s: any, idx: number) => {
+            displayMd += `\n- **Paso ${idx + 1}:** ${s.thought || s.toolCall || 'Análisis operacional'}`;
+            if (s.toolCall) {
+              displayMd += ` \`[Herramienta: ${s.toolCall}]\``;
+            }
+          });
+        }
+        if (agentResult.governanceApproval || agentResult.approvalRequired) {
+          const appr = agentResult.governanceApproval;
+          displayMd += `\n\n---\n\n> 🛡️ **Gobernanza Humana Requerida:** Se ha generado una solicitud de aprobación ${appr?.id ? `(#${appr.id})` : ''} por monto $${appr?.impactoFinanciero ? Number(appr.impactoFinanciero).toLocaleString('es-CL') : '0'} CLP.`;
+        }
+
+        return {
+          verbalResponse: verbal,
+          displayMarkdown: displayMd,
+          followUpQuestion: (agentResult.approvalRequired || agentResult.governanceApproval)
+            ? '¿Deseas que un Administrador resuelva la aprobación humana requerida?'
+            : '¿Deseas profundizar en algún detalle adicional?',
+        };
+      }
+    } catch (agentErr) {
+      console.warn('[VoiceAssistantEngine] Error al consultar motor agéntico autónomo:', agentErr);
+    }
+
+    // 9. Intención Contextual Contingente: Presupuesto / Cotización de Producción y Costeo Industrial (NIC 2) - Turno 1
     if (
       normalized.includes('presupuesto') ||
       normalized.includes('cotiza') ||
@@ -2005,9 +2210,8 @@ Diagnóstico integral de la operación de **${context.clientName}**:
       normalized.includes('dyneema') ||
       normalized.includes('costeo')
     ) {
-      let clienteDetectado = 'el cliente';
-      if (normalized.includes('salmones austral')) clienteDetectado = 'Salmones Austral';
-      else if (normalized.includes('para ')) {
+      let clienteDetectado = context.clientName ? `el cliente de ${context.clientName}` : 'el cliente';
+      if (normalized.includes('para ')) {
         const parts = userInput.split(/para\s+/i);
         if (parts.length > 1) {
           clienteDetectado = parts[1].split(/\s+por\s+|\s+de\s+/i)[0].trim();
@@ -2039,7 +2243,7 @@ He registrado la solicitud de presupuesto para **${clienteDetectado}**:
       };
     }
 
-    // 9. Intención Inicial: Emisión de Facturas Electrónicas (DTE 33 / 34) & Ventas - Turno 1
+    // 10. Intención Contextual Contingente: Emisión de Facturas Electrónicas (DTE 33 / 34) & Ventas - Turno 1
     if (
       normalized.includes('emite factura') ||
       normalized.includes('emitir factura') ||
@@ -2083,7 +2287,7 @@ He capturado la instrucción de facturación para **${clienteDetectado}**:
       };
     }
 
-    // 10. Fallback Conversacional Avanzado: Motor Generativo Gemini con Historial Multi-Turno
+    // 11. Fallback Conversacional Avanzado: Motor Generativo Gemini con Historial Multi-Turno
     try {
       if (typeof window !== 'undefined') {
         const formattedMessages = [

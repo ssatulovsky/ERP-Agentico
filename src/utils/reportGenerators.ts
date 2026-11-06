@@ -13,6 +13,7 @@ import {
   CashFlowMovement, 
   LeaseContract, 
   ClientCompany,
+  CompanyProfile,
   ChileIndicators,
   Balance8ColumnasReport,
   WarehouseWithdrawal,
@@ -48,6 +49,22 @@ export function triggerCsvDownload(csvString: string, filename: string) {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+// Helper to safely ensure ClientCompany shape
+function ensureSafeCompany(comp: any): ClientCompany {
+  return {
+    id: comp?.id || comp?.rut || 'client-default-01',
+    rut: comp?.rut || '76.104.550-9',
+    razonSocial: comp?.razonSocial || comp?.nombreCorto || 'Empresa SpA',
+    nombreCorto: comp?.nombreCorto || comp?.razonSocial || 'Empresa',
+    giro: comp?.giro || 'Servicios y Actividades Comerciales',
+    regimenTributario: comp?.regimenTributario || '14 D3 ProPyme General',
+    direccion: comp?.direccion || 'Santiago, Chile',
+    emailContacto: comp?.emailContacto || 'contacto@empresa.cl',
+    telefono: comp?.telefono || '+56 2 2222 3333',
+    ...comp,
+  };
 }
 
 // Helper to add standard official header to jsPDF
@@ -2040,13 +2057,14 @@ export function downloadLibroAuxiliarPdf(
 
   const titleText = config.customTitle?.trim() ? config.customTitle.trim().toUpperCase() : scopeLabel;
 
-  let currentY = addPdfHeader(
+  addPdfHeader(
     doc,
+    safeCompany,
     titleText,
     `${modeLabel} | Rango: ${config.fechaDesde} a ${config.fechaHasta} | Folio Legal Inicial N° ${String(config.folioInicial || 101).padStart(6, '0')}`,
-    safeCompany,
     isLandscape
   );
+  let currentY = 46;
 
   // Recuadro Normativo y Resumen de Saldos del Rango
   doc.setFillColor(248, 250, 252);

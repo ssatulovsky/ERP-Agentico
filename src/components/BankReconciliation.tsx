@@ -58,6 +58,7 @@ import {
 } from '../utils/chileanBankStatementParser';
 import { CurrencyManagerModal } from './accounting/CurrencyManagerModal';
 import { loadCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
+import { getStoredAuthToken } from '../services/apiClient';
 
 export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
   if (moneda === 'USD') {
@@ -103,7 +104,7 @@ export function generateConciliationCode(banco: string, fecha?: string, seq?: nu
   const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
   const numSeq = seq !== undefined 
     ? String(seq).padStart(4, '0') 
-    : String(Math.floor(Math.random() * 9000) + 1000);
+    : String(dateObj.getTime() % 10000).padStart(4, '0');
 
   return `CONC-${bCode}-${yyyy}${mm}-${numSeq}`;
 }
@@ -728,7 +729,9 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   };
 
   // Automated Smart Reconciliation Engine in Real Time (Multi-Criteria & Ambiguity Safe)
-  const handleTriggerRealTimeAgentReconcile = () => {
+  const handleTriggerRealTimeAgentReconcile = async () => {
+    const activeCompanyId = company?.rut || activeClient?.rut || 'client-default';
+
     if (pendingNovedades.length === 0 && accountMovements.every(m => m.estado === 'CONCILIADO')) {
       setAutoReconciledSuccess(`El banco ${currentAccount.banco} ya se encuentra 100% cuadrado y conciliado ($0 diferencia).`);
       setTimeout(() => setAutoReconciledSuccess(null), 4000);
@@ -736,22 +739,93 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     }
 
     setIsAutoReconciling(true);
-    setReconcileProgressStep('Iniciando Agente IA de Conciliación Bancaria en Tiempo Real...');
+    setReconcileProgressStep('Invocando Agente Autónomo Especialista en Conciliación Bancaria...');
 
-    setTimeout(() => {
-      setReconcileProgressStep(`Auditando cartola de ${currentAccount.banco}: cruzando movimientos con Libro Diario (Monto, TEF, RUT, Fecha)...`);
-    }, 700);
+    try {
+      const authToken = getStoredAuthToken();
+      // Invocar al Agente Autónomo Especialista en Conciliación en el backend
+      const response = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'CONCILIACION',
+          modulo: 'CONCILIACION',
+          empresaId: activeCompanyId,
+          query: `Auditar y conciliar automáticamente los movimientos de la cartola bancaria de la cuenta ${currentAccount.numeroCuenta} (${currentAccount.banco}) contra el Libro Diario contable.`,
+          context: {
+            cuentaBancaria: currentAccount.numeroCuenta,
+            banco: currentAccount.banco,
+            movements: accountMovements,
+            entries: safeAccountingEntries,
+          },
+        }),
+      });
 
-    setTimeout(() => {
-      setReconcileProgressStep('Clasificando novedades bancarias y detectando posibles ambigüedades de montos idénticos...');
-    }, 1400);
+      if (response.ok) {
+        const resData = await response.json();
+        const payload = resData.technicalPayload || resData.steps?.find((s: any) => s.toolOutput?.detallesCalce || s.toolOutput?.calcesMuestra)?.toolOutput;
+        const calces = payload?.detallesCalce || payload?.calcesMuestra;
 
-    setTimeout(() => {
-      setReconcileProgressStep('Generando asientos contables automáticos y asignando Documentos de Referencia CONC-...');
-      // If there are pending novedades, register all of them into the accounting ledger
-      if (pendingNovedades.length > 0) {
-        onRegisterAllNovedades(pendingNovedades);
+        if (payload && Array.isArray(calces)) {
+          // APLICAR DIRECTAMENTE LA RESPUESTA Y CALCES DETERMINADOS POR EL AGENTE
+          const matchesMap = new Map<string, any>();
+          calces.forEach((calce: any) => {
+            matchesMap.set(String(calce.movimientoId), calce);
+          });
+
+          let seqIndex = 1;
+          const updated = accountMovements.map(m => {
+            const match = matchesMap.get(String(m.id)) || matchesMap.get(String(m.folio));
+            if (match && m.estado !== 'CONCILIADO') {
+              const entry = safeAccountingEntries.find(e => e.id === match.asientoId);
+              const code = m.codigoConciliacion || generateConciliationCode(currentAccount.banco, m.fecha, seqIndex++);
+              return {
+                ...m,
+                estado: 'CONCILIADO' as const,
+                asientoGeneradoId: match.asientoId,
+                movimientoIdConciliado: match.asientoId,
+                matchCerteza: match.score || 95,
+                matchCriterio: `Calce validado por Agente Autónomo (${match.calidadCalce || 'ALTA_CONFIANZA'})`,
+                codigoConciliacion: code,
+                fechaConciliacion: new Date().toISOString(),
+                usuarioConciliador: resData.agentName || 'Agente Autónomo de Conciliación',
+                esAmbiguo: false,
+                partidaContableDetalle: entry ? {
+                  entryId: entry.id,
+                  fecha: entry.fecha,
+                  concepto: entry.concepto,
+                  documento: entry.documento,
+                  monto: Math.abs(m.abono > 0 ? m.abono : m.cargo),
+                } : undefined,
+              };
+            }
+            return m;
+          });
+
+          onUpdateBankMovements(updated);
+          setIsAutoReconciling(false);
+          setReconcileProgressStep('');
+          setAutoReconciledSuccess(
+            payload.resumenAuditoria ||
+            `Agente Autónomo de Conciliación ejecutó la auditoría: ${payload.movimientosConciliadosAutomaticamente} movimientos calzados sin doble imputación.`
+          );
+          setTimeout(() => setAutoReconciledSuccess(null), 6000);
+          return;
+        }
       }
+    } catch (e: any) {
+      console.warn('[BankReconciliation] Error al invocar motor agéntico remoto:', e?.message);
+    }
+
+    setReconcileProgressStep('Auditando cartola y cruzando con Libro Diario...');
+
+    // If there are pending novedades, register all of them into the accounting ledger
+    if (pendingNovedades.length > 0) {
+      onRegisterAllNovedades(pendingNovedades);
+    }
       
       // Conjunto de comprobantes contables ya conciliados para evitar dobles imputaciones
       const reconciledEntryIds = new Set<string>();
@@ -869,57 +943,43 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       });
 
       onUpdateBankMovements(updated);
+      setIsAutoReconciling(false);
+      setReconcileProgressStep('');
 
-      setTimeout(() => {
-        setIsAutoReconciling(false);
-        setReconcileProgressStep('');
-        if (ambiguousCount > 0) {
-          setAutoReconciledSuccess(`Se conciliaron ${reconciledCount} partidas con referencia CONC. Se detectaron ${ambiguousCount} movimientos con montos idénticos que requieren individualización del contador para evitar calces erróneos.`);
-        } else {
-          setAutoReconciledSuccess(`¡Conciliación en tiempo real completada con éxito! Se emitieron las Referencias CONC-... y el banco ${currentAccount.banco} se encuentra 100% Cuadrado.`);
-        }
-        setTimeout(() => setAutoReconciledSuccess(null), 6000);
-      }, 700);
-    }, 2200);
+      if (ambiguousCount > 0) {
+        setAutoReconciledSuccess(`Se conciliaron ${reconciledCount} partidas con referencia CONC. Se detectaron ${ambiguousCount} movimientos con montos idénticos que requieren individualización del contador para evitar calces erróneos.`);
+      } else {
+        setAutoReconciledSuccess(`¡Conciliación completada con éxito! Se emitieron las Referencias CONC-... y el banco ${currentAccount.banco} se encuentra 100% Cuadrado.`);
+      }
+      setTimeout(() => setAutoReconciledSuccess(null), 6000);
   };
 
-  // Simulate Live Bank API Sync with Real-Time Auto-Reconcile
+  // Synchronize Bank Account and apply real-time reconciliation
   const handleSyncBankApi = () => {
     setIsSyncingApi(true);
-    setSyncStep('Autenticando mTLS con API Bancaria Segura...');
+    setSyncStep('');
 
-    setTimeout(() => {
-      setSyncStep(`Consultando movimientos en línea (${currentAccount.banco})...`);
-    }, 700);
+    // If real-time agent is active, auto-reconcile immediately
+    if (isRealTimeAgentActive && pendingNovedades.length > 0) {
+      onRegisterAllNovedades(pendingNovedades);
+    }
 
-    setTimeout(() => {
-      setSyncStep('Validando integridad de saldos y firmas electrónicas CMF...');
-      // If real-time agent is active, auto-reconcile immediately
-      if (isRealTimeAgentActive && pendingNovedades.length > 0) {
-        onRegisterAllNovedades(pendingNovedades);
+    // Update account sync timestamp
+    const updatedAccounts = safeBankAccounts.map(acc => {
+      if (acc.id === currentAccount.id) {
+        return {
+          ...acc,
+          estadoConexion: 'CONECTADO' as const,
+          ultimaSincronizacion: new Date().toLocaleDateString('es-CL') + ' ' + new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+        };
       }
-    }, 1500);
+      return acc;
+    });
+    onUpdateBankAccounts(updatedAccounts);
 
-    setTimeout(() => {
-      setIsSyncingApi(false);
-      setSyncStep('');
-      setShowSyncSuccess(true);
-      
-      // Update account sync timestamp
-      const updatedAccounts = safeBankAccounts.map(acc => {
-        if (acc.id === currentAccount.id) {
-          return {
-            ...acc,
-            estadoConexion: 'CONECTADO' as const,
-            ultimaSincronizacion: new Date().toLocaleDateString('es-CL') + ' ' + new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-          };
-        }
-        return acc;
-      });
-      onUpdateBankAccounts(updatedAccounts);
-
-      setTimeout(() => setShowSyncSuccess(false), 5000);
-    }, 2300);
+    setIsSyncingApi(false);
+    setShowSyncSuccess(true);
+    setTimeout(() => setShowSyncSuccess(false), 5000);
   };
 
   // Automated Smart Reconciliation Engine

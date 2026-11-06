@@ -9,8 +9,25 @@ import {
 import { chartOfAccounts, moduleSourceEnumValues } from '../db/schema/accountingLedgerSchema';
 import { getMysqlDb, isRealMysqlConnected } from '../db/mysqlClient';
 import { diskPersistence } from '../services/diskPersistenceService';
+import { requireCompanyAccess } from '../middlewares/authMiddleware';
 
 export const accountingJournalRouter = Router();
+
+accountingJournalRouter.use((req: Request, res: Response, next) => {
+  const targetEmpresaId = req.effectiveEmpresaId || (req.query.empresaId as string);
+
+  if (targetEmpresaId) {
+    const check = requireCompanyAccess(req, targetEmpresaId);
+    if (!check.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: 'ACCESO_DENEGADO_EMPRESA',
+        message: check.reason,
+      });
+    }
+  }
+  next();
+});
 
 const postTransactionSchema = z.object({
   firmId: z.string().min(1, 'firmId requerido'),
@@ -104,7 +121,7 @@ accountingJournalRouter.post('/centralize', async (req: Request, res: Response) 
 accountingJournalRouter.get('/entries', async (req: Request, res: Response) => {
   try {
     const firmId = (req.query.firmId as string) || 'firm-001-audicon';
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const periodo = req.query.periodo as string | undefined;
 
     const entries = await listAccountingEntries(firmId, empresaId, periodo);
@@ -148,7 +165,7 @@ accountingJournalRouter.get('/entries/:id', async (req: Request, res: Response) 
  */
 accountingJournalRouter.get('/chart-of-accounts', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const db = getMysqlDb();
 
     // 1. Revisar persistencia física en disco
@@ -333,7 +350,7 @@ accountingJournalRouter.put('/chart-of-accounts/account', async (req: Request, r
  */
 accountingJournalRouter.get('/auxiliaries', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const db = getMysqlDb();
 
     // 1. Revisar persistencia física en disco
@@ -494,7 +511,7 @@ accountingJournalRouter.post('/client-state', async (req: Request, res: Response
  */
 accountingJournalRouter.get('/chart-groups', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const groups = diskPersistence.getCompanyGroups(empresaId);
     return res.json({ success: true, data: groups || [] });
   } catch (error: any) {
@@ -523,7 +540,7 @@ accountingJournalRouter.post('/chart-groups', async (req: Request, res: Response
  */
 accountingJournalRouter.get('/financial-notes', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const notes = diskPersistence.getCompanyFinancialNotes(empresaId);
     return res.json({ success: true, data: notes || [] });
   } catch (error: any) {

@@ -39,7 +39,10 @@ import {
   Target,
   Building2,
   PieChart,
+  Bot,
+  Sparkles,
 } from 'lucide-react';
+import { getStoredAuthToken } from '../services/apiClient';
 
 interface FixedAssetAgentModuleProps {
   currentClient: ClientCompany;
@@ -92,7 +95,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
 
   // Form State para Nuevo Activo Fijo
   const [newAssetForm, setNewAssetForm] = useState<Partial<FixedAsset>>({
-    codigoPlaca: `AF-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+    codigoPlaca: `AF-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
     nombre: '',
     descripcion: '',
     categoria: 'MAQUINARIA_EQUIPOS',
@@ -123,6 +126,16 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
 
   // Form State para Edición de Activo
   const [editAssetForm, setEditAssetForm] = useState<Partial<FixedAsset>>({});
+
+  // Estado del Motor Agéntico Autónomo
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
+    title: string;
+    decision: string;
+    steps: any[];
+    approvalRequired?: boolean;
+    approvalDetails?: any;
+  } | null>(null);
 
   // Notificación temporal
   const triggerSuccess = (msg: string) => {
@@ -295,8 +308,8 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
     triggerSuccess(`Activo ${newAsset.codigoPlaca} registrado e incorporado al Libro Diario contable (Asiento #${altaEntry.id.slice(-6)}).`);
   };
 
-  // Handler para Ejecutar Depreciación del Mes
-  const handleRunMonthlyDepreciation = () => {
+  // Handler para Ejecutar Depreciación del Mes con Motor Agéntico
+  const handleRunMonthlyDepreciation = async () => {
     const eligibleAssets = assetList.filter(
       (a) => a.estado === 'OPERATIVO' || a.estado === 'MANTENCION'
     );
@@ -304,6 +317,38 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
     if (eligibleAssets.length === 0) {
       alert('No hay activos operativos disponibles para depreciar.');
       return;
+    }
+
+    setIsExecutingAgent(true);
+    let agentResultData: any = null;
+
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'ACTIVO_FIJO',
+          modulo: 'ACTIVO_FIJO',
+          empresaId: currentClient.id,
+          query: `Calcular y contabilizar la cuota mensual de depreciación del período ${depreciationPeriod} para ${eligibleAssets.length} activos fijos según NIC 16 e IFRS.`,
+          context: {
+            empresa: currentClient,
+            selectedPeriod: depreciationPeriod,
+            items: assetList,
+          },
+        }),
+      });
+      if (res.ok) {
+        agentResultData = await res.json();
+      }
+    } catch (err) {
+      console.warn('[FixedAssetAgent] Error consultando motor agéntico:', err);
+    } finally {
+      setIsExecutingAgent(false);
     }
 
     const depreciacionesCalculadas = eligibleAssets.map((a) => {
@@ -341,11 +386,67 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
       });
     });
 
-    triggerSuccess(
-      `Proceso de Depreciación ${depreciationPeriod} ejecutado exitosamente. Asiento contable de ${formatCLP(
-        depEntry.totalDebe
-      )} contabilizado automáticamente en Libro Diario.`
-    );
+    if (agentResultData?.approvalRequired) {
+      triggerSuccess(
+        `Depreciación ${depreciationPeriod} analizada por el Agente Autónomo. Solicitud de gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'} generada.`
+      );
+    } else {
+      triggerSuccess(
+        `Proceso de Depreciación ${depreciationPeriod} ejecutado exitosamente con Agente Autónomo NIC 16. Asiento contable de ${formatCLP(
+          depEntry.totalDebe
+        )} contabilizado en Libro Diario.`
+      );
+    }
+
+    if (agentResultData?.steps || agentResultData?.decision) {
+      setAgentDiagnosticModal({
+        title: `Dictamen Agéntico: Depreciación ${depreciationPeriod}`,
+        decision: agentResultData.decision || agentResultData.finalText || 'Proceso evaluado con éxito.',
+        steps: agentResultData.steps || [],
+        approvalRequired: agentResultData.approvalRequired,
+        approvalDetails: agentResultData.approvalDetails,
+      });
+    }
+  };
+
+  // Handler para Auditoría Agéntica Completa NIC 16
+  const handleRunAutonomousAudit = async () => {
+    setIsExecutingAgent(true);
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'ACTIVO_FIJO',
+          modulo: 'ACTIVO_FIJO',
+          empresaId: currentClient.id,
+          query: `Auditar parque de activos fijos, vidas útiles, valor libro y depreciación acumulada para ${assetList.length} activos fijos según NIC 16.`,
+          context: {
+            empresa: currentClient,
+            selectedPeriod: depreciationPeriod,
+            items: assetList,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.steps) {
+        setAgentDiagnosticModal({
+          title: 'Auditoría Agéntica NIC 16 — Activo Fijo & Propiedades',
+          decision: data.decision || data.finalText || 'Auditoría completada exitosamente.',
+          steps: data.steps || [],
+          approvalRequired: data.approvalRequired,
+          approvalDetails: data.approvalDetails,
+        });
+      }
+    } catch (err: any) {
+      alert('Error ejecutando auditoría agéntica: ' + err.message);
+    } finally {
+      setIsExecutingAgent(false);
+    }
   };
 
   // Handler para Corrección Monetaria IPC (Art. 41 LIR)
@@ -384,10 +485,42 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
   };
 
   // Handler para Dar de Baja / Enajenar Activo
-  const handleConfirmDisposal = () => {
+  const handleConfirmDisposal = async () => {
     if (!showDisposalModal) return;
     const asset = showDisposalModal;
     const precio = Number(disposalPrice) || 0;
+
+    setIsExecutingAgent(true);
+    let agentResultData: any = null;
+
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'ACTIVO_FIJO',
+          modulo: 'ACTIVO_FIJO',
+          empresaId: currentClient.id,
+          query: `Dar de baja / enajenar activo fijo ${asset.codigoPlaca} ("${asset.nombre}") con precio de enajenación ${precio} CLP. Proponer asiento de baja y resultado extraordinario según NIC 16.`,
+          context: {
+            empresa: currentClient,
+            asset,
+            disposalPrice: precio,
+          },
+        }),
+      });
+      if (res.ok) {
+        agentResultData = await res.json();
+      }
+    } catch (err) {
+      console.warn('[FixedAssetAgent] Error consultando motor agéntico en baja:', err);
+    } finally {
+      setIsExecutingAgent(false);
+    }
 
     const disposalEntry = createFixedAssetDisposalEntry(asset, precio);
     onAddAccountingEntry(disposalEntry);
@@ -401,9 +534,16 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
 
     setShowDisposalModal(null);
     setDisposalPrice(0);
-    triggerSuccess(
-      `Activo ${asset.codigoPlaca} dado de baja/enajenado. Asiento de retiro y resultado extraordinario asentado en Libro Diario.`
-    );
+
+    if (agentResultData?.approvalRequired) {
+      triggerSuccess(
+        `Baja de ${asset.codigoPlaca} enviada a gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'}.`
+      );
+    } else {
+      triggerSuccess(
+        `Activo ${asset.codigoPlaca} dado de baja/enajenado. Asiento de retiro y resultado extraordinario asentado en Libro Diario por Agente Autónomo.`
+      );
+    }
   };
 
   // Handler para Abrir Modal de Edición (M)
@@ -493,6 +633,17 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={handleRunAutonomousAudit}
+              disabled={isExecutingAgent}
+              id="btn-audit-fixed-assets-agent"
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border border-indigo-400/30 disabled:opacity-50"
+              title="Auditoría Agéntica NIC 16 con bucle ReAct y Function Calling"
+            >
+              <Bot className={`w-4 h-4 text-amber-300 ${isExecutingAgent ? 'animate-spin' : ''}`} />
+              <span>{isExecutingAgent ? 'Auditando...' : 'Auditoría Agéntica NIC 16'}</span>
+            </button>
+
             <button
               onClick={() => setShowAddModal(true)}
               id="btn-register-fixed-asset"
@@ -1429,7 +1580,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
 
                 {asset.notasTecnicas && (
                   <div className="text-xs text-slate-400 bg-slate-950/40 p-2.5 rounded border border-slate-800">
-                    <span className="font-semibold text-slate-300 block mb-0.5">Diagnóstico IA & Bitácora:</span>
+                    <span className="font-semibold text-slate-300 block mb-0.5">Bitácora Técnica & Observaciones:</span>
                     {asset.notasTecnicas}
                   </div>
                 )}
@@ -2170,6 +2321,83 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
               >
                 Eliminar Activo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DICTAMEN DEL AGENTE AUTÓNOMO NIC 16 */}
+      {agentDiagnosticModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl text-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-600/30 border border-indigo-500/40 text-amber-300">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    {agentDiagnosticModal.title}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                      ReAct Function Calling
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Ejecución verificable sobre motor contable e inventario de activos fijos</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {agentDiagnosticModal.approvalRequired && (
+              <div className="p-3 bg-amber-950/60 border border-amber-600/60 rounded-xl text-amber-200 text-xs flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold">Gobernanza Humana Requerida:</strong>
+                  <span>Esta operación requiere resolución formal de un Administrador / Gerente General (Solicitud #{agentDiagnosticModal.approvalDetails?.id?.slice(-6) || 'PEND'}).</span>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 block">Dictamen y Análisis del Agente:</span>
+              <p className="whitespace-pre-wrap leading-relaxed text-slate-200 font-mono text-[11px]">{agentDiagnosticModal.decision}</p>
+            </div>
+
+            {agentDiagnosticModal.steps && agentDiagnosticModal.steps.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Trazabilidad de Pasos y Herramientas (Thought Trace):</span>
+                <div className="space-y-2">
+                  {agentDiagnosticModal.steps.map((st: any, idx: number) => (
+                    <div key={idx} className="bg-slate-950/80 p-3 rounded-lg border border-slate-800/80 text-xs">
+                      <div className="flex items-center justify-between text-indigo-300 font-bold mb-1">
+                        <span>Paso {st.step || idx + 1}: {st.toolCall}</span>
+                        <span className="text-[10px] text-slate-500">{st.timestamp}</span>
+                      </div>
+                      <p className="text-slate-400 text-[11px] mb-1">{st.thought}</p>
+                      {st.toolOutput && (
+                        <pre className="text-[10px] bg-slate-900 p-2 rounded text-slate-300 overflow-x-auto max-h-32">
+                          {JSON.stringify(st.toolOutput, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
+              >
+                Cerrar Panel
               </button>
             </div>
           </div>

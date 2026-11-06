@@ -30,8 +30,12 @@ import {
   Server,
   Smartphone,
   X,
+  Pencil,
+  Bot,
+  ShieldAlert,
   Scale,
 } from 'lucide-react';
+import { getStoredAuthToken } from '../../services/apiClient';
 import {
   ExpenseReport,
   ExpenseItem,
@@ -52,6 +56,7 @@ import {
 } from '../../utils/expenseManagementAgent';
 import { expenseApiService, ExpenseDbStatus } from '../../services/expenseApiService';
 import { CreateExpenseReportModal } from './CreateExpenseReportModal';
+import { EditExpenseReportModal } from './EditExpenseReportModal';
 import { AddExpenseItemModal } from './AddExpenseItemModal';
 import { ExpenseReportDetailModal } from './ExpenseReportDetailModal';
 import { CentralizeExpenseModal } from './CentralizeExpenseModal';
@@ -100,9 +105,59 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [showCreateReportModal, setShowCreateReportModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [selectedReportDetail, setSelectedReportDetail] = useState<ExpenseReport | null>(null);
+  const [reportToEdit, setReportToEdit] = useState<ExpenseReport | null>(null);
   const [reportToCentralize, setReportToCentralize] = useState<ExpenseReport | null>(null);
   const [showArchitectureModal, setShowArchitectureModal] = useState(false);
   const [showMobileApp, setShowMobileApp] = useState(false);
+
+  // Estado del Motor Agéntico Autónomo
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
+    title: string;
+    decision: string;
+    steps: any[];
+    approvalRequired?: boolean;
+    approvalDetails?: any;
+  } | null>(null);
+
+  const handleRunAutonomousExpenseAudit = async () => {
+    setIsExecutingAgent(true);
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'RENDICIONES',
+          modulo: 'RENDICIONES',
+          empresaId,
+          query: `Auditar cumplimiento tributario chileno, comprobantes y topes para ${reports.length} rendiciones de gastos activas.`,
+          context: {
+            empresa: { id: empresaId },
+            reports,
+            items,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.steps) {
+        setAgentDiagnosticModal({
+          title: 'Auditoría Agéntica de Rendiciones de Gastos',
+          decision: data.decision || data.finalText || 'Auditoría de rendiciones completada.',
+          steps: data.steps || [],
+          approvalRequired: data.approvalRequired,
+          approvalDetails: data.approvalDetails,
+        });
+      }
+    } catch (err: any) {
+      alert('Error en auditoría agéntica de rendiciones: ' + err.message);
+    } finally {
+      setIsExecutingAgent(false);
+    }
+  };
 
   // Cálculo del siguiente folio correlativo basado en la base de datos
   const nextFolioNumber = useMemo(() => {
@@ -209,7 +264,40 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
     if (!reportToCentralize) return;
     const report = reportToCentralize;
     try {
+      const authToken = getStoredAuthToken();
       const reportComprobantes = items.filter((i) => i.expenseReportId === report.id);
+
+      // Evaluación con motor agéntico de rendiciones
+      let agentApprovalMsg = '';
+      try {
+        const agentRes = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: 'RENDICIONES',
+            modulo: 'RENDICIONES',
+            empresaId,
+            query: `Auditar rendición ${report.folio} (${report.titulo}) por ${formatCLP(report.montoTotal)} y proponer centralización contable según normativa chilena SII.`,
+            context: {
+              empresa: { id: empresaId },
+              report,
+              comprobantes: reportComprobantes,
+            },
+          }),
+        });
+        if (agentRes.ok) {
+          const aData = await agentRes.json();
+          if (aData.approvalRequired) {
+            agentApprovalMsg = ` [Gobernanza Humana #${aData.approvalDetails?.id?.slice(-6) || 'PEND'} requerida por monto]`;
+          }
+        }
+      } catch (agentErr) {
+        console.warn('[ExpenseReportsModule] Error en motor agéntico:', agentErr);
+      }
+
       const entry = generateExpenseAccountingEntry(report, reportComprobantes, chartOfAccounts, config);
       if (onAddEntry) {
         await onAddEntry(entry);
@@ -229,7 +317,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
         return updated;
       });
       setCreatedNotification(
-        `✓ Rendición ${report.folio} ("${report.titulo}") centralizada exitosamente en el Libro Diario (Asiento #${entry.id}, Total: ${formatCLP(entry.totalDebe)}).`
+        `✓ Rendición ${report.folio} ("${report.titulo}") centralizada exitosamente en el Libro Diario (Asiento #${entry.id}, Total: ${formatCLP(entry.totalDebe)}).${agentApprovalMsg}`
       );
       setTimeout(() => setCreatedNotification(null), 6000);
       await fetchRealData();
@@ -312,6 +400,23 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
       }
     } catch (err) {
       console.error('[ExpenseReportsModule] Error al crear rendición:', err);
+      throw err;
+    }
+  };
+
+  // Acción: Modificar Rendición de Gastos en MySQL 8.0 / Disco
+  const handleUpdateReport = async (reportId: string, updates: Partial<ExpenseReport>) => {
+    try {
+      const updated = await expenseApiService.updateExpenseReport(reportId, updates);
+      setReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, ...updated, ...updates } : r)));
+      if (selectedReportDetail?.id === reportId) {
+        setSelectedReportDetail((prev) => (prev ? { ...prev, ...updated, ...updates } : null));
+      }
+      setCreatedNotification(`¡Rendición ${updated.folio || reportId} modificada y sincronizada en MySQL 8.0!`);
+      setTimeout(() => setCreatedNotification(null), 4000);
+      await fetchRealData();
+    } catch (err: any) {
+      console.error('[ExpenseReportsModule] Error al modificar rendición:', err);
       throw err;
     }
   };
@@ -424,6 +529,17 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
 
         {/* Botones de Acción */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleRunAutonomousExpenseAudit}
+            disabled={isExecutingAgent}
+            className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Auditoría Agéntica de Rendiciones con bucle ReAct"
+          >
+            <Bot className={`w-4 h-4 text-amber-300 ${isExecutingAgent ? 'animate-spin' : ''}`} />
+            <span>{isExecutingAgent ? 'Auditando...' : 'Auditoría Agéntica'}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowMobileApp(true)}
@@ -876,6 +992,16 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
 
                           <button
                             type="button"
+                            onClick={() => setReportToEdit(report)}
+                            className="px-2.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            title="Modificar datos de la rendición"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Modificar</span>
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => setSelectedReportDetail(report)}
                             className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                           >
@@ -1177,6 +1303,19 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
           onUpdateReportStatus={handleUpdateReportStatus}
           onCommitAccountingEntry={onAddEntry}
           chartOfAccounts={chartOfAccounts}
+          onEditReportClick={() => setReportToEdit(selectedReportDetail)}
+        />
+      )}
+
+      {reportToEdit && (
+        <EditExpenseReportModal
+          isOpen={!!reportToEdit}
+          onClose={() => setReportToEdit(null)}
+          report={reportToEdit}
+          onUpdate={handleUpdateReport}
+          costCenters={costCenters}
+          projects={projects}
+          empresaId={empresaId}
         />
       )}
 
@@ -1306,6 +1445,83 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
               >
                 Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DICTAMEN DEL AGENTE AUTÓNOMO DE RENDICIONES */}
+      {agentDiagnosticModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl text-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-600/30 border border-indigo-500/40 text-amber-300">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    {agentDiagnosticModal.title}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                      ReAct Function Calling
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Validación de topes tributarios, comprobantes y centralización contable</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {agentDiagnosticModal.approvalRequired && (
+              <div className="p-3 bg-amber-950/60 border border-amber-600/60 rounded-xl text-amber-200 text-xs flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold">Gobernanza Humana Requerida:</strong>
+                  <span>Esta centralización requiere autorización formal de Administrador / Gerente General (Solicitud #{agentDiagnosticModal.approvalDetails?.id?.slice(-6) || 'PEND'}).</span>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 block">Dictamen y Análisis del Agente:</span>
+              <p className="whitespace-pre-wrap leading-relaxed text-slate-200 font-mono text-[11px]">{agentDiagnosticModal.decision}</p>
+            </div>
+
+            {agentDiagnosticModal.steps && agentDiagnosticModal.steps.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Trazabilidad de Pasos y Herramientas (Thought Trace):</span>
+                <div className="space-y-2">
+                  {agentDiagnosticModal.steps.map((st: any, idx: number) => (
+                    <div key={idx} className="bg-slate-950/80 p-3 rounded-lg border border-slate-800/80 text-xs">
+                      <div className="flex items-center justify-between text-indigo-300 font-bold mb-1">
+                        <span>Paso {st.step || idx + 1}: {st.toolCall}</span>
+                        <span className="text-[10px] text-slate-500">{st.timestamp}</span>
+                      </div>
+                      <p className="text-slate-400 text-[11px] mb-1">{st.thought}</p>
+                      {st.toolOutput && (
+                        <pre className="text-[10px] bg-slate-900 p-2 rounded text-slate-300 overflow-x-auto max-h-32">
+                          {JSON.stringify(st.toolOutput, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Cerrar Panel
               </button>
             </div>
           </div>

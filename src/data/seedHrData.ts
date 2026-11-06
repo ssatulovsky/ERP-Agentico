@@ -547,3 +547,297 @@ export const INITIAL_HR_ALERTS: HrAgentAlert[] = [
     accionRecomendada: 'Verificar la entrega a todos los colaboradores del anexo RIOHS con el protocolo de prevención de acoso y no discriminación.',
   }
 ];
+
+// ============================================================================
+// CONJUNTOS DE DATOS RRHH PARA RETAIL LOGISTICS / AGROINDUSTRIAL (CLIENT-RETAIL)
+// ============================================================================
+
+export const RETAIL_LABOR_CONTRACTS: LaborContract[] = [
+  {
+    id: 'ctr-ret-01',
+    employeeId: 'emp-retail-1',
+    rut: '18.456.789-2',
+    nombreCompleto: 'Gonzalo Tapia Morales',
+    nacionalidad: 'Chilena',
+    estadoCivil: 'Casado',
+    fechaNacimiento: '1988-04-12',
+    domicilio: 'Av. Las Acacias 450',
+    comuna: 'San Bernardo',
+    cargo: 'Jefe de Finanzas y Control de Gestión',
+    departamento: 'Administración & Finanzas',
+    tipoContrato: 'INDEFINIDO',
+    fechaInicio: '2024-03-01',
+    sueldoBase: 1850000,
+    jornadaHorasSemanales: 40,
+    distribucionJornada: 'Lunes a Viernes de 08:30 a 17:30 hrs',
+    lugarTrabajo: 'Oficina Central San Bernardo',
+    gratificacionModalidad: 'ART_50',
+    asignacionColacion: 85000,
+    asignacionMovilizacion: 65000,
+    estado: 'VIGENTE',
+    registradoDtRel: true,
+    folioRegistroDt: 'REL-2024-098234-DT',
+    clausulaConfidencialidad: true,
+    clausulaTeletrabajo: false,
+    observaciones: 'Jornada adaptada a 40 horas ordinarias con registro de asistencia electrónico.',
+    anexos: [],
+  },
+  {
+    id: 'ctr-ret-02',
+    employeeId: 'emp-retail-2',
+    rut: '15.340.891-3',
+    nombreCompleto: 'Rosa Cárdenas Silva',
+    nacionalidad: 'Chilena',
+    estadoCivil: 'Soltera',
+    fechaNacimiento: '1982-10-05',
+    domicilio: 'Camino Lo Echevers 550',
+    comuna: 'Quilicura',
+    cargo: 'Supervisora de Logística y Bodega',
+    departamento: 'Operaciones & Logística',
+    tipoContrato: 'INDEFINIDO',
+    fechaInicio: '2023-08-15',
+    sueldoBase: 1250000,
+    jornadaHorasSemanales: 42,
+    distribucionJornada: 'Lunes a Viernes de 08:00 a 17:00 hrs',
+    lugarTrabajo: 'Centro de Distribución Lo Echevers Galpón 4',
+    gratificacionModalidad: 'ART_50',
+    asignacionColacion: 80000,
+    asignacionMovilizacion: 60000,
+    estado: 'VIGENTE',
+    registradoDtRel: true,
+    folioRegistroDt: 'REL-2023-77123-DT',
+    clausulaConfidencialidad: true,
+    clausulaTeletrabajo: false,
+    anexos: [],
+  },
+  {
+    id: 'ctr-ret-03',
+    employeeId: 'emp-retail-3',
+    rut: '17.345.678-9',
+    nombreCompleto: 'Esteban Morales Peña',
+    nacionalidad: 'Chilena',
+    estadoCivil: 'Casado',
+    fechaNacimiento: '1991-07-22',
+    domicilio: 'Pasaje El Roble 1290',
+    comuna: 'Renca',
+    cargo: 'Encargado de Despacho y Sucursales',
+    departamento: 'Logística',
+    tipoContrato: 'INDEFINIDO',
+    fechaInicio: '2024-01-10',
+    sueldoBase: 950000,
+    jornadaHorasSemanales: 42,
+    distribucionJornada: 'Lunes a Viernes de 08:30 a 17:30 hrs',
+    lugarTrabajo: 'CD Lo Echevers & Ruta Sucursales',
+    gratificacionModalidad: 'ART_50',
+    asignacionColacion: 75000,
+    asignacionMovilizacion: 55000,
+    estado: 'VIGENTE',
+    registradoDtRel: true,
+    folioRegistroDt: 'REL-2024-33102-DT',
+    clausulaConfidencialidad: true,
+    clausulaTeletrabajo: false,
+    anexos: [],
+  },
+  {
+    id: 'ctr-ret-04',
+    employeeId: 'emp-retail-4',
+    rut: '19.876.543-2',
+    nombreCompleto: 'Claudia Henríquez Soto',
+    nacionalidad: 'Chilena',
+    estadoCivil: 'Soltera',
+    fechaNacimiento: '1999-02-14',
+    domicilio: 'Av. Américo Vespucio Norte 2200',
+    comuna: 'Pudahuel',
+    cargo: 'Asistente de Operaciones Retail',
+    departamento: 'Operaciones',
+    tipoContrato: 'PLAZO_FIJO',
+    fechaInicio: '2024-06-01',
+    fechaTermino: '2026-11-30',
+    sueldoBase: 650000,
+    jornadaHorasSemanales: 44,
+    distribucionJornada: 'Lunes a Viernes de 09:00 a 18:00 hrs',
+    lugarTrabajo: 'Oficinas Despacho Pudahuel',
+    gratificacionModalidad: 'ART_50',
+    asignacionColacion: 70000,
+    asignacionMovilizacion: 50000,
+    estado: 'VIGENTE',
+    registradoDtRel: true,
+    folioRegistroDt: 'REL-2024-88914-DT',
+    clausulaConfidencialidad: true,
+    clausulaTeletrabajo: false,
+    anexos: [],
+  },
+];
+
+export const RETAIL_VACATION_RECORDS: VacationRecord[] = [
+  {
+    id: 'vac-ret-01',
+    employeeId: 'emp-retail-1',
+    rut: '18.456.789-2',
+    nombreCompleto: 'Gonzalo Tapia Morales',
+    fechaIngreso: '2024-03-01',
+    antiguedadAnos: 2,
+    diasLegalesPorAno: 15,
+    diasProgresivos: 0,
+    diasAcumuladosTotales: 30,
+    diasTomadosHistorico: 10,
+    diasDisponibles: 20,
+    periodosPendientes: 1.3,
+    alertaExcesoPeriodosArt70: false,
+    solicitudes: [],
+  },
+  {
+    id: 'vac-ret-02',
+    employeeId: 'emp-retail-2',
+    rut: '15.340.891-3',
+    nombreCompleto: 'Rosa Cárdenas Silva',
+    fechaIngreso: '2023-08-15',
+    antiguedadAnos: 3,
+    diasLegalesPorAno: 15,
+    diasProgresivos: 0,
+    diasAcumuladosTotales: 45,
+    diasTomadosHistorico: 20,
+    diasDisponibles: 25,
+    periodosPendientes: 1.6,
+    alertaExcesoPeriodosArt70: false,
+    solicitudes: [],
+  },
+  {
+    id: 'vac-ret-03',
+    employeeId: 'emp-retail-3',
+    rut: '17.345.678-9',
+    nombreCompleto: 'Esteban Morales Peña',
+    fechaIngreso: '2024-01-10',
+    antiguedadAnos: 2,
+    diasLegalesPorAno: 15,
+    diasProgresivos: 0,
+    diasAcumuladosTotales: 30,
+    diasTomadosHistorico: 15,
+    diasDisponibles: 15,
+    periodosPendientes: 1.0,
+    alertaExcesoPeriodosArt70: false,
+    solicitudes: [],
+  },
+  {
+    id: 'vac-ret-04',
+    employeeId: 'emp-retail-4',
+    rut: '19.876.543-2',
+    nombreCompleto: 'Claudia Henríquez Soto',
+    fechaIngreso: '2024-06-01',
+    antiguedadAnos: 2,
+    diasLegalesPorAno: 15,
+    diasProgresivos: 0,
+    diasAcumuladosTotales: 25,
+    diasTomadosHistorico: 10,
+    diasDisponibles: 15,
+    periodosPendientes: 1.0,
+    alertaExcesoPeriodosArt70: false,
+    solicitudes: [],
+  },
+];
+
+export const RETAIL_MEDICAL_LEAVES: MedicalLeave[] = [
+  {
+    id: 'lme-ret-01',
+    folioLicencia: 'LME-661204-7',
+    employeeId: 'emp-retail-2',
+    rut: '15.340.891-3',
+    nombreCompleto: 'Rosa Cárdenas Silva',
+    tipoLicencia: 'ENFERMEDAD_COMUN',
+    entidadTramitadora: 'FONASA_COMPIN',
+    fechaInicio: '2026-07-06',
+    fechaTermino: '2026-07-12',
+    diasReposo: 7,
+    diasDescuentoRemuneracion: 7,
+    diasSubsidioSIL: 4,
+    descuentoNominaEstimado: 291666,
+    medicoNombre: 'Dr. Patricio Alarcón Soto',
+    medicoRut: '12.334.890-1',
+    diagnosticoCie10: 'M54.5 - Lumbago no especificado',
+    estado: 'APROBADA_COMPIN_ISAPRE',
+    fechaTramitacionEmpleador: '2026-07-07',
+    observaciones: 'Tramitada oportunamente a través de portal Medipass.',
+  }
+];
+
+export const RETAIL_ABSENTEEISM: AbsenteeismRecord[] = [
+  {
+    id: 'abs-ret-01',
+    employeeId: 'emp-retail-3',
+    rut: '17.345.678-9',
+    nombreCompleto: 'Esteban Morales Peña',
+    fecha: '2026-08-17',
+    tipo: 'ATRASO_REITERADO',
+    duracionTexto: '35 minutos',
+    minutosAtraso: 35,
+    justificativoPresentado: 'Congestión vehicular extrema en autopista Costanera Norte.',
+    impactoDescuentoPesos: 4800,
+    alertaCausalArt160N3: false,
+    estado: 'JUSTIFICADO',
+    observaciones: 'Aviso previo telefónico a jefatura de despacho.',
+  }
+];
+
+export const RETAIL_DISCIPLINARY_SANCTIONS: DisciplinarySanction[] = [
+  {
+    id: 'sanct-ret-01',
+    employeeId: 'emp-retail-3',
+    rut: '17.345.678-9',
+    nombreCompleto: 'Esteban Morales Peña',
+    fechaInfraccion: '2026-07-28',
+    fechaEmision: '2026-07-29',
+    tipo: 'AMONESTACION_VERBAL',
+    motivoInfraccion: 'No utilización de elementos de protección personal (zapatos de seguridad con punta de acero en área de carga de pallets).',
+    articuloRiohs: 'Art. 32 Reglamento Interno de Orden, Higiene y Seguridad (Seguridad Operacional en Bodega)',
+    estado: 'FIRMADA_TRABAJADOR',
+    compromisoMejora: 'Uso permanente e inexcusable de EPP en zonas de maniobra.',
+    observaciones: 'Constancia interna en carpeta personal con copia al Comité Paritario de Higiene y Seguridad.',
+  }
+];
+
+// Selectores con integridad referencial garantizada por empresa
+export function getInitialContractsForClient(clientId?: string): LaborContract[] {
+  if (!clientId) return INITIAL_LABOR_CONTRACTS;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_LABOR_CONTRACTS;
+  }
+  return INITIAL_LABOR_CONTRACTS;
+}
+
+export function getInitialVacationsForClient(clientId?: string): VacationRecord[] {
+  if (!clientId) return INITIAL_VACATION_RECORDS;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_VACATION_RECORDS;
+  }
+  return INITIAL_VACATION_RECORDS;
+}
+
+export function getInitialMedicalLeavesForClient(clientId?: string): MedicalLeave[] {
+  if (!clientId) return INITIAL_MEDICAL_LEAVES;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_MEDICAL_LEAVES;
+  }
+  return INITIAL_MEDICAL_LEAVES;
+}
+
+export function getInitialSanctionsForClient(clientId?: string): DisciplinarySanction[] {
+  if (!clientId) return INITIAL_DISCIPLINARY_SANCTIONS;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_DISCIPLINARY_SANCTIONS;
+  }
+  return INITIAL_DISCIPLINARY_SANCTIONS;
+}
+
+export function getInitialAbsenteeismForClient(clientId?: string): AbsenteeismRecord[] {
+  if (!clientId) return INITIAL_ABSENTEEISM;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_ABSENTEEISM;
+  }
+  return INITIAL_ABSENTEEISM;
+}
+

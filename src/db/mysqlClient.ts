@@ -1043,6 +1043,151 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
       console.warn(`[MySQL 8.0] Verificación de tablas procurement: ${procErr.message}`);
     }
 
+    // Tablas de CAF / Secuencia Atómica DTE, RRHH Histórico y Gobernanza Agéntica
+    try {
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS \`dte_caf_sequences\` (
+          \`id\` VARCHAR(36) NOT NULL,
+          \`empresa_id\` VARCHAR(36) NOT NULL,
+          \`tipo_dte\` INT NOT NULL,
+          \`ultimo_folio_emitido\` BIGINT NOT NULL DEFAULT 0,
+          \`folio_desde\` BIGINT NOT NULL DEFAULT 1,
+          \`folio_hasta\` BIGINT NOT NULL DEFAULT 5000,
+          \`caf_xml\` MEDIUMTEXT NULL,
+          \`fecha_autorizacion\` DATE NULL,
+          \`ambiente\` INT DEFAULT 1,
+          \`activo\` BOOLEAN NOT NULL DEFAULT TRUE,
+          \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          UNIQUE KEY \`uq_caf_empresa_tipo_ambiente\` (\`empresa_id\`, \`tipo_dte\`, \`ambiente\`),
+          KEY \`idx_caf_empresa\` (\`empresa_id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS \`payroll_historical_settlements\` (
+          \`id\` VARCHAR(64) NOT NULL,
+          \`empresa_id\` VARCHAR(64) NOT NULL,
+          \`periodo\` VARCHAR(7) NOT NULL,
+          \`trabajador_id\` VARCHAR(64) NOT NULL,
+          \`trabajador_rut\` VARCHAR(20) NOT NULL,
+          \`trabajador_nombre\` VARCHAR(255) NOT NULL,
+          \`cargo\` VARCHAR(150) NULL,
+          \`sueldo_base\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`dias_trabajados\` INT NOT NULL DEFAULT 30,
+          \`total_haberes_imponibles\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`total_haberes_no_imponibles\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`total_haberes\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`cotizacion_afp\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`cotizacion_salud\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`cotizacion_afc\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`impuesto_unico_segunda_categoria\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`otros_descuentos\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`total_descuentos\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`alcance_liquido\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`aporte_patronal_sis\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`aporte_patronal_mutual\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`aporte_patronal_afc\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`aporte_patronal_ley21735\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`costo_empresa_total\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`uf_valor\` DECIMAL(10,2) NULL,
+          \`utm_valor\` DECIMAL(10,2) NULL,
+          \`tope_imponible_afp_uf\` DECIMAL(6,2) NULL,
+          \`tope_imponible_afc_uf\` DECIMAL(6,2) NULL,
+          \`asiento_contable_ref_id\` VARCHAR(64) NULL,
+          \`estado\` VARCHAR(30) NOT NULL DEFAULT 'CERRADA',
+          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          UNIQUE KEY \`uq_payroll_emp_periodo_trab\` (\`empresa_id\`, \`periodo\`, \`trabajador_rut\`),
+          KEY \`idx_payroll_empresa_periodo\` (\`empresa_id\`, \`periodo\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS \`payroll_reliquidations\` (
+          \`id\` VARCHAR(64) NOT NULL,
+          \`empresa_id\` VARCHAR(64) NOT NULL,
+          \`trabajador_id\` VARCHAR(64) NOT NULL,
+          \`trabajador_rut\` VARCHAR(20) NOT NULL,
+          \`trabajador_nombre\` VARCHAR(255) NOT NULL,
+          \`periodo_afectado\` VARCHAR(7) NOT NULL,
+          \`periodo_pago_reliquidacion\` VARCHAR(7) NOT NULL,
+          \`motivo\` VARCHAR(255) NOT NULL,
+          \`diferencia_sueldo_base\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_gratificacion\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_horas_extras\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_bonos\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_imponible_total\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`recalculo_afp\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`recalculo_salud\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`recalculo_afc\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`recalculo_iusc\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_liquida_a_pagar\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_ley21735_empleador\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_sis_empleador\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`diferencia_mutual_empleador\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`asiento_ajuste_ref_id\` VARCHAR(64) NULL,
+          \`estado\` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          KEY \`idx_reliq_empresa_periodo\` (\`empresa_id\`, \`periodo_afectado\`),
+          KEY \`idx_reliq_trabajador\` (\`trabajador_rut\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS \`hr_climate_surveys\` (
+          \`id\` VARCHAR(64) NOT NULL,
+          \`empresa_id\` VARCHAR(64) NOT NULL,
+          \`periodo\` VARCHAR(7) NOT NULL,
+          \`dimension\` VARCHAR(100) NOT NULL,
+          \`puntaje_promedio\` DECIMAL(4,2) NOT NULL,
+          \`participacion_porcentaje\` DECIMAL(5,2) NOT NULL,
+          \`total_encuestados\` INT NOT NULL,
+          \`nivel_alerta\` VARCHAR(30) NOT NULL DEFAULT 'NORMAL',
+          \`comentarios_destacados\` JSON NULL,
+          \`acciones_propuestas_agente\` JSON NULL,
+          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          KEY \`idx_climate_empresa_periodo\` (\`empresa_id\`, \`periodo\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS \`module_agent_approvals\` (
+          \`id\` VARCHAR(64) NOT NULL,
+          \`empresa_id\` VARCHAR(64) NOT NULL,
+          \`modulo\` VARCHAR(50) NOT NULL,
+          \`agente_origen_id\` VARCHAR(100) NOT NULL,
+          \`agente_origen_nombre\` VARCHAR(150) NOT NULL,
+          \`agente_origen_rol\` VARCHAR(150) NOT NULL,
+          \`tipo_operacion\` VARCHAR(100) NOT NULL,
+          \`entidad_tipo\` VARCHAR(60) NOT NULL,
+          \`entidad_id\` VARCHAR(64) NOT NULL,
+          \`resumen_operacion\` TEXT NOT NULL,
+          \`impacto_financiero_clp\` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+          \`detalles_json\` JSON NULL,
+          \`estado\` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+          \`requiere_aprobacion_humana\` BOOLEAN NOT NULL DEFAULT TRUE,
+          \`aprobado_por_rut\` VARCHAR(20) NULL,
+          \`aprobado_por_nombre\` VARCHAR(255) NULL,
+          \`aprobado_por_rol\` VARCHAR(100) NULL,
+          \`fecha_decision\` DATETIME(3) NULL,
+          \`motivo_rechazo\` TEXT NULL,
+          \`ejecutado\` BOOLEAN NOT NULL DEFAULT FALSE,
+          \`fecha_ejecucion\` DATETIME(3) NULL,
+          \`resultado_ejecucion\` TEXT NULL,
+          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          KEY \`idx_agent_appr_empresa_modulo\` (\`empresa_id\`, \`modulo\`, \`estado\`),
+          KEY \`idx_agent_appr_entidad\` (\`entidad_tipo\`, \`entidad_id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+      console.log('[MySQL 8.0] Tablas dte_caf_sequences, RRHH histórico y gobernanza agéntica inicializadas.');
+    } catch (hrErr: any) {
+      console.warn(`[MySQL 8.0] Verificación de tablas caf/rrhh/approvals: ${hrErr.message}`);
+    }
+
     // Sincronizar datos de disco a MySQL
     await diskPersistence.syncDiskToMysql();
   } catch (err: any) {

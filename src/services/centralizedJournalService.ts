@@ -6,7 +6,7 @@ import {
   agentAuditLogs,
   type ModuleSource,
 } from '../db/schema/accountingLedgerSchema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 
 const HMAC_SECRET = process.env.SUPERVISOR_HMAC_SECRET || 'SIEX_AUDIT_SUPERVISOR_KEY_2026';
 
@@ -99,8 +99,11 @@ export async function postModuleTransaction(
     tipoDocumentoRef?: string;
     folioDocumentoRef?: string;
     montoDocumentoRef?: number;
+    fechaDocumentoRef?: string;
+    fechaVencimientoRef?: string;
     documentoOperacion?: string;
     tipoDocumentoOperacion?: string;
+    fechaDocumentoOperacion?: string;
     documentoConciliacion?: string;
     tipoDocumentoConciliacion?: string;
     monedaOriginal?: string;

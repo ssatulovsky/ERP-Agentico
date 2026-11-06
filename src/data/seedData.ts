@@ -348,6 +348,106 @@ export const INITIAL_EMPLOYEES: EmployeePayroll[] = [
   ),
 ];
 
+export const RETAIL_EMPLOYEES: EmployeePayroll[] = [
+  calculatePayroll(
+    {
+      id: 'emp-retail-1',
+      rut: '18.456.789-2',
+      nombreCompleto: 'Gonzalo Tapia Morales',
+      cargo: 'Jefe de Finanzas y Control de Gestión',
+      departamento: 'Administración',
+      fechaIngreso: '2024-03-01',
+      tipoContrato: 'INDEFINIDO',
+      sueldoBase: 1850000,
+      gratificacionModalidad: 'ART_50',
+      horasExtrasCantidad: 4,
+      comisionesBonosImponibles: 150000,
+      asignacionColacion: 85000,
+      asignacionMovilizacion: 65000,
+      afpNombre: 'HABITAT',
+      saludTipo: 'ISAPRE',
+      saludPlanUf: 4.5,
+      otrosDescuentos: 0,
+    },
+    DEFAULT_INDICATORS
+  ),
+  calculatePayroll(
+    {
+      id: 'emp-retail-2',
+      rut: '15.340.891-3',
+      nombreCompleto: 'Rosa Cárdenas Silva',
+      cargo: 'Supervisora de Logística y Bodega',
+      departamento: 'Operaciones',
+      fechaIngreso: '2023-08-15',
+      tipoContrato: 'INDEFINIDO',
+      sueldoBase: 1250000,
+      gratificacionModalidad: 'ART_50',
+      horasExtrasCantidad: 8,
+      comisionesBonosImponibles: 80000,
+      asignacionColacion: 80000,
+      asignacionMovilizacion: 60000,
+      afpNombre: 'PROVIDA',
+      saludTipo: 'FONASA',
+      saludPlanUf: 0,
+      otrosDescuentos: 0,
+    },
+    DEFAULT_INDICATORS
+  ),
+  calculatePayroll(
+    {
+      id: 'emp-retail-3',
+      rut: '17.345.678-9',
+      nombreCompleto: 'Esteban Morales Peña',
+      cargo: 'Encargado de Despacho y Sucursales',
+      departamento: 'Logística',
+      fechaIngreso: '2024-01-10',
+      tipoContrato: 'INDEFINIDO',
+      sueldoBase: 950000,
+      gratificacionModalidad: 'ART_50',
+      horasExtrasCantidad: 6,
+      comisionesBonosImponibles: 50000,
+      asignacionColacion: 75000,
+      asignacionMovilizacion: 55000,
+      afpNombre: 'PLANVITAL',
+      saludTipo: 'FONASA',
+      saludPlanUf: 0,
+      otrosDescuentos: 0,
+    },
+    DEFAULT_INDICATORS
+  ),
+  calculatePayroll(
+    {
+      id: 'emp-retail-4',
+      rut: '19.876.543-2',
+      nombreCompleto: 'Claudia Henríquez Soto',
+      cargo: 'Asistente de Operaciones Retail',
+      departamento: 'Operaciones',
+      fechaIngreso: '2024-06-01',
+      tipoContrato: 'PLAZO_FIJO',
+      sueldoBase: 650000,
+      gratificacionModalidad: 'ART_50',
+      horasExtrasCantidad: 2,
+      comisionesBonosImponibles: 30000,
+      asignacionColacion: 70000,
+      asignacionMovilizacion: 50000,
+      afpNombre: 'UNO',
+      saludTipo: 'FONASA',
+      saludPlanUf: 0,
+      otrosDescuentos: 0,
+    },
+    DEFAULT_INDICATORS
+  ),
+];
+
+export function getInitialPayrollsForClient(clientId?: string): EmployeePayroll[] {
+  if (!clientId) return INITIAL_EMPLOYEES;
+  const clean = clientId.toLowerCase();
+  if (clean.includes('retail') || clean.includes('agro') || clean.includes('76.104.550-9') || clean.includes('77.210.980-5')) {
+    return RETAIL_EMPLOYEES;
+  }
+  return INITIAL_EMPLOYEES;
+}
+
 export const INITIAL_LEASES: LeaseContract[] = [
   {
     id: 'lease-101',

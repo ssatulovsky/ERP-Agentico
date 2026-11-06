@@ -2125,19 +2125,33 @@ VALUES (
 )
 ON DUPLICATE KEY UPDATE `nombre` = VALUES(`nombre`), `centro_costo_id` = VALUES(`centro_costo_id`);
 
--- Colaboradores Iniciales
+-- Colaboradores Iniciales: InnovAgile Group SpA (client-innovagile)
 INSERT INTO `employees` (
   `id`, `empresa_id`, `rut`, `nombre`, `apellido_paterno`, `apellido_materno`,
   `cargo`, `sueldo_base`, `afp`, `isapre_fonasa`, `pactado_isapre_uf`, `aplica_afc`,
   `activo`, `fecha_ingreso`, `created_at`
 )
-VALUES (
-  'emp-001', 'client-retail-01', '18.456.789-2', 'Gonzalo', 'Tapia', 'Morales',
-  'Jefe de Finanzas y Control de Gestión', 1850000.00, 'HABITAT', 'COLMENA', 4.5000, TRUE,
-  TRUE, '2024-03-01', NOW()
-)
-ON DUPLICATE KEY UPDATE `sueldo_base` = VALUES(`sueldo_base`);
+VALUES
+  ('emp-1', 'client-innovagile', '14.892.301-2', 'Ignacio', 'Valenzuela', 'Castro', 'Líder Técnico de Arquitectura de Software', 3800000.00, 'HABITAT', 'ISAPRE', 7.2000, TRUE, TRUE, '2021-04-01', NOW()),
+  ('emp-2', 'client-innovagile', '16.450.912-K', 'Francisca', 'Santander', 'Henríquez', 'Ingeniera de Datos y Machine Learning', 2400000.00, 'CUPRUM', 'FONASA', 0.0000, TRUE, TRUE, '2022-07-15', NOW()),
+  ('emp-3', 'client-innovagile', '17.890.342-8', 'Sebastián', 'Morales', 'Peña', 'Consultor de Finanzas y Control de Gestión', 1600000.00, 'MODELO', 'FONASA', 0.0000, TRUE, TRUE, '2023-01-10', NOW()),
+  ('emp-4', 'client-innovagile', '19.231.874-5', 'Valentina', 'Rojas', 'Carvajal', 'Asistente Contable y Operaciones', 850000.00, 'UNO', 'FONASA', 0.0000, TRUE, TRUE, '2024-03-01', NOW())
+ON DUPLICATE KEY UPDATE `sueldo_base` = VALUES(`sueldo_base`), `cargo` = VALUES(`cargo`);
 
+-- Colaboradores Iniciales: Retail Logistics Chile (client-retail-01)
+INSERT INTO `employees` (
+  `id`, `empresa_id`, `rut`, `nombre`, `apellido_paterno`, `apellido_materno`,
+  `cargo`, `sueldo_base`, `afp`, `isapre_fonasa`, `pactado_isapre_uf`, `aplica_afc`,
+  `activo`, `fecha_ingreso`, `created_at`
+)
+VALUES
+  ('emp-001', 'client-retail-01', '18.456.789-2', 'Gonzalo', 'Tapia', 'Morales', 'Jefe de Finanzas y Control de Gestión', 1850000.00, 'HABITAT', 'COLMENA', 4.5000, TRUE, TRUE, '2024-03-01', NOW()),
+  ('emp-002', 'client-retail-01', '15.340.891-3', 'Rosa', 'Cárdenas', 'Silva', 'Supervisora de Logística y Bodega', 1250000.00, 'PROVIDA', 'FONASA', 0.0000, TRUE, TRUE, '2023-08-15', NOW()),
+  ('emp-003', 'client-retail-01', '17.345.678-9', 'Esteban', 'Morales', 'Peña', 'Encargado de Despacho y Sucursales', 950000.00, 'PLANVITAL', 'FONASA', 0.0000, TRUE, TRUE, '2024-01-10', NOW()),
+  ('emp-004', 'client-retail-01', '19.876.543-2', 'Claudia', 'Henríquez', 'Soto', 'Asistente de Operaciones Retail', 650000.00, 'UNO', 'FONASA', 0.0000, TRUE, TRUE, '2024-06-01', NOW())
+ON DUPLICATE KEY UPDATE `sueldo_base` = VALUES(`sueldo_base`), `cargo` = VALUES(`cargo`);
+
+-- Contratos Laborales MiDT / REL (InnovAgile)
 INSERT INTO `labor_contracts` (
   `id`, `employee_id`, `empresa_id`, `rut`, `nombre_completo`, `cargo`, `departamento`,
   `tipo_contrato`, `fecha_inicio`, `sueldo_base`, `jornada_horas_semanales`,
@@ -2145,14 +2159,74 @@ INSERT INTO `labor_contracts` (
   `asignacion_colacion`, `asignacion_movilizacion`, `estado`, `registrado_dt_rel`,
   `folio_registro_dt`, `created_at`
 )
-VALUES (
-  'cto-001', 'emp-001', 'client-retail-01', '18.456.789-2', 'Gonzalo Tapia Morales',
-  'Jefe de Finanzas y Control de Gestión', 'ADMINISTRACION', 'INDEFINIDO', '2024-03-01',
-  1850000.00, 40, 'Lunes a Viernes de 08:30 a 17:30 hrs',
-  'Av. Las Acacias 450, San Bernardo, RM', 'ART_50', 85000.00, 65000.00,
-  'VIGENTE', TRUE, 'DT-REL-2024-098234', NOW()
-)
+VALUES
+  ('cto-inno-001', 'emp-1', 'client-innovagile', '14.892.301-2', 'Ignacio Andrés Valenzuela Castro', 'Líder Técnico de Arquitectura de Software', 'Ingeniería & Tecnología', 'INDEFINIDO', '2021-04-01', 3800000.00, 40, 'Lunes a Jueves de 08:30 a 18:00 hrs y Viernes de 08:30 a 14:30 hrs', 'Modalidad Híbrida (Av. Providencia 1208, Of. 601)', 'ART_50', 90000.00, 80000.00, 'VIGENTE', TRUE, 'REL-2021-88401-DT', NOW()),
+  ('cto-inno-002', 'emp-2', 'client-innovagile', '16.450.912-K', 'Francisca Paz Santander Henríquez', 'Ingeniera de Datos y Machine Learning', 'Desarrollo & Analítica', 'INDEFINIDO', '2022-07-15', 2400000.00, 42, 'Lunes a Jueves de 08:30 a 18:30 hrs y Viernes de 08:30 a 16:30 hrs', 'Oficina Central (Av. Providencia 1208, Of. 601)', 'ART_50', 85000.00, 75000.00, 'VIGENTE', TRUE, 'REL-2022-34902-DT', NOW()),
+  ('cto-inno-003', 'emp-3', 'client-innovagile', '17.890.342-8', 'Sebastián Eduardo Morales Peña', 'Consultor de Finanzas y Control de Gestión', 'Finanzas & Contabilidad', 'INDEFINIDO', '2023-01-10', 1600000.00, 42, 'Lunes a Viernes de 09:00 a 18:00 hrs', 'Oficina Central Providencia', 'ART_50', 80000.00, 70000.00, 'VIGENTE', TRUE, 'REL-2023-11094-DT', NOW()),
+  ('cto-inno-004', 'emp-4', 'client-innovagile', '19.231.874-5', 'Valentina Belén Rojas Carvajal', 'Asistente Contable y Operaciones', 'Finanzas & Contabilidad', 'PLAZO_FIJO', '2024-03-01', 850000.00, 44, 'Lunes a Viernes de 08:30 a 17:30 hrs', 'Oficina Central Providencia', 'ART_50', 75000.00, 65000.00, 'VIGENTE', TRUE, 'REL-2024-0615-DT', NOW())
 ON DUPLICATE KEY UPDATE `jornada_horas_semanales` = VALUES(`jornada_horas_semanales`);
+
+-- Contratos Laborales MiDT / REL (Retail Logistics)
+INSERT INTO `labor_contracts` (
+  `id`, `employee_id`, `empresa_id`, `rut`, `nombre_completo`, `cargo`, `departamento`,
+  `tipo_contrato`, `fecha_inicio`, `sueldo_base`, `jornada_horas_semanales`,
+  `distribucion_jornada`, `lugar_trabajo`, `gratificacion_modalidad`,
+  `asignacion_colacion`, `asignacion_movilizacion`, `estado`, `registrado_dt_rel`,
+  `folio_registro_dt`, `created_at`
+)
+VALUES
+  ('cto-ret-001', 'emp-001', 'client-retail-01', '18.456.789-2', 'Gonzalo Tapia Morales', 'Jefe de Finanzas y Control de Gestión', 'ADMINISTRACION', 'INDEFINIDO', '2024-03-01', 1850000.00, 40, 'Lunes a Viernes de 08:30 a 17:30 hrs', 'Av. Las Acacias 450, San Bernardo, RM', 'ART_50', 85000.00, 65000.00, 'VIGENTE', TRUE, 'DT-REL-2024-098234', NOW()),
+  ('cto-ret-002', 'emp-002', 'client-retail-01', '15.340.891-3', 'Rosa Cárdenas Silva', 'Supervisora de Logística y Bodega', 'OPERACIONES', 'INDEFINIDO', '2023-08-15', 1250000.00, 42, 'Lunes a Viernes de 08:00 a 17:00 hrs', 'Camino Lo Echevers 550, Galpón 4', 'ART_50', 80000.00, 60000.00, 'VIGENTE', TRUE, 'DT-REL-2023-771234', NOW()),
+  ('cto-ret-003', 'emp-003', 'client-retail-01', '17.345.678-9', 'Esteban Morales Peña', 'Encargado de Despacho y Sucursales', 'LOGISTICA', 'INDEFINIDO', '2024-01-10', 950000.00, 42, 'Lunes a Viernes de 08:30 a 17:30 hrs', 'Camino Lo Echevers 550, Quilicura', 'ART_50', 75000.00, 55000.00, 'VIGENTE', TRUE, 'DT-REL-2024-331024', NOW()),
+  ('cto-ret-004', 'emp-004', 'client-retail-01', '19.876.543-2', 'Claudia Henríquez Soto', 'Asistente de Operaciones Retail', 'OPERACIONES', 'PLAZO_FIJO', '2024-06-01', 650000.00, 44, 'Lunes a Viernes de 09:00 a 18:00 hrs', 'Av. Vespucio Norte 2200, Pudahuel', 'ART_50', 70000.00, 50000.00, 'VIGENTE', TRUE, 'DT-REL-2024-889142', NOW())
+ON DUPLICATE KEY UPDATE `jornada_horas_semanales` = VALUES(`jornada_horas_semanales`);
+
+-- Licencias Médicas Electrónicas (LME)
+INSERT INTO `medical_leaves` (
+  `id`, `folio_licencia`, `employee_id`, `empresa_id`, `rut`, `nombre_completo`,
+  `tipo_licencia`, `entidad_tramitadora`, `fecha_inicio`, `fecha_termino`,
+  `dias_reposo`, `dias_descuento_remuneracion`, `dias_subsidio_sil`, `descuento_nomina_estimado`,
+  `medico_nombre`, `medico_rut`, `diagnostico_cie10`, `estado`, `fecha_tramitacion_empleador`, `created_at`
+)
+VALUES
+  ('lme-inno-01', 'LME-789210-4', 'emp-2', 'client-innovagile', '16.450.912-K', 'Francisca Paz Santander Henríquez', 'ENFERMEDAD_COMUN', 'FONASA_COMPIN', '2026-08-10', '2026-08-16', 7, 7, 4, 560000.00, 'Dra. Marcela Lagos Vivanco', '13.440.112-9', 'J06.9', 'APROBADA_COMPIN_ISAPRE', '2026-08-11', NOW()),
+  ('lme-inno-02', 'LME-991204-1', 'emp-1', 'client-innovagile', '14.892.301-2', 'Ignacio Andrés Valenzuela Castro', 'ACCIDENTE_DE_TRAYECTO', 'MUTUAL_DE_SEGURIDAD', '2026-09-01', '2026-09-04', 4, 4, 4, 506666.00, 'Dr. Fernando Correa Benítez', '11.890.224-1', 'S93.4', 'TRAMITADA_EMPLEADOR', '2026-09-02', NOW()),
+  ('lme-ret-01', 'LME-661204-7', 'emp-002', 'client-retail-01', '15.340.891-3', 'Rosa Cárdenas Silva', 'ENFERMEDAD_COMUN', 'FONASA_COMPIN', '2026-07-06', '2026-07-12', 7, 7, 4, 291666.00, 'Dr. Patricio Alarcón Soto', '12.334.890-1', 'M54.5', 'APROBADA_COMPIN_ISAPRE', '2026-07-07', NOW())
+ON DUPLICATE KEY UPDATE `estado` = VALUES(`estado`);
+
+-- Historial Inmutable de Liquidaciones de Remuneraciones (2026-05 a 2026-08)
+INSERT INTO `payroll_historical_settlements` (
+  `id`, `empresa_id`, `periodo`, `trabajador_id`, `trabajador_rut`, `trabajador_nombre`,
+  `cargo`, `sueldo_base`, `dias_trabajados`, `total_haberes_imponibles`, `total_haberes_no_imponibles`,
+  `total_haberes`, `cotizacion_afp`, `cotizacion_salud`, `cotizacion_afc`,
+  `impuesto_unico_segunda_categoria`, `otros_descuentos`, `total_descuentos`, `alcance_liquido`,
+  `aporte_patronal_sis`, `aporte_patronal_mutual`, `aporte_patronal_afc`, `aporte_patronal_ley21735`,
+  `costo_empresa_total`, `uf_valor`, `utm_valor`, `tope_imponible_afp_uf`, `tope_imponible_afc_uf`,
+  `asiento_contable_ref_id`, `estado`, `created_at`
+)
+VALUES
+  ('hist-2026-08-emp1', 'client-innovagile', '2026-08', 'emp-1', '14.892.301-2', 'Ignacio Andrés Valenzuela Castro', 'Líder Técnico de Arquitectura de Software', 3800000.00, 30, 4447917.00, 170000.00, 4617917.00, 382405.00, 244300.00, 20364.00, 412580.00, 0.00, 1059649.00, 3558268.00, 50570.00, 31562.00, 81456.00, 33940.00, 4815445.00, 37720.00, 68450.00, 90.00, 135.20, 'entry-payroll-2026-08', 'CERRADA', NOW()),
+  ('hist-2026-08-emp2', 'client-innovagile', '2026-08', 'emp-2', '16.450.912-K', 'Francisca Paz Santander Henríquez', 'Ingeniera de Datos y Machine Learning', 2400000.00, 30, 2797917.00, 160000.00, 2957917.00, 320082.00, 195854.00, 16788.00, 68420.00, 0.00, 601144.00, 2356773.00, 41689.00, 26021.00, 67150.00, 27979.00, 3120756.00, 37720.00, 68450.00, 90.00, 135.20, 'entry-payroll-2026-08', 'CERRADA', NOW()),
+  ('hist-2026-08-emp3', 'client-innovagile', '2026-08', 'emp-3', '17.890.342-8', 'Sebastián Eduardo Morales Peña', 'Consultor de Finanzas y Control de Gestión', 1600000.00, 30, 1897917.00, 150000.00, 2047917.00, 200799.00, 132854.00, 11388.00, 8920.00, 0.00, 353961.00, 1693956.00, 28279.00, 17651.00, 45550.00, 18979.00, 2158376.00, 37720.00, 68450.00, 90.00, 135.20, 'entry-payroll-2026-08', 'CERRADA', NOW()),
+  ('hist-2026-08-emp4', 'client-innovagile', '2026-08', 'emp-4', '19.231.874-5', 'Valentina Belén Rojas Carvajal', 'Asistente Contable y Operaciones', 850000.00, 30, 1097917.00, 140000.00, 1237917.00, 114842.00, 76854.00, 0.00, 0.00, 0.00, 191696.00, 1046221.00, 16359.00, 10211.00, 32938.00, 10979.00, 1308404.00, 37720.00, 68450.00, 90.00, 135.20, 'entry-payroll-2026-08', 'CERRADA', NOW()),
+  ('hist-2026-07-emp1', 'client-innovagile', '2026-07', 'emp-1', '14.892.301-2', 'Ignacio Andrés Valenzuela Castro', 'Líder Técnico de Arquitectura de Software', 3800000.00, 30, 4447917.00, 170000.00, 4617917.00, 380682.00, 243200.00, 20272.00, 410200.00, 0.00, 1054354.00, 3563563.00, 50343.00, 31420.00, 81090.00, 33785.00, 4814555.00, 37550.00, 68100.00, 90.00, 135.20, 'entry-payroll-2026-07', 'CERRADA', NOW()),
+  ('hist-2026-07-emp2', 'client-innovagile', '2026-07', 'emp-2', '16.450.912-K', 'Francisca Paz Santander Henríquez', 'Ingeniera de Datos y Machine Learning', 2400000.00, 30, 2797917.00, 160000.00, 2957917.00, 320082.00, 195854.00, 16788.00, 67800.00, 0.00, 600524.00, 2357393.00, 41689.00, 26021.00, 67150.00, 27979.00, 3120756.00, 37550.00, 68100.00, 90.00, 135.20, 'entry-payroll-2026-07', 'CERRADA', NOW())
+ON DUPLICATE KEY UPDATE `alcance_liquido` = VALUES(`alcance_liquido`);
+
+-- Reliquidaciones y Ajustes Retroactivos (Art. 46 LIR)
+INSERT INTO `payroll_reliquidations` (
+  `id`, `empresa_id`, `trabajador_id`, `trabajador_rut`, `trabajador_nombre`,
+  `periodo_afectado`, `periodo_pago_reliquidacion`, `motivo`,
+  `diferencia_sueldo_base`, `diferencia_gratificacion`, `diferencia_horas_extras`, `diferencia_bonos`,
+  `diferencia_imponible_total`, `recalculo_afp`, `recalculo_salud`, `recalculo_afc`,
+  `recalculo_iusc`, `diferencia_liquida_a_pagar`, `diferencia_ley21735_empleador`,
+  `diferencia_sis_empleador`, `diferencia_mutual_empleador`, `asiento_ajuste_ref_id`,
+  `estado`, `created_at`
+)
+VALUES
+  ('reliq-001', 'client-innovagile', 'emp-3', '17.890.342-8', 'Sebastián Eduardo Morales Peña', '2026-06', '2026-08', 'AUMENTO_SUELDO_RETROACTIVO', 150000.00, 37500.00, 0.00, 0.00, 187500.00, 19838.00, 13125.00, 1125.00, 7500.00, 145912.00, 1875.00, 2794.00, 1744.00, 'entry-reliq-reliq-001', 'APROBADO_Y_PAGADO', NOW()),
+  ('reliq-002', 'client-innovagile', 'emp-1', '14.892.301-2', 'Ignacio Andrés Valenzuela Castro', '2026-07', '2026-09', 'BONO_RETROACTIVO', 0.00, 0.00, 0.00, 300000.00, 300000.00, 33810.00, 21000.00, 1800.00, 32400.00, 210990.00, 3000.00, 4470.00, 2790.00, NULL, 'PENDIENTE', NOW())
+ON DUPLICATE KEY UPDATE `diferencia_liquida_a_pagar` = VALUES(`diferencia_liquida_a_pagar`);
 
 -- ============================================================================
 -- 46.1 DATOS SEMILLA: PRESUPUESTOS Y ÓRDENES DE PRODUCCIÓN
@@ -2598,5 +2672,288 @@ VALUES
 ('item-04', 'rdg-001', 'client-retail-01', '2026-09-27', 'TICKET_PEAJE', 'TAG-98124', '96.812.390-1', 'Sociedad Concesionaria Ruta del Canal S.A.', 'PEAJES_ESTACIONAMIENTOS', 'Peajes y transbordo canal de Chacao ida y vuelta', 0.00, 0.00, 10000.00, 10000.00, 'cc-02', 'CC-VTA-STGO', 'pry-01', 'PRY-QUELLON-26', '4.2.01.010', 'Peajes & Tag Autopistas', FALSE, TRUE, NOW()),
 ('item-05', 'rdg-002', 'client-retail-01', '2026-09-16', 'FACTURA_ELECTRONICA_33', 'F-78192', '76.992.110-3', 'Ferretería Industrial Austral Ltda.', 'MATERIALES_INSUMOS', 'Pernos de acero inox 316 y electrodos para balsas', 138655.00, 26345.00, 0.00, 165000.00, 'cc-03', 'CC-PRD-QUELLON', 'pry-01', 'PRY-QUELLON-26', '4.1.02.001', 'Materiales Menores & Consumibles', FALSE, TRUE, NOW());
 
+-- ============================================================================
+-- TABLAS DE GESTIÓN COMERCIAL, RFQ Y ADJUDICACIÓN DE PROVEEDORES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `rfq_requests` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_rfq` VARCHAR(50) NOT NULL,
+  `titulo` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_limite_respuesta` DATE NOT NULL,
+  `dias_plazo_respuesta` INT NOT NULL DEFAULT 3,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'ENVIADA',
+  `items_json` JSON NOT NULL,
+  `proveedor_ganador_rut` VARCHAR(20) NULL,
+  `proveedor_ganador_nombre` VARCHAR(255) NULL,
+  `orden_compra_generada_id` VARCHAR(64) NULL,
+  `folio_orden_compra` VARCHAR(50) NULL,
+  `motivo_adjudicacion` TEXT NULL,
+  `recomendacion_agente_sr` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_rfq_folio_empresa` (`empresa_id`, `folio_rfq`),
+  KEY `idx_rfq_empresa_estado` (`empresa_id`, `estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `rfq_supplier_responses` (
+  `id` VARCHAR(64) NOT NULL,
+  `rfq_id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `proveedor_rut` VARCHAR(20) NOT NULL,
+  `proveedor_razon_social` VARCHAR(255) NOT NULL,
+  `email_contacto` VARCHAR(150) NOT NULL,
+  `telefono_contacto` VARCHAR(50) NULL,
+  `estado_seguimiento` VARCHAR(40) NOT NULL DEFAULT 'ENVIADA',
+  `fecha_envio` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `fecha_lectura` DATETIME(3) NULL,
+  `fecha_respuesta` DATETIME(3) NULL,
+  `cantidad_reiteraciones` INT NOT NULL DEFAULT 0,
+  `ultimo_recordatorio_at` DATETIME(3) NULL,
+  `monto_neto_ofertado` DECIMAL(15,2) NULL,
+  `plazo_entrega_dias_ofertado` INT NULL,
+  `condicion_pago_ofertada` VARCHAR(100) NULL,
+  `costo_flete_clp` DECIMAL(15,2) DEFAULT '0.00',
+  `scoring_ponderado_total` DECIMAL(5,2) NULL,
+  `items_cotizados_json` JSON NULL,
+  `observaciones_proveedor` TEXT NULL,
+  `es_oferta_ganadora` BOOLEAN NOT NULL DEFAULT FALSE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_rfq_supplier` (`rfq_id`, `proveedor_rut`),
+  KEY `idx_rfq_supplier_estado` (`estado_seguimiento`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `purchase_orders` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_oc` VARCHAR(50) NOT NULL,
+  `rfq_origen_id` VARCHAR(64) NULL,
+  `proveedor_rut` VARCHAR(20) NOT NULL,
+  `proveedor_razon_social` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_entrega_pactada` DATE NOT NULL,
+  `condicion_pago` VARCHAR(100) NOT NULL DEFAULT 'Crédito 30 días',
+  `items_json` JSON NOT NULL,
+  `monto_neto` DECIMAL(15,2) NOT NULL,
+  `monto_iva` DECIMAL(15,2) NOT NULL,
+  `monto_total` DECIMAL(15,2) NOT NULL,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'EMITIDA',
+  `aprobado_por_agente` BOOLEAN NOT NULL DEFAULT TRUE,
+  `firma_agente` VARCHAR(100) DEFAULT 'Esteban Morales (Gerente Comercial & Aprovisionamiento Sr.)',
+  `motivo_generacion` TEXT NULL,
+  `asiento_contable_ref_id` VARCHAR(64) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_oc_folio_empresa` (`empresa_id`, `folio_oc`),
+  KEY `idx_oc_empresa_fecha` (`empresa_id`, `fecha_emision`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `commercial_quotes` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `folio_cotizacion` VARCHAR(50) NOT NULL,
+  `cliente_rut` VARCHAR(20) NOT NULL,
+  `cliente_razon_social` VARCHAR(255) NOT NULL,
+  `fecha_emision` DATE NOT NULL,
+  `fecha_vencimiento` DATE NOT NULL,
+  `validez_dias` INT NOT NULL DEFAULT 15,
+  `items_json` JSON NOT NULL,
+  `monto_neto` DECIMAL(15,2) NOT NULL,
+  `monto_iva` DECIMAL(15,2) NOT NULL,
+  `monto_total` DECIMAL(15,2) NOT NULL,
+  `margen_bruto_promedio_porcentaje` DECIMAL(5,2) NOT NULL,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'ENVIADA',
+  `stock_validado` BOOLEAN NOT NULL DEFAULT TRUE,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cotizacion_folio_empresa` (`empresa_id`, `folio_cotizacion`),
+  KEY `idx_cotizacion_cliente` (`cliente_rut`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- TABLAS DE CAF / SECUENCIA ATÓMICA DE FOLIOS DTE
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `dte_caf_sequences` (
+  `id` VARCHAR(36) NOT NULL,
+  `empresa_id` VARCHAR(36) NOT NULL,
+  `tipo_dte` INT NOT NULL,
+  `ultimo_folio_emitido` BIGINT NOT NULL DEFAULT 0,
+  `folio_desde` BIGINT NOT NULL DEFAULT 1,
+  `folio_hasta` BIGINT NOT NULL DEFAULT 5000,
+  `caf_xml` MEDIUMTEXT NULL,
+  `fecha_autorizacion` DATE NULL,
+  `ambiente` INT DEFAULT 1,
+  `activo` BOOLEAN NOT NULL DEFAULT TRUE,
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_caf_empresa_tipo_ambiente` (`empresa_id`, `tipo_dte`, `ambiente`),
+  KEY `idx_caf_empresa` (`empresa_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- TABLAS DE RRHH HISTÓRICO, RELIQUIDACIONES Y GOBERNANZA DE AGENTES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `payroll_historical_settlements` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `periodo` VARCHAR(7) NOT NULL,
+  `trabajador_id` VARCHAR(64) NOT NULL,
+  `trabajador_rut` VARCHAR(20) NOT NULL,
+  `trabajador_nombre` VARCHAR(255) NOT NULL,
+  `cargo` VARCHAR(150) NULL,
+  `sueldo_base` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `dias_trabajados` INT NOT NULL DEFAULT 30,
+  `total_haberes_imponibles` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `total_haberes_no_imponibles` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `total_haberes` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `cotizacion_afp` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `cotizacion_salud` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `cotizacion_afc` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `impuesto_unico_segunda_categoria` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `otros_descuentos` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `total_descuentos` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `alcance_liquido` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `aporte_patronal_sis` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `aporte_patronal_mutual` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `aporte_patronal_afc` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `aporte_patronal_ley21735` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `costo_empresa_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `uf_valor` DECIMAL(10,2) NULL,
+  `utm_valor` DECIMAL(10,2) NULL,
+  `tope_imponible_afp_uf` DECIMAL(6,2) NULL,
+  `tope_imponible_afc_uf` DECIMAL(6,2) NULL,
+  `asiento_contable_ref_id` VARCHAR(64) NULL,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'CERRADA',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payroll_emp_periodo_trab` (`empresa_id`, `periodo`, `trabajador_rut`),
+  KEY `idx_payroll_empresa_periodo` (`empresa_id`, `periodo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `payroll_reliquidations` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `trabajador_id` VARCHAR(64) NOT NULL,
+  `trabajador_rut` VARCHAR(20) NOT NULL,
+  `trabajador_nombre` VARCHAR(255) NOT NULL,
+  `periodo_afectado` VARCHAR(7) NOT NULL,
+  `periodo_pago_reliquidacion` VARCHAR(7) NOT NULL,
+  `motivo` VARCHAR(255) NOT NULL,
+  `diferencia_sueldo_base` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_gratificacion` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_horas_extras` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_bonos` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_imponible_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `recalculo_afp` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `recalculo_salud` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `recalculo_afc` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `recalculo_iusc` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_liquida_a_pagar` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_ley21735_empleador` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_sis_empleador` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `diferencia_mutual_empleador` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `asiento_ajuste_ref_id` VARCHAR(64) NULL,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_reliq_empresa_periodo` (`empresa_id`, `periodo_afectado`),
+  KEY `idx_reliq_trabajador` (`trabajador_rut`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `hr_climate_surveys` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `periodo` VARCHAR(7) NOT NULL,
+  `dimension` VARCHAR(100) NOT NULL,
+  `puntaje_promedio` DECIMAL(4,2) NOT NULL,
+  `participacion_porcentaje` DECIMAL(5,2) NOT NULL,
+  `total_encuestados` INT NOT NULL,
+  `nivel_alerta` VARCHAR(30) NOT NULL DEFAULT 'NORMAL',
+  `comentarios_destacados` JSON NULL,
+  `acciones_propuestas_agente` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_climate_empresa_periodo` (`empresa_id`, `periodo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `module_agent_approvals` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `modulo` VARCHAR(50) NOT NULL,
+  `agente_origen_id` VARCHAR(100) NOT NULL,
+  `agente_origen_nombre` VARCHAR(150) NOT NULL,
+  `agente_origen_rol` VARCHAR(150) NOT NULL,
+  `tipo_operacion` VARCHAR(100) NOT NULL,
+  `entidad_tipo` VARCHAR(60) NOT NULL,
+  `entidad_id` VARCHAR(64) NOT NULL,
+  `resumen_operacion` TEXT NOT NULL,
+  `impacto_financiero_clp` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `detalles_json` JSON NULL,
+  `estado` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+  `requiere_aprobacion_humana` BOOLEAN NOT NULL DEFAULT TRUE,
+  `aprobado_por_rut` VARCHAR(20) NULL,
+  `aprobado_por_nombre` VARCHAR(255) NULL,
+  `aprobado_por_rol` VARCHAR(100) NULL,
+  `fecha_decision` DATETIME(3) NULL,
+  `motivo_rechazo` TEXT NULL,
+  `ejecutado` BOOLEAN NOT NULL DEFAULT FALSE,
+  `fecha_ejecucion` DATETIME(3) NULL,
+  `resultado_ejecucion` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_agent_appr_empresa_modulo` (`empresa_id`, `modulo`, `estado`),
+  KEY `idx_agent_appr_entidad` (`entidad_tipo`, `entidad_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `payroll_previred_historical_payments` (
+  `id` VARCHAR(64) NOT NULL,
+  `empresa_id` VARCHAR(64) NOT NULL,
+  `rut_empresa` VARCHAR(20) NOT NULL,
+  `razon_social` VARCHAR(255) NOT NULL,
+  `periodo` VARCHAR(7) NOT NULL,
+  `folio_previred` VARCHAR(50) NOT NULL,
+  `fecha_pago` DATETIME(3) NOT NULL,
+  `medio_pago` VARCHAR(50) NOT NULL DEFAULT 'CPE_BANCO_CHILE',
+  `banco` VARCHAR(100) NOT NULL DEFAULT 'Banco de Chile',
+  `nro_transaccion` VARCHAR(60) NOT NULL,
+  `estado` VARCHAR(40) NOT NULL DEFAULT 'PAGADO_Y_ACREDITADO',
+  `total_trabajadores` INT NOT NULL DEFAULT 0,
+  `monto_afp_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_salud_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_afc_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_mutual_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_sis_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_ley21735_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_caja_compensacion_total` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `monto_total_pagado` DECIMAL(15,2) NOT NULL DEFAULT '0.00',
+  `asiento_pago_id` VARCHAR(64) NULL,
+  `detalles_por_trabajador` JSON NULL,
+  `comprobante_hash` VARCHAR(100) NULL,
+  `certificado_f30_url` VARCHAR(255) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_previred_empresa_periodo` (`empresa_id`, `periodo`),
+  KEY `idx_previred_empresa` (`empresa_id`),
+  KEY `idx_previred_folio` (`folio_previred`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seeds de Pagos Históricos de Imposiciones PreviRed (InnovAgile y Retail)
+INSERT INTO `payroll_previred_historical_payments` (
+  `id`, `empresa_id`, `rut_empresa`, `razon_social`, `periodo`, `folio_previred`,
+  `fecha_pago`, `medio_pago`, `banco`, `nro_transaccion`, `estado`, `total_trabajadores`,
+  `monto_afp_total`, `monto_salud_total`, `monto_afc_total`, `monto_mutual_total`,
+  `monto_sis_total`, `monto_ley21735_total`, `monto_total_pagado`, `asiento_pago_id`, `created_at`
+)
+VALUES
+  ('prev-innovagile-2026-08', 'client-innovagile', '77.798.901-4', 'InnovAgile Solutions SpA', '2026-08', 'PREV-202608-910482', '2026-09-11 12:00:00', 'CPE_BANCO_CHILE', 'Banco de Chile', 'TRX-202608-910482', 'PAGADO_Y_ACREDITADO', 4, 1018128.00, 649862.00, 227132.00, 85445.00, 136897.00, 91877.00, 2209341.00, 'asiento-prev-2026-08-client-innovagile', NOW()),
+  ('prev-innovagile-2026-07', 'client-innovagile', '77.798.901-4', 'InnovAgile Solutions SpA', '2026-07', 'PREV-202607-862934', '2026-08-12 09:45:00', 'CPE_BANCO_CHILE', 'Banco de Chile', 'TRX-202607-862934', 'PAGADO_Y_ACREDITADO', 4, 1016405.00, 648762.00, 226766.00, 85303.00, 136670.00, 91724.00, 2205630.00, 'asiento-prev-2026-07-client-innovagile', NOW()),
+  ('prev-innovagile-2026-06', 'client-innovagile', '77.798.901-4', 'InnovAgile Solutions SpA', '2026-06', 'PREV-202606-819201', '2026-07-11 11:30:00', 'CPE_BANCO_CHILE', 'Banco de Chile', 'TRX-202606-819201', 'PAGADO_Y_ACREDITADO', 4, 998450.00, 638200.00, 222800.00, 83800.00, 134200.00, 90100.00, 2167550.00, 'asiento-prev-2026-06-client-innovagile', NOW()),
+  ('prev-innovagile-2026-05', 'client-innovagile', '77.798.901-4', 'InnovAgile Solutions SpA', '2026-05', 'PREV-202605-771923', '2026-06-12 10:15:00', 'CPE_BANCO_CHILE', 'Banco de Chile', 'TRX-202605-771923', 'PAGADO_Y_ACREDITADO', 4, 965400.00, 615000.00, 215400.00, 81000.00, 129800.00, 87100.00, 2093700.00, 'asiento-prev-2026-05-client-innovagile', NOW()),
+  ('prev-retail-2026-08', 'client-retail-01', '76.104.550-9', 'Retail Solutions Chile SpA', '2026-08', 'PREV-202608-RET-910482', '2026-09-11 12:30:00', 'CPE_BANCO_CHILE', 'Banco de Chile', 'TRX-202608-RET-910482', 'PAGADO_Y_ACREDITADO', 4, 524100.00, 362400.00, 142100.00, 48200.00, 77200.00, 51800.00, 1205800.00, 'asiento-prev-2026-08-client-retail-01', NOW())
+ON DUPLICATE KEY UPDATE `monto_total_pagado` = VALUES(`monto_total_pagado`);
+
 -- Fin del script actualizado de inicialización MySQL para ERP Agéntico Multi-Proceso
+
 

@@ -6,6 +6,7 @@ import type {
   UseJobMonitorOptions,
   UseJobMonitorReturn,
 } from './types/jobMonitoring.types';
+import { getStoredAuthToken } from '../services/apiClient';
 
 /**
  * Hook personalizado para monitorear procesos asíncronos en segundo plano (BullMQ).
@@ -147,10 +148,12 @@ export function useJobMonitor<TResult = unknown, TProgress = unknown>(
       const signal = abortControllerRef.current.signal;
 
       try {
+        const authToken = getStoredAuthToken();
         const response = await fetch(`/api/jobs/${encodeURIComponent(queueName)}/${encodeURIComponent(jobId)}?includeResult=true`, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
           },
           signal,
         });
@@ -272,7 +275,8 @@ export function useJobMonitor<TResult = unknown, TProgress = unknown>(
     // MOTOR PRIMARIO: SERVER-SENT EVENTS (SSE) CON DEGRADACIÓN A POLLING
     // ========================================================================
     const startSseConnection = () => {
-      const sseUrl = `/api/jobs/stream/${encodeURIComponent(queueName)}/${encodeURIComponent(jobId)}`;
+      const authToken = getStoredAuthToken();
+      const sseUrl = `/api/jobs/stream/${encodeURIComponent(queueName)}/${encodeURIComponent(jobId)}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
 
       try {
         const es = new EventSource(sseUrl);

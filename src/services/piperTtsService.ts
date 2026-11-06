@@ -733,14 +733,47 @@ export class PiperTtsService {
     rate: number
   ): Promise<void> {
     return new Promise((resolve, reject) => {
+      // Sanear config JSON si contiene 'PhonemeType.ESPEAK' (incompatible con enum de Python 3.12/3.13)
+      const sanitizeConfigFile = (filePath?: string): string | undefined => {
+        if (!filePath || !fs.existsSync(filePath)) return undefined;
+        try {
+          const raw = fs.readFileSync(filePath, 'utf8');
+          if (raw.includes('PhonemeType.')) {
+            const fixed = raw
+              .replace(/"phoneme_type":\s*"PhonemeType\.ESPEAK"/g, '"phoneme_type": "espeak"')
+              .replace(/'PhonemeType\.ESPEAK'/g, '"espeak"')
+              .replace(/PhonemeType\.ESPEAK/g, 'espeak')
+              .replace(/"phoneme_type":\s*"PhonemeType\.TEXT"/g, '"phoneme_type": "text"')
+              .replace(/'PhonemeType\.TEXT'/g, '"text"')
+              .replace(/PhonemeType\.TEXT/g, 'text');
+            try {
+              fs.writeFileSync(filePath, fixed, 'utf8');
+              return filePath;
+            } catch {
+              // Si el archivo original no tiene permisos de escritura, crear versión saneada en temp
+              const tmpDir = path.join(process.cwd(), 'storage', 'temp');
+              if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+              const tempConfig = path.join(tmpDir, `sanitized_${path.basename(filePath)}`);
+              fs.writeFileSync(tempConfig, fixed, 'utf8');
+              return tempConfig;
+            }
+          }
+        } catch {}
+        return filePath;
+      };
+
+      const cleanExplicit = sanitizeConfigFile(configPath);
+      const cleanModelJson = sanitizeConfigFile(`${modelPath}.json`);
+      const effectiveConfigPath = cleanExplicit || cleanModelJson || configPath;
+
       const args = [
         '--model', modelPath,
         '--output_file', outWavPath,
         '--sentence-silence', '0.1'
       ];
 
-      if (configPath) {
-        args.push('--config', configPath);
+      if (effectiveConfigPath) {
+        args.push('--config', effectiveConfigPath);
       }
 
       // En Piper: --length_scale controla la duración/velocidad (menor a 1.0 = más rápido)

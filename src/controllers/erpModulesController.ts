@@ -21,8 +21,26 @@ import {
 } from '../db/mysqlSchema';
 import { diskPersistence } from '../services/diskPersistenceService';
 import { postModuleTransaction } from '../services/centralizedJournalService';
+import { requireCompanyAccess } from '../middlewares/authMiddleware';
 
 export const erpModulesRouter = Router();
+
+// Control de acceso y aislamiento multi-tenant perimetral en todas las rutas de módulos ERP
+erpModulesRouter.use((req: Request, res: Response, next) => {
+  const targetEmpresaId = req.effectiveEmpresaId || (req.query.empresaId as string);
+
+  if (targetEmpresaId) {
+    const check = requireCompanyAccess(req, targetEmpresaId);
+    if (!check.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: 'ACCESO_DENEGADO_EMPRESA',
+        message: check.reason,
+      });
+    }
+  }
+  next();
+});
 
 // ============================================================================
 // 1. CONCILIACIÓN BANCARIA AUTOMÁTICA
@@ -30,35 +48,14 @@ export const erpModulesRouter = Router();
 
 erpModulesRouter.get('/banking/accounts', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
     const db = getMysqlDb();
     let accounts: any[] = [];
 
     if (isRealMysqlConnected) {
       accounts = await db.select().from(bankAccounts).where(eq(bankAccounts.empresaId, empresaId));
     } else {
-      accounts = [
-        {
-          id: 'bank-acc-01',
-          empresaId,
-          bancoCodigo: 'BANCO_DE_CHILE',
-          numeroCuenta: '00-123-45678-90',
-          tipoCuenta: 'CORRIENTE',
-          moneda: 'CLP',
-          saldoContable: '45890000.00',
-          saldoCartola: '45890000.00',
-        },
-        {
-          id: 'bank-acc-02',
-          empresaId,
-          bancoCodigo: 'SANTANDER',
-          numeroCuenta: '71-889-01234-55',
-          tipoCuenta: 'CORRIENTE',
-          moneda: 'CLP',
-          saldoContable: '18450000.00',
-          saldoCartola: '18450000.00',
-        },
-      ];
+      accounts = diskPersistence.getBankAccounts(empresaId);
     }
 
     res.json({ success: true, count: accounts.length, data: accounts });
@@ -67,9 +64,27 @@ erpModulesRouter.get('/banking/accounts', async (req: Request, res: Response) =>
   }
 });
 
+erpModulesRouter.post('/banking/accounts', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, accounts, replace } = req.body;
+    const targetEmpresa = req.effectiveEmpresaId || empresaId;
+    if (!Array.isArray(accounts)) {
+      return res.status(400).json({ success: false, error: 'accounts debe ser un array' });
+    }
+    const normalized = targetEmpresa
+      ? accounts.map((a: any) => ({ ...a, empresaId: a.empresaId || targetEmpresa }))
+      : accounts;
+    diskPersistence.saveBankAccounts(normalized, targetEmpresa, Boolean(replace));
+    res.json({ success: true, count: accounts.length, message: 'Cuentas bancarias persistidas exitosamente.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 erpModulesRouter.get('/banking/transactions', async (req: Request, res: Response) => {
   try {
     const accountId = req.query.accountId as string | undefined;
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || undefined;
     const db = getMysqlDb();
 
     if (isRealMysqlConnected) {
@@ -79,7 +94,7 @@ erpModulesRouter.get('/banking/transactions', async (req: Request, res: Response
       return res.json({ success: true, count: txs.length, data: txs });
     }
 
-    const diskTxs = diskPersistence.getBankMovements(accountId);
+    const diskTxs = diskPersistence.getBankMovements(accountId || empresaId, empresaId);
     res.json({ success: true, count: diskTxs.length, data: diskTxs });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -88,11 +103,15 @@ erpModulesRouter.get('/banking/transactions', async (req: Request, res: Response
 
 erpModulesRouter.post('/banking/transactions', async (req: Request, res: Response) => {
   try {
-    const { movements } = req.body;
+    const { movements, empresaId, replace } = req.body;
+    const targetEmpresa = req.effectiveEmpresaId || empresaId;
     if (!Array.isArray(movements)) {
       return res.status(400).json({ success: false, error: 'movements debe ser un array' });
     }
-    diskPersistence.saveBankMovements(movements);
+    const normalized = targetEmpresa
+      ? movements.map((m: any) => ({ ...m, empresaId: m.empresaId || targetEmpresa }))
+      : movements;
+    diskPersistence.saveBankMovements(normalized, targetEmpresa, Boolean(replace));
     res.json({ success: true, count: movements.length, message: 'Movimientos bancarios persistidos correctamente.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -123,7 +142,7 @@ erpModulesRouter.post('/banking/reconcile', async (req: Request, res: Response) 
 
 erpModulesRouter.get('/f29/declarations', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const periodo = (req.query.periodo as string) || '2026-08';
 
     const defaultF29 = {
@@ -162,42 +181,66 @@ erpModulesRouter.get('/f29/declarations', async (req: Request, res: Response) =>
 
 erpModulesRouter.get('/wms/inventory', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
-    const items = [
-      {
-        id: 'item-001',
-        empresaId,
-        sku: 'HARINA-IND-50KG',
-        descripcion: 'Saco Harina Trigo Panadera 50kg Especial',
-        stockActual: '420.00',
-        costoPromedioPonderado: '28500.0000',
-        totalValorizado: 11970000,
-      },
-      {
-        id: 'item-002',
-        empresaId,
-        sku: 'ACEITE-MAR-5L',
-        descripcion: 'Aceite Vegetal Maravilla Bidón 5 Litros',
-        stockActual: '850.00',
-        costoPromedioPonderado: '7800.0000',
-        totalValorizado: 6630000,
-      },
-      {
-        id: 'item-003',
-        empresaId,
-        sku: 'AZUCAR-GRAN-25KG',
-        descripcion: 'Saco Azúcar Blanca Granulada 25kg',
-        stockActual: '310.00',
-        costoPromedioPonderado: '19400.0000',
-        totalValorizado: 6014000,
-      },
-    ];
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    let items = diskPersistence.getInventoryItems(empresaId);
+
+    // Si aún no existen ítems en persistencia para esta empresa, inicializar catálogo base para la empresa
+    if (!items || items.length === 0) {
+      const defaultItems = [
+        {
+          id: `item-${Date.now()}-001`,
+          empresaId,
+          sku: 'HARINA-IND-50KG',
+          descripcion: 'Saco Harina Trigo Panadera 50kg Especial',
+          stockActual: 420,
+          costoPromedioPonderado: 28500,
+          costoUnitarioPMP: 28500,
+          totalValorizado: 11970000,
+          stockMinimo: 100,
+          categoria: 'MATERIAS_PRIMAS',
+        },
+        {
+          id: `item-${Date.now()}-002`,
+          empresaId,
+          sku: 'ACEITE-MAR-5L',
+          descripcion: 'Aceite Vegetal Maravilla Bidón 5 Litros',
+          stockActual: 850,
+          costoPromedioPonderado: 7800,
+          costoUnitarioPMP: 7800,
+          totalValorizado: 6630000,
+          stockMinimo: 150,
+          categoria: 'INSUMOS',
+        },
+        {
+          id: `item-${Date.now()}-003`,
+          empresaId,
+          sku: 'AZUCAR-GRAN-25KG',
+          descripcion: 'Saco Azúcar Blanca Granulada 25kg',
+          stockActual: 310,
+          costoPromedioPonderado: 19400,
+          costoUnitarioPMP: 19400,
+          totalValorizado: 6014000,
+          stockMinimo: 80,
+          categoria: 'MATERIAS_PRIMAS',
+        },
+      ];
+      diskPersistence.setInventoryItems(empresaId, defaultItems);
+      items = diskPersistence.getInventoryItems(empresaId);
+    }
+
+    const valorTotalInventario = items.reduce(
+      (acc: number, it: any) =>
+        acc +
+        Number(it.stockActual ?? it.stockTotal ?? 0) *
+          Number(it.costoPromedioPonderado ?? it.costoUnitarioPMP ?? 0),
+      0
+    );
 
     res.json({
       success: true,
       empresaId,
       totalItems: items.length,
-      valorTotalInventario: 24614000,
+      valorTotalInventario,
       data: items,
     });
   } catch (error: any) {
@@ -205,16 +248,43 @@ erpModulesRouter.get('/wms/inventory', async (req: Request, res: Response) => {
   }
 });
 
+erpModulesRouter.post('/wms/inventory/items', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, items } = req.body;
+    if (!empresaId || !Array.isArray(items)) {
+      return res.status(400).json({ success: false, error: 'empresaId y items (array) son obligatorios' });
+    }
+    diskPersistence.setInventoryItems(empresaId, items);
+    res.json({ success: true, empresaId, count: items.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 erpModulesRouter.post('/wms/movement', async (req: Request, res: Response) => {
   try {
-    const { firmId, empresaId, sku, tipoMovimiento, cantidad, costoUnitario, dteFolioRef } = req.body;
+    const { firmId, empresaId, sku, tipoMovimiento, cantidad, costoUnitario, dteFolioRef, warehouseId } = req.body;
 
     const montoTotal = Math.round(Number(cantidad) * Number(costoUnitario));
     const now = new Date();
     const periodo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const fecha = now.toISOString().slice(0, 10);
 
-    // Contabilización automática en Libro Diario según si es entrada o salida (Costo de Ventas PMP)
+    // 1. Registrar movimiento físico y actualizar existencias en persistencia de disco / DB
+    const movementRecord = {
+      id: crypto.randomUUID(),
+      empresaId: empresaId || '76.892.410-K',
+      warehouseId: warehouseId || 'bodega-central-01',
+      sku,
+      tipoMovimiento: tipoMovimiento || 'SALIDA',
+      cantidad: Number(cantidad),
+      costoUnitario: Number(costoUnitario),
+      dteFolioRef: dteFolioRef || null,
+      createdAt: now.toISOString(),
+    };
+    diskPersistence.recordStockMovement(movementRecord);
+
+    // 2. Contabilización automática en Libro Diario según si es entrada o salida (Costo de Ventas PMP)
     let journalResult = null;
     if (tipoMovimiento === 'SALIDA') {
       journalResult = await postModuleTransaction({
@@ -248,8 +318,107 @@ erpModulesRouter.post('/wms/movement', async (req: Request, res: Response) => {
       success: true,
       message: `Movimiento de inventario registrado (${tipoMovimiento} ${cantidad} un.)`,
       montoTotal,
+      movement: movementRecord,
       journalEntry: journalResult,
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// WMS: Bodegas (Warehouses)
+erpModulesRouter.get('/wms/warehouses', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    let list = diskPersistence.getWarehouses(empresaId);
+    if (!list || list.length === 0) {
+      list = [
+        {
+          id: `wh-${Date.now()}-01`,
+          empresaId: empresaId || '76.892.410-K',
+          codigo: 'BOD-CENTRAL',
+          nombre: 'Bodega Central de Almacenamiento & Distribución',
+          direccion: 'Av. Industrial 4500, Galpón 4, San Bernardo',
+          tipo: 'CENTRAL',
+          responsableNombre: 'Diego Morales - Jefe de Bodega',
+          capacidadM3: 2500,
+          ocupacionActualM3: 1450,
+          activo: true,
+        },
+      ];
+      if (empresaId) {
+        diskPersistence.setWarehouses(empresaId, list);
+      }
+    }
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/wms/warehouses', async (req: Request, res: Response) => {
+  try {
+    const warehouse = req.body;
+    if (!warehouse.id) warehouse.id = crypto.randomUUID();
+    diskPersistence.saveWarehouse(warehouse);
+    res.status(201).json({ success: true, data: warehouse });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/wms/warehouses/bulk', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, warehouses } = req.body;
+    if (!empresaId || !Array.isArray(warehouses)) {
+      return res.status(400).json({ success: false, error: 'empresaId y warehouses son obligatorios' });
+    }
+    diskPersistence.setWarehouses(empresaId, warehouses);
+    res.json({ success: true, count: warehouses.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// WMS: Transferencias de Bodega (Guías DTE 52)
+erpModulesRouter.get('/wms/transfers', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getWarehouseTransfers(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/wms/transfers', async (req: Request, res: Response) => {
+  try {
+    const transfer = req.body;
+    if (!transfer.id) transfer.id = crypto.randomUUID();
+    diskPersistence.saveWarehouseTransfer(transfer);
+    res.status(201).json({ success: true, data: transfer });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// WMS: Requisiciones de Reposición
+erpModulesRouter.get('/wms/requisitions', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getReplenishmentRequisitions(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/wms/requisitions', async (req: Request, res: Response) => {
+  try {
+    const requisition = req.body;
+    if (!requisition.id) requisition.id = crypto.randomUUID();
+    diskPersistence.saveReplenishmentRequisition(requisition);
+    res.status(201).json({ success: true, data: requisition });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -261,7 +430,7 @@ erpModulesRouter.post('/wms/movement', async (req: Request, res: Response) => {
 
 erpModulesRouter.get('/cashflow/forecast', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
 
     const projection = {
       empresaId,
@@ -306,7 +475,7 @@ erpModulesRouter.get('/cashflow/forecast', async (req: Request, res: Response) =
 
 erpModulesRouter.get('/leases/contracts', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
 
     const contracts = [
       {
@@ -415,7 +584,7 @@ erpModulesRouter.post('/leases/amortize', async (req: Request, res: Response) =>
 
 erpModulesRouter.get('/karin/records', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
 
     const records = [
       {
@@ -443,7 +612,7 @@ erpModulesRouter.get('/karin/records', async (req: Request, res: Response) => {
 
 erpModulesRouter.get('/anchor/marketing-logs', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const logs = [
       {
         id: 'mkt-001',
@@ -469,7 +638,7 @@ erpModulesRouter.get('/anchor/marketing-logs', async (req: Request, res: Respons
 
 erpModulesRouter.get('/anchor/tickets', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
     const tickets = [
       {
         id: 'tick-001',
@@ -495,7 +664,7 @@ erpModulesRouter.get('/anchor/tickets', async (req: Request, res: Response) => {
 // ============================================================================
 erpModulesRouter.get('/cost-centers', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
     const db = getMysqlDb();
 
     if (isRealMysqlConnected && db) {
@@ -572,7 +741,7 @@ erpModulesRouter.post('/cost-centers', async (req: Request, res: Response) => {
 // ============================================================================
 erpModulesRouter.get('/fixed-assets', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || '';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
     const db = getMysqlDb();
 
     if (isRealMysqlConnected && db) {
@@ -672,3 +841,214 @@ erpModulesRouter.post('/fixed-assets', async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+erpModulesRouter.post('/fixed-assets/bulk', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, assets } = req.body;
+    if (!empresaId || !Array.isArray(assets)) {
+      return res.status(400).json({ success: false, error: 'empresaId y assets (array) son requeridos' });
+    }
+    diskPersistence.setFixedAssets(empresaId, assets);
+    res.json({ success: true, count: assets.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/fixed-assets/depreciate', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, periodo, firmId } = req.body;
+    const targetEmpresa = empresaId || 'client-retail-01';
+    const assets = diskPersistence.getFixedAssets(targetEmpresa);
+
+    let totalCuotaMes = 0;
+    const updatedAssets = assets.map((a: any) => {
+      const valorAdq = Number(a.valorAdquisicionOriginal || 0);
+      const valorRes = Number(a.valorResidualFinanciero || 0);
+      const vidaUtil = Number(a.vidaUtilMesesFinanciera || 60);
+      const cuota = vidaUtil > 0 ? Math.round((valorAdq - valorRes) / vidaUtil) : 0;
+      const mesesDep = Number(a.mesesDepreciados || 0) + 1;
+      const depAcum = Math.min(valorAdq - valorRes, Number(a.depreciacionAcumuladaFinanciera || 0) + cuota);
+      const valorLibro = Math.max(valorRes, valorAdq - depAcum);
+
+      totalCuotaMes += cuota;
+      return {
+        ...a,
+        mesesDepreciados: mesesDep,
+        cuotaDepreciacionMensualFinanciera: cuota,
+        depreciacionAcumuladaFinanciera: depAcum,
+        valorLibroFinanciero: valorLibro,
+      };
+    });
+
+    diskPersistence.setFixedAssets(targetEmpresa, updatedAssets);
+
+    // Generar asiento contable balanceado de depreciación mensual
+    let journalResult = null;
+    if (totalCuotaMes > 0) {
+      const now = new Date();
+      const per = periodo || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      journalResult = await postModuleTransaction({
+        firmId: firmId || 'firm-001-audicon',
+        empresaId: targetEmpresa,
+        periodo: per,
+        fecha: now.toISOString().slice(0, 10),
+        origenModulo: 'ACTIVO_FIJO',
+        documentoRef: `DEP_${per}`,
+        glosa: `Depreciación Mensual de Activos Fijos - Periodo ${per}`,
+        agenteNombre: 'AGENTE_ACTIVO_FIJO_NIC16',
+        traceId: crypto.randomUUID(),
+        lineas: [
+          {
+            codigoCuenta: '6.1.02.001',
+            nombreCuenta: 'Depreciación del Ejercicio (Gasto)',
+            debe: totalCuotaMes,
+            haber: 0,
+          },
+          {
+            codigoCuenta: '1.2.01.099',
+            nombreCuenta: 'Depreciación Acumulada de Activo Fijo (Complementaria)',
+            debe: 0,
+            haber: totalCuotaMes,
+          },
+        ],
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Depreciación calculada exitosamente para ${assets.length} activos fijos. Cuota total: $${totalCuotaMes}`,
+      totalCuotaMes,
+      assets: updatedAssets,
+      journalEntry: journalResult,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// 14. COSTOS DE PRODUCCIÓN, ÓRDENES (OP) & RECETAS (NIC 2)
+// ============================================================================
+
+erpModulesRouter.get('/production/orders', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getProductionOrders(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/orders', async (req: Request, res: Response) => {
+  try {
+    const order = req.body;
+    if (!order.id) order.id = crypto.randomUUID();
+    diskPersistence.saveProductionOrder(order);
+    res.status(201).json({ success: true, data: order });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/orders/bulk', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, orders } = req.body;
+    if (!empresaId || !Array.isArray(orders)) {
+      return res.status(400).json({ success: false, error: 'empresaId y orders son obligatorios' });
+    }
+    diskPersistence.setProductionOrders(empresaId, orders);
+    res.json({ success: true, count: orders.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.get('/production/budgets', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getProductionBudgets(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/budgets', async (req: Request, res: Response) => {
+  try {
+    const budget = req.body;
+    if (!budget.id) budget.id = crypto.randomUUID();
+    diskPersistence.saveProductionBudget(budget);
+    res.status(201).json({ success: true, data: budget });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.get('/production/withdrawals', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getWarehouseWithdrawals(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/withdrawals', async (req: Request, res: Response) => {
+  try {
+    const withdrawal = req.body;
+    if (!withdrawal.id) withdrawal.id = crypto.randomUUID();
+    diskPersistence.saveWarehouseWithdrawal(withdrawal);
+    res.status(201).json({ success: true, data: withdrawal });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.get('/production/recipes', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const list = diskPersistence.getRecipes(empresaId);
+    res.json({ success: true, count: list.length, data: list });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/recipes', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, recipes } = req.body;
+    if (!empresaId || !Array.isArray(recipes)) {
+      return res.status(400).json({ success: false, error: 'empresaId y recipes son obligatorios' });
+    }
+    diskPersistence.setRecipes(empresaId, recipes);
+    res.json({ success: true, count: recipes.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.get('/production/rfqs', async (req: Request, res: Response) => {
+  try {
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
+    const config = diskPersistence.getAutoRfqConfig(empresaId);
+    const rfqs = diskPersistence.getAutoRfqs(empresaId);
+    res.json({ success: true, config, rfqs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+erpModulesRouter.post('/production/rfqs', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, config, rfqs } = req.body;
+    if (config) diskPersistence.saveAutoRfqConfig(empresaId, config);
+    if (Array.isArray(rfqs)) diskPersistence.saveAutoRfqs(empresaId, rfqs);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+

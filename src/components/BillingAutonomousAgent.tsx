@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import { InvoiceLayoutDesigner } from './billing/InvoiceLayoutDesigner';
 import { INITIAL_CLIENTS } from '../data/seedData';
+import { getStoredAuthToken } from '../services/apiClient';
 import {
   BillingEmissionDraft,
   BillingItemDetail,
@@ -449,13 +450,51 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
 
     addLog(`🚀 [HTTP-DTE] Iniciando emisión directa de DTE ${draft.tipoDte} para RUT Emisor: ${company.rut}...`);
     addLog(`📦 [Mapeo] Mapeando datos internos ERP: ${draft.items.length} ítems. Total: $${draft.montoTotal.toLocaleString('es-CL')} CLP.`);
+
+    // 1. Verificación previa con el Agente Autónomo Especialista (ReAct Loop)
+    const authToken = getStoredAuthToken();
+    try {
+      addLog(`🧠 [Agente Autónomo] Validando normativa tributaria SII y estructura del borrador DTE...`);
+      const agentRes = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'CONTABILIDAD',
+          modulo: 'CONTABILIDAD',
+          empresaId: company.id || company.rut,
+          query: `Validar y certificar borrador DTE Tipo ${draft.tipoDte} para ${draft.razonSocialReceptor} (RUT ${draft.rutReceptor}) por total $${draft.montoTotal} CLP.`,
+          context: {
+            company,
+            empresa: company,
+            draft,
+          },
+        }),
+      });
+      if (agentRes.ok) {
+        const aData = await agentRes.json();
+        const shortDecision = (aData.decision || aData.finalText || 'Validación conforme').slice(0, 120);
+        addLog(`📋 [Agente Autónomo] Dictamen: ${shortDecision}...`);
+        if (aData.approvalRequired) {
+          addLog(`⚠️ [Gobernanza Humana] Solicitud #${aData.approvalDetails?.id?.slice(-6) || 'PEND'} creada para autorización.`);
+        }
+      }
+    } catch (agentErr: any) {
+      addLog(`⚠️ [Agente Autónomo] Aviso en verificación preliminar: ${agentErr.message}`);
+    }
+
     addLog(`🔑 [Criptografía] Leyendo CAF (XML) y Certificado Digital PKCS#12 (.p12/.pfx) almacenados localmente...`);
     addLog(`🌐 [HTTP POST] Enviando POST JSON a http://localhost:8050/dte/emitir...`);
 
     try {
       const res = await fetch('/api/billing/emitir-http-dte', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
           draft,
           companyId: company.id,

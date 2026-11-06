@@ -53,6 +53,20 @@ export interface DiskDataStore {
   rfqSupplierResponses?: any[];
   purchaseOrders?: any[];
   commercialQuotes?: any[];
+  sessions?: Record<string, any>;
+  governanceApprovals?: any[];
+  warehouseTransfers?: any[];
+  replenishmentRequisitions?: any[];
+  productionOrders?: any[];
+  cifPoolItems?: any[];
+  productionBudgets?: any[];
+  warehouseWithdrawals?: any[];
+  recipes?: any[];
+  autoRfqConfigs?: Record<string, any>;
+  autoRfqs?: any[];
+  stockMovements?: any[];
+  aiConfig?: any;
+  aiUsageLogs?: any[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -89,6 +103,18 @@ class DiskPersistenceService {
     rfqSupplierResponses: [],
     purchaseOrders: [],
     commercialQuotes: [],
+    sessions: {},
+    governanceApprovals: [],
+    warehouseTransfers: [],
+    replenishmentRequisitions: [],
+    productionOrders: [],
+    cifPoolItems: [],
+    productionBudgets: [],
+    warehouseWithdrawals: [],
+    recipes: [],
+    autoRfqConfigs: {},
+    autoRfqs: [],
+    stockMovements: [],
   };
 
   private isInitialized = false;
@@ -124,6 +150,8 @@ class DiskPersistenceService {
         const parsed = JSON.parse(raw);
         this.store = {
           ...this.store,
+          warehouses: parsed.warehouses || [],
+          inventoryItems: parsed.inventoryItems || [],
           costCenters: parsed.costCenters || [],
           fixedAssets: parsed.fixedAssets || [],
           expenseReports: parsed.expenseReports || [],
@@ -134,6 +162,17 @@ class DiskPersistenceService {
           groups: parsed.groups || {},
           financialNotes: parsed.financialNotes || {},
           clientStates: parsed.clientStates || {},
+          governanceApprovals: parsed.governanceApprovals || [],
+          warehouseTransfers: parsed.warehouseTransfers || [],
+          replenishmentRequisitions: parsed.replenishmentRequisitions || [],
+          productionOrders: parsed.productionOrders || [],
+          cifPoolItems: parsed.cifPoolItems || [],
+          productionBudgets: parsed.productionBudgets || [],
+          warehouseWithdrawals: parsed.warehouseWithdrawals || [],
+          recipes: parsed.recipes || [],
+          autoRfqConfigs: parsed.autoRfqConfigs || {},
+          autoRfqs: parsed.autoRfqs || [],
+          stockMovements: parsed.stockMovements || [],
           ...parsed,
         };
         if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
@@ -194,9 +233,6 @@ class DiskPersistenceService {
     }
   }
 
-  /**
-   * Programa un guardado diferido (debounce) para no saturar I/O en ráfagas de transacciones.
-   */
   public scheduleFlush() {
     if (this.saveDebounceTimer) {
       clearTimeout(this.saveDebounceTimer);
@@ -204,6 +240,37 @@ class DiskPersistenceService {
     this.saveDebounceTimer = setTimeout(() => {
       this.flushToDiskSync();
     }, 300);
+  }
+
+  /**
+   * Alias de scheduleFlush para compatibilidad con servicios que persisten colecciones adicionales.
+   */
+  public scheduleDiskSave() {
+    this.scheduleFlush();
+  }
+
+  /**
+   * Obtiene una copia del snapshot completo persistido en memoria/disco.
+   */
+  public getSnapshot(): DiskDataStore {
+    if (!this.isInitialized) {
+      this.loadFromDisk();
+    }
+    return { ...this.store };
+  }
+
+  /**
+   * Actualiza una colección o clave arbitraria en el almacén de persistencia y programa su guardado.
+   */
+  public updateCollection(collectionName: string, items: any[]): void {
+    if (collectionName === 'aiConfig') {
+      this.store.aiConfig = items[0] || null;
+    } else if (collectionName === 'aiUsageLogs') {
+      this.store.aiUsageLogs = items;
+    } else {
+      (this.store as any)[collectionName] = items;
+    }
+    this.scheduleFlush();
   }
 
   /**
@@ -569,7 +636,8 @@ class DiskPersistenceService {
   // OPERACIONES CRUD CON DOBLE PERSISTENCIA (MYSQL + DISCO)
   // ==========================================================================
 
-  public addAccountingEntry(entry: any, lines: any[]) {
+  public addAccountingEntry(entry: any, lines?: any[]) {
+    const entryLines = lines || entry.lineas || [];
     // 1. Guardar en memoria de proceso y disco
     const existingIndex = this.store.entries.findIndex((e) => e.id === entry.id);
     if (existingIndex >= 0) {
@@ -579,7 +647,7 @@ class DiskPersistenceService {
       this.store.entries.unshift(entry);
     }
 
-    this.store.lines.push(...lines);
+    this.store.lines.push(...entryLines);
     this.scheduleFlush();
 
     // 2. Si MySQL está conectado, persistir inmediatamente en MySQL
@@ -821,15 +889,28 @@ class DiskPersistenceService {
     }
   }
 
-  public saveBankMovements(movements: any[]) {
+  public saveBankMovements(movements: any[], empresaId?: string, replace = false) {
     if (!Array.isArray(movements) || movements.length === 0) return;
+    if (!this.store.bankMovements) this.store.bankMovements = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    if (replace && norm) {
+      this.store.bankMovements = this.store.bankMovements.filter((m) => {
+        const mEmp = (m.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return mEmp !== norm;
+      });
+    }
     for (const mov of movements) {
+      const targetEmp = mov.empresaId || empresaId;
+      const normalizedMov = { ...mov, empresaId: targetEmp };
       const idx = this.store.bankMovements.findIndex((m) => m.id === mov.id);
       if (idx >= 0) {
-        this.store.bankMovements[idx] = { ...this.store.bankMovements[idx], ...mov };
+        this.store.bankMovements[idx] = { ...this.store.bankMovements[idx], ...normalizedMov };
       } else {
-        this.store.bankMovements.push(mov);
+        this.store.bankMovements.push(normalizedMov);
       }
+    }
+    if (empresaId) {
+      this.saveClientState(empresaId, 'bankMovements', movements);
     }
     this.scheduleFlush();
 
@@ -886,11 +967,174 @@ class DiskPersistenceService {
     }
   }
 
-  public getBankMovements(accountId?: string): any[] {
-    if (accountId) {
-      return this.store.bankMovements.filter((m) => m.cuentaId === accountId || m.accountId === accountId);
+  public getBankMovements(accountIdOrEmpresaId?: string, empresaId?: string): any[] {
+    let list = this.store.bankMovements || [];
+    if (!accountIdOrEmpresaId && !empresaId) return list;
+
+    if (accountIdOrEmpresaId && !empresaId) {
+      const norm = accountIdOrEmpresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      const hasMatchingCompany = list.some((m: any) => {
+        const mEmp = (m.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return mEmp === norm;
+      });
+      const isRutOrEmpresa = hasMatchingCompany ||
+        /^[0-9]{7,8}-[0-9kK]$/.test(accountIdOrEmpresaId) ||
+        accountIdOrEmpresaId.startsWith('emp-') ||
+        accountIdOrEmpresaId.startsWith('EMP-') ||
+        accountIdOrEmpresaId.startsWith('client-') ||
+        accountIdOrEmpresaId.startsWith('CLIENT-');
+
+      if (isRutOrEmpresa) {
+        const filtered = list.filter((m: any) => {
+          const mEmp = (m.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+          return mEmp === norm;
+        });
+        if (filtered.length > 0) return filtered;
+        const saved = this.getClientState(accountIdOrEmpresaId, 'bankMovements');
+        if (Array.isArray(saved) && saved.length > 0) return saved;
+        return filtered;
+      }
+      return list.filter((m: any) => m.cuentaId === accountIdOrEmpresaId || m.accountId === accountIdOrEmpresaId || m.bankAccountId === accountIdOrEmpresaId);
     }
-    return this.store.bankMovements || [];
+
+    if (accountIdOrEmpresaId) {
+      list = list.filter((m: any) => m.cuentaId === accountIdOrEmpresaId || m.accountId === accountIdOrEmpresaId);
+    }
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      const filtered = list.filter((m: any) => {
+        const mEmp = (m.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return mEmp === norm;
+      });
+      if (filtered.length > 0) return filtered;
+      const saved = this.getClientState(empresaId, 'bankMovements');
+      if (Array.isArray(saved) && saved.length > 0) return saved;
+      return filtered;
+    }
+    return list;
+  }
+
+  public getBankMovementsByCompany(empresaId?: string): any[] {
+    return this.getBankMovements(empresaId);
+  }
+
+  public getBankAccounts(empresaId?: string): any[] {
+    let list = this.store.bankAccounts || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    const filtered = list.filter((b: any) => {
+      const bEmp = (b.empresaId || b.empresa_id || b.rut || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return bEmp === norm;
+    });
+    if (filtered.length > 0) return filtered;
+    const saved = this.getClientState(empresaId, 'bankAccounts');
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+    return list.filter((b: any) => {
+      const bEmp = (b.empresaId || b.empresa_id || b.rut || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return !bEmp;
+    });
+  }
+
+  public saveBankAccounts(accounts: any[], empresaId?: string, replace = false): void {
+    if (!Array.isArray(accounts)) return;
+    if (!this.store.bankAccounts) this.store.bankAccounts = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    if (replace && norm) {
+      this.store.bankAccounts = this.store.bankAccounts.filter((b: any) => {
+        const bEmp = (b.empresaId || b.empresa_id || b.rut || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return bEmp !== norm;
+      });
+    }
+    for (const acc of accounts) {
+      const targetEmpresaId = acc.empresaId || empresaId;
+      const idx = this.store.bankAccounts.findIndex((b: any) => b.id === acc.id);
+      if (idx >= 0) {
+        this.store.bankAccounts[idx] = { ...this.store.bankAccounts[idx], ...acc, empresaId: targetEmpresaId };
+      } else {
+        this.store.bankAccounts.push({ ...acc, empresaId: targetEmpresaId });
+      }
+    }
+    if (empresaId) {
+      this.saveClientState(empresaId, 'bankAccounts', accounts);
+    }
+    this.scheduleFlush();
+  }
+
+  public savePayrolls(payrolls: any[], empresaId?: string, replace = false): void {
+    if (!Array.isArray(payrolls)) return;
+    if (!this.store.payrolls) this.store.payrolls = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    if (replace && norm) {
+      this.store.payrolls = this.store.payrolls.filter((p: any) => {
+        const pEmp = (p.empresaId || p.empresa_id || p.rutEmpresa || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return pEmp !== norm;
+      });
+    }
+    for (const pay of payrolls) {
+      const targetEmpresaId = pay.empresaId || pay.rutEmpresa || empresaId;
+      const idx = this.store.payrolls.findIndex((p: any) => p.id === pay.id);
+      if (idx >= 0) {
+        this.store.payrolls[idx] = { ...this.store.payrolls[idx], ...pay, empresaId: targetEmpresaId };
+      } else {
+        this.store.payrolls.push({ ...pay, empresaId: targetEmpresaId });
+      }
+    }
+    if (empresaId) {
+      this.saveClientState(empresaId, 'payrolls', payrolls);
+    }
+    this.scheduleFlush();
+  }
+
+  public getJournalEntries(empresaId?: string, periodo?: string): any[] {
+    return this.getAccountingEntries(empresaId, periodo);
+  }
+
+  public getPayrolls(empresaId?: string, periodo?: string): any[] {
+    let result = this.store.payrolls || [];
+    if (empresaId) {
+      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+      result = result.filter((p: any) => {
+        const pEmp = (p.empresaId || p.empresa_id || p.rutEmpresa || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return pEmp === norm;
+      });
+    }
+    if (periodo) {
+      result = result.filter((p: any) => !p.periodo || p.periodo === periodo);
+    }
+    if (result.length > 0) return result;
+    if (empresaId) {
+      const saved = this.getClientState(empresaId, 'payrolls');
+      if (Array.isArray(saved) && saved.length > 0) {
+        return periodo ? saved.filter((p: any) => !p.periodo || p.periodo === periodo) : saved;
+      }
+    }
+    return result;
+  }
+
+  public addDtes(dtes: any[]): void {
+    if (!Array.isArray(dtes)) return;
+    for (const d of dtes) {
+      this.addDte(d);
+    }
+  }
+
+  public saveDtes(empresaId: string, dtes: any[], replace = false): void {
+    if (!Array.isArray(dtes)) return;
+    if (!this.store.dtes) this.store.dtes = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    if (replace && norm) {
+      this.store.dtes = this.store.dtes.filter((d: any) => {
+        const dNorm = (d.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+        return dNorm !== norm;
+      });
+    }
+    for (const d of dtes) {
+      this.addDte({ ...d, empresaId });
+    }
+    if (empresaId) {
+      this.saveClientState(empresaId, 'dtes', dtes);
+    }
+    this.scheduleFlush();
   }
 
   public getAccountingEntries(empresaId?: string, periodo?: string): any[] {
@@ -899,13 +1143,16 @@ class DiskPersistenceService {
       const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
       result = result.filter((e) => {
         const eNorm = (e.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-        return !eNorm || eNorm === norm;
+        return eNorm === norm;
       });
     }
     if (periodo) {
       result = result.filter((e) => !e.periodo || e.periodo === periodo);
     }
-    return result;
+    return result.map((e) => ({
+      ...e,
+      lineas: e.lineas || this.getLinesForEntry(e.id),
+    }));
   }
 
   public getLinesForEntry(entryId: string): any[] {
@@ -932,14 +1179,431 @@ class DiskPersistenceService {
       const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
       result = result.filter((d) => {
         const dNorm = (d.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-        return !dNorm || dNorm === norm;
+        return Boolean(dNorm && dNorm === norm);
       });
     }
     if (periodo) {
-      result = result.filter((d) => !d.periodo || d.periodo === periodo);
+      result = result.filter((d) => (d.periodo || (d.fechaEmision ? d.fechaEmision.slice(0, 7) : '')) === periodo);
+    }
+    if (result.length > 0) return result;
+    if (empresaId) {
+      const saved = this.getClientState(empresaId, 'dtes');
+      if (Array.isArray(saved) && saved.length > 0) {
+        return periodo ? saved.filter((d: any) => (d.periodo || (d.fechaEmision ? d.fechaEmision.slice(0, 7) : '')) === periodo) : saved;
+      }
     }
     return result;
   }
+
+  public markDtesAsCentralized(empresaId: string, periodo: string, tipoOp: string, entryId: string): void {
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    let modified = false;
+    for (const d of this.store.dtes) {
+      const dEmp = (d.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      if ((!norm || !dEmp || dEmp === norm) && (!periodo || d.periodo === periodo)) {
+        if (!tipoOp || d.tipoOperacion === tipoOp || d.tipo === tipoOp) {
+          d.estadoContable = 'CENTRALIZADO';
+          d.entryIdRef = entryId;
+          modified = true;
+        }
+      }
+    }
+    if (modified) {
+      this.scheduleFlush();
+    }
+  }
+
+  private ensureSessionsFile(): Record<string, any> {
+    const sessDir = path.resolve(process.cwd(), 'storage');
+    const sessFile = path.join(sessDir, 'sessions.json');
+    try {
+      if (!fs.existsSync(sessDir)) {
+        fs.mkdirSync(sessDir, { recursive: true });
+      }
+      if (fs.existsSync(sessFile)) {
+        return JSON.parse(fs.readFileSync(sessFile, 'utf-8'));
+      }
+    } catch {}
+    return this.store.sessions || {};
+  }
+
+  private writeSessionsFile(sessions: Record<string, any>): void {
+    const sessDir = path.resolve(process.cwd(), 'storage');
+    const sessFile = path.join(sessDir, 'sessions.json');
+    try {
+      if (!fs.existsSync(sessDir)) {
+        fs.mkdirSync(sessDir, { recursive: true });
+      }
+      const tmp = `${sessFile}.tmp.${Date.now()}`;
+      fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2), 'utf-8');
+      fs.renameSync(tmp, sessFile);
+    } catch (e: any) {
+      console.warn(`[DiskPersistence] Error guardando sessions.json: ${e.message}`);
+    }
+  }
+
+  public saveSession(token: string, session: any): void {
+    const sessions = this.ensureSessionsFile();
+    sessions[token] = session;
+    this.writeSessionsFile(sessions);
+    if (!this.store.sessions) {
+      this.store.sessions = {};
+    }
+    this.store.sessions[token] = session;
+  }
+
+  public getSession(token: string): any | null {
+    const sessions = this.ensureSessionsFile();
+    const s = sessions[token] || (this.store.sessions ? this.store.sessions[token] : null);
+    if (s && s.expiresAt > Date.now()) {
+      return s;
+    }
+    if (s && s.expiresAt <= Date.now()) {
+      delete sessions[token];
+      this.writeSessionsFile(sessions);
+      if (this.store.sessions) delete this.store.sessions[token];
+    }
+    return null;
+  }
+
+  public deleteSession(token: string): void {
+    const sessions = this.ensureSessionsFile();
+    if (sessions[token]) {
+      delete sessions[token];
+      this.writeSessionsFile(sessions);
+    }
+    if (this.store.sessions && this.store.sessions[token]) {
+      delete this.store.sessions[token];
+    }
+  }
+
+  public getInventoryItems(empresaId?: string): any[] {
+    const items = this.store.inventoryItems || [];
+    if (!empresaId) return items;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return items.filter((item: any) => {
+      const itemEmpresa = (item.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return itemEmpresa === norm;
+    });
+  }
+
+  public setInventoryItems(empresaId: string, items: any[]): void {
+    if (!this.store.inventoryItems) this.store.inventoryItems = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.inventoryItems = this.store.inventoryItems.filter((it: any) => {
+      const itemEmpresa = (it.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return itemEmpresa && itemEmpresa !== norm;
+    });
+    for (const item of items) {
+      this.store.inventoryItems.push({
+        ...item,
+        empresaId: item.empresaId || empresaId,
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  public saveInventoryItem(item: any): void {
+    if (!this.store.inventoryItems) this.store.inventoryItems = [];
+    const idx = this.store.inventoryItems.findIndex(
+      (it: any) => it.id === item.id || (it.sku === item.sku && it.empresaId === item.empresaId)
+    );
+    if (idx >= 0) {
+      this.store.inventoryItems[idx] = { ...this.store.inventoryItems[idx], ...item };
+    } else {
+      this.store.inventoryItems.push(item);
+    }
+    this.scheduleFlush();
+  }
+
+  public recordStockMovement(movement: any): void {
+    if (!this.store.stockMovements) this.store.stockMovements = [];
+    this.store.stockMovements.unshift(movement);
+
+    // Actualizar stock físico en inventoryItems
+    const items = this.store.inventoryItems || [];
+    const norm = (movement.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    const item = items.find(
+      (it: any) =>
+        (it.id === movement.itemId || it.sku === movement.sku) &&
+        (!movement.empresaId || (it.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase() === norm)
+    );
+
+    if (item) {
+      const currentStock = Number(item.stockActual ?? item.stockTotal ?? 0);
+      const qty = Number(movement.cantidad || 0);
+      const unitCost = Number(movement.costoUnitario || item.costoPromedioPonderado || item.costoUnitarioPMP || 0);
+
+      if (movement.tipoMovimiento === 'ENTRADA') {
+        const totalOldVal = currentStock * Number(item.costoPromedioPonderado ?? item.costoUnitarioPMP ?? 0);
+        const totalNewVal = qty * unitCost;
+        const newStock = currentStock + qty;
+        item.stockActual = newStock;
+        item.stockTotal = newStock;
+        if (newStock > 0) {
+          const newPmp = Math.round((totalOldVal + totalNewVal) / newStock);
+          item.costoPromedioPonderado = newPmp;
+          item.costoUnitarioPMP = newPmp;
+        }
+      } else if (movement.tipoMovimiento === 'SALIDA' || movement.tipoMovimiento === 'MERMA') {
+        const newStock = Math.max(0, currentStock - qty);
+        item.stockActual = newStock;
+        item.stockTotal = newStock;
+      }
+    }
+    this.scheduleFlush();
+  }
+
+  public getWarehouses(empresaId?: string): any[] {
+    const list = this.store.warehouses || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((w: any) => {
+      const wEmp = (w.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return wEmp === norm;
+    });
+  }
+
+  public saveWarehouse(w: any): void {
+    if (!this.store.warehouses) this.store.warehouses = [];
+    const idx = this.store.warehouses.findIndex((item: any) => item.id === w.id);
+    if (idx >= 0) {
+      this.store.warehouses[idx] = { ...this.store.warehouses[idx], ...w };
+    } else {
+      this.store.warehouses.push(w);
+    }
+    this.scheduleFlush();
+  }
+
+  public setWarehouses(empresaId: string, list: any[]): void {
+    if (!this.store.warehouses) this.store.warehouses = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.warehouses = this.store.warehouses.filter((w: any) => {
+      const wEmp = (w.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return wEmp && wEmp !== norm;
+    });
+    for (const w of list) {
+      this.store.warehouses.push({ ...w, empresaId: w.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
+  public getWarehouseTransfers(empresaId?: string): any[] {
+    const list = this.store.warehouseTransfers || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((t: any) => {
+      const tEmp = (t.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return tEmp === norm;
+    });
+  }
+
+  public saveWarehouseTransfer(transfer: any): void {
+    if (!this.store.warehouseTransfers) this.store.warehouseTransfers = [];
+    const idx = this.store.warehouseTransfers.findIndex((t: any) => t.id === transfer.id);
+    if (idx >= 0) {
+      this.store.warehouseTransfers[idx] = { ...this.store.warehouseTransfers[idx], ...transfer };
+    } else {
+      this.store.warehouseTransfers.unshift(transfer);
+    }
+    this.scheduleFlush();
+  }
+
+  public setWarehouseTransfers(empresaId: string, list: any[]): void {
+    if (!this.store.warehouseTransfers) this.store.warehouseTransfers = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.warehouseTransfers = this.store.warehouseTransfers.filter((t: any) => {
+      const tEmp = (t.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return tEmp && tEmp !== norm;
+    });
+    for (const t of list) {
+      this.store.warehouseTransfers.push({ ...t, empresaId: t.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
+  public getReplenishmentRequisitions(empresaId?: string): any[] {
+    const list = this.store.replenishmentRequisitions || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((r: any) => {
+      const rEmp = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return rEmp === norm;
+    });
+  }
+
+  public saveReplenishmentRequisition(req: any): void {
+    if (!this.store.replenishmentRequisitions) this.store.replenishmentRequisitions = [];
+    const idx = this.store.replenishmentRequisitions.findIndex((r: any) => r.id === req.id);
+    if (idx >= 0) {
+      this.store.replenishmentRequisitions[idx] = { ...this.store.replenishmentRequisitions[idx], ...req };
+    } else {
+      this.store.replenishmentRequisitions.unshift(req);
+    }
+    this.scheduleFlush();
+  }
+
+  public setReplenishmentRequisitions(empresaId: string, list: any[]): void {
+    if (!this.store.replenishmentRequisitions) this.store.replenishmentRequisitions = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.replenishmentRequisitions = this.store.replenishmentRequisitions.filter((r: any) => {
+      const rEmp = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return rEmp && rEmp !== norm;
+    });
+    for (const r of list) {
+      this.store.replenishmentRequisitions.push({ ...r, empresaId: r.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
+  public getProductionOrders(empresaId?: string): any[] {
+    const list = this.store.productionOrders || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((o: any) => {
+      const oEmp = (o.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return oEmp === norm;
+    });
+  }
+
+  public saveProductionOrder(order: any): void {
+    if (!this.store.productionOrders) this.store.productionOrders = [];
+    const idx = this.store.productionOrders.findIndex((o: any) => o.id === order.id);
+    if (idx >= 0) {
+      this.store.productionOrders[idx] = { ...this.store.productionOrders[idx], ...order };
+    } else {
+      this.store.productionOrders.unshift(order);
+    }
+    this.scheduleFlush();
+  }
+
+  public setProductionOrders(empresaId: string, orders: any[]): void {
+    if (!this.store.productionOrders) this.store.productionOrders = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.productionOrders = this.store.productionOrders.filter((o: any) => {
+      const oEmp = (o.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return oEmp && oEmp !== norm;
+    });
+    for (const o of orders) {
+      this.store.productionOrders.push({ ...o, empresaId: o.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
+  public saveProductionOrders(empresaId: string, orders: any[]): void {
+    this.setProductionOrders(empresaId, orders);
+  }
+
+  public getProductionBudgets(empresaId?: string): any[] {
+    const list = this.store.productionBudgets || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((b: any) => {
+      const bEmp = (b.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return bEmp === norm;
+    });
+  }
+
+  public saveProductionBudget(budget: any): void {
+    if (!this.store.productionBudgets) this.store.productionBudgets = [];
+    const idx = this.store.productionBudgets.findIndex((b: any) => b.id === budget.id);
+    if (idx >= 0) {
+      this.store.productionBudgets[idx] = { ...this.store.productionBudgets[idx], ...budget };
+    } else {
+      this.store.productionBudgets.unshift(budget);
+    }
+    this.scheduleFlush();
+  }
+
+  public getWarehouseWithdrawals(empresaId?: string): any[] {
+    const list = this.store.warehouseWithdrawals || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((w: any) => {
+      const wEmp = (w.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return wEmp === norm;
+    });
+  }
+
+  public saveWarehouseWithdrawal(w: any): void {
+    if (!this.store.warehouseWithdrawals) this.store.warehouseWithdrawals = [];
+    const idx = this.store.warehouseWithdrawals.findIndex((item: any) => item.id === w.id);
+    if (idx >= 0) {
+      this.store.warehouseWithdrawals[idx] = { ...this.store.warehouseWithdrawals[idx], ...w };
+    } else {
+      this.store.warehouseWithdrawals.unshift(w);
+    }
+    this.scheduleFlush();
+  }
+
+  public getRecipes(empresaId?: string): any[] {
+    const list = this.store.recipes || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((r: any) => {
+      const rEmp = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return rEmp === norm;
+    });
+  }
+
+  public saveRecipe(recipe: any): void {
+    if (!this.store.recipes) this.store.recipes = [];
+    const idx = this.store.recipes.findIndex((r: any) => r.id === recipe.id);
+    if (idx >= 0) {
+      this.store.recipes[idx] = { ...this.store.recipes[idx], ...recipe };
+    } else {
+      this.store.recipes.push(recipe);
+    }
+    this.scheduleFlush();
+  }
+
+  public setRecipes(empresaId: string, list: any[]): void {
+    if (!this.store.recipes) this.store.recipes = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.recipes = this.store.recipes.filter((r: any) => {
+      const rEmp = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return rEmp && rEmp !== norm;
+    });
+    for (const r of list) {
+      this.store.recipes.push({ ...r, empresaId: r.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
+  public getAutoRfqConfig(empresaId: string): any | null {
+    if (!this.store.autoRfqConfigs) return null;
+    return this.store.autoRfqConfigs[empresaId] || null;
+  }
+
+  public saveAutoRfqConfig(empresaId: string, config: any): void {
+    if (!this.store.autoRfqConfigs) this.store.autoRfqConfigs = {};
+    this.store.autoRfqConfigs[empresaId] = config;
+    this.scheduleFlush();
+  }
+
+  public getAutoRfqs(empresaId?: string): any[] {
+    const list = this.store.autoRfqs || [];
+    if (!empresaId) return list;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return list.filter((q: any) => {
+      const qEmp = (q.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return qEmp === norm;
+    });
+  }
+
+  public saveAutoRfqs(empresaId: string, list: any[]): void {
+    if (!this.store.autoRfqs) this.store.autoRfqs = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.autoRfqs = this.store.autoRfqs.filter((q: any) => {
+      const qEmp = (q.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return qEmp && qEmp !== norm;
+    });
+    for (const q of list) {
+      this.store.autoRfqs.push({ ...q, empresaId: q.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
 
   public addAuditLog(log: any) {
     this.store.auditLogs.unshift(log);
@@ -994,6 +1658,10 @@ class DiskPersistenceService {
     this.scheduleFlush();
   }
 
+  public saveFixedAsset(empresaId: string, fa: any) {
+    this.addFixedAsset({ ...fa, empresaId });
+  }
+
   public getFixedAssets(empresaId?: string): any[] {
     let result = this.store.fixedAssets || [];
     if (empresaId) {
@@ -1005,6 +1673,20 @@ class DiskPersistenceService {
     }
     return result;
   }
+
+  public setFixedAssets(empresaId: string, assets: any[]): void {
+    if (!this.store.fixedAssets) this.store.fixedAssets = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.fixedAssets = this.store.fixedAssets.filter((a: any) => {
+      const aNorm = (a.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return aNorm && aNorm !== norm;
+    });
+    for (const a of assets) {
+      this.store.fixedAssets.push({ ...a, empresaId: a.empresaId || empresaId });
+    }
+    this.scheduleFlush();
+  }
+
 
   public saveVaultEntry(entry: any) {
     if (!this.store.credentialsVault) this.store.credentialsVault = [];
@@ -1082,22 +1764,15 @@ class DiskPersistenceService {
   // ==========================================================================
 
   public getExpenseReports(empresaId?: string): any[] {
-    let result = this.store.expenseReports || [];
-    if (empresaId) {
-      const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
-      const filtered = result.filter((r) => {
-        const rNorm = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
-        return (
-          !r.empresaId ||
-          r.empresaId === empresaId ||
-          rNorm === norm ||
-          r.empresaId === 'client-retail-01' ||
-          norm === 'CLIENTRETAIL01'
-        );
-      });
-      return filtered.length > 0 ? filtered : result;
+    const result = this.store.expenseReports || [];
+    if (!empresaId) {
+      return result;
     }
-    return result;
+    const norm = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
+    return result.filter((r) => {
+      const rNorm = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return r.empresaId === empresaId || rNorm === norm;
+    });
   }
 
   public updateExpenseReport(id: string, partial: any): boolean {
@@ -1126,6 +1801,19 @@ class DiskPersistenceService {
         createdAt: report.createdAt || new Date().toISOString(),
         updatedAt: report.updatedAt || new Date().toISOString(),
       });
+    }
+    this.scheduleFlush();
+  }
+
+  public saveExpenseReports(empresaId: string, reports: any[]): void {
+    if (!this.store.expenseReports) this.store.expenseReports = [];
+    const norm = (empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+    this.store.expenseReports = this.store.expenseReports.filter((r: any) => {
+      const rEmp = (r.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
+      return rEmp && rEmp !== norm;
+    });
+    for (const r of reports) {
+      this.store.expenseReports.push({ ...r, empresaId: r.empresaId || empresaId });
     }
     this.scheduleFlush();
   }
@@ -1328,7 +2016,7 @@ class DiskPersistenceService {
     if (isRealMysqlConnected) {
       (async () => {
         try {
-          const db = getMysqlDb();
+          const db = mysqlDb;
           const { clientAuxiliariesMaster } = await import('../db/mysqlSchema');
           for (const aux of auxiliaries) {
             const rawRut = (aux.rut || aux.rutCompleto || '').trim();
@@ -2204,6 +2892,89 @@ class DiskPersistenceService {
       ];
     }
   }
+
+  // ============================================================================
+  // GOBERNANZA AGÉNTICA: APROBACIONES HUMAN-IN-THE-LOOP (PERSISTENCIA TOTAL)
+  // ============================================================================
+  public getApprovals(empresaId?: string, modulo?: string): any[] {
+    let list = this.store.governanceApprovals || [];
+    if (empresaId) {
+      const cleanTarget = empresaId.replace(/[^0-9kK]/g, '').toUpperCase();
+      list = list.filter(a => {
+        const cleanEmp = (a.empresaId || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        return cleanEmp === cleanTarget || a.empresaId === empresaId;
+      });
+    }
+    if (modulo) {
+      list = list.filter(a => a.modulo === modulo);
+    }
+    return list;
+  }
+
+  public getGovernanceApprovals(empresaId?: string, modulo?: string): any[] {
+    return this.getApprovals(empresaId, modulo);
+  }
+
+  public getApprovalById(id: string): any | null {
+    const list = this.store.governanceApprovals || [];
+    return list.find(a => a.id === id) || null;
+  }
+
+  public saveApproval(approval: any): void {
+    if (!this.store.governanceApprovals) this.store.governanceApprovals = [];
+    const idx = this.store.governanceApprovals.findIndex(a => a.id === approval.id);
+    if (idx >= 0) {
+      this.store.governanceApprovals[idx] = { ...this.store.governanceApprovals[idx], ...approval };
+    } else {
+      this.store.governanceApprovals.unshift(approval);
+    }
+    this.flushToDiskSync();
+
+    // Sincronizar asíncronamente con MySQL si está conectado
+    if (isRealMysqlConnected) {
+      (async () => {
+        try {
+          const db = mysqlDb;
+          const { moduleAgentApprovals } = await import('../db/schema/hrManagementSchema');
+          await db.insert(moduleAgentApprovals).values({
+            id: approval.id,
+            empresaId: approval.empresaId,
+            modulo: approval.modulo as any,
+            agenteNombre: approval.agenteNombre || 'Agente Especialista',
+            operacionTipo: approval.operacionTipo || 'OPERACION_AUTONOMA',
+            titulo: approval.titulo || 'Solicitud de Aprobación Agéntica',
+            descripcion: approval.descripcion || '',
+            datosOperacion: approval.datosOperacion || {},
+            impactoFinancieroClp: String(approval.impactoFinancieroClp || approval.impactoFinanciero || 0),
+            nivelRiesgo: (approval.nivelRiesgo || approval.riesgoNivel || 'MEDIO') as any,
+            estado: approval.estado as any,
+            solicitadoEn: approval.solicitadoEn ? new Date(approval.solicitadoEn) : new Date(),
+            resueltoPor: approval.resueltoPor || null,
+            resueltoEn: approval.resueltoEn ? new Date(approval.resueltoEn) : null,
+            resultadoEjecucion: approval.resultadoEjecucion || null,
+          }).onDuplicateKeyUpdate({
+            set: {
+              estado: approval.estado as any,
+              resueltoPor: approval.resueltoPor || null,
+              resueltoEn: approval.resueltoEn ? new Date(approval.resueltoEn) : null,
+              resultadoEjecucion: approval.resultadoEjecucion || null,
+            }
+          });
+        } catch (err: any) {
+          console.warn('[DiskPersistence] Error al sincronizar approval en MySQL:', err?.message);
+        }
+      })();
+    }
+  }
+
+  public getClient(empresaId: string): any | null {
+    const clean = (empresaId || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    return (this.store.clients || []).find((c: any) => {
+      const cRut = (c.rut || c.id || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      return cRut === clean || c.id === empresaId;
+    }) || null;
+  }
 }
 
 export const diskPersistence = new DiskPersistenceService();
+(globalThis as any).__diskPersistence = diskPersistence;

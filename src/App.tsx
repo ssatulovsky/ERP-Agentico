@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Navbar } from './components/Navbar';
 import { DteManager } from './components/DteManager';
 import { F29SeniorAgent } from './components/F29SeniorAgent';
@@ -22,7 +22,7 @@ import { ErpPremiaLogo } from './components/ErpPremiaLogo';
 import { CostCenterModule } from './components/CostCenterModule';
 import { ExpenseReportsModule } from './components/expenses/ExpenseReportsModule';
 import { CollaboratorExpenseMobileApp } from './components/expenses/mobile/CollaboratorExpenseMobileApp';
-import { loadClientState, saveClientState, loadPersistentState, savePersistentState } from './utils/storageService';
+import { loadClientState, saveClientState, loadPersistentState, savePersistentState, setStorageSyncErrorHandler } from './utils/storageService';
 
 import { 
   initialCompanyProfile, 
@@ -44,6 +44,7 @@ import {
   seedChequesEmitidos,
   seedDeudasFinancieras,
   seedProvisionesEgresos,
+  getInitialPayrollsForClient,
 } from './data/seedData';
 import {
   seedFixedAssets,
@@ -102,7 +103,12 @@ import {
   ProvisionEgreso,
   MedicalLeave,
   VacationRecord,
+  VacationRequest,
   AbsenteeismRecord,
+  LaborContract,
+  HrBenefit,
+  DisciplinarySanction,
+  KarinInvestigationCase,
   ExpenseReport,
 } from './types';
 import { expenseApiService } from './services/expenseApiService';
@@ -111,6 +117,12 @@ import {
   INITIAL_MEDICAL_LEAVES,
   INITIAL_VACATION_RECORDS,
   INITIAL_ABSENTEEISM,
+  INITIAL_HR_BENEFITS,
+  getInitialContractsForClient,
+  getInitialVacationsForClient,
+  getInitialMedicalLeavesForClient,
+  getInitialSanctionsForClient,
+  getInitialAbsenteeismForClient,
 } from './data/seedHrData';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { VoiceAgentDialogueModal } from './components/voice/VoiceAgentDialogueModal';
@@ -130,6 +142,7 @@ import {
   ErpModuleId,
 } from './services/securityRbacService';
 import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
+import { getStoredAuthToken, erpFetch } from './services/apiClient';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -261,6 +274,18 @@ export default function App() {
   });
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
+  // Alerta de sincronización o persistencia fallida con el servidor (Punto C: jamás silenciar fallos)
+  const [serverSyncError, setServerSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStorageSyncErrorHandler((err, ctx) => {
+      setServerSyncError(`Error al sincronizar ${ctx.key} con el servidor: ${err.message}`);
+    });
+    return () => {
+      setStorageSyncErrorHandler(null);
+    };
+  }, []);
+
   // Core Data States with Multi-Tenant Local Persistence (Sin datos fijos, almacenamiento real segregado)
   const [dtes, setDtes] = useState<DteDocument[]>(() => {
     const isDemo = activeClient.id === 'client-retail-01' || (activeClient as any)?.isDemo;
@@ -294,8 +319,8 @@ export default function App() {
     };
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
-    const isDemo = activeClient.id === 'client-retail-01' || (activeClient as any)?.isDemo;
-    return loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', isDemo ? seedPayrolls : []);
+    const raw = loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', []);
+    return (!raw || raw.length === 0) ? getInitialPayrollsForClient(activeClientId) : raw;
   });
   const [leases, setLeases] = useState<LeaseContract[]>(() => {
     return loadClientState<LeaseContract[]>(activeClientId, 'leases', seedLeases);
@@ -331,15 +356,45 @@ export default function App() {
     return loadClientState<ProvisionEgreso[]>(activeClientId, 'provisionesEgresos', seedProvisionesEgresos);
   });
 
-  // HR & People States (Licencias Médicas, Vacaciones y Ausentismo persistidos por cliente)
+  // HR & People States (Contratos, Licencias Médicas, Vacaciones, Sanciones y Ausentismo con integridad relacional por empresa)
+  const [contracts, setContracts] = useState<LaborContract[]>(() => {
+    const raw = loadClientState<LaborContract[]>(activeClientId, 'contracts', []);
+    return (!raw || raw.length === 0) ? getInitialContractsForClient(activeClientId) : raw;
+  });
   const [medicalLeaves, setMedicalLeaves] = useState<MedicalLeave[]>(() => {
-    return loadClientState<MedicalLeave[]>(activeClientId, 'medicalLeaves', INITIAL_MEDICAL_LEAVES);
+    return loadClientState<MedicalLeave[]>(activeClientId, 'medicalLeaves', getInitialMedicalLeavesForClient(activeClientId));
   });
   const [vacations, setVacations] = useState<VacationRecord[]>(() => {
-    return loadClientState<VacationRecord[]>(activeClientId, 'vacations', INITIAL_VACATION_RECORDS);
+    const raw = loadClientState<VacationRecord[]>(activeClientId, 'vacations', []);
+    return (!raw || raw.length === 0) ? getInitialVacationsForClient(activeClientId) : raw;
   });
   const [absenteeismList, setAbsenteeismList] = useState<AbsenteeismRecord[]>(() => {
-    return loadClientState<AbsenteeismRecord[]>(activeClientId, 'absenteeismList', INITIAL_ABSENTEEISM);
+    return loadClientState<AbsenteeismRecord[]>(activeClientId, 'absenteeismList', getInitialAbsenteeismForClient(activeClientId));
+  });
+  const [sanctions, setSanctions] = useState<DisciplinarySanction[]>(() => {
+    return loadClientState<DisciplinarySanction[]>(activeClientId, 'sanctions', getInitialSanctionsForClient(activeClientId));
+  });
+  const [benefits, setBenefits] = useState<HrBenefit[]>(() => {
+    return loadClientState<HrBenefit[]>(activeClientId, 'benefits', INITIAL_HR_BENEFITS);
+  });
+  const [karinCases, setKarinCases] = useState<KarinInvestigationCase[]>(() => {
+    return loadClientState<KarinInvestigationCase[]>(activeClientId, 'karinCases', [
+      {
+        id: 'karin-01',
+        empresaId: activeClientId,
+        folioCaso: 'KARIN-2026-004',
+        fechaDenuncia: '2026-08-20',
+        tipoAcoso: 'ACOSO_LABORAL',
+        denuncianteRutAnonimizado: '18.***.***-2',
+        denunciadoCargo: 'Jefatura de Turno Logístico',
+        estado: 'INVESTIGACION_INTERNA',
+        medidasDeResguardo: 'Separación inmediata de turnos y cambio de dependencia física preventiva.',
+        plazoLegalDias: 30,
+        fechaLimiteInforme: '2026-09-19',
+        responsableInvestigacion: 'Comité Paritario & Oficial de Cumplimiento RRHH',
+        conclusionesYAcciones: 'Entrevistas de testigos en curso bajo estricta confidencialidad según Ley 21.643.',
+      }
+    ]);
   });
 
   // Efectos de Sincronización Automática en LocalStorage por Cliente
@@ -417,9 +472,27 @@ export default function App() {
 
   useEffect(() => {
     if (activeClientId) {
-      saveClientState(activeClientId, 'absenteeismList', absenteeismList);
+      saveClientState(activeClientId, 'contracts', contracts);
     }
-  }, [activeClientId, absenteeismList]);
+  }, [activeClientId, contracts]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'sanctions', sanctions);
+    }
+  }, [activeClientId, sanctions]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'benefits', benefits);
+    }
+  }, [activeClientId, benefits]);
+
+  useEffect(() => {
+    if (activeClientId) {
+      saveClientState(activeClientId, 'karinCases', karinCases);
+    }
+  }, [activeClientId, karinCases]);
 
   // Parámetros Generales de Sistema ERP (Art. 16 Código Tributario, Moneda, Cuentas de Cierre y Redondeo)
   const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(() => {
@@ -452,30 +525,635 @@ export default function App() {
     }));
   };
 
-  // Inventory & Multi-Warehouse States (Agente de Inventarios & Bodegas)
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(seedWarehouses);
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(seedInventoryItems);
-  const [transfers, setTransfers] = useState<WarehouseTransfer[]>(seedTransfers);
-  const [requisitions, setRequisitions] = useState<ReplenishmentRequisition[]>(seedRequisitions);
+  // Inventory & Multi-Warehouse States (Agente de Inventarios & Bodegas - Servidor Fuente de Verdad)
+  const isDefaultRetail = activeClientId === 'client-retail-01';
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(() =>
+    loadClientState<Warehouse[]>(activeClientId, 'warehouses', isDefaultRetail ? seedWarehouses : [])
+  );
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(() =>
+    loadClientState<InventoryItem[]>(activeClientId, 'inventoryItems', isDefaultRetail ? seedInventoryItems : [])
+  );
+  const [transfers, setTransfers] = useState<WarehouseTransfer[]>(() =>
+    loadClientState<WarehouseTransfer[]>(activeClientId, 'transfers', isDefaultRetail ? seedTransfers : [])
+  );
+  const [requisitions, setRequisitions] = useState<ReplenishmentRequisition[]>(() =>
+    loadClientState<ReplenishmentRequisition[]>(activeClientId, 'requisitions', isDefaultRetail ? seedRequisitions : [])
+  );
 
   // Fixed Assets (Responsable de la Administración del Activo Fijo - NIC 16)
-  const [fixedAssets, setFixedAssets] = useState<FixedAsset[]>(seedFixedAssets);
+  const [fixedAssets, setFixedAssets] = useState<FixedAsset[]>(() =>
+    loadClientState<FixedAsset[]>(activeClientId, 'fixedAssets', isDefaultRetail ? seedFixedAssets : [])
+  );
 
   // Production Orders & Costing (Agente de Producción o Costeo - NIC 2)
-  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(seedProductionOrders);
-  const [cifPoolItems, setCifPoolItems] = useState<IndirectCostPoolItem[]>(seedCifPool);
+  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(() =>
+    loadClientState<ProductionOrder[]>(activeClientId, 'productionOrders', isDefaultRetail ? seedProductionOrders : [])
+  );
+  const [cifPoolItems, setCifPoolItems] = useState<IndirectCostPoolItem[]>(() =>
+    loadClientState<IndirectCostPoolItem[]>(activeClientId, 'cifPoolItems', isDefaultRetail ? seedCifPool : [])
+  );
 
   // Production Budgets & Warehouse Withdrawals (Presupuestos & Vales a OP)
-  const [productionBudgets, setProductionBudgets] = useState<ProductionBudget[]>(SEED_PRODUCTION_BUDGETS);
-  const [warehouseWithdrawals, setWarehouseWithdrawals] = useState<WarehouseWithdrawal[]>(SEED_WAREHOUSE_WITHDRAWALS);
+  const [productionBudgets, setProductionBudgets] = useState<ProductionBudget[]>(() =>
+    loadClientState<ProductionBudget[]>(activeClientId, 'productionBudgets', isDefaultRetail ? SEED_PRODUCTION_BUDGETS : [])
+  );
+  const [warehouseWithdrawals, setWarehouseWithdrawals] = useState<WarehouseWithdrawal[]>(() =>
+    loadClientState<WarehouseWithdrawal[]>(activeClientId, 'warehouseWithdrawals', isDefaultRetail ? SEED_WAREHOUSE_WITHDRAWALS : [])
+  );
 
   // Mini-Empresas & Centros de Costo Descentralizados
-  const [costCenters, setCostCenters] = useState<CostCenterMaster[]>(SEED_COST_CENTERS);
+  const [costCenters, setCostCenters] = useState<CostCenterMaster[]>(() =>
+    loadClientState<CostCenterMaster[]>(activeClientId, 'costCenters', isDefaultRetail ? SEED_COST_CENTERS : [])
+  );
 
   // Recetas / Escandallos (BOM) & Abastecimiento Autónomo (RFQ)
-  const [recipes, setRecipes] = useState<ProductRecipe[]>(SEED_RECIPES);
-  const [autoRfqConfig, setAutoRfqConfig] = useState<AutoRfqRuleConfig>(DEFAULT_AUTO_RFQ_CONFIG);
-  const [autoRfqs, setAutoRfqs] = useState<AutoGeneratedRfq[]>(SEED_AUTO_RFQS);
+  const [recipes, setRecipes] = useState<ProductRecipe[]>(() =>
+    loadClientState<ProductRecipe[]>(activeClientId, 'recipes', isDefaultRetail ? SEED_RECIPES : [])
+  );
+  const [autoRfqConfig, setAutoRfqConfig] = useState<AutoRfqRuleConfig>(() =>
+    loadClientState<AutoRfqRuleConfig>(activeClientId, 'autoRfqConfig', DEFAULT_AUTO_RFQ_CONFIG)
+  );
+  const [autoRfqs, setAutoRfqs] = useState<AutoGeneratedRfq[]>(() =>
+    loadClientState<AutoGeneratedRfq[]>(activeClientId, 'autoRfqs', isDefaultRetail ? SEED_AUTO_RFQS : [])
+  );
+
+  // ============================================================================
+  // PERSISTENCIA DE DTE, REMUNERACIONES Y BANCOS EN EL SERVIDOR (FUENTE DE VERDAD)
+  // ============================================================================
+  const getAuthHeaders = useCallback((): Record<string, string> => {
+    const token = getStoredAuthToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }, []);
+
+  const persistDtesToServer = useCallback((updatedDtes: DteDocument[], replace = false) => {
+    if (typeof window === 'undefined' || !activeClientId) return;
+    erpFetch('/api/rcv/dtes', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ empresaId: activeClientId, dtes: updatedDtes, replace }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        console.error('[App] Error al persistir DTEs en servidor:', err);
+        setServerSyncError(`Error al guardar DTEs en el servidor: ${err.message}`);
+      });
+  }, [activeClientId, getAuthHeaders]);
+
+  const persistPayrollsToServer = useCallback((updatedPayrolls: EmployeePayroll[]) => {
+    if (typeof window === 'undefined' || !activeClientId) return;
+    erpFetch('/api/payroll', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ empresaId: activeClientId, payrolls: updatedPayrolls, replace: true }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        console.error('[App] Error al persistir nómina en servidor:', err);
+        setServerSyncError(`Error al guardar remuneraciones en el servidor: ${err.message}`);
+      });
+  }, [activeClientId, getAuthHeaders]);
+
+  const persistBankAccountsToServer = useCallback((updatedAccounts: BankAccountConfig[]) => {
+    if (typeof window === 'undefined' || !activeClientId) return;
+    erpFetch('/api/modules/banking/accounts', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ empresaId: activeClientId, accounts: updatedAccounts, replace: true }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        console.error('[App] Error al persistir cuentas bancarias:', err);
+        setServerSyncError(`Error al guardar cuentas bancarias en el servidor: ${err.message}`);
+      });
+  }, [activeClientId, getAuthHeaders]);
+
+  const persistBankMovementsToServer = useCallback((updatedMovs: BankStatementMovement[], replace = false) => {
+    if (typeof window === 'undefined' || !activeClientId) return;
+    erpFetch('/api/modules/banking/transactions', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ empresaId: activeClientId, movements: updatedMovs, replace }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        console.error('[App] Error al persistir cartola bancaria:', err);
+        setServerSyncError(`Error al guardar movimientos bancarios en el servidor: ${err.message}`);
+      });
+  }, [activeClientId, getAuthHeaders]);
+
+  const handleUpdateBankAccounts = useCallback((newAccounts: BankAccountConfig[]) => {
+    setBankAccounts(newAccounts);
+    saveClientState(activeClientId, 'bankAccounts', newAccounts);
+    persistBankAccountsToServer(newAccounts);
+  }, [activeClientId, persistBankAccountsToServer]);
+
+  const handleUpdateBankMovements = useCallback((newMovs: BankStatementMovement[]) => {
+    setBankMovements(newMovs);
+    saveClientState(activeClientId, 'bankMovements', newMovs);
+    persistBankMovementsToServer(newMovs);
+  }, [activeClientId, persistBankMovementsToServer]);
+
+  // Carga reactiva de fuente de verdad del servidor
+  const syncCompanyDataFromServer = useCallback((clientId: string) => {
+    if (typeof window === 'undefined' || !clientId) return;
+    const encId = encodeURIComponent(clientId);
+    const headers = getAuthHeaders();
+
+    // 1. DTEs (Facturación / RCV)
+    erpFetch(`/api/rcv/dtes?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data)) {
+          setDtes(res.data);
+          saveClientState(clientId, 'dtes', res.data);
+        }
+      })
+      .catch((err) => {
+        console.error('[ServerSync] Error al cargar DTEs:', err);
+        setServerSyncError(`Error al cargar DTEs del servidor: ${err.message}`);
+      });
+
+    // 2. Remuneraciones / Nómina (RR.HH.)
+    erpFetch(`/api/payroll?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data)) {
+          setPayrolls(res.data);
+          saveClientState(clientId, 'payrolls', res.data);
+        }
+      })
+      .catch((err) => {
+        console.error('[ServerSync] Error al cargar remuneraciones:', err);
+        setServerSyncError(`Error al cargar remuneraciones del servidor: ${err.message}`);
+      });
+
+    // 3. Cuentas Bancarias
+    erpFetch(`/api/modules/banking/accounts?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data)) {
+          setBankAccounts(res.data);
+          saveClientState(clientId, 'bankAccounts', res.data);
+        }
+      })
+      .catch((err) => {
+        console.error('[ServerSync] Error al cargar cuentas bancarias:', err);
+        setServerSyncError(`Error al cargar cuentas bancarias del servidor: ${err.message}`);
+      });
+
+    // 4. Movimientos Bancarios (Cartola)
+    erpFetch(`/api/modules/banking/transactions?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data)) {
+          const filtered = res.data.filter((m: any) => !m.id?.startsWith('bmov-'));
+          setBankMovements(filtered);
+          saveClientState(clientId, 'bankMovements', filtered);
+        }
+      })
+      .catch((err) => {
+        console.error('[ServerSync] Error al cargar cartola bancaria:', err);
+        setServerSyncError(`Error al cargar movimientos bancarios del servidor: ${err.message}`);
+      });
+
+    // 5. Inventario WMS
+    erpFetch(`/api/modules/wms/inventory?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setInventoryItems(res.data);
+          saveClientState(clientId, 'inventoryItems', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar inventario del servidor: ${err.message}`);
+      });
+
+    // 6. Bodegas WMS
+    erpFetch(`/api/modules/wms/warehouses?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setWarehouses(res.data);
+          saveClientState(clientId, 'warehouses', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar bodegas del servidor: ${err.message}`);
+      });
+
+    // 7. Activos Fijos
+    erpFetch(`/api/modules/fixed-assets?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setFixedAssets(res.data);
+          saveClientState(clientId, 'fixedAssets', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar activos fijos del servidor: ${err.message}`);
+      });
+
+    // 8. Órdenes de Producción
+    erpFetch(`/api/modules/production/orders?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setProductionOrders(res.data);
+          saveClientState(clientId, 'productionOrders', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar órdenes de producción del servidor: ${err.message}`);
+      });
+
+    // 9. Recetas de Producción
+    erpFetch(`/api/modules/production/recipes?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setRecipes(res.data);
+          saveClientState(clientId, 'recipes', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar recetas del servidor: ${err.message}`);
+      });
+
+    // 10. Presupuestos de Producción
+    erpFetch(`/api/modules/production/budgets?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setProductionBudgets(res.data);
+          saveClientState(clientId, 'productionBudgets', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar presupuestos del servidor: ${err.message}`);
+      });
+
+    // 11. Retiros de Bodega
+    erpFetch(`/api/modules/production/withdrawals?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setWarehouseWithdrawals(res.data);
+          saveClientState(clientId, 'warehouseWithdrawals', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar retiros del servidor: ${err.message}`);
+      });
+
+    // 12. Centros de Costo
+    erpFetch(`/api/modules/cost-centers?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setCostCenters(res.data);
+          saveClientState(clientId, 'costCenters', res.data);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar centros de costo del servidor: ${err.message}`);
+      });
+
+    // 13. RFQ Config & Solicitudes
+    erpFetch(`/api/modules/production/rfqs?empresaId=${encId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res.success) {
+          if (res.config) {
+            setAutoRfqConfig(res.config);
+            saveClientState(clientId, 'autoRfqConfig', res.config);
+          }
+          if (Array.isArray(res.rfqs) && res.rfqs.length > 0) {
+            setAutoRfqs(res.rfqs);
+            saveClientState(clientId, 'autoRfqs', res.rfqs);
+          }
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al cargar RFQs del servidor: ${err.message}`);
+      });
+  }, [getAuthHeaders]);
+
+  // Carga y sincronización inicial y reactiva desde el Servidor (Fuente de Verdad)
+  useEffect(() => {
+    if (activeClientId) {
+      syncCompanyDataFromServer(activeClientId);
+    }
+  }, [activeClientId, syncCompanyDataFromServer]);
+
+  // Handlers sincronizados con Persistencia en Servidor (Fuente de Verdad)
+  const handleUpdateWarehouses = (newWarehouses: Warehouse[]) => {
+    setWarehouses(newWarehouses);
+    saveClientState(activeClientId, 'warehouses', newWarehouses);
+    fetch('/api/modules/wms/warehouses/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, warehouses: newWarehouses }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar bodegas en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateInventoryItems = (newItems: InventoryItem[]) => {
+    setInventoryItems(newItems);
+    saveClientState(activeClientId, 'inventoryItems', newItems);
+    fetch('/api/modules/wms/inventory/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, items: newItems }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar inventario en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateTransfers = (newTransfers: WarehouseTransfer[]) => {
+    setTransfers(newTransfers);
+    saveClientState(activeClientId, 'transfers', newTransfers);
+  };
+
+  const handleUpdateRequisitions = (newReqs: ReplenishmentRequisition[]) => {
+    setRequisitions(newReqs);
+    saveClientState(activeClientId, 'requisitions', newReqs);
+  };
+
+  const handleAddAsset = (asset: FixedAsset) => {
+    const updated = [asset, ...fixedAssets];
+    setFixedAssets(updated);
+    saveClientState(activeClientId, 'fixedAssets', updated);
+    fetch('/api/modules/fixed-assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...asset, empresaId: activeClientId }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar activo fijo en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateAsset = (asset: FixedAsset) => {
+    const updated = fixedAssets.map((a) => (a.id === asset.id ? asset : a));
+    setFixedAssets(updated);
+    saveClientState(activeClientId, 'fixedAssets', updated);
+    fetch('/api/modules/fixed-assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...asset, empresaId: activeClientId }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al actualizar activo fijo en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleDeleteAsset = (assetId: string) => {
+    const updated = fixedAssets.filter((a) => a.id !== assetId);
+    setFixedAssets(updated);
+    saveClientState(activeClientId, 'fixedAssets', updated);
+    fetch('/api/modules/fixed-assets/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, assets: updated }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al eliminar activo fijo en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleAddProductionOrder = (order: ProductionOrder) => {
+    const updated = [order, ...productionOrders];
+    setProductionOrders(updated);
+    saveClientState(activeClientId, 'productionOrders', updated);
+    fetch('/api/modules/production/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...order, empresaId: activeClientId }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar orden de producción en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateProductionOrder = (order: ProductionOrder) => {
+    const updated = productionOrders.map((o) => (o.id === order.id ? order : o));
+    setProductionOrders(updated);
+    saveClientState(activeClientId, 'productionOrders', updated);
+    fetch('/api/modules/production/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...order, empresaId: activeClientId }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al actualizar orden de producción en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateRecipes = (newRecipes: ProductRecipe[]) => {
+    setRecipes(newRecipes);
+    saveClientState(activeClientId, 'recipes', newRecipes);
+    fetch('/api/modules/production/recipes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, recipes: newRecipes }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar recetas en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateAutoRfqConfig = (newConfig: AutoRfqRuleConfig) => {
+    setAutoRfqConfig(newConfig);
+    saveClientState(activeClientId, 'autoRfqConfig', newConfig);
+    fetch('/api/modules/production/rfqs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, config: newConfig }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar config RFQ en el servidor: ${err.message}`);
+      });
+  };
+
+  const handleUpdateAutoRfqs = (newRfqs: AutoGeneratedRfq[]) => {
+    setAutoRfqs(newRfqs);
+    saveClientState(activeClientId, 'autoRfqs', newRfqs);
+    fetch('/api/modules/production/rfqs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresaId: activeClientId, rfqs: newRfqs }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((err) => {
+        setServerSyncError(`Error al guardar RFQs en el servidor: ${err.message}`);
+      });
+  };
 
   // Select active client
   const handleSelectActiveClient = (clientId: string) => {
@@ -491,7 +1169,8 @@ export default function App() {
     const isDemo = selected.id === 'client-retail-01' || (selected as any)?.isDemo;
 
     const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', isDemo ? seedDtes : []);
-    const loadedPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', isDemo ? seedPayrolls : []);
+    const rawPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', []);
+    const loadedPayrolls = (!rawPayrolls || rawPayrolls.length === 0) ? getInitialPayrollsForClient(clientId) : rawPayrolls;
     const loadedMovements = loadClientState<CashFlowMovement[]>(clientId, 'movements', seedMovements);
     const loadedBanks = loadClientState<BankAccountConfig[]>(clientId, 'bankAccounts', seedBankAccounts);
     const loadedBankMovs = loadClientState<BankStatementMovement[]>(clientId, 'bankMovements', seedBankMovements);
@@ -499,9 +1178,14 @@ export default function App() {
     const loadedChequesEmit = loadClientState<ChequeEmitido[]>(clientId, 'chequesEmitidos', seedChequesEmitidos);
     const loadedDeudas = loadClientState<DeudaFinanciera[]>(clientId, 'deudasFinancieras', seedDeudasFinancieras);
     const loadedProvisiones = loadClientState<ProvisionEgreso[]>(clientId, 'provisionesEgresos', seedProvisionesEgresos);
-    const loadedMedicalLeaves = loadClientState<MedicalLeave[]>(clientId, 'medicalLeaves', INITIAL_MEDICAL_LEAVES);
-    const loadedVacations = loadClientState<VacationRecord[]>(clientId, 'vacations', INITIAL_VACATION_RECORDS);
-    const loadedAbsenteeism = loadClientState<AbsenteeismRecord[]>(clientId, 'absenteeismList', INITIAL_ABSENTEEISM);
+    const rawContracts = loadClientState<LaborContract[]>(clientId, 'contracts', []);
+    const loadedContracts = (!rawContracts || rawContracts.length === 0) ? getInitialContractsForClient(clientId) : rawContracts;
+    const loadedMedicalLeaves = loadClientState<MedicalLeave[]>(clientId, 'medicalLeaves', getInitialMedicalLeavesForClient(clientId));
+    const rawVacations = loadClientState<VacationRecord[]>(clientId, 'vacations', []);
+    const loadedVacations = (!rawVacations || rawVacations.length === 0) ? getInitialVacationsForClient(clientId) : rawVacations;
+    const loadedAbsenteeism = loadClientState<AbsenteeismRecord[]>(clientId, 'absenteeismList', getInitialAbsenteeismForClient(clientId));
+    const loadedSanctions = loadClientState<DisciplinarySanction[]>(clientId, 'sanctions', getInitialSanctionsForClient(clientId));
+    const loadedBenefits = loadClientState<HrBenefit[]>(clientId, 'benefits', INITIAL_HR_BENEFITS);
 
     setDtes(loadedDtes);
     setPayrolls(loadedPayrolls);
@@ -512,9 +1196,45 @@ export default function App() {
     setChequesEmitidos(loadedChequesEmit);
     setDeudasFinancieras(loadedDeudas);
     setProvisionesEgresos(loadedProvisiones);
+    setContracts(loadedContracts);
     setMedicalLeaves(loadedMedicalLeaves);
     setVacations(loadedVacations);
     setAbsenteeismList(loadedAbsenteeism);
+    setSanctions(loadedSanctions);
+    setBenefits(loadedBenefits);
+
+    // Carga segregada y persistente de WMS, Activo Fijo y Producción (Servidor Fuente de Verdad)
+    const isRetailClient = clientId === 'client-retail-01';
+    const loadedWarehouses = loadClientState<Warehouse[]>(clientId, 'warehouses', isRetailClient ? seedWarehouses : []);
+    const loadedItems = loadClientState<InventoryItem[]>(clientId, 'inventoryItems', isRetailClient ? seedInventoryItems : []);
+    const loadedTransfers = loadClientState<WarehouseTransfer[]>(clientId, 'transfers', isRetailClient ? seedTransfers : []);
+    const loadedRequisitions = loadClientState<ReplenishmentRequisition[]>(clientId, 'requisitions', isRetailClient ? seedRequisitions : []);
+    const loadedFixedAssets = loadClientState<FixedAsset[]>(clientId, 'fixedAssets', isRetailClient ? seedFixedAssets : []);
+    const loadedProductionOrders = loadClientState<ProductionOrder[]>(clientId, 'productionOrders', isRetailClient ? seedProductionOrders : []);
+    const loadedCifPool = loadClientState<IndirectCostPoolItem[]>(clientId, 'cifPoolItems', isRetailClient ? seedCifPool : []);
+    const loadedBudgets = loadClientState<ProductionBudget[]>(clientId, 'productionBudgets', isRetailClient ? SEED_PRODUCTION_BUDGETS : []);
+    const loadedWithdrawals = loadClientState<WarehouseWithdrawal[]>(clientId, 'warehouseWithdrawals', isRetailClient ? SEED_WAREHOUSE_WITHDRAWALS : []);
+    const loadedCostCenters = loadClientState<CostCenterMaster[]>(clientId, 'costCenters', isRetailClient ? SEED_COST_CENTERS : []);
+    const loadedRecipes = loadClientState<ProductRecipe[]>(clientId, 'recipes', isRetailClient ? SEED_RECIPES : []);
+    const loadedAutoRfqConfig = loadClientState<AutoRfqRuleConfig>(clientId, 'autoRfqConfig', DEFAULT_AUTO_RFQ_CONFIG);
+    const loadedAutoRfqs = loadClientState<AutoGeneratedRfq[]>(clientId, 'autoRfqs', isRetailClient ? SEED_AUTO_RFQS : []);
+
+    setWarehouses(loadedWarehouses);
+    setInventoryItems(loadedItems);
+    setTransfers(loadedTransfers);
+    setRequisitions(loadedRequisitions);
+    setFixedAssets(loadedFixedAssets);
+    setProductionOrders(loadedProductionOrders);
+    setCifPoolItems(loadedCifPool);
+    setProductionBudgets(loadedBudgets);
+    setWarehouseWithdrawals(loadedWithdrawals);
+    setCostCenters(loadedCostCenters);
+    setRecipes(loadedRecipes);
+    setAutoRfqConfig(loadedAutoRfqConfig);
+    setAutoRfqs(loadedAutoRfqs);
+
+    // Sincronización completa desde el servidor (Servidor como fuente de verdad)
+    syncCompanyDataFromServer(clientId);
 
     if (isExento) {
       setF29({
@@ -823,6 +1543,8 @@ export default function App() {
   // Handler to clear all mock/demo DTEs and start completely blank
   const handleClearAllDtes = () => {
     setDtes([]);
+    saveClientState(activeClientId, 'dtes', []);
+    persistDtesToServer([], true);
   };
 
   // Libro Diario Contable Persistente (MySQL / Drizzle ORM API)
@@ -866,14 +1588,22 @@ export default function App() {
 
   // Handlers
   const handleAddDte = (newDte: DteDocument) => {
-    setDtes(prev => [newDte, ...prev]);
+    setDtes(prev => {
+      const updated = [newDte, ...prev];
+      saveClientState(activeClientId, 'dtes', updated);
+      persistDtesToServer(updated, true);
+      return updated;
+    });
   };
 
   const handleAddMultipleDtes = (newDtes: DteDocument[], autoSyncCashFlow: boolean) => {
     setDtes(prev => {
       const existingIds = new Set(prev.map(d => d.id));
       const filtered = newDtes.filter(d => !existingIds.has(d.id));
-      return [...filtered, ...prev];
+      const updated = [...filtered, ...prev];
+      saveClientState(activeClientId, 'dtes', updated);
+      persistDtesToServer(updated, true);
+      return updated;
     });
 
     if (autoSyncCashFlow) {
@@ -902,7 +1632,12 @@ export default function App() {
   };
 
   const handleUpdateDte = (updated: DteDocument) => {
-    setDtes(prev => prev.map(d => d.id === updated.id ? updated : d));
+    setDtes(prev => {
+      const next = prev.map(d => (d.id === updated.id ? updated : d));
+      saveClientState(activeClientId, 'dtes', next);
+      persistDtesToServer(next, true);
+      return next;
+    });
 
     // Sincronización automática de Cuentas por Cobrar / Pagar con el Flujo de Caja
     setMovements(prev => prev.map(m => {
@@ -952,15 +1687,105 @@ export default function App() {
   };
 
   const handleAddEmployee = (emp: EmployeePayroll) => {
-    setPayrolls(prev => [emp, ...prev]);
+    setPayrolls(prev => {
+      const next = [emp, ...prev];
+      saveClientState(activeClientId, 'payrolls', next);
+      persistPayrollsToServer(next);
+      return next;
+    });
+
+    // Garantizar integridad relacional: auto-crear contrato laboral y registro de vacaciones
+    setContracts(prev => {
+      if (prev.some(c => c.employeeId === emp.id || c.rut === emp.rut)) return prev;
+      const newContract: LaborContract = {
+        id: `ctr-${Date.now()}`,
+        employeeId: emp.id,
+        rut: emp.rut,
+        nombreCompleto: emp.nombreCompleto,
+        nacionalidad: 'Chilena',
+        estadoCivil: 'Soltero(a)',
+        fechaNacimiento: '1990-01-01',
+        domicilio: 'Av. Providencia 1208',
+        comuna: 'Providencia',
+        cargo: emp.cargo,
+        departamento: emp.departamento,
+        tipoContrato: emp.tipoContrato === 'INDEFINIDO' ? 'INDEFINIDO' : 'PLAZO_FIJO',
+        fechaInicio: emp.fechaIngreso,
+        sueldoBase: emp.sueldoBase,
+        jornadaHorasSemanales: 40,
+        distribucionJornada: 'Lunes a Viernes de 08:30 a 17:30 hrs',
+        lugarTrabajo: 'Oficina Central / Faena Operativa',
+        gratificacionModalidad: (emp.gratificacionModalidad === 'ART_47' ? 'ART_47' : 'ART_50') as any,
+        asignacionColacion: emp.asignacionColacion || 0,
+        asignacionMovilizacion: emp.asignacionMovilizacion || 0,
+        estado: 'VIGENTE',
+        registradoDtRel: true,
+        folioRegistroDt: `DT-REL-${Date.now().toString().slice(-6)}`,
+        anexos: [],
+        clausulaConfidencialidad: true,
+        clausulaTeletrabajo: false,
+        observaciones: 'Contrato laboral registrado en la Dirección del Trabajo (Mi DT / REL)',
+      };
+      return [newContract, ...prev];
+    });
+
+    setVacations(prev => {
+      if (prev.some(v => v.employeeId === emp.id || v.rut === emp.rut)) return prev;
+      const newVacation: VacationRecord = {
+        id: `vac-${Date.now()}`,
+        employeeId: emp.id,
+        rut: emp.rut,
+        nombreCompleto: emp.nombreCompleto,
+        fechaIngreso: emp.fechaIngreso,
+        antiguedadAnos: 0,
+        diasLegalesPorAno: 15,
+        diasProgresivos: 0,
+        diasAcumuladosTotales: 15,
+        diasTomadosHistorico: 0,
+        diasDisponibles: 15,
+        periodosPendientes: 1.0,
+        alertaExcesoPeriodosArt70: false,
+        solicitudes: [],
+      };
+      return [newVacation, ...prev];
+    });
   };
 
   const handleUpdateEmployee = (updated: EmployeePayroll) => {
-    setPayrolls(prev => prev.map(p => p.id === updated.id ? updated : p));
+    setPayrolls(prev => {
+      const next = prev.map(p => (p.id === updated.id ? updated : p));
+      saveClientState(activeClientId, 'payrolls', next);
+      persistPayrollsToServer(next);
+      return next;
+    });
+    setContracts(prev => prev.map(c => {
+      if (c.employeeId === updated.id || c.rut === updated.rut) {
+        return {
+          ...c,
+          cargo: updated.cargo,
+          departamento: updated.departamento,
+          sueldoBase: updated.sueldoBase,
+          tipoContrato: updated.tipoContrato === 'INDEFINIDO' ? 'INDEFINIDO' : 'PLAZO_FIJO',
+          asignacionColacion: updated.asignacionColacion || 0,
+          asignacionMovilizacion: updated.asignacionMovilizacion || 0,
+        };
+      }
+      return c;
+    }));
   };
 
   const handleDeleteEmployee = (id: string) => {
-    setPayrolls(prev => prev.filter(p => p.id !== id));
+    setPayrolls(prev => {
+      const next = prev.filter(p => p.id !== id);
+      saveClientState(activeClientId, 'payrolls', next);
+      persistPayrollsToServer(next);
+      return next;
+    });
+    setContracts(prev => prev.filter(c => c.employeeId !== id));
+    setVacations(prev => prev.filter(v => v.employeeId !== id));
+    setMedicalLeaves(prev => prev.filter(l => l.employeeId !== id));
+    setAbsenteeismList(prev => prev.filter(a => a.employeeId !== id));
+    setSanctions(prev => prev.filter(s => s.employeeId !== id));
   };
 
   const handleAddLease = (lease: LeaseContract) => {
@@ -1045,7 +1870,7 @@ export default function App() {
     }
 
     // 3. Mark bank movement as reconciled
-    setBankMovements(prev => prev.map(m => {
+    const nextMovs = bankMovements.map(m => {
       if (m.id === movement.id) {
         return {
           ...m,
@@ -1057,7 +1882,10 @@ export default function App() {
         };
       }
       return m;
-    }));
+    });
+    setBankMovements(nextMovs);
+    saveClientState(activeClientId, 'bankMovements', nextMovs);
+    persistBankMovementsToServer(nextMovs);
   };
 
   // Bulk Register all pending Bank Novelties
@@ -1098,19 +1926,24 @@ export default function App() {
     });
 
     if (foliosToSettle.size > 0) {
-      setDtes(prevDtes => prevDtes.map(d => {
-        if (d.folio && foliosToSettle.has(d.folio)) {
-          return {
-            ...d,
-            estadoPago: d.tipoOperacion === 'VENTA' ? 'COBRADO' : 'PAGADO',
-          };
-        }
-        return d;
-      }));
+      setDtes(prevDtes => {
+        const nextDtes = prevDtes.map(d => {
+          if (d.folio && foliosToSettle.has(d.folio)) {
+            return {
+              ...d,
+              estadoPago: d.tipoOperacion === 'VENTA' ? 'COBRADO' : 'PAGADO',
+            };
+          }
+          return d;
+        });
+        saveClientState(activeClientId, 'dtes', nextDtes);
+        persistDtesToServer(nextDtes, true);
+        return nextDtes;
+      });
     }
 
     setMovements(prev => [...newCashFlowMovs, ...prev]);
-    setBankMovements(prev => prev.map(m => {
+    const nextMovs = bankMovements.map(m => {
       if (resolvedMap.has(m.id)) {
         return {
           ...m,
@@ -1121,12 +1954,17 @@ export default function App() {
         };
       }
       return m;
-    }));
+    });
+    setBankMovements(nextMovs);
+    saveClientState(activeClientId, 'bankMovements', nextMovs);
+    persistBankMovementsToServer(nextMovs);
   };
 
   // Reset demo movements to initial state with novelties for testing
   const handleResetBankMovements = () => {
     setBankMovements(seedBankMovements);
+    saveClientState(activeClientId, 'bankMovements', seedBankMovements);
+    persistBankMovementsToServer(seedBankMovements, true);
   };
 
   // Discrepancy detector for quick alerts
@@ -1151,7 +1989,12 @@ export default function App() {
         company
       );
       await handleAddEntry(asiento);
-      setDtes(prev => prev.map(d => d.tipoOperacion === 'COMPRA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+      setDtes(prev => {
+        const next = prev.map(d => (d.tipoOperacion === 'COMPRA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+        saveClientState(activeClientId, 'dtes', next);
+        persistDtesToServer(next, true);
+        return next;
+      });
     } catch (e) {
       console.warn('[VoiceAgent] Error al centralizar compras:', e);
       throw e;
@@ -1171,7 +2014,12 @@ export default function App() {
         company
       );
       await handleAddEntry(asiento);
-      setDtes(prev => prev.map(d => d.tipoOperacion === 'VENTA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+      setDtes(prev => {
+        const next = prev.map(d => (d.tipoOperacion === 'VENTA' ? { ...d, imputacionEstado: 'CENTRALIZADO' } : d));
+        saveClientState(activeClientId, 'dtes', next);
+        persistDtesToServer(next, true);
+        return next;
+      });
     } catch (e) {
       console.warn('[VoiceAgent] Error al centralizar ventas:', e);
       throw e;
@@ -1201,7 +2049,7 @@ export default function App() {
     try {
       const pending = expenseReports.filter(r => r.estado !== 'PAGADO' && r.estado !== 'RECHAZADO');
       for (const rep of pending) {
-        await expenseApiService.updateReportStatus(rep.id, 'APROBADO', 'Aprobado y centralizado por Agente Paula Carvallo');
+        await expenseApiService.updateReportStatus(rep.id, 'APROBADA', 'Aprobado y centralizado por Agente Paula Carvallo');
       }
       const data = await expenseApiService.getExpenseReports(company.rut);
       if (Array.isArray(data)) setExpenseReports(data);
@@ -1635,6 +2483,20 @@ export default function App() {
 
         {/* Content Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto bg-[#f8fafc]">
+          {serverSyncError && (
+            <div className="bg-rose-50 border-l-4 border-rose-500 p-4 mb-6 flex items-center justify-between rounded shadow-sm" role="alert">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+                <span className="text-sm font-semibold text-rose-800">{serverSyncError}</span>
+              </div>
+              <button
+                onClick={() => setServerSyncError(null)}
+                className="text-rose-600 hover:text-rose-800 text-xs font-bold px-2.5 py-1 rounded bg-rose-100 hover:bg-rose-200 cursor-pointer ml-4 transition-colors"
+              >
+                Descartar
+              </button>
+            </div>
+          )}
           {activeTab === 'security_admin' && (
             <SecurityManagementModule
               securityState={securityState}
@@ -1745,9 +2607,9 @@ export default function App() {
               firm={firm}
               activeClient={activeClient}
               bankAccounts={bankAccounts}
-              onUpdateBankAccounts={setBankAccounts}
+              onUpdateBankAccounts={handleUpdateBankAccounts}
               bankMovements={bankMovements}
-              onUpdateBankMovements={setBankMovements}
+              onUpdateBankMovements={handleUpdateBankMovements}
               cashFlowMovements={movements}
               accountingEntries={entries}
               onRegisterNovedad={handleRegisterBankNovedad}
@@ -1779,14 +2641,41 @@ export default function App() {
               payrolls={payrolls}
               onUpdateEmployee={handleUpdateEmployee}
               onAddEmployee={handleAddEmployee}
+              onDeleteEmployee={handleDeleteEmployee}
               indicators={indicators}
               onAddAccountingEntry={handleAddEntry}
+              contracts={contracts}
+              onAddContract={(contract) => setContracts(prev => [contract, ...prev])}
+              onUpdateContract={(contract) => setContracts(prev => prev.map(c => c.id === contract.id ? contract : c))}
               medicalLeaves={medicalLeaves}
               onAddMedicalLeave={(leave) => setMedicalLeaves(prev => [leave, ...prev])}
               onUpdateMedicalLeave={(leave) => setMedicalLeaves(prev => prev.map(l => l.id === leave.id ? leave : l))}
               vacations={vacations}
+              onAddVacationRequest={(employeeId, req) => setVacations(prev => prev.map(v => v.employeeId === employeeId ? { ...v, solicitudes: [req, ...(v.solicitudes || [])] } : v))}
+              onApproveVacationRequest={(employeeId, reqId) => setVacations(prev => prev.map(v => {
+                if (v.employeeId === employeeId) {
+                  const r = (v.solicitudes || []).find(s => s.id === reqId);
+                  const d = r ? r.diasHabilesTomados : 0;
+                  return {
+                    ...v,
+                    diasTomadosHistorico: (v.diasTomadosHistorico || 0) + d,
+                    diasDisponibles: Math.max(0, v.diasDisponibles - d),
+                    solicitudes: (v.solicitudes || []).map(s => s.id === reqId ? { ...s, estado: 'AUTORIZADA_RRHH' } : s)
+                  };
+                }
+                return v;
+              }))}
               absenteeismList={absenteeismList}
               onAddAbsenteeismRecord={(rec) => setAbsenteeismList(prev => [rec, ...prev])}
+              benefits={benefits}
+              onAddBenefit={(b) => setBenefits(prev => [b, ...prev])}
+              onToggleBenefit={(id) => setBenefits(prev => prev.map(b => b.id === id ? { ...b, activo: !b.activo } : b))}
+              sanctions={sanctions}
+              onAddSanction={(s) => setSanctions(prev => [s, ...prev])}
+              onUpdateSanction={(s) => setSanctions(prev => prev.map(item => item.id === s.id ? s : item))}
+              karinCases={karinCases}
+              onAddKarinCase={(k) => setKarinCases(prev => [k, ...prev])}
+              onUpdateKarinCase={(k) => setKarinCases(prev => prev.map(item => item.id === k.id ? k : item))}
             />
           )}
 
@@ -1809,26 +2698,26 @@ export default function App() {
               activeClient={activeClient}
               onUpdateClient={handleUpdateClient}
               warehouses={warehouses}
-              onUpdateWarehouses={setWarehouses}
+              onUpdateWarehouses={handleUpdateWarehouses}
               inventoryItems={inventoryItems}
-              onUpdateInventoryItems={setInventoryItems}
+              onUpdateInventoryItems={handleUpdateInventoryItems}
               transfers={transfers}
-              onUpdateTransfers={setTransfers}
+              onUpdateTransfers={handleUpdateTransfers}
               requisitions={requisitions}
-              onUpdateRequisitions={setRequisitions}
+              onUpdateRequisitions={handleUpdateRequisitions}
               onAddAccountingEntry={handleAddEntry}
               productionOrders={productionOrders}
               productionBudgets={productionBudgets}
               warehouseWithdrawals={warehouseWithdrawals}
               onAddWithdrawal={handleAddWithdrawal}
-              onQuickCreateOp={(newOp) => setProductionOrders(prev => [newOp, ...prev])}
+              onQuickCreateOp={handleAddProductionOrder}
               costCenters={costCenters}
               recipes={recipes}
-              onUpdateRecipes={setRecipes}
+              onUpdateRecipes={handleUpdateRecipes}
               autoRfqConfig={autoRfqConfig}
-              onUpdateAutoRfqConfig={setAutoRfqConfig}
+              onUpdateAutoRfqConfig={handleUpdateAutoRfqConfig}
               autoRfqs={autoRfqs}
-              onUpdateAutoRfqs={setAutoRfqs}
+              onUpdateAutoRfqs={handleUpdateAutoRfqs}
             />
           )}
 
@@ -1837,9 +2726,9 @@ export default function App() {
               currentClient={activeClient}
               assets={fixedAssets || []}
               fixedAssets={fixedAssets || []}
-              onAddAsset={(asset) => setFixedAssets(prev => [asset, ...prev])}
-              onUpdateAsset={(asset) => setFixedAssets(prev => prev.map(a => a.id === asset.id ? asset : a))}
-              onDeleteAsset={(assetId) => setFixedAssets(prev => prev.filter(a => a.id !== assetId))}
+              onAddAsset={handleAddAsset}
+              onUpdateAsset={handleUpdateAsset}
+              onDeleteAsset={handleDeleteAsset}
               onAddAccountingEntry={handleAddEntry}
               accountingEntries={entries || []}
               indicators={indicators}
@@ -1852,8 +2741,8 @@ export default function App() {
               currentClient={activeClient}
               productionOrders={productionOrders || []}
               cifPoolItems={cifPoolItems || []}
-              onAddProductionOrder={(order) => setProductionOrders(prev => [order, ...prev])}
-              onUpdateProductionOrder={(order) => setProductionOrders(prev => prev.map(o => o.id === order.id ? order : o))}
+              onAddProductionOrder={handleAddProductionOrder}
+              onUpdateProductionOrder={handleUpdateProductionOrder}
               onAddAccountingEntry={handleAddEntry}
               accountingEntries={entries || []}
               productionBudgets={productionBudgets}
@@ -1863,7 +2752,7 @@ export default function App() {
               onApproveBudgetAndGenerateOp={handleApproveBudgetAndGenerateOp}
               inventoryItems={inventoryItems}
               warehouses={warehouses}
-              onUpdateInventoryItems={setInventoryItems}
+              onUpdateInventoryItems={handleUpdateInventoryItems}
             />
           )}
 
@@ -2004,6 +2893,7 @@ export default function App() {
       {/* Voice Agent Dialogue Modal - Personas a Cargo con Interfaz de Voz */}
       {isVoiceDialogueOpen && (
         <VoiceAgentDialogueModal
+          key={voiceDialoguePersonaId}
           isOpen={isVoiceDialogueOpen}
           onClose={() => setIsVoiceDialogueOpen(false)}
           activeClientId={activeClientId}

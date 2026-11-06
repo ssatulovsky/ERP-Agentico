@@ -46,7 +46,8 @@ export const agentPersonasStorage = {
             ...def.voz,
             ...(found.voz || {}),
             pitch,
-            neuralModel: found.voz?.neuralModel || def.voz.neuralModel || 'piper',
+            neuralModel: found.voz?.neuralModel || def.voz.neuralModel || 'gemini',
+            geminiVoiceName: found.voz?.geminiVoiceName || def.voz.geminiVoiceName || (effectiveSex === 'MASCULINO' ? 'Fenrir' : 'Aoede'),
             piperVoiceId,
           },
         };

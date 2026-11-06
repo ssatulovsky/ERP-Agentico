@@ -50,6 +50,7 @@ import {
 } from '../utils/chileanAccounting';
 import { downloadPayrollPdf, downloadPayrollExcel, downloadPreviredCsv } from '../utils/reportGenerators';
 import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 
 interface PayrollManagerProps {
   payrolls: EmployeePayroll[];
@@ -125,7 +126,11 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
   const totalImponible = safePayrolls.reduce((s, p) => s + p.totalHaberesImponibles, 0);
   const totalDescuentosPrevisionales = safePayrolls.reduce((s, p) => s + p.afpMonto + p.saludMonto + p.afcTrabajadorMonto, 0);
   const totalImpuestoUnico = safePayrolls.reduce((s, p) => s + p.impuestoUnicoMonto, 0);
-  const totalAportesPatronales = safePayrolls.reduce((s, p) => s + p.sisEmpleadorMonto + p.mutualEmpleadorMonto + p.afcEmpleadorMonto, 0);
+  const totalLey21735 = safePayrolls.reduce((s, p) => s + (p.reformaPrevisionalLey21735Monto || Math.round(p.totalHaberesImponibles * 0.01)), 0);
+  const totalAportesPatronales = safePayrolls.reduce(
+    (s, p) => s + p.sisEmpleadorMonto + p.mutualEmpleadorMonto + p.afcEmpleadorMonto + (p.reformaPrevisionalLey21735Monto || Math.round(p.totalHaberesImponibles * 0.01)),
+    0
+  );
   const totalCostoEmpresa = safePayrolls.reduce((s, p) => s + p.costoTotalEmpresa, 0);
 
   const handleOpenAddModal = () => {
@@ -231,6 +236,12 @@ export const PayrollManager: React.FC<PayrollManagerProps> = ({
           </button>
         </div>
       )}
+
+      {/* Barra de Gobernanza Agéntica con Aprobación Humana */}
+      <ModuleAgentGovernanceHeader
+        moduloId="RRHH"
+        empresaId={company.rut}
+      />
 
       {/* Inter-Agent Dialogue & Supervision Banner */}
       <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white rounded-xl p-5 shadow-sm border border-blue-800/60">

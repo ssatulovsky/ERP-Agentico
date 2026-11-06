@@ -432,7 +432,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                     </button>
                   </div>
                   <p className="text-slate-600 text-[11px] leading-tight mb-2">
-                    Nómina con topes imponibles chilenos (84.3 UF para AFP/Salud y 126.6 UF para AFC).
+                    Nómina con topes imponibles chilenos 2026 (90.0 UF para AFP/Salud, 135.2 UF para AFC y 1.0% aporte patronal Ley 21.735).
                   </p>
                   <div className="bg-slate-50 p-2 rounded text-[10px] text-slate-700 space-y-0.5">
                     <div>• <strong>Gratificación Art. 50:</strong> 25% del sueldo con tope de 4.75 ingresos mínimos mensuales.</div>

@@ -70,6 +70,7 @@ import {
   DEFAULT_CENTRALIZATION_CONFIG,
   ACCESSIBLE_ACCOUNTS
 } from '../utils/siiAutomation';
+import { getStoredAuthToken } from '../services/apiClient';
 
 interface SiiAutonomousEngineModalProps {
   isOpen: boolean;
@@ -509,9 +510,43 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
     showToast(`¡Factura Folio ${updated.folio} desglosada exitosamente en ${splitPartidas.length} partidas!`);
   };
 
-  // Ejecución de Centralización de Compras o Ventas (Resumen o Detallado)
+  // Ejecución de Centralización de Compras o Ventas (Resumen o Detallado) con Certificación Agéntica
   const handleGenerateCentralization = async (tipo: 'COMPRA' | 'VENTA') => {
     try {
+      // 1. Auditoría y certificación por el Agente Autónomo Tributario SII (ReAct Loop)
+      try {
+        const authToken = getStoredAuthToken();
+        const docsCount = safeDtes.filter(d => (tipo === 'COMPRA' ? d.tipoOperacion === 'COMPRA' : d.tipoOperacion === 'VENTA') && (d.periodo === selectedPeriod || d.fechaEmision?.startsWith(selectedPeriod))).length;
+        const agentRes = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: 'TRIBUTARIO_SII',
+            modulo: 'TRIBUTARIO_SII',
+            empresaId: company.rut,
+            query: `Certificar y centralizar ${docsCount} documentos de ${tipo === 'COMPRA' ? 'Compras' : 'Ventas'} para el período ${selectedPeriod} al Libro Diario.`,
+            context: {
+              empresa: company,
+              company,
+              periodo: selectedPeriod,
+              tipo,
+              dtes: safeDtes,
+            },
+          }),
+        });
+        if (agentRes.ok) {
+          const aData = await agentRes.json();
+          if (aData.decision || aData.finalText) {
+            addLog(`🤖 [Agente Tributario SII] ${((aData.decision || aData.finalText) as string).slice(0, 150)}...`);
+          }
+        }
+      } catch (agentErr) {
+        console.warn('[SiiAutonomousEngineModal] Fallback agéntico:', agentErr);
+      }
+
       const isDetailed = centralizationConfig.modoRegistroContable === 'DETALLADO_DOCUMENTO';
 
       if (isDetailed) {

@@ -54,6 +54,8 @@ import type {
   RfqSupplierQuoteItem
 } from '../types/commercialProcurement';
 import { CompanyProfile, ClientCompany } from '../types';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
+import { getStoredAuthToken } from '../services/apiClient';
 
 interface CommercialProcurementAgentModuleProps {
   company: CompanyProfile;
@@ -147,7 +149,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
       });
       const data = await res.json();
       if (data.success) {
-        showNotification(`Recordatorio formal emitido con éxito a ${supplierName} (Email/WhatsApp).`);
+        showNotification(`Recordatorio registrado internamente para ${supplierName} (sin envío de correo externo configurado).`);
         loadState();
       } else {
         alert(data.error || 'Error al enviar recordatorio');
@@ -166,9 +168,46 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
     }
     setActionLoadingId(`award-${winningSupplierRut}`);
     try {
+      const authToken = getStoredAuthToken();
+
+      // Evaluación previa por el motor agéntico de gobernanza
+      let agentApprovalMsg = '';
+      try {
+        const agentRes = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: 'COMERCIAL_COMPRAS',
+            modulo: 'COMERCIAL_COMPRAS',
+            empresaId: activeClientId,
+            query: `Adjudicar licitación ${rfqId} al proveedor ${supplierName} (${winningSupplierRut}) y emitir orden de compra formal con gobernanza humana.`,
+            context: {
+              company,
+              rfqId,
+              winningSupplierRut,
+              supplierName,
+            },
+          }),
+        });
+        if (agentRes.ok) {
+          const aData = await agentRes.json();
+          if (aData.approvalRequired) {
+            agentApprovalMsg = ` [Gobernanza Humana #${aData.approvalDetails?.id?.slice(-6) || 'PEND'} requerida por monto]`;
+          }
+        }
+      } catch (err) {
+        console.warn('[CommercialProcurement] Advertencia en verificación agéntica de OC:', err);
+      }
+
       const res = await fetch('/api/commercial-procurement/rfq/award', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
           empresaId: activeClientId,
           rfqId,
@@ -178,7 +217,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
       });
       const data = await res.json();
       if (data.success) {
-        showNotification(data.message || `¡Licitación adjudicada con éxito a ${supplierName}!`);
+        showNotification((data.message || `¡Licitación adjudicada con éxito a ${supplierName}!`) + agentApprovalMsg);
         loadState();
       } else {
         alert(data.error || 'Error al adjudicar licitación');
@@ -389,7 +428,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
     }
   };
 
-  // Acción: Consulta IA con Esteban Morales
+  // Acción: Consulta Agéntica con Esteban Morales (Bucle ReAct)
   const handleSendChat = async () => {
     if (!userQuery.trim() || isQueryingAi) return;
     const userText = userQuery.trim();
@@ -403,31 +442,69 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
     setIsQueryingAi(true);
 
     try {
-      const res = await fetch('/api/commercial-procurement/ai-advisor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          empresaId: activeClientId,
-          prompt: userText,
-          companyProfile: company
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setChatMessages([
-          ...newMsgs,
-          { role: 'assistant', content: data.text, timestamp: new Date().toLocaleTimeString('es-CL') }
-        ]);
-      } else {
-        setChatMessages([
-          ...newMsgs,
-          {
-            role: 'assistant',
-            content: 'Estimado, como Gerente Comercial y de Aprovisionamiento he analizado la situación: ' + (data.error || 'Operación en curso.'),
-            timestamp: new Date().toLocaleTimeString('es-CL')
+      const authToken = getStoredAuthToken();
+      let assistantText = '';
+
+      // 1. Invocar al Agente Autónomo Especialista con ReAct y Function Calling
+      try {
+        const agentRes = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: 'COMERCIAL_COMPRAS',
+            modulo: 'COMERCIAL_COMPRAS',
+            agentRole: 'Esteban Morales - Gerente Comercial y de Abastecimiento',
+            empresaId: activeClientId,
+            query: userText,
+            context: {
+              company,
+              empresa: company,
+              rfqs: state?.rfqs || [],
+              purchaseOrders: state?.purchaseOrders || [],
+            },
+          }),
+        });
+
+        if (agentRes.ok) {
+          const agentData = await agentRes.json();
+          assistantText = agentData.decision || agentData.finalText || '';
+          if (agentData.approvalRequired) {
+            assistantText += `\n\n⚠️ *Gobernanza Humana Requerida:* Solicitud #${agentData.approvalDetails?.id?.slice(-6) || 'PEND'} creada para autorización de Administrador.`;
           }
-        ]);
+        }
+      } catch (agentErr) {
+        console.warn('[CommercialProcurement] Fallback de agente a ai-advisor:', agentErr);
       }
+
+      // 2. Fallback al asesor comercial si no hubo respuesta del bucle agéntico
+      if (!assistantText) {
+        const res = await fetch('/api/commercial-procurement/ai-advisor', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            empresaId: activeClientId,
+            prompt: userText,
+            companyProfile: company
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.text) {
+          assistantText = data.text;
+        } else {
+          assistantText = 'Estimado, como Gerente Comercial y de Aprovisionamiento he analizado la situación: ' + (data.error || 'Operación en curso.');
+        }
+      }
+
+      setChatMessages([
+        ...newMsgs,
+        { role: 'assistant', content: assistantText, timestamp: new Date().toLocaleTimeString('es-CL') }
+      ]);
     } catch (e: any) {
       setChatMessages([
         ...newMsgs,
@@ -444,6 +521,12 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
 
   return (
     <div className="space-y-6">
+      {/* Gobernanza Agéntica del Módulo Comercial & Compras (Esteban Morales) */}
+      <ModuleAgentGovernanceHeader
+        moduloId="COMERCIAL_COMPRAS"
+        empresaId={activeClientId || company.id}
+      />
+
       {/* Banner Principal del Agente Senior */}
       <div className="bg-gradient-to-r from-slate-900 via-sky-950 to-blue-900 text-white rounded-2xl shadow-xl border border-sky-500/30 p-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />

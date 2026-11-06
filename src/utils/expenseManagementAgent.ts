@@ -6,6 +6,7 @@ import {
   ExpenseCategory,
   ExpenseDocumentType,
   AccountingEntry,
+  AccountingEntryLine,
   HierarchicalAccountItem,
 } from '../types';
 

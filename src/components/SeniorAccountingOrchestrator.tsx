@@ -22,6 +22,7 @@ import {
   Building2,
   Landmark,
   ShieldCheck,
+  ShieldAlert,
   Download,
   Info,
   Calendar,
@@ -87,6 +88,7 @@ import {
   SystemGeneralParameters,
   FinancialStatementNote,
   ExpenseReport,
+  TipoDocumentoRespaldo,
 } from '../types';
 import { generateExpenseAccountingEntry } from '../utils/expenseManagementAgent';
 import { expenseApiService } from '../services/expenseApiService';
@@ -111,6 +113,7 @@ import {
   type AuxiliaryRangedSummaryRow,
   type AuxiliaryBookReportPayload,
 } from '../utils/reportGenerators';
+import { getStoredAuthToken } from '../services/apiClient';
 import {
   CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS,
   buildOfficial8ColumnBalance,
@@ -158,6 +161,7 @@ import { CashFlowIndirectView } from './accounting/CashFlowIndirectView';
 import { SearchableAccountSelect } from './accounting/SearchableAccountSelect';
 import { SearchableAuxiliarySelect, type AuxiliaryOption } from './accounting/SearchableAuxiliarySelect';
 import { AuxiliaryManagerModal } from './accounting/AuxiliaryManagerModal';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 import { ExtraordinaryFiscalYearReopenModal } from './accounting/ExtraordinaryFiscalYearReopenModal';
 import { EditAccountingEntryModal } from './accounting/EditAccountingEntryModal';
 import { SEED_COST_CENTERS } from '../data/seedCostCenters';
@@ -213,7 +217,7 @@ interface SeniorAccountingOrchestratorProps {
 
 export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestratorProps> = ({
   company,
-  onUpdateCompany = () => {},
+  onUpdateCompany = (_updated?: Partial<CompanyProfile>) => {},
   firm,
   indicators,
   entries = [],
@@ -1296,106 +1300,89 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     setIsAiLoading(true);
 
     try {
-      const response = await fetch('/api/accounting/senior-orchestrator', {
+      const authToken = getStoredAuthToken();
+      // Invocar motor agéntico real con bucle ReAct y Function Calling
+      const response = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
-          empresa: company,
-          query: rawGlosaInput,
-          mode: 'route_glosa',
-          rawGlosa: rawGlosaInput,
-          monto: rawMontoInput,
-          indicators,
+          module: 'CONTABILIDAD',
+          modulo: 'CONTABILIDAD',
+          empresaId: company.rut || company.id,
+          query: `Formular e imputar asiento contable para: "${rawGlosaInput}" por monto $${rawMontoInput.toLocaleString('es-CL')}. Aplicar partida doble estricta y plan de cuentas chileno.`,
+          prompt: rawGlosaInput,
+          context: {
+            empresa: company,
+            monto: rawMontoInput,
+            rawGlosa: rawGlosaInput,
+            indicators,
+          },
+          contextData: {
+            empresa: company,
+            monto: rawMontoInput,
+            rawGlosa: rawGlosaInput,
+            indicators,
+          },
         }),
       });
 
       const resJson = await response.json();
-      const aiText = resJson.text || '';
+      const aiText = resJson.finalText || resJson.text || '';
+      const technicalPayload = resJson.technicalPayload || resJson.data?.technicalPayload;
 
-      // Extract JSON if present
       let extractedJSON: AccountingProposalResponse | null = null;
-      try {
-        const match = aiText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (match && match[1]) {
-          extractedJSON = JSON.parse(match[1]);
-        }
-      } catch (err) {
-        console.warn('Failed to parse AI JSON:', err);
-      }
-
-      // Fallback deterministic if no JSON extracted
-      if (!extractedJSON) {
-        const isCompra = rawGlosaInput.toLowerCase().includes('compra') || rawGlosaInput.toLowerCase().includes('proveedor') || rawGlosaInput.toLowerCase().includes('pago');
-        const isVenta = rawGlosaInput.toLowerCase().includes('venta') || rawGlosaInput.toLowerCase().includes('cliente') || rawGlosaInput.toLowerCase().includes('factura emitida');
-        const iva = Math.round(rawMontoInput * 0.19);
-        const neto = rawMontoInput;
-        const total = neto + iva;
-
-        // Clasificación inteligente según texto de glosa real
-        let cuentaCod = '6.1.04.006';
-        let cuentaNom = 'Gastos Operacionales Generales';
-        const lowerGlosa = rawGlosaInput.toLowerCase();
-        if (lowerGlosa.includes('software') || lowerGlosa.includes('licencia') || lowerGlosa.includes('cloud') || lowerGlosa.includes('servidor')) {
-          cuentaCod = '6.1.04.002';
-          cuentaNom = 'Software, Servidores Cloud y Licencias';
-        } else if (lowerGlosa.includes('arriendo') || lowerGlosa.includes('alquiler')) {
-          cuentaCod = '6.1.04.001';
-          cuentaNom = 'Arriendos de Inmuebles y Oficinas';
-        } else if (lowerGlosa.includes('honorario') || lowerGlosa.includes('asesor')) {
-          cuentaCod = '6.1.03.001';
-          cuentaNom = 'Honorarios Profesionales de Terceros';
-        } else if (lowerGlosa.includes('impresora') || lowerGlosa.includes('computador') || lowerGlosa.includes('equipo')) {
-          cuentaCod = '1.2.01.004';
-          cuentaNom = 'Equipos Computacionales y Servidores';
-        } else if (lowerGlosa.includes('papel') || lowerGlosa.includes('tinta') || lowerGlosa.includes('utiles')) {
-          cuentaCod = '6.1.04.006';
-          cuentaNom = 'Útiles de Oficina, Papelería y Suministros Menores';
-        }
-
+      if (technicalPayload && technicalPayload.lineas && technicalPayload.lineas.length > 0) {
         extractedJSON = {
           empresa_id: company.rut || company.id || '',
           accion: 'propuesta_asiento',
-          origen_modulo: isVenta ? 'VENTAS' : (isCompra ? 'COMPRAS' : 'MANUAL'),
-          periodo: new Date().toISOString().substring(0, 7),
+          origen_modulo: 'MANUAL',
+          periodo: new Date().toISOString().slice(0, 7),
           asiento: {
-            fecha: new Date().toISOString().split('T')[0],
-            tipo_comprobante: isVenta ? 'INGRESO' : (isCompra ? 'EGRESO' : 'TRASPASO'),
-            glosa_general: rawGlosaInput,
+            fecha: technicalPayload.fecha || new Date().toISOString().split('T')[0],
+            tipo_comprobante: 'TRASPASO',
+            glosa_general: technicalPayload.glosa || technicalPayload.concepto || rawGlosaInput,
             cuadre_valido: true,
-            total_debe: total,
-            total_haber: total,
-            lineas: [
-              {
-                codigo_cuenta: cuentaCod,
-                nombre_cuenta: cuentaNom,
-                debe: neto,
-                haber: 0,
-                centro_costo: 'ADMINISTRACION',
-              },
-              {
-                codigo_cuenta: '1.1.04.001',
-                nombre_cuenta: 'IVA Crédito Fiscal (DL 825)',
-                debe: iva,
-                haber: 0,
-              },
-              {
-                codigo_cuenta: '2.1.01.001',
-                nombre_cuenta: 'Proveedores Nacionales (Cuentas por Pagar)',
-                debe: 0,
-                haber: total,
-                rut_auxiliar: company.rut || 'Pendiente de RUT Auxiliar',
-              },
-            ],
+            total_debe: technicalPayload.totalDebe || rawMontoInput,
+            total_haber: technicalPayload.totalHaber || rawMontoInput,
+            lineas: technicalPayload.lineas.map((l: any) => ({
+              codigo_cuenta: l.cuentaCodigo || l.codigoCuenta || '6.1.04.006',
+              nombre_cuenta: l.cuentaNombre || l.nombreCuenta || 'Gastos Operacionales',
+              debe: Number(l.debe) || 0,
+              haber: Number(l.haber) || 0,
+              glosa_detalle: l.glosa || rawGlosaInput,
+              rut_auxiliar: l.rutAuxiliar || '',
+            })),
           },
-          alertas_auditoria: [
-            'Asiento formulado con montos reales suministrados: IVA Crédito Fiscal sujeto a respaldo de DTE en RCV según Art. 23 DL 825.',
-          ],
+          alertas_auditoria: resJson.steps ? resJson.steps.map((s: any) => s.thought).filter(Boolean) : ['Asiento generado por Agente Autónomo Especialista en Contabilidad.'],
         };
+      } else {
+        // Extract JSON if present in text
+        try {
+          const match = aiText.match(/```json\s*([\s\S]*?)\s*```/);
+          if (match && match[1]) {
+            extractedJSON = JSON.parse(match[1]);
+          }
+        } catch (err) {
+          console.warn('Failed to parse AI JSON:', err);
+        }
+      }
+
+      if (!extractedJSON) {
+        showToast('El agente autónomo no generó una propuesta contable válida o estructurada para esta operación.', 'info');
+        setAiProposalResponse({
+          humanLayer: aiText.replace(/```json[\s\S]*?```/, '').trim() ||
+            `El agente contable procesó la consulta para "${rawGlosaInput}", pero no formuló una propuesta contable estructurada. Por favor proporcione más detalles de la operación.`,
+          transactionalLayer: null,
+        });
+        return;
       }
 
       setAiProposalResponse({
         humanLayer: aiText.replace(/```json[\s\S]*?```/, '').trim() ||
-          `Como Agente Orquestador Contable y Financiero Senior, he determinado la imputación para "${rawGlosaInput}". Se clasificó el gasto operacional con crédito fiscal IVA afecto y pasivo en Proveedores Nacionales con centro de costo.`,
+          `Como Agente Orquestador Contable y Financiero Senior, he determinado la imputación para "${rawGlosaInput}". Se validó la partida doble y la consistencia técnica de las cuentas.`,
         transactionalLayer: extractedJSON,
       });
     } catch (err: any) {
@@ -1557,7 +1544,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     if (failedCount === 0) {
       showToast(`Migración masiva completada: ${successCount} asientos registrados con éxito en el Libro Diario.`, 'success');
     } else {
-      showToast(`Migración masiva parcial: ${successCount} registrados, ${failedCount} con error o período bloqueado.`, 'warning');
+      showToast(`Migración masiva parcial: ${successCount} registrados, ${failedCount} con error o período bloqueado.`, 'info');
     }
   };
 
@@ -3302,6 +3289,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           </button>
         </div>
       )}
+
+      {/* Gobernanza Agéntica del Módulo Contable (Camila Valenzuela - Auditora IFRS) */}
+      <ModuleAgentGovernanceHeader
+        moduloId="CONTABILIDAD"
+        empresaId={company.id}
+      />
 
       {/* Top Banner: Senior Orchestrator Identity & Context */}
       <div className="bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f172a] text-white border border-slate-700 rounded-xl p-6 shadow-md">

@@ -53,6 +53,7 @@ import {
 } from '../utils/f29SeniorEngine';
 import { JournalEntryView } from './accounting/JournalEntryView';
 import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
+import { getStoredAuthToken } from '../services/apiClient';
 import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
 
 interface F29SeniorAgentProps {
@@ -178,37 +179,62 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
     setIsLoadingAi(true);
 
     try {
-      const response = await fetch('/api/f29/senior-agent', {
+      const authToken = getStoredAuthToken();
+      // Invocar al Agente Autónomo Especialista Tributario con bucle ReAct
+      const response = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
-          empresa: company,
-          dtes,
-          payrolls,
-          indicators,
+          module: 'TRIBUTARIO_SII',
+          modulo: 'TRIBUTARIO_SII',
+          empresaId: company.rut,
           query: queryText,
-          options: {
+          prompt: queryText,
+          context: {
             periodo: selectedPeriod,
-            simularPostergacionArt64: isPostergacionActive
-          }
-        })
+            dtes,
+            payrolls,
+            indicators,
+            empresa: company,
+            company,
+            options: {
+              periodo: selectedPeriod,
+              simularPostergacionArt64: isPostergacionActive,
+            },
+          },
+          contextData: {
+            periodo: selectedPeriod,
+            dtes,
+            payrolls,
+            indicators,
+            empresa: company,
+            company,
+          },
+        }),
       });
 
       const resJson = await response.json();
-      if (resJson.success && resJson.data) {
-        const aiText = resJson.data.aiResponseText;
+      if (resJson.success) {
+        const aiText = resJson.finalText || resJson.data?.aiResponseText;
+        const toolOutput = resJson.steps?.find((s: any) => s.toolCall === 'tool_tax_calculate_f29')?.toolOutput;
         const currentPayload = {
           empresa_id: company.rut,
           periodo_tributario: selectedPeriod,
           estado_liquidacion: 'PRE_DECLARACION',
-          f29_mapeo: resJson.data.f29_mapeo || seniorResult.f29_mapeo,
-          alertas_fiscales: seniorResult.alertas_fiscales,
-          asiento_contable_f29: resJson.data.asiento_contable_f29 || seniorResult.asiento_contable_f29
+          f29_mapeo: toolOutput?.f29Mapeo || resJson.data?.f29_mapeo || seniorResult.f29_mapeo,
+          alertas_fiscales: toolOutput?.alertasFiscales || seniorResult.alertas_fiscales,
+          asiento_contable_f29: toolOutput?.asientoSugerido || resJson.data?.asiento_contable_f29 || seniorResult.asiento_contable_f29,
         };
 
         let displayText = aiText;
         if (!displayText) {
-          displayText = `### Capa Asesora (Resolución Tributaria):\nPara **${company.razonSocial}**, el análisis del período **${selectedPeriod}** indica:\n- **Débito Fiscal (c538)**: ${formatCLP(resJson.data.calculos?.totalDebitoCalculado || seniorResult.f29_mapeo.c538_total_debito)}\n- **Crédito Fiscal con Remanente (c537)**: ${formatCLP(resJson.data.calculos?.totalCreditoConRemanente || seniorResult.f29_mapeo.c537_total_credito)}\n- **Total F29 a Enterar (c091)**: ${formatCLP(resJson.data.calculos?.totalAPagarF29 || seniorResult.f29_mapeo.c091_total_a_pagar_f29)}\n\nNormativa aplicada: DL 825 de IVA (Arts. 23, 28 y 64), LIR Art. 84 para PPM y Ley 19.983 para acuse de recibo de 8 días.`;
+          const debito = toolOutput?.debitoFiscalIva ?? seniorResult.f29_mapeo.c538_total_debito;
+          const credito = toolOutput?.totalCreditoConRemanente ?? seniorResult.f29_mapeo.c537_total_credito;
+          const totalPagar = toolOutput?.totalPagarF29 ?? seniorResult.f29_mapeo.c091_total_a_pagar_f29;
+          displayText = `### Capa Asesora (Resolución Tributaria Agéntica):\nPara **${company.razonSocial}**, el análisis del período **${selectedPeriod}** indica:\n- **Débito Fiscal (c538)**: ${formatCLP(debito)}\n- **Crédito Fiscal con Remanente (c537)**: ${formatCLP(credito)}\n- **Total F29 a Enterar (c091)**: ${formatCLP(totalPagar)}\n\nNormativa aplicada: DL 825 de IVA (Arts. 23 y 28 proporcionalidad y remanente reajustado en UTM), LIR Art. 84 para PPM y Ley 19.983 para acuse de recibo de 8 días.`;
         }
 
         setChatMessages(prev => [
@@ -221,7 +247,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
           }
         ]);
       } else {
-        throw new Error(resJson.error || 'Error en respuesta del servidor');
+        throw new Error(resJson.errorMessage || resJson.error || 'Error en respuesta del agente');
       }
     } catch (err: any) {
       console.warn('Fallback al motor determinístico local:', err);

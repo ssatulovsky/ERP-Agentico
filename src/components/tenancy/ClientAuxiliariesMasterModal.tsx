@@ -93,7 +93,7 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
   const [comuna, setComuna] = useState<string>('');
 
   // Tipo
-  const [tipoAuxiliar, setTipoAuxiliar] = useState<'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'EMPLEADO' | 'HONORARIO'>('CLIENTE');
+  const [tipoAuxiliar, setTipoAuxiliar] = useState<'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'EMPLEADO' | 'HONORARIO' | 'RENDICION'>('CLIENTE');
 
   // Comercial
   const [limiteCredito, setLimiteCredito] = useState<number>(10000000);
@@ -595,7 +595,7 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
                   </h3>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {(['CLIENTE', 'PROVEEDOR', 'AMBOS', 'EMPLEADO', 'HONORARIO'] as const).map((tipo) => (
+                    {(['CLIENTE', 'PROVEEDOR', 'AMBOS', 'EMPLEADO', 'HONORARIO', 'RENDICION'] as const).map((tipo) => (
                       <button
                         key={tipo}
                         type="button"
@@ -611,8 +611,9 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
                           {tipo === 'CLIENTE' && 'Imputación de facturas 33/34 y cobranzas'}
                           {tipo === 'PROVEEDOR' && 'Imputación de compras y pagos'}
                           {tipo === 'AMBOS' && 'Operaciones cruzadas de cliente y proveedor'}
-                          {tipo === 'EMPLEADO' && 'Anticipos, sueldos y rendiciones'}
+                          {tipo === 'EMPLEADO' && 'Anticipos, sueldos y personal'}
                           {tipo === 'HONORARIO' && 'Retenciones BHE 2da categoría'}
+                          {tipo === 'RENDICION' && 'Fondos por rendir y colaboradores rendidores'}
                         </span>
                       </button>
                     ))}

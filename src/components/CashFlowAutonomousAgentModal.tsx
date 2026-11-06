@@ -17,7 +17,9 @@ import {
   Receipt,
   CreditCard,
   Landmark,
+  Sparkles,
 } from 'lucide-react';
+import { getStoredAuthToken } from '../services/apiClient';
 import {
   CashFlowMovement,
   EmployeePayroll,
@@ -87,6 +89,50 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
     new Set(projectedMovements.map(m => m.id))
   );
 
+  // Estado del Motor Agéntico Autónomo
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const [agentThoughtTrace, setAgentThoughtTrace] = useState<any[] | null>(null);
+  const [agentDecisionText, setAgentDecisionText] = useState<string | null>(null);
+
+  const handleRunAutonomousProjection = async () => {
+    setIsExecutingAgent(true);
+    setAgentThoughtTrace(null);
+    setAgentDecisionText(null);
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'FLUJO_CAJA',
+          modulo: 'FLUJO_CAJA',
+          empresaId: (accountingEntries && accountingEntries[0] as any)?.empresaId || 'client-retail-01',
+          query: 'Proyectar compromisos y saldo de flujo de caja a 30, 60 y 90 días con análisis de solvencia y liquidez.',
+          context: {
+            payrolls,
+            dtes,
+            productionOrders,
+            existingMovements,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.decision || data.finalText) {
+        setAgentDecisionText(data.decision || data.finalText);
+      }
+      if (data.steps && data.steps.length > 0) {
+        setAgentThoughtTrace(data.steps);
+      }
+    } catch (err: any) {
+      console.warn('[CashFlowAutonomousAgentModal] Error al ejecutar agente:', err);
+    } finally {
+      setIsExecutingAgent(false);
+    }
+  };
+
   const toggleSelectAll = () => {
     if (selectedIds.size === projectedMovements.length) {
       setSelectedIds(new Set());
@@ -144,16 +190,50 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRunAutonomousProjection}
+              disabled={isExecutingAgent}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow cursor-pointer border border-indigo-400/30 disabled:opacity-50"
+            >
+              <Sparkles className={`w-3.5 h-3.5 text-amber-300 ${isExecutingAgent ? 'animate-spin' : ''}`} />
+              <span>{isExecutingAgent ? 'Proyectando...' : 'Proyectar con Agente (30/60/90)'}</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
+          {/* Panel Dictamen Agéntico */}
+          {agentDecisionText && (
+            <div className="bg-indigo-950/50 border border-indigo-500/40 rounded-xl p-4 space-y-2">
+              <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold">
+                <Bot className="w-4 h-4 text-amber-300" />
+                <span>Dictamen del Agente Autónomo de Flujo de Caja (30-60-90 Días):</span>
+              </div>
+              <p className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                {agentDecisionText}
+              </p>
+              {agentThoughtTrace && agentThoughtTrace.length > 0 && (
+                <div className="pt-2 text-[11px] text-slate-400 space-y-1">
+                  <span className="font-bold text-slate-300 block">Herramientas ejecutadas en el backend:</span>
+                  {agentThoughtTrace.map((st: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 font-mono text-[10px] text-indigo-300">
+                      <span>• {st.toolCall}</span>
+                      <span className="text-slate-500">({st.timestamp})</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80 space-y-1">

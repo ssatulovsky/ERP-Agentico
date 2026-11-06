@@ -40,3 +40,31 @@ export function decryptVaultSecret(encryptedHex: string, ivHex: string, tagHex: 
   decrypted += decipher.final('utf8');
   return decrypted;
 }
+
+/**
+ * Serializa y cifra un texto plano en una cadena compacta segura tipo vault:v1:<iv>:<tag>:<encrypted>
+ */
+export function encryptToVaultString(plainText: string): string {
+  if (!plainText) return '';
+  if (plainText.startsWith('vault:v1:')) return plainText;
+  const { encrypted, iv, tag } = encryptVaultSecret(plainText);
+  return `vault:v1:${iv}:${tag}:${encrypted}`;
+}
+
+/**
+ * Descifra una cadena vault:v1:<iv>:<tag>:<encrypted> validando su integridad GCM
+ */
+export function decryptFromVaultString(vaultString: string): string {
+  if (!vaultString) return '';
+  if (!vaultString.startsWith('vault:v1:')) return vaultString;
+  const parts = vaultString.split(':');
+  if (parts.length !== 5) return vaultString;
+  const [, , iv, tag, encrypted] = parts;
+  try {
+    return decryptVaultSecret(encrypted, iv, tag);
+  } catch (err) {
+    console.error('[VaultCrypto] Error descifrando secreto:', err);
+    return '';
+  }
+}
+

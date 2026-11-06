@@ -43,6 +43,8 @@ export * from './schema/inventoryWmsSchema';
 export * from './schema/employeesSchema';
 export * from './schema/expenseReportsSchema';
 export * from './schema/procurementCommercialSchema';
+export * from './schema/hrManagementSchema';
+export * from './schema/dtesSchema';
 
 // ============================================================================
 // 6. TABLA: economic_indicators (Sincronización Histórica de Indicadores Chilenos)

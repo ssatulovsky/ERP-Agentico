@@ -87,6 +87,32 @@ export const expenseApiService = {
   },
 
   /**
+   * Modifica los datos de cabecera de una rendición en MySQL 8.0 / Disco Persistente
+   */
+  async updateExpenseReport(
+    reportId: string,
+    updates: Partial<ExpenseReport>
+  ): Promise<ExpenseReport> {
+    const res = await fetch(`/api/expenses/reports/${encodeURIComponent(reportId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      throw new Error(json?.error || `Error ${res.status}: ${res.statusText}`);
+    }
+
+    if (json?.success && json?.data) {
+      return json.data;
+    }
+
+    throw new Error(json?.error || 'No se pudo actualizar la rendición en la base de datos.');
+  },
+
+  /**
    * Actualiza el estado de una rendición (Workflow de Aprobación en MySQL 8.0)
    */
   async updateReportStatus(

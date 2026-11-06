@@ -23,6 +23,7 @@ import {
   authenticateErpLogin,
   resolveCompaniesForLoginUsername,
 } from '../../services/securityRbacService';
+import { setStoredAuthToken } from '../../services/apiClient';
 
 interface LoginScreenProps {
   securityState: SecurityRbacStoreState;
@@ -42,6 +43,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [empresaId, setEmpresaId] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<LoginValidationResult | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
 
   // Visibilidad del panel de pruebas QA (por defecto false para demos limpias con clientes, o según configuración)
   const [showQaPanel, setShowQaPanel] = useState<boolean>(
@@ -95,7 +97,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   }, [allowedCompaniesForUser, userCompanyResolution.defaultCompanyId, empresaId]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empresaId) {
       setValidationError({
@@ -108,6 +110,33 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       return;
     }
 
+    setIsAuthenticating(true);
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, empresaId }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success && data.result) {
+        if (data.token) {
+          setStoredAuthToken(data.token);
+        }
+        setValidationError(null);
+        onLoginSuccess(data.result, empresaId);
+        return;
+      }
+      if (data && data.success === false && data.errorCode) {
+        setValidationError(data);
+        return;
+      }
+    } catch (netErr) {
+      console.warn('[LoginScreen] Servidor no disponible vía fetch, usando contingencia local:', netErr);
+    } finally {
+      setIsAuthenticating(false);
+    }
+
+    // Validación de contingencia local
     const res = authenticateErpLogin({
       usernameInput: username,
       passwordInput: password,
@@ -122,10 +151,39 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     onLoginSuccess(res, empresaId);
   };
 
-  const applyQuickScenario = (u: string, p: string, empId: string, autoSubmit = false) => {
+  const applyQuickScenario = async (u: string, p: string, empId: string, autoSubmit = false) => {
     setUsername(u);
     setPassword(p);
     setEmpresaId(empId);
+
+    setIsAuthenticating(true);
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p, empresaId: empId }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success && data.result) {
+        if (data.token) {
+          setStoredAuthToken(data.token);
+        }
+        setValidationError(null);
+        if (autoSubmit) {
+          onLoginSuccess(data.result, empId);
+        }
+        return;
+      }
+      if (data && data.success === false && data.errorCode) {
+        setValidationError(data);
+        return;
+      }
+    } catch (netErr) {
+      console.warn('[LoginScreen] Contingencia local en escenario rápido:', netErr);
+    } finally {
+      setIsAuthenticating(false);
+    }
+
     const res = authenticateErpLogin({
       usernameInput: u,
       passwordInput: p,
@@ -368,9 +426,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
                 <button
                   type="submit"
-                  className="w-full mt-2 py-3 px-5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  disabled={isAuthenticating}
+                  className={`w-full mt-2 py-3 px-5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    isAuthenticating ? 'opacity-70 cursor-not-allowed' : ''
+                  }`}
                 >
-                  <span>Ingresar al Sistema</span>
+                  <span>{isAuthenticating ? 'Autenticando en Servidor...' : 'Ingresar al Sistema'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
@@ -431,8 +492,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                           👑 SuperAdmin (Dueño del ERP)
                         </span>
                         <p className="text-[11px] text-slate-300 mt-0.5">
-                          Usuario: <code className="text-indigo-300 font-bold">ssatulovsky</code> · Clave:{' '}
-                          <code className="text-indigo-300">admin123</code>
+                          Usuario: <code className="text-indigo-300 font-bold">ssatulovsky</code> · Empresa: InnovAgile
                         </p>
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           Ve las 4 empresas del sistema y todos los módulos.
@@ -441,7 +501,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          applyQuickScenario('ssatulovsky', 'admin123', 'client-innovagile', false)
+                          applyQuickScenario('ssatulovsky', '', 'client-innovagile', false)
                         }
                         className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
                       >
@@ -458,8 +518,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                           🏢 Admin Cliente + Empresas Anclas
                         </span>
                         <p className="text-[11px] text-slate-300 mt-0.5">
-                          Usuario: <code className="text-emerald-300 font-bold">admin</code> · Clave:{' '}
-                          <code className="text-emerald-300">admin123</code>
+                          Usuario: <code className="text-emerald-300 font-bold">admin</code> · Empresa: Retail Logistics
                         </p>
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           Solo ve <strong>Retail Logistics</strong> y su ancla <strong>Agroindustrial Valle Central</strong> (no ve las demás empresas).
@@ -468,7 +527,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          applyQuickScenario('admin', 'admin123', 'client-retail-logistics', false)
+                          applyQuickScenario('admin', '', 'client-retail-logistics', false)
                         }
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
                       >
@@ -485,8 +544,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                           👩‍💼 Rol &apos;RRHH&apos; (Solo RRHH y Nómina)
                         </span>
                         <p className="text-[11px] text-slate-300 mt-0.5">
-                          Usuario: <code className="text-sky-300 font-bold">rrhh</code> · Clave:{' '}
-                          <code className="text-sky-300">rrhh123</code>
+                          Usuario: <code className="text-sky-300 font-bold">rrhh</code> · Empresa: InnovAgile
                         </p>
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           Solo ve su empresa asignada y únicamente los módulos de RRHH y Remuneraciones.
@@ -495,7 +553,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          applyQuickScenario('rrhh', 'rrhh123', 'client-innovagile', false)
+                          applyQuickScenario('rrhh', '', 'client-innovagile', false)
                         }
                         className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
                       >
@@ -518,7 +576,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          applyQuickScenario('minera', '123456', 'client-minera-sur', false)
+                          applyQuickScenario('minera', '', 'client-minera-sur', false)
                         }
                         className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
                       >
@@ -541,7 +599,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          applyQuickScenario('inactivo', '123456', 'client-innovagile', false)
+                          applyQuickScenario('inactivo', '', 'client-innovagile', false)
                         }
                         className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
                       >

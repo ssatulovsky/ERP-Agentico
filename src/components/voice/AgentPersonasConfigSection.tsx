@@ -452,21 +452,47 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                         Motor de Voz de Síntesis
                       </span>
                       <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-teal-100 text-teal-800 border border-teal-200">
-                        {persona.voz.neuralModel === 'browser' ? 'Nativo' : 'Neural VITS'}
+                        {persona.voz.neuralModel === 'browser' ? 'Nativo' : (persona.voz.neuralModel === 'piper' ? 'Neural VITS' : 'Gemini HD')}
                       </span>
                     </label>
                     <select
-                      value={persona.voz.neuralModel || 'piper'}
+                      value={persona.voz.neuralModel || 'gemini'}
                       onChange={e => handleUpdateVoiceConfig(persona.id, 'neuralModel', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:ring-1 focus:ring-teal-500 focus:outline-hidden cursor-pointer"
                     >
+                      <option value="gemini">🌟 Gemini Ultra-Natural HD (Locutor Humano en Tiempo Real)</option>
                       <option value="piper">✨ Piper Neural TTS (Modelo Humano VITS en Español)</option>
                       <option value="browser">🔊 Síntesis Nativa del Navegador (Web Speech API)</option>
                     </select>
                   </div>
 
-                  {/* Selector de Modelo Piper o Voz del Sistema */}
-                  {(persona.voz.neuralModel || 'piper') === 'piper' ? (
+                  {/* Selector según el Motor Elegido */}
+                  {(persona.voz.neuralModel || 'gemini') === 'gemini' ? (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Voz Gemini Ultra-Natural en Español
+                      </label>
+                      <select
+                        value={persona.voz.geminiVoiceName || (persona.sexo === 'MASCULINO' ? 'Fenrir' : 'Aoede')}
+                        onChange={e => handleUpdateVoiceConfig(persona.id, 'geminiVoiceName', e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:ring-1 focus:ring-teal-500 focus:outline-hidden cursor-pointer"
+                      >
+                        <optgroup label="👩 Voces Femeninas Naturales (Alta Fidelidad)">
+                          <option value="Aoede">Aoede — Ejecutiva, fluida y empática (Vera Albornoz)</option>
+                          <option value="Kore">Kore — Analítica, metódica y precisa (Camila Valenzuela)</option>
+                        </optgroup>
+                        <optgroup label="👨 Voces Masculinas Naturales (Alta Fidelidad)">
+                          <option value="Fenrir">Fenrir — Barítono formal y autoritativo (Jorge Silva / Tributario)</option>
+                          <option value="Puck">Puck — Dinámico, comercial y ágil (Esteban Morales / Compras)</option>
+                          <option value="Charon">Charon — Grave, analítico y profundo (Roberto Lagos / Costos)</option>
+                        </optgroup>
+                      </select>
+                      <p className="text-[10px] text-teal-700 mt-1 font-medium flex items-center gap-1">
+                        <Check className="w-3 h-3 text-teal-600" />
+                        Voz neuronal ultra-realista con cadencia, pausas y modulación humana profesional.
+                      </p>
+                    </div>
+                  ) : persona.voz.neuralModel === 'piper' ? (
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 mb-1">
                         Modelo Piper Neural en Español
@@ -493,7 +519,7 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                       </select>
                       <p className="text-[10px] text-teal-700 mt-1 font-medium flex items-center gap-1">
                         <Check className="w-3 h-3 text-teal-600" />
-                        Voz neural con entonación humana fluida (sin tono robótico).
+                        Voz neural local VITS sin conexión a internet.
                       </p>
                     </div>
                   ) : (

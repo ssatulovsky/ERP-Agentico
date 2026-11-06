@@ -8,7 +8,7 @@ export interface CompanyAuxiliaryItem {
   codigoAuxiliar?: string;
   razonSocial: string;
   nombreFantasia?: string;
-  tipo?: 'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'HONORARIO' | 'HONORARIOS' | 'EMPLEADO';
+  tipo?: 'CLIENTE' | 'PROVEEDOR' | 'AMBOS' | 'HONORARIO' | 'HONORARIOS' | 'EMPLEADO' | 'RENDICION' | 'RENDICIONES';
   tipoAuxiliar?: string;
   giroComercial?: string;
   inactivo?: boolean;

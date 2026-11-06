@@ -39,7 +39,8 @@ import {
   Edit2,
   Pencil,
   RefreshCw,
-  Search
+  Search,
+  History
 } from 'lucide-react';
 import { 
   EmployeePayroll, 
@@ -88,6 +89,12 @@ import { ContractsManager } from './hr/ContractsManager';
 import { MedicalLeavesManager } from './hr/MedicalLeavesManager';
 import { SanctionsManager } from './hr/SanctionsManager';
 import { VacationsManager } from './hr/VacationsManager';
+import { PayrollHistoricalAndReliquidationsManager } from './hr/PayrollHistoricalAndReliquidationsManager';
+import { ClimateSurveyManager } from './hr/ClimateSurveyManager';
+import { HrAgentTeamSelectorBar } from './hr/HrAgentTeamSelectorBar';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
+import { HrAgentRole } from '../services/hrAgentTeamService';
+import { getStoredAuthToken } from '../services/apiClient';
 
 export type HrSubTab =
   | 'collaborators'
@@ -101,6 +108,8 @@ export type HrSubTab =
   | 'karin'
   | 'certificates'
   | 'legal_books'
+  | 'payroll_historical'
+  | 'climate_surveys'
   | 'console';
 
 interface HrAgentModuleProps {
@@ -170,6 +179,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
 }) => {
   // Navigation Tabs inside HR Agent Module
   const [activeSubTab, setActiveSubTab] = useState<HrSubTab>('collaborators');
+  const [activeAgentRole, setActiveAgentRole] = useState<HrAgentRole>('GERENTE_RRHH');
 
   // Multi-Company Active State
   const activeEmpresaId = activeClient.id || company.id;
@@ -437,7 +447,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
       asignacionMovilizacion: calculated.asignacionMovilizacion || 0,
       estado: 'VIGENTE',
       registradoDtRel: true,
-      folioRegistroDt: `DT-2026-${Math.floor(100000 + Math.random() * 900000)}`,
+      folioRegistroDt: `DT-${new Date().getFullYear()}-${(contracts.length + 1).toString().padStart(6, '0')}`,
       anexos: [],
       clausulaConfidencialidad: true,
       clausulaTeletrabajo: false,
@@ -581,8 +591,8 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
     showToast(`¡Asiento contable integrado exitosamente en el Libro Diario del ERP! (${formatCLP(totalDebe)})`);
   };
 
-  // Agent Chat Processor
-  const handleSendAgentQuery = (customPrompt?: string) => {
+  // Agent Chat Processor (Conexión Real Agéntica ReAct con Motor Backend)
+  const handleSendAgentQuery = async (customPrompt?: string) => {
     const query = customPrompt || agentQuery;
     if (!query.trim()) return;
 
@@ -595,133 +605,106 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
     setChatMessages(prev => [...prev, userMsg]);
     setAgentQuery('');
 
-    // Simulate Agent autonomous legal reasoning
-    setTimeout(() => {
-      const qLower = query.toLowerCase();
-      const currentPeriod = new Date().toISOString().substring(0, 7);
-      const emp = payrolls[0];
+    const currentPeriod = new Date().toISOString().substring(0, 7);
+    const emp = payrolls[0];
+    const qLower = query.toLowerCase();
+
+    try {
+      // 1. Invocar el agente autónomo con Function Calling en backend
+      const authToken = getStoredAuthToken();
+      const response = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'RRHH',
+          modulo: 'RRHH',
+          empresaId: activeEmpresaId,
+          query: query,
+          prompt: query,
+          context: {
+            empresa: activeClient,
+            payroll: emp,
+            indicators,
+            totalPayrolls: payrolls.length,
+            payrolls: payrolls.slice(0, 10),
+          },
+          contextData: {
+            empresa: activeClient,
+            payroll: emp,
+            indicators,
+            totalPayrolls: payrolls.length,
+            payrolls: payrolls.slice(0, 10),
+          },
+        }),
+      });
+
+      const agentData = await response.json();
 
       let replyText = '';
       let payload: ErpTechnicalOutputPayload | undefined = undefined;
+      const mainText = agentData.finalText || agentData.decision || agentData.data?.finalText || agentData.data?.decision;
 
-      if (qLower.includes('finiquito') || qLower.includes('art 161') || qLower.includes('indemniz')) {
-        const fin = calculateSeverancePay({
-          empresaId: activeEmpresaId,
-          rut: emp.rut,
-          nombreCompleto: emp.nombreCompleto,
-          cargo: emp.cargo,
-          fechaIngreso: emp.fechaIngreso,
-          fechaDespido: new Date().toISOString().split('T')[0],
-          causal: 'ART_161_NECESIDADES_DE_LA_EMPRESA',
-          sueldoBase: emp.sueldoBase,
-          promedioGratificacion: emp.gratificacionMonto,
-          promedioVariables: 0,
-          asignacionesNoImponibles: emp.totalHaberesNoImponibles,
-          diasAvisoPrevioOtorgados: 0,
-          diasVacacionesPendientes: 14.5,
-          ufValue: indicators.uf,
-        });
+      if (agentData.success && mainText) {
+        replyText = mainText;
+        const toolCalls = agentData.toolCallsExecuted || agentData.data?.toolCallsExecuted || [];
+        if (toolCalls.length > 0) {
+          replyText += `\n\n> ⚙️ **Herramientas de Ejecución Autárquica:** ${toolCalls.join(', ')}`;
+        }
+        const steps = agentData.steps || agentData.data?.steps || [];
+        if (steps.length > 0) {
+          const stepLines = steps
+            .filter((s: any) => s.thought || s.action)
+            .map((s: any) => `- **Paso ${s.step}:** ${s.thought || 'Procesando'} ${s.action ? `\`(${s.action})\`` : ''}`)
+            .join('\n');
+          if (stepLines) {
+            replyText += `\n\n📋 **Traza de Ejecución Agéntica:**\n${stepLines}`;
+          }
+        }
+        if (agentData.approvalRequired || agentData.data?.approvalRequired) {
+          replyText += `\n\n🛡️ **Gobernanza Human-in-the-Loop:** Esta operación requiere confirmación explícita del supervisor contable/RRHH en la bandeja de aprobaciones antes de impactar el Libro Mayor.`;
+        }
 
-        replyText = `### Dictamen Legal y Liquidación de Finiquito (Art. 161 Código del Trabajo)\n\nSe ha procesado el cálculo formal de término de contrato por **Necesidades de la Empresa** para don(ña) **${emp.nombreCompleto}** (RUT: ${emp.rut}) bajo el contexto de **${activeClient.razonSocial}**:\n\n- **Antigüedad Computable:** ${fin.aniosComputables} años de servicio.\n- **Base Mensual Computable:** ${formatCLP(fin.remuneracionMensualComputable)} (respetando el tope legal de 90 UF: ${formatCLP(90 * indicators.uf)}).\n- **Indemnización Años de Servicio (Art. 163):** ${formatCLP(fin.indemnizacionAnosServicio)}.\n- **Indemnización Sustitutiva de Aviso Previo (Art. 161 inc. 2):** ${formatCLP(fin.indemnizacionAvisoPrevio)} (al no otorgarse 30 días de preaviso).\n- **Feriado Legal Proporcional (Art. 73):** ${formatCLP(fin.montoFeriadoProporcional)} (${fin.diasFeriadoPendienteProporcional} días hábiles).\n- **Imputación Aporte AFC Empleador (Art. 13 Ley 19.728):** -${formatCLP(fin.descuentoAporteAfcEmpleador)}.\n\n**Total Líquido a Pagar en Finiquito:** **${formatCLP(fin.totalFiniquitoLiquido)}**.\n\nA continuación se adjunta la transacción técnica normalizada para integración contable en el ERP:`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'finiquitos',
-          accion: 'calcular_finiquito',
-          periodo: currentPeriod,
-          payroll: emp,
-          detallesAdicionales: {
+        if (agentData.technicalPayload) {
+          payload = agentData.technicalPayload;
+        } else if (agentData.data?.technicalPayload) {
+          payload = agentData.data.technicalPayload;
+        } else if (qLower.includes('finiquito') || qLower.includes('art 161') || qLower.includes('indemniz')) {
+          const diasVac = (emp as any).diasVacacionesPendientes !== undefined ? (emp as any).diasVacacionesPendientes : 0;
+          const fin = calculateSeverancePay({
+            empresaId: activeEmpresaId,
+            rut: emp.rut,
+            nombreCompleto: emp.nombreCompleto,
+            cargo: emp.cargo,
+            fechaIngreso: emp.fechaIngreso,
+            fechaDespido: new Date().toISOString().split('T')[0],
             causal: 'ART_161_NECESIDADES_DE_LA_EMPRESA',
-            indemnizacion_anos_servicio: fin.indemnizacionAnosServicio,
-            indemnizacion_aviso_previo: fin.indemnizacionAvisoPrevio,
-            feriado_proporcional: fin.montoFeriadoProporcional,
-            liquido_finiquito: fin.totalFiniquitoLiquido,
-          },
-        });
-        // Override technical payload accounting entry with finiquito entry
-        payload.asiento_contable = fin.asientoContable || payload.asiento_contable;
-
-      } else if (qLower.includes('contrato') || qLower.includes('40 horas') || qLower.includes('art 10')) {
-        replyText = `### Validación y Redacción de Contrato de Trabajo (Art. 10 CT & Ley 40 Horas)\n\nSe valida la estructura obligatoria de contrato individual para **${emp.nombreCompleto}** en **${activeClient.razonSocial}**:\n\n1. **Cláusulas del Art. 10:** Se verifican los 7 numerales legales (individualización, funciones, lugar de servicios, remuneración y período, duración de jornada, plazo de contrato y estipulaciones pactadas).\n2. **Ley de 40 Horas (Ley 21.561):** La jornada pactada de **40 horas semanales** cumple anticipadamente con el cronograma legal (vigencia de 42 horas en abril 2026 y 40 horas en 2028). Distribución en 5 días (lunes a viernes).\n3. **Excepción Art. 22 inciso 2:** Se verifica que el cargo no está sujeto a fiscalización superior inmediata solo en caso de gerencia. Para cargos operativos se mantiene registro de asistencia digital acreditado por la DT.\n4. **Plazo de Registro MiDT:** Debe inscribirse en el Portal MiDT dentro de los 15 días corridos desde el inicio de faena.`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'contratos',
-          accion: 'generar_contrato',
-          periodo: currentPeriod,
-          payroll: emp,
-          detallesAdicionales: {
-            tipo_contrato: emp.tipoContrato,
-            jornada_horas: 40,
-            ley_40_horas_cumplimiento: true,
-            registro_dt_plazo_dias: 15,
-          },
-        });
-
-      } else if (qLower.includes('vacaciones') || qLower.includes('art 70') || qLower.includes('progresivo')) {
-        const vacCheck = calculateVacationEligibility({
-          fechaIngreso: emp.fechaIngreso,
-          totalAnosCotizadosSistema: 12,
-          diasPendientesHistoricos: 22,
-        });
-
-        replyText = `### Auditoría de Feriado Anual y Alerta Legal Art. 70\n\nAnálisis de cumplimiento para **${emp.nombreCompleto}**:\n\n- **Feriado Legal Anual (Art. 67):** 15 días hábiles (sábado considerado inhábil según Art. 69).\n- **Feriado Progresivo (Art. 68):** Acredita 12 años cotizados en el sistema previsional y más de 3 años continuos en ${activeClient.razonSocial}. Le corresponden **+${vacCheck.diasProgresivos} día(s) hábil(es) progresivo(s)**.\n- **Saldo Acumulado Total:** ${vacCheck.diasDisponiblesTotal} días hábiles disponibles (${vacCheck.periodosAcumulados} períodos).\n\n⚠️ **${vacCheck.infraccionArt70 ? 'INFRACCIÓN DETECTADA ART. 70 CÓDIGO DEL TRABAJO' : 'CUMPLIMIENTO NORMAL'}**: ${vacCheck.alertaMensaje || 'Dentro de los límites legales permitidos.'}`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'ausentismos',
-          accion: 'registrar_licencia',
-          periodo: currentPeriod,
-          payroll: emp,
-          detallesAdicionales: {
-            dias_disponibles_vacaciones: vacCheck.diasDisponiblesTotal,
-            alerta_art_70: vacCheck.infraccionArt70,
-          },
-        });
-
-      } else if (qLower.includes('karin') || qLower.includes('acoso') || qLower.includes('convivencia')) {
-        replyText = `### Protocolo Preventivo de Convivencia Laboral (Ley Karin N° 21.643)\n\nEl sistema mantiene activo el protocolo obligatorio de prevención, investigación y sanción del acoso laboral, sexual y violencia en el trabajo para **${activeClient.razonSocial}**:\n\n1. **Canal de Denuncias:** Activo y garantizando confidencialidad e imparcialidad.\n2. **Medidas de Resguardo Inmediatas:** Ante cualquier denuncia, el empleador debe adoptar medidas inmediatas (ej: separación de espacios físicos o redistribución de turnos) en un plazo máximo de 24 horas.\n3. **Plazo de Investigación:** La investigación interna o remisión a la Dirección del Trabajo (DT) no puede exceder los 30 días corridos.\n4. **Actualización RIOHS:** Se constata la entrega formal del anexo de la Ley Karin a toda la dotación activa.`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'ley_karin',
-          accion: 'registrar_licencia',
-          periodo: currentPeriod,
-          payroll: emp,
-          detallesAdicionales: {
-            normativa: 'Ley Karin N° 21.643',
-            canal_denuncias_activo: true,
-            casos_en_investigacion: karinCases.length,
-          },
-        });
-
-      } else if (qLower.includes('previred') || qLower.includes('105') || qLower.includes('lre') || qLower.includes('libro')) {
-        const previred = generatePrevired105Fields(payrolls, activeClient, currentPeriod);
-        replyText = `### Generación de Libro de Remuneraciones Electrónico (LRE) & Archivo Previred 105 Campos\n\nSe han estructurado los archivos oficiales para **${activeClient.razonSocial}** (Período: ${currentPeriod}):\n\n- **Total Cotizantes Procesados:** ${previred.totalCotizantes} colaboradores.\n- **Total Imposiciones Previsionales PREVIRED:** **${formatCLP(previred.totalMontoPrevired)}**.\n  - Cotizaciones AFP: ${formatCLP(previred.resumenEntidades.afpMonto)}\n  - Salud (Fonasa/Isapres): ${formatCLP(previred.resumenEntidades.fonasaMonto + previred.resumenEntidades.isapreMonto)}\n  - Seguro Cesantía (AFC Trabajador + Empleador): ${formatCLP(previred.resumenEntidades.afcTrabajadorMonto + previred.resumenEntidades.afcEmpleadorMonto)}\n  - SIS (1.49%): ${formatCLP(previred.resumenEntidades.sisMonto)}\n  - Mutualidad Ley 16.744 (${activeClient.mutualidad || 'Mutual'}): ${formatCLP(previred.resumenEntidades.mutualMonto)}\n\nEl archivo cumple con el layout de 105 campos para carga masiva y el layout CSV de la Dirección del Trabajo (códigos 1000 a 5000).`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'remuneraciones',
-          accion: 'generar_previred',
-          periodo: currentPeriod,
-          payroll: emp,
-          detallesAdicionales: {
-            total_previred_pesos: previred.totalMontoPrevired,
-            campos_previred_layout: 105,
-          },
-        });
-
+            sueldoBase: emp.sueldoBase,
+            promedioGratificacion: emp.gratificacionMonto,
+            promedioVariables: 0,
+            asignacionesNoImponibles: emp.totalHaberesNoImponibles,
+            diasAvisoPrevioOtorgados: 0,
+            diasVacacionesPendientes: diasVac,
+            ufValue: indicators.uf,
+          });
+          payload = buildErpTechnicalPayload({
+            empresaId: activeEmpresaId,
+            modulo: 'finiquitos',
+            accion: 'calcular_finiquito',
+            periodo: currentPeriod,
+            payroll: emp,
+            detallesAdicionales: {
+              causal: 'ART_161_NECESIDADES_DE_LA_EMPRESA',
+              indemnizacion_anos_servicio: fin.indemnizacionAnosServicio,
+              liquido_finiquito: fin.totalFiniquitoLiquido,
+            },
+          });
+          payload.asiento_contable = fin.asientoContable || payload.asiento_contable;
+        }
       } else {
-        // Default Payroll Calculation & Centralization
-        replyText = `### Liquidación Mensual y Cumplimiento Normativo de Nómina\n\nSe procesó el motor de remuneraciones del colaborador **${emp.nombreCompleto}** en **${activeClient.razonSocial}**:\n\n1. **Haberes Imponibles:** Sueldo Base (${formatCLP(emp.sueldoBase)}) + Gratificación Art. 50 tope 4.75 IMM (${formatCLP(emp.gratificacionMonto)}) = **${formatCLP(emp.totalHaberesImponibles)}**.\n2. **Haberes No Imponibles:** Colación (${formatCLP(emp.asignacionColacion)}) + Movilización (${formatCLP(emp.asignacionMovilizacion)}) = **${formatCLP(emp.totalHaberesNoImponibles)}**.\n3. **Descuentos Previsionales:** AFP ${emp.afpNombre} (${formatCLP(emp.afpMonto)}) + Salud ${emp.saludTipo} (${formatCLP(emp.saludMonto)}) + AFC (${formatCLP(emp.afcTrabajadorMonto)}) = **${formatCLP(emp.afpMonto + emp.saludMonto + emp.afcTrabajadorMonto)}**.\n4. **Impuesto Único Segunda Categoría:** **${formatCLP(emp.impuestoUnicoMonto)}** (calculado sobre base tributable en UTM según tabla SII).\n5. **Sueldo Líquido a Transferir:** **${formatCLP(emp.sueldoLiquido)}**.\n6. **Costo Total Empresa:** **${formatCLP(emp.costoTotalEmpresa)}** (incluye SIS 1.49%, Mutual y AFC patronal).\n\nTransacción técnica generada en formato JSON normalizado:`;
-
-        payload = buildErpTechnicalPayload({
-          empresaId: activeEmpresaId,
-          modulo: 'remuneraciones',
-          accion: 'crear_liquidacion',
-          periodo: currentPeriod,
-          payroll: emp,
-        });
+        throw new Error(agentData.error || 'Respuesta no concluyente del motor agéntico');
       }
 
       setChatMessages(prev => [
@@ -731,9 +714,19 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
           text: replyText,
           timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
           payload,
-        }
+        },
       ]);
-    }, 600);
+    } catch (err: any) {
+      console.error('[HrAgentModule] Error en ejecución del agente:', err);
+      setChatMessages(prev => [
+        ...prev,
+        {
+          sender: 'agent',
+          text: `⚠️ **Error en la ejecución del Agente de RR.HH.:**\n\n${err.message || 'No fue posible completar la ejecución agéntica en el servidor.'}\n\nPor favor revise los parámetros de la consulta o la conectividad del motor e intente nuevamente.`,
+          timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    }
   };
 
   // Quick Action triggers for Agent
@@ -747,6 +740,22 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Barra de Gobernanza Agéntica Transversal con Aprobación Humana */}
+      <ModuleAgentGovernanceHeader
+        moduloId="RRHH"
+        empresaId={activeEmpresaId}
+        onOperationExecuted={(appr) => {
+          showToast(`Operación ${appr.operacionTipo} autorizada y concretada exitosamente.`);
+        }}
+      />
+
+      {/* Selector del Equipo de Agentes de RRHH */}
+      <HrAgentTeamSelectorBar
+        activeRole={activeAgentRole}
+        onSelectAgentRole={setActiveAgentRole}
+        onNavigateSubtab={(sub) => setActiveSubTab(sub as HrSubTab)}
+      />
+
       {/* Top Banner: Contexto Operativo & Multi-Empresa ERP */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
@@ -760,7 +769,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                   Agente de Administración y Gestión de Personas / RRHH
                 </h2>
                 <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200 uppercase tracking-wide">
-                  Autónomo & Legal 100% Chile
+                  Autónomo & Legal 100% Chile (2026)
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -810,7 +819,9 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
             { id: 'karin', label: '9. Canal Ley Karin 21.643', icon: ShieldAlert, count: activeKarinCases.length },
             { id: 'certificates', label: '10. Certificados Laborales', icon: FileText },
             { id: 'legal_books', label: '11. Libros DT & Previred 105', icon: FileSpreadsheet },
-            { id: 'console', label: '12. Consola Asistente IA', icon: Bot },
+            { id: 'payroll_historical', label: '12. Histórico & Reliquidaciones', icon: History },
+            { id: 'climate_surveys', label: '13. Clima Laboral & eNPS', icon: HeartPulse },
+            { id: 'console', label: '14. Consola Asistente IA', icon: Bot },
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeSubTab === tab.id;
@@ -1836,6 +1847,25 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: HISTÓRICO DE REMUNERACIONES & RELIQUIDACIONES RETROACTIVAS        */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'payroll_historical' && (
+        <PayrollHistoricalAndReliquidationsManager
+          company={company}
+          indicators={indicators}
+          payrolls={payrolls}
+          onAddAccountingEntry={onAddAccountingEntry}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB: CLIMA ORGANIZACIONAL, DIAGNÓSTICO & ENPS                         */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'climate_surveys' && (
+        <ClimateSurveyManager company={company} />
       )}
 
       {/* Modal: View MiDT Payload */}

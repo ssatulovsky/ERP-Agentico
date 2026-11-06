@@ -448,16 +448,21 @@ supervisorLedgerRouter.post(
  */
 supervisorLedgerRouter.get('/entries', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.query.empresaId ? String(req.query.empresaId).trim() : undefined;
+    const authUser = (req as any).user;
+    // AISLAMIENTO MULTI-TENANT ESTRICTO: usuarios no-superadmin SOLO leen req.effectiveEmpresaId
+    const targetEmpresaId = authUser?.isSuperAdmin
+      ? (req.effectiveEmpresaId || (req.query.empresaId ? String(req.query.empresaId).trim() : undefined))
+      : (req.effectiveEmpresaId || authUser?.empresaPrincipalId);
+
     const periodo = req.query.periodo ? String(req.query.periodo).trim() : undefined;
 
-    const entries = await queryEntriesWithLines(empresaId, periodo);
+    const entries = await queryEntriesWithLines(targetEmpresaId, periodo);
 
     res.json({
       success: true,
       data: entries,
       total: entries.length,
-      empresaId: empresaId || 'TODAS',
+      empresaId: targetEmpresaId || 'TODAS',
       periodo: periodo || 'TODOS',
       timestamp: new Date().toISOString(),
     });

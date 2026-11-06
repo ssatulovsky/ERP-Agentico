@@ -132,8 +132,11 @@ export interface AccountingEntryLineInput {
   tipoDocumentoRef?: string | null;
   folioDocumentoRef?: string | null;
   montoDocumentoRef?: number | string | null;
+  fechaDocumentoRef?: string | null;
+  fechaVencimientoRef?: string | null;
   documentoOperacion?: string | null;
   tipoDocumentoOperacion?: string | null;
+  fechaDocumentoOperacion?: string | null;
   documentoConciliacion?: string | null;
   tipoDocumentoConciliacion?: string | null;
   monedaOriginal?: string | null;
@@ -475,7 +478,7 @@ export async function recordVerifiedEntry(
         ...newEntryPayload,
         firmId: 'firm-default-001',
         createdAt: new Date(),
-      };
+      } as unknown as AccountingEntry;
 
       // 5.2 Preparar e insertar líneas en bloque
       const linesToInsert: NewAccountingEntryLine[] = lineas.map((line, idx) => {
@@ -547,7 +550,7 @@ export async function recordVerifiedEntry(
         ...l,
         rutAuxiliar: l.rutAuxiliar || null,
         centroCosto: l.centroCosto || null,
-      }));
+      })) as unknown as AccountingEntryLine[];
 
       // 5.3 Construir diff contable y registrar log de auditoría agéntica
       const diffContable = {

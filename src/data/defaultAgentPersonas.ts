@@ -18,7 +18,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
       pitch: 1.0,
       rate: 1.0,
       volume: 1.0,
-      neuralModel: 'piper',
+      neuralModel: 'gemini',
+      geminiVoiceName: 'Aoede',
       piperVoiceId: 'es_AR-daniela-high',
     },
     accionesSugeridas: [
@@ -61,6 +62,9 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
       pitch: 1.15,
       rate: 1.0,
       volume: 1.0,
+      neuralModel: 'gemini',
+      geminiVoiceName: 'Kore',
+      piperVoiceId: 'es_MX-ald-medium',
     },
     accionesSugeridas: [
       {
@@ -385,7 +389,8 @@ export const DEFAULT_AGENT_PERSONAS: AgentPersona[] = [
       pitch: 0.62, // Tono barítono masculino asertivo y estratégico
       rate: 0.98,
       volume: 1.0,
-      neuralModel: 'piper',
+      neuralModel: 'gemini',
+      geminiVoiceName: 'Puck',
       piperVoiceId: 'es_ES-davefx-medium',
     },
     accionesSugeridas: [

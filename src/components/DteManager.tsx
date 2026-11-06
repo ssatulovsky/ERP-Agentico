@@ -42,6 +42,8 @@ import {
 import { downloadRcvCsv, downloadRcvExcel, downloadRcvPdf } from '../utils/reportGenerators';
 import { SiiIntegrationModal } from './SiiIntegrationModal';
 import { SiiAutonomousEngineModal } from './SiiAutonomousEngineModal';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
+import { getStoredAuthToken } from '../services/apiClient';
 
 interface DteManagerProps {
   dtes: DteDocument[];
@@ -195,7 +197,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
       if (updatedDoc.tipoOperacion === 'VENTA') {
         newEntry = createSalesDteEntry(updatedDoc);
       } else if (updatedDoc.tipoOperacion === 'COMPRA') {
-        newEntry = createPurchaseDteEntry(updatedDoc);
+        newEntry = createPurchaseDteEntry(updatedDoc, isCompanyExento);
       }
       if (newEntry) {
         onAddEntry(newEntry);
@@ -232,9 +234,13 @@ export const DteManager: React.FC<DteManagerProps> = ({
     setIsConnectingSii(true);
     setSyncAlert(`Conectando con Servicio de Impuestos Internos (zeusr.sii.cl / RCV) para RUT ${company.rut}...`);
     try {
+      const authToken = getStoredAuthToken();
       const res = await fetch('/api/sii/download-rcv', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
           tipo: 'VENTA',
           periodo: '2026-08',
@@ -262,12 +268,43 @@ export const DteManager: React.FC<DteManagerProps> = ({
         if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
           receivedDocs.forEach(doc => {
             if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
-            else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc));
+            else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc, isCompanyExento));
             else onAddEntry(createHonorariosEntry(doc));
           });
         }
 
-        setSyncAlert(`¡Registro de Ventas obtenido desde el SII! Se sincronizaron ${receivedDocs.length} documentos oficiales (${rcvAccountingMode === 'DETALLADO_DOCUMENTO' ? 'Movimiento a Movimiento' : 'Modo Resumen Global'}).`);
+        // Auditoría agéntica de conciliación RCV vs Libro Diario
+        let agentNote = '';
+        try {
+          const agentRes = await fetch('/api/agents/autonomous/execute', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+            body: JSON.stringify({
+              module: 'TRIBUTARIO_SII',
+              modulo: 'TRIBUTARIO_SII',
+              empresaId: company.rut,
+              query: `Conciliar ${receivedDocs.length} documentos RCV con el Libro Diario para el período 2026-08.`,
+              context: {
+                empresa: company,
+                company,
+                periodo: '2026-08',
+                dtes: receivedDocs,
+              },
+            }),
+          });
+          if (agentRes.ok) {
+            const aData = await agentRes.json();
+            const desc = aData.decision || aData.finalText || '';
+            if (desc) agentNote = ` | Dictamen Agente: ${desc.slice(0, 100)}...`;
+          }
+        } catch (aErr) {
+          console.warn('[DteManager] Error consultando conciliación agéntica:', aErr);
+        }
+
+        setSyncAlert(`¡Registro de Ventas obtenido desde el SII! Se sincronizaron ${receivedDocs.length} documentos oficiales (${rcvAccountingMode === 'DETALLADO_DOCUMENTO' ? 'Movimiento a Movimiento' : 'Modo Resumen Global'}).${agentNote}`);
       } else {
         if (isCompanyExento) {
           setSyncAlert(`Consulta oficial al SII completada: ${company.razonSocial} es un contribuyente NO AFECTO A IVA (Art. 12 Letra E / DL 825). El SII certifica $0 ventas afectas con IVA (DTE 33: 0, Débito Fiscal: $0 CLP) y 0 facturas exentas emitidas en el período. Cero datos inventados.`);
@@ -399,7 +436,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
     if (createdDte.tipoOperacion === 'VENTA') {
       entry = createSalesDteEntry(createdDte);
     } else if (createdDte.tipoOperacion === 'COMPRA') {
-      entry = createPurchaseDteEntry(createdDte);
+      entry = createPurchaseDteEntry(createdDte, isCompanyExento);
     } else {
       entry = createHonorariosEntry(createdDte);
     }
@@ -410,18 +447,31 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
   // Callback from SiiIntegrationModal
   const handleIngestFromSiiModal = (newDocs: DteDocument[], autoSyncCashFlow: boolean) => {
+    // Si la empresa es exenta de IVA y son compras, reflejar IVA No Recuperable en cada documento
+    const processedDocs = newDocs.map(d => {
+      if (isCompanyExento && d.tipoOperacion === 'COMPRA' && d.montoIva > 0) {
+        return {
+          ...d,
+          montoIvaRecuperable: 0,
+          montoIvaNoRecuperable: d.montoIva,
+          ivaNoRecuperable: true,
+        };
+      }
+      return d;
+    });
+
     if (onAddMultipleDtes) {
-      onAddMultipleDtes(newDocs, autoSyncCashFlow);
+      onAddMultipleDtes(processedDocs, autoSyncCashFlow);
     } else {
-      newDocs.forEach((doc) => {
+      processedDocs.forEach((doc) => {
         onAddDte(doc);
       });
     }
 
     if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
-      newDocs.forEach((doc) => {
+      processedDocs.forEach((doc) => {
         if (doc.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(doc));
-        else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc));
+        else if (doc.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(doc, isCompanyExento));
         else onAddEntry(createHonorariosEntry(doc));
       });
     }
@@ -469,6 +519,9 @@ export const DteManager: React.FC<DteManagerProps> = ({
           montoNeto,
           montoExento,
           montoIva: iva,
+          montoIvaRecuperable: (ingestType === 'COMPRA' && isCompanyExento) ? 0 : iva,
+          montoIvaNoRecuperable: (ingestType === 'COMPRA' && isCompanyExento) ? iva : 0,
+          ivaNoRecuperable: ingestType === 'COMPRA' && isCompanyExento,
           montoTotal: total,
           retencionTasa: ingestType === 'HONORARIOS' ? 0.145 : undefined,
           retencionMonto: ingestType === 'HONORARIOS' ? Math.round(total * 0.145) : undefined,
@@ -476,6 +529,8 @@ export const DteManager: React.FC<DteManagerProps> = ({
           estadoPago: 'PENDIENTE',
           glosa: isExento
             ? `Servicio de Consultoría / Software (Exento IVA Art. 12 Letra E / DL 825) - Folio ${folio}`
+            : (ingestType === 'COMPRA' && isCompanyExento)
+            ? `Compra Recibida - IVA No Recuperable (Giro Exento Art. 23 DL 825) - Folio ${folio}`
             : `Ingesta RCV SII - ${ingestType === 'VENTA' ? 'Venta' : ingestType === 'COMPRA' ? 'Compra' : 'BHE'} Folio ${folio}`,
         };
 
@@ -484,7 +539,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
         // Generate normalized accounting entry if configured in DETALLADO_DOCUMENTO mode
         if (rcvAccountingMode === 'DETALLADO_DOCUMENTO') {
           if (dte.tipoOperacion === 'VENTA') onAddEntry(createSalesDteEntry(dte));
-          else if (dte.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(dte));
+          else if (dte.tipoOperacion === 'COMPRA') onAddEntry(createPurchaseDteEntry(dte, isCompanyExento));
           else onAddEntry(createHonorariosEntry(dte));
         }
 
@@ -505,7 +560,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
     if (dte.tipoOperacion === 'VENTA') {
       entry = createSalesDteEntry(dte);
     } else if (dte.tipoOperacion === 'COMPRA') {
-      entry = createPurchaseDteEntry(dte);
+      entry = createPurchaseDteEntry(dte, isCompanyExento);
     } else {
       entry = createHonorariosEntry(dte);
     }
@@ -521,6 +576,12 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Gobernanza Agéntica del Módulo Tributario SII (Jorge Rojas) */}
+      <ModuleAgentGovernanceHeader
+        moduloId="TRIBUTARIO_SII"
+        empresaId={company?.id || ''}
+      />
+
       {/* Alert banner if sync success */}
       {syncAlert && (
         <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs flex items-center justify-between shadow-xs">
@@ -891,7 +952,9 @@ export const DteManager: React.FC<DteManagerProps> = ({
                 <th className="px-4 py-3">Contraparte (RUT & Razón Social)</th>
                 <th className="px-4 py-3">Fecha Emisión</th>
                 <th className="px-4 py-3 text-right">Monto Neto ($)</th>
-                <th className="px-4 py-3 text-right">IVA / Retención ($)</th>
+                <th className="px-4 py-3 text-right" title="IVA Crédito Fiscal Recuperable / IVA No Recuperable Art. 23 DL 825 / Retención BHE">
+                  IVA (Rec / No Rec) ($)
+                </th>
                 <th className="px-4 py-3 text-right">Total ($ CLP)</th>
                 <th className="px-4 py-3 text-center">Estado SII</th>
                 <th className="px-4 py-3 text-center">Estado Pago</th>
@@ -990,6 +1053,15 @@ export const DteManager: React.FC<DteManagerProps> = ({
                       <td className="px-4 py-3 text-right font-mono">
                         {isBH ? (
                           <span className="text-purple-700 font-bold">-{formatNumberCL(doc.retencionMonto || (doc.montoTotal * (doc.retencionTasa || 0.145)))}</span>
+                        ) : (doc.ivaNoRecuperable || (isCompanyExento && !isVenta && doc.montoIva > 0) || (doc.montoIvaNoRecuperable && doc.montoIvaNoRecuperable > 0)) ? (
+                          <div className="flex flex-col items-end">
+                            <span className="text-amber-700 font-bold" title="IVA No Recuperable: Imputado a Costo/Gasto Operacional según Art. 23 DL 825">
+                              {formatNumberCL(doc.montoIvaNoRecuperable || doc.montoIva)}
+                            </span>
+                            <span className="text-[9px] bg-amber-100 text-amber-800 px-1 rounded font-sans font-semibold">
+                              No Rec.
+                            </span>
+                          </div>
                         ) : doc.montoIva !== 0 ? (
                           <span className={isVenta ? 'text-emerald-700 font-bold' : 'text-blue-700 font-bold'}>
                             {formatNumberCL(doc.montoIva)}

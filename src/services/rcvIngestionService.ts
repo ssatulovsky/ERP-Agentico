@@ -149,7 +149,8 @@ export class RcvIngestionService {
     fileBuffer: Buffer,
     tipoOperacion: 'COMPRA' | 'VENTA',
     periodo: string,
-    empresaId: string
+    empresaId: string,
+    isCompanyExento: boolean = false
   ): Promise<ParsedDteRow[]> {
     if (!fileBuffer || fileBuffer.length === 0) {
       throw new Error('SIN_DATOS: El archivo proporcionado está vacío (0 bytes).');
@@ -309,14 +310,27 @@ export class RcvIngestionService {
         colIndexMap['montoExento'] !== undefined ? parseChileanNumber(cols[colIndexMap['montoExento']]) : 0;
       const montoNetoVal =
         colIndexMap['montoNeto'] !== undefined ? parseChileanNumber(cols[colIndexMap['montoNeto']]) : 0;
-      const montoIvaRecuperableVal =
+      let montoIvaRecuperableVal =
         colIndexMap['montoIvaRecuperable'] !== undefined
           ? parseChileanNumber(cols[colIndexMap['montoIvaRecuperable']])
           : 0;
-      const montoIvaNoRecuperableVal =
+      let montoIvaNoRecuperableVal =
         colIndexMap['montoIvaNoRecuperable'] !== undefined
           ? parseChileanNumber(cols[colIndexMap['montoIvaNoRecuperable']])
           : 0;
+
+      // Si la empresa compradora es exenta de IVA, todo IVA de compra debe ir a la columna
+      // IVA No Recuperable (Art. 23 DL 825: operaciones no gravadas o exentas), por más que el archivo del SII no lo tenga en esa columna.
+      if (tipoOperacion === 'COMPRA' && isCompanyExento) {
+        if (montoIvaRecuperableVal > 0) {
+          montoIvaNoRecuperableVal += montoIvaRecuperableVal;
+          montoIvaRecuperableVal = 0;
+        } else if (montoIvaNoRecuperableVal === 0 && montoNetoVal > 0 && tipoDteNum === 33) {
+          // Factura afecta electrónica recibida por empresa exenta: IVA implícito al 19% pasa a no recuperable
+          montoIvaNoRecuperableVal = Math.round(montoNetoVal * 0.19);
+        }
+      }
+
       let montoTotalVal =
         colIndexMap['montoTotal'] !== undefined ? parseChileanNumber(cols[colIndexMap['montoTotal']]) : 0;
 

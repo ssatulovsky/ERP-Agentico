@@ -197,7 +197,7 @@ Genera un dictamen conciso en formato JSON puro con las siguientes claves:
 
   try {
     const response = await client.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -344,7 +344,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         agenteNombre: 'AGENTE_WORKER_F29',
         accion: 'INICIO_LIQUIDACION_F29_ASINCRONA',
         estadoTransicion: 'EJECUTANDO',
-        modelName: 'gemini-2.5-flash',
+        modelName: 'gemini-3.8-flash',
         payloadInput: {
           jobId: job.id,
           attemptsMade: job.attemptsMade,
@@ -785,7 +785,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         traceId,
         agenteNombre: 'AGENTE_WORKER_F29',
         accion: 'LIQUIDACION_F29_ASINCRONA_PERSISTIDA',
-        modelName: 'gemini-2.5-flash',
+        modelName: 'gemini-3.8-flash',
         tiempoEjecucionMs: Date.now() - startTime,
         payloadInput: job.data,
         payloadOutput: {
@@ -809,7 +809,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         agenteNombre: 'AGENTE_WORKER_F29',
         accion: 'FINALIZACION_LIQUIDACION_F29_ASINCRONA',
         estadoTransicion: 'APROBADO',
-        modelName: 'gemini-2.5-flash',
+        modelName: 'gemini-3.8-flash',
         supervisorSignature: verifiedEntryResult.supervisorSignature,
         payloadInput: job.data,
         payloadOutput: {
@@ -890,7 +890,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         agenteNombre: 'AGENTE_WORKER_F29',
         accion: 'ERROR_LIQUIDACION_F29_ASINCRONA',
         estadoTransicion: 'RECHAZADO',
-        modelName: 'gemini-2.5-flash',
+        modelName: 'gemini-3.8-flash',
         payloadInput: job.data,
         payloadOutput: {
           error: errorMsg,

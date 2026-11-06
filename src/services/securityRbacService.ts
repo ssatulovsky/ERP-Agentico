@@ -1,4 +1,21 @@
+import crypto from 'node:crypto';
 import type { ClientCompany } from '../types';
+import { verifyPassword, hashPassword } from '../utils/passwordCrypto';
+
+/**
+ * Genera una contraseña inicial aleatoria de alta entropía.
+ * Se utiliza para provisionamiento inicial seguro sin contraseñas conocidas.
+ */
+export function generateRandomInitialPassword(length = 20): string {
+  return 'Sec_' + crypto.randomBytes(length).toString('base64url').replace(/[^a-zA-Z0-9]/g, '').slice(0, length) + '!26';
+}
+
+/**
+ * Retorna el hash scrypt de una contraseña inicial recién generada de forma aleatoria.
+ */
+export function generateRandomScryptHash(): string {
+  return hashPassword(generateRandomInitialPassword());
+}
 
 export type WhatsAppAgentScope =
   | 'FLUJO_CAJA'
@@ -334,6 +351,14 @@ export interface SecurityUser {
   empresasAnclasPermitidas: string[]; // IDs de empresas anclas adicionales que puede operar
   recibirAudioWhatsapp?: boolean;
   ultimoAcceso?: string;
+  debeCambiarPassword?: boolean;
+}
+
+export function sanitizeSecurityUser(user: SecurityUser): SecurityUser {
+  return {
+    ...user,
+    password: '',
+  };
 }
 
 export interface CompanySecurityConfig {
@@ -585,7 +610,7 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
   {
     id: 'usr-superadmin',
     username: 'ssatulovsky',
-    password: 'admin123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Sergio Satulovsky (SuperAdmin ERP)',
     cargo: 'Socio Director & Propietario ERP',
     email: 'ssatulovsky@innovagile.cl',
@@ -600,11 +625,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
       'client-minera-sur',
     ],
     recibirAudioWhatsapp: true,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-admin-cliente',
     username: 'admin',
-    password: 'admin123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Claudia Navarrete Ruiz',
     cargo: 'Gerente de Administración (Admin Cliente + Anclas)',
     email: 'contabilidad@retaillogistics.cl',
@@ -614,11 +640,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-retail-logistics',
     empresasAnclasPermitidas: ['client-agro-valle'],
     recibirAudioWhatsapp: true,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-rrhh-01',
     username: 'rrhh',
-    password: 'rrhh123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Sofía Castro (Jefa RRHH)',
     cargo: 'Encargada de Recursos Humanos y Nómina',
     email: 'rrhh@innovagile.cl',
@@ -628,11 +655,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-innovagile',
     empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-bodega-rrhh-02',
     username: 'operaciones',
-    password: 'op123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Diego Morales (Supervisor RRHH + Bodega)',
     cargo: 'Supervisor de Bodega y Turnos RRHH',
     email: 'operaciones@retaillogistics.cl',
@@ -642,11 +670,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-retail-logistics',
     empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-contador-03',
     username: 'contador',
-    password: 'conta123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Jorge Rojas (Contador Senior)',
     cargo: 'Contador General & Tributario',
     email: 'jrojas@siexconsultores.cl',
@@ -656,11 +685,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-innovagile',
     empresasAnclasPermitidas: ['client-retail-logistics', 'client-agro-valle'],
     recibirAudioWhatsapp: false,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-compras-01',
     username: 'compras',
-    password: 'compras123',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Esteban Morales (Jefe Comercial & Aprovisionamiento)',
     cargo: 'Encargado de Gestión Comercial, Forecasting y Compras',
     email: 'compras@innovagile.cl',
@@ -670,11 +700,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-retail-logistics',
     empresasAnclasPermitidas: ['client-agro-valle'],
     recibirAudioWhatsapp: true,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-minera-suspendida',
     username: 'minera',
-    password: '123456',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Rodrigo Cifuentes (Minera del Sur)',
     cargo: 'Gerente de Operaciones Faena',
     email: 'adquisiciones@mineradelsur.cl',
@@ -684,11 +715,12 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-minera-sur',
     empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
+    debeCambiarPassword: true,
   },
   {
     id: 'usr-inactivo-04',
     username: 'inactivo',
-    password: '123456',
+    password: generateRandomScryptHash(),
     nombreCompleto: 'Roberto Gómez (Ex-Colaborador)',
     cargo: 'Analista Administrativo',
     email: 'rgomez@innovagile.cl',
@@ -698,6 +730,7 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
     empresaPrincipalId: 'client-innovagile',
     empresasAnclasPermitidas: [],
     recibirAudioWhatsapp: false,
+    debeCambiarPassword: true,
   },
 ];
 
@@ -940,7 +973,7 @@ export function authenticateErpLogin(params: {
     return false;
   });
 
-  if (!matchedUser || matchedUser.password !== cleanPass) {
+  if (!matchedUser || !verifyPassword(cleanPass, matchedUser.password)) {
     return {
       ok: false,
       errorCode: 'CREDENCIALES_INVALIDAS',
@@ -990,7 +1023,7 @@ export function authenticateErpLogin(params: {
       errorCode: 'USUARIO_INACTIVO',
       errorTitle: 'Usuario No Activo en Sistema',
       errorMessage: 'Usuario no activo en sistema, comuníquese con su administrador.',
-      user: matchedUser,
+      user: sanitizeSecurityUser(matchedUser),
       companyConfig,
     };
   }
@@ -1041,7 +1074,7 @@ export function authenticateErpLogin(params: {
 
   return {
     ok: true,
-    user: matchedUser,
+    user: sanitizeSecurityUser(matchedUser),
     role,
     companyConfig,
     allowedCompanyIds:
@@ -1287,7 +1320,12 @@ export function mergeSecurityRbacStates(
   }
   for (const u of serverState.users || []) {
     if (u && u.username) {
-      usersByUsername.set(u.username.trim().toLowerCase(), u);
+      const key = u.username.trim().toLowerCase();
+      const defaultUser = DEFAULT_SECURITY_USERS.find(du => du.username.trim().toLowerCase() === key);
+      usersByUsername.set(key, {
+        ...u,
+        debeCambiarPassword: u.debeCambiarPassword !== undefined ? u.debeCambiarPassword : (defaultUser?.debeCambiarPassword ?? false),
+      });
     }
   }
   for (const u of localState.users || []) {
@@ -1296,9 +1334,13 @@ export function mergeSecurityRbacStates(
       const existingOnServer = usersByUsername.get(key);
       const isDefaultUnchangedOnServer =
         existingOnServer && defaultUsersMap.get(key) === JSON.stringify(existingOnServer);
-      // Si el usuario fue dado de alta en esta sesión (no existe aún en servidor) o fue editado localmente mientras el servidor tenía el seed por defecto
+      const defaultUser = DEFAULT_SECURITY_USERS.find(du => du.username.trim().toLowerCase() === key);
+      const userWithFlag = {
+        ...u,
+        debeCambiarPassword: u.debeCambiarPassword !== undefined ? u.debeCambiarPassword : (defaultUser?.debeCambiarPassword ?? false),
+      };
       if (!existingOnServer || isDefaultUnchangedOnServer) {
-        usersByUsername.set(key, u);
+        usersByUsername.set(key, userWithFlag);
       }
     }
   }

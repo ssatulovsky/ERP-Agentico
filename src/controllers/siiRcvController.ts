@@ -6,8 +6,25 @@ import { getMysqlDb, isRealMysqlConnected, inMemoryDtesRcv } from '../db/mysqlCl
 import { diskPersistence } from '../services/diskPersistenceService';
 import { SiiRcvService, SiiGatewayError } from '../services/siiRcvService';
 import { RcvIngestionService } from '../services/rcvIngestionService';
+import { requireCompanyAccess } from '../middlewares/authMiddleware';
 
 export const siiRcvRouter = Router();
+
+siiRcvRouter.use((req: Request, res: Response, next) => {
+  const targetEmpresaId = req.effectiveEmpresaId || (req.query.empresaRut as string) || (req.query.empresaId as string);
+
+  if (targetEmpresaId) {
+    const check = requireCompanyAccess(req, targetEmpresaId);
+    if (!check.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: 'ACCESO_DENEGADO_EMPRESA',
+        message: check.reason,
+      });
+    }
+  }
+  next();
+});
 
 const syncApiSchema = z.object({
   empresaRut: z.string().min(3, 'RUT de empresa mandante requerido'),
@@ -142,14 +159,15 @@ siiRcvRouter.post('/upload-csv', async (req: Request, res: Response) => {
  */
 siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
   try {
-    const empresaRut = String(req.query.empresaRut || req.query.empresaId || '').replace(/\./g, '').trim().toUpperCase();
-    const periodo = String(req.query.periodo || '');
+    const empresaRut = String(req.effectiveEmpresaId || '').replace(/\./g, '').trim().toUpperCase();
+    const periodo = req.query.periodo ? String(req.query.periodo).trim() : '';
     const tipo = req.query.tipo ? String(req.query.tipo).toUpperCase() : undefined;
 
-    if (!empresaRut || !periodo) {
+    if (!empresaRut) {
       return res.status(400).json({
         success: false,
-        error: 'Parámetros obligatorios: empresaRut y periodo (AAAA-MM)',
+        error: 'IDENTIFICADOR_EMPRESA_INVALIDO',
+        message: 'No se identificó la empresa autorizada en la sesión.',
       });
     }
 
@@ -159,8 +177,11 @@ siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
     if (isRealMysqlConnected) {
       const conditions = [
         eq(dtesRcv.empresaId, empresaRut),
-        eq(dtesRcv.periodo, periodo),
       ];
+
+      if (periodo) {
+        conditions.push(eq(dtesRcv.periodo, periodo));
+      }
 
       if (tipo && (tipo === 'COMPRA' || tipo === 'VENTA')) {
         conditions.push(eq(dtesRcv.tipoOperacion, tipo));
@@ -174,14 +195,14 @@ siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
       // Búsqueda en almacén de contingencia
       records = inMemoryDtesRcv.filter((d) => {
         const matchEmpresa = d.empresaId === empresaRut;
-        const matchPeriodo = d.periodo === periodo;
+        const matchPeriodo = periodo ? d.periodo === periodo : true;
         const matchTipo = tipo ? d.tipoOperacion === tipo : true;
         return matchEmpresa && matchPeriodo && matchTipo;
       });
     }
 
     if (records.length === 0) {
-      const diskRecords = diskPersistence.getDtes(empresaRut, periodo);
+      const diskRecords = diskPersistence.getDtes(empresaRut, periodo || undefined);
       if (diskRecords.length > 0) {
         records = diskRecords.filter((d: any) => (tipo ? d.tipoOperacion === tipo : true));
       }
@@ -190,7 +211,7 @@ siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
     res.status(200).json({
       success: true,
       empresaId: empresaRut,
-      periodo,
+      periodo: periodo || 'TODOS',
       totalRegistros: records.length,
       data: records,
     });
@@ -201,3 +222,79 @@ siiRcvRouter.get('/dtes', async (req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * POST /api/rcv/dtes
+ * Persiste documentos DTE para una empresa en diskPersistence y MySQL si está conectado
+ */
+siiRcvRouter.post('/dtes', async (req: Request, res: Response) => {
+  try {
+    const { dtes, replace } = req.body;
+    const targetEmpresa = String(req.effectiveEmpresaId || '').replace(/\./g, '').trim().toUpperCase();
+    if (!targetEmpresa || !Array.isArray(dtes)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Parámetros obligatorios: array de dtes válido y empresa autorizada',
+      });
+    }
+
+    const normalized = dtes.map((d: any) => ({
+      ...d,
+      empresaId: targetEmpresa,
+    }));
+
+    if (replace) {
+      diskPersistence.saveDtes(targetEmpresa, normalized, true);
+    } else {
+      diskPersistence.addDtes(normalized);
+      diskPersistence.saveClientState(targetEmpresa, 'dtes', normalized);
+    }
+
+    if (isRealMysqlConnected) {
+      const db = getMysqlDb();
+      for (const d of normalized) {
+        try {
+          await db
+            .insert(dtesRcv)
+            .values({
+              id: d.id || `${d.tipoDte}-${d.folio}-${targetEmpresa}`,
+              empresaId: targetEmpresa,
+              periodo: d.periodo || new Date().toISOString().slice(0, 7),
+              tipoOperacion: d.tipoOperacion || 'COMPRA',
+              tipoDte: Number(d.tipoDte) || 33,
+              folio: Number(d.folio) || 0,
+              rutContraparte: d.rutContraparte || d.rutEmisor || d.rutReceptor || '',
+              razonSocialContraparte: d.razonSocialContraparte || d.razonSocial || '',
+              fechaEmision: d.fechaEmision ? new Date(d.fechaEmision) : new Date(),
+              montoNeto: String(d.montoNeto || d.neto || 0),
+              montoIva: String(d.montoIva || d.iva || 0),
+              montoTotal: String(d.montoTotal || d.total || 0),
+              estadoContable: d.estadoContable || 'PENDIENTE',
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                montoNeto: String(d.montoNeto || d.neto || 0),
+                montoIva: String(d.montoIva || d.iva || 0),
+                montoTotal: String(d.montoTotal || d.total || 0),
+                estadoContable: d.estadoContable || 'PENDIENTE',
+              },
+            });
+        } catch (e: any) {
+          // ignore duplicate insert errors
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${dtes.length} DTEs persistidos con éxito.`,
+      count: dtes.length,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al persistir DTEs',
+    });
+  }
+});
+

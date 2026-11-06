@@ -42,7 +42,12 @@ import {
   Percent,
   FileText,
   Building2,
+  Bot,
+  Sparkles,
+  X,
+  ShieldAlert,
 } from 'lucide-react';
+import { getStoredAuthToken } from '../services/apiClient';
 import { BudgetManagementSection } from './BudgetManagementSection';
 import { OpClosureAnalysisModal } from './OpClosureAnalysisModal';
 
@@ -99,7 +104,7 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
 
   // Form State para Nueva OP
   const [newOpForm, setNewOpForm] = useState<Partial<ProductionOrder>>({
-    folioOP: `OP-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+    folioOP: `OP-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
     descripcion: '',
     productoCodigo: '',
     productoNombre: '',
@@ -139,6 +144,16 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     cantidadVendida: 1,
     dteFolioFactura: undefined as number | undefined,
   });
+
+  // Estado del Motor Agéntico Autónomo
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
+    title: string;
+    decision: string;
+    steps: any[];
+    approvalRequired?: boolean;
+    approvalDetails?: any;
+  } | null>(null);
 
   const triggerSuccess = (msg: string) => {
     setActionSuccessMessage(msg);
@@ -206,7 +221,7 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
       empresaId: currentClient.id || 'CLIENTE_ACTUAL',
       folioOP: newOpForm.folioOP || `OP-${Date.now().toString().slice(-4)}`,
       descripcion: newOpForm.descripcion || newOpForm.productoNombre || '',
-      productoCodigo: newOpForm.productoCodigo || `PROD-${Math.floor(100 + Math.random() * 900)}`,
+      productoCodigo: newOpForm.productoCodigo || `PROD-${Date.now().toString().slice(-4)}`,
       productoNombre: newOpForm.productoNombre || '',
       categoria: (newOpForm.categoria as ProductionProductCategory) || 'REDES_Y_FONDEOS',
       unidadMedida: newOpForm.unidadMedida || 'UNID',
@@ -405,8 +420,8 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
         empresaId: currentClient.id,
         sku: op.productoCodigo || `PT-${op.folioOP.replace(/[^0-9]/g, '')}`,
         nombre: op.productoNombre,
-        categoria: 'PRODUCTO_TERMINADO',
-        unidadMedida: op.unidadMedida || 'UN',
+        categoria: 'MERCADERIA_VENTA',
+        unidadMedida: (op.unidadMedida && ['UNIDADES', 'CAJAS', 'KILOS', 'LITROS', 'METROS', 'PALLETS'].includes(op.unidadMedida) ? op.unidadMedida : 'UNIDADES') as any,
         costoUnitarioPMP: costUnit,
         ultimoPrecioCompra: costUnit,
         precioVentaSugerido: Math.round(costUnit * 1.35),
@@ -456,10 +471,43 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     onUpdateInventoryItems(updated);
   };
 
-  // Handler: Liquidar OP a Productos Terminados (Cierre)
-  const handleLiquidateOpToPt = (op: ProductionOrder) => {
+  // Handler: Liquidar OP a Productos Terminados (Cierre con Motor Agéntico)
+  const handleLiquidateOpToPt = async (op: ProductionOrder) => {
     const cantProducida = op.cantidadProducidaReal > 0 ? op.cantidadProducidaReal : op.cantidadObjetivo;
     const costUnit = Math.round((op.costoTotalProduccion || 0) / cantProducida);
+
+    setIsExecutingAgent(true);
+    let agentResultData: any = null;
+
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'COSTOS_PRODUCCION',
+          modulo: 'COSTOS_PRODUCCION',
+          empresaId: currentClient.id,
+          query: `Liquidar y cerrar orden de producción ${op.folioOP} (${op.productoNombre}) a Productos Terminados según NIC 2. Cantidad producida: ${cantProducida} unidades a costo unitario real ${costUnit} CLP.`,
+          context: {
+            empresa: currentClient,
+            productionOrders: safeOrders,
+            opId: op.id,
+            cantidadProducida: cantProducida,
+          },
+        }),
+      });
+      if (res.ok) {
+        agentResultData = await res.json();
+      }
+    } catch (err) {
+      console.warn('[ProductionCostingAgent] Error consultando motor agéntico:', err);
+    } finally {
+      setIsExecutingAgent(false);
+    }
 
     const updatedOp: ProductionOrder = {
       ...op,
@@ -479,20 +527,69 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     onUpdateProductionOrder(updatedOp);
     syncFinishedProductToInventory(updatedOp, cantProducida, costUnit);
 
-    triggerSuccess(
-      `Orden ${op.folioOP} liquidada a Productos Terminados (Costo total: ${formatCLP(
-        op.costoTotalProduccion
-      )}). Asiento WIP -> PT contabilizado y stock físico actualizado.`
-    );
+    if (agentResultData?.approvalRequired) {
+      triggerSuccess(
+        `Orden ${op.folioOP} liquidada y enviada a gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'}.`
+      );
+    } else {
+      triggerSuccess(
+        `Orden ${op.folioOP} liquidada a Productos Terminados (Costo total: ${formatCLP(
+          op.costoTotalProduccion
+        )}). Asiento WIP -> PT contabilizado por Agente de Costos.`
+      );
+    }
+
+    if (agentResultData?.steps || agentResultData?.decision) {
+      setAgentDiagnosticModal({
+        title: `Dictamen Agéntico: Liquidación OP ${op.folioOP}`,
+        decision: agentResultData.decision || agentResultData.finalText || 'Liquidación ejecutada.',
+        steps: agentResultData.steps || [],
+        approvalRequired: agentResultData.approvalRequired,
+        approvalDetails: agentResultData.approvalDetails,
+      });
+    }
   };
 
   // Handler: Confirmar Cierre y Liquidación desde Modal de Análisis de Desvíos
-  const handleConfirmClosureAndLiquidation = (orderId: string, analysis: ProductionOrderClosureAnalysis) => {
+  const handleConfirmClosureAndLiquidation = async (orderId: string, analysis: ProductionOrderClosureAnalysis) => {
     const op = safeOrders.find(o => o.id === orderId);
     if (!op) return;
 
     const cantProducida = op.cantidadProducidaReal > 0 ? op.cantidadProducidaReal : op.cantidadObjetivo;
     const costUnit = Math.round((op.costoTotalProduccion || 0) / cantProducida);
+
+    setIsExecutingAgent(true);
+    let agentResultData: any = null;
+
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'COSTOS_PRODUCCION',
+          modulo: 'COSTOS_PRODUCCION',
+          empresaId: currentClient.id,
+          query: `Cierre de orden ${op.folioOP} con análisis de desvíos: Eficiencia ${analysis.diagnosticoEficiencia}. Proponer asiento de cierre y desvío según NIC 2.`,
+          context: {
+            empresa: currentClient,
+            opId: op.id,
+            analysis,
+            productionOrders: safeOrders,
+          },
+        }),
+      });
+      if (res.ok) {
+        agentResultData = await res.json();
+      }
+    } catch (err) {
+      console.warn('[ProductionCostingAgent] Error consultando motor agéntico en cierre:', err);
+    } finally {
+      setIsExecutingAgent(false);
+    }
 
     const updatedOp: ProductionOrder = {
       ...op,
@@ -514,9 +611,65 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     syncFinishedProductToInventory(updatedOp, cantProducida, costUnit);
     setClosureModalOp(null);
 
-    triggerSuccess(
-      `Orden ${op.folioOP} liquidada a Productos Terminados con éxito. Diagnóstico de Eficiencia: ${analysis.diagnosticoEficiencia}. Asiento WIP -> PT contabilizado y stock físico ingresado.`
-    );
+    if (agentResultData?.approvalRequired) {
+      triggerSuccess(
+        `Cierre de ${op.folioOP} registrado. Solicitud de gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'} creada.`
+      );
+    } else {
+      triggerSuccess(
+        `Orden ${op.folioOP} liquidada a Productos Terminados con éxito. Diagnóstico de Eficiencia: ${analysis.diagnosticoEficiencia}. Asiento WIP -> PT contabilizado.`
+      );
+    }
+
+    if (agentResultData?.steps || agentResultData?.decision) {
+      setAgentDiagnosticModal({
+        title: `Auditoría de Cierre: OP ${op.folioOP}`,
+        decision: agentResultData.decision || agentResultData.finalText || 'Cierre registrado.',
+        steps: agentResultData.steps || [],
+        approvalRequired: agentResultData.approvalRequired,
+        approvalDetails: agentResultData.approvalDetails,
+      });
+    }
+  };
+
+  // Handler: Auditoría Agéntica NIC 2 de Órdenes de Producción y Desvíos
+  const handleRunCostAudit = async () => {
+    setIsExecutingAgent(true);
+    try {
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'COSTOS_PRODUCCION',
+          modulo: 'COSTOS_PRODUCCION',
+          empresaId: currentClient.id,
+          query: `Auditar costos de producción NIC 2, análisis de desvíos estándar vs real y absorción de CIF para ${safeOrders.length} órdenes de producción.`,
+          context: {
+            empresa: currentClient,
+            productionOrders: safeOrders,
+            budgets: productionBudgets,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.steps) {
+        setAgentDiagnosticModal({
+          title: 'Auditoría Agéntica NIC 2 — Costos Industriales',
+          decision: data.decision || data.finalText || 'Auditoría de costos completada.',
+          steps: data.steps || [],
+          approvalRequired: data.approvalRequired,
+          approvalDetails: data.approvalDetails,
+        });
+      }
+    } catch (err: any) {
+      alert('Error en auditoría agéntica de costos: ' + err.message);
+    } finally {
+      setIsExecutingAgent(false);
+    }
   };
 
   // Handler: Registrar Venta / Costo de Ventas
@@ -565,6 +718,17 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={handleRunCostAudit}
+              disabled={isExecutingAgent}
+              id="btn-audit-production-cost-agent"
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border border-cyan-400/30 disabled:opacity-50"
+              title="Auditoría Agéntica NIC 2 de costos y desvíos presupuestarios"
+            >
+              <Bot className={`w-4 h-4 text-amber-300 ${isExecutingAgent ? 'animate-spin' : ''}`} />
+              <span>{isExecutingAgent ? 'Auditando...' : 'Auditoría Agéntica NIC 2'}</span>
+            </button>
+
             <button
               onClick={() => setShowCreateOpModal(true)}
               id="btn-create-production-order"
@@ -1822,6 +1986,83 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
           onClose={() => setClosureModalOp(null)}
           onConfirmClosure={handleConfirmClosureAndLiquidation}
         />
+      )}
+
+      {/* MODAL: DICTAMEN DEL AGENTE AUTÓNOMO NIC 2 */}
+      {agentDiagnosticModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/40 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl text-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-cyan-600/30 border border-cyan-500/40 text-cyan-300">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    {agentDiagnosticModal.title}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                      ReAct Function Calling
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Ejecución verificable sobre costeo por órdenes de producción (NIC 2)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {agentDiagnosticModal.approvalRequired && (
+              <div className="p-3 bg-amber-950/60 border border-amber-600/60 rounded-xl text-amber-200 text-xs flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold">Gobernanza Humana Requerida:</strong>
+                  <span>Esta operación de liquidación/cierre requiere autorización de Administrador / Gerente General (Solicitud #{agentDiagnosticModal.approvalDetails?.id?.slice(-6) || 'PEND'}).</span>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-400 block">Dictamen y Análisis del Agente:</span>
+              <p className="whitespace-pre-wrap leading-relaxed text-slate-200 font-mono text-[11px]">{agentDiagnosticModal.decision}</p>
+            </div>
+
+            {agentDiagnosticModal.steps && agentDiagnosticModal.steps.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Trazabilidad de Pasos y Herramientas (Thought Trace):</span>
+                <div className="space-y-2">
+                  {agentDiagnosticModal.steps.map((st: any, idx: number) => (
+                    <div key={idx} className="bg-slate-950/80 p-3 rounded-lg border border-slate-800/80 text-xs">
+                      <div className="flex items-center justify-between text-cyan-300 font-bold mb-1">
+                        <span>Paso {st.step || idx + 1}: {st.toolCall}</span>
+                        <span className="text-[10px] text-slate-500">{st.timestamp}</span>
+                      </div>
+                      <p className="text-slate-400 text-[11px] mb-1">{st.thought}</p>
+                      {st.toolOutput && (
+                        <pre className="text-[10px] bg-slate-900 p-2 rounded text-slate-300 overflow-x-auto max-h-32">
+                          {JSON.stringify(st.toolOutput, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setAgentDiagnosticModal(null)}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold"
+              >
+                Cerrar Panel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

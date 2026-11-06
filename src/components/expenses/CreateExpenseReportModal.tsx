@@ -50,8 +50,18 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
     if (isOpen) {
       setErrorMessage(null);
       const loadedAux = loadCompanyAuxiliaries(empresaId);
-      // Priorizar auxiliares tipo EMPLEADO o con datos completos
       setAuxiliaries(loadedAux);
+
+      // Pre-poblar con el primer auxiliar de tipo RENDICION o EMPLEADO si existe
+      const preferred = loadedAux.find(
+        (a) => a.tipo === 'RENDICION' || a.tipo === 'RENDICIONES' || a.tipo === 'EMPLEADO' || a.tipoAuxiliar === 'RENDICION' || a.tipoAuxiliar === 'EMPLEADO'
+      );
+      if (preferred && (!rendidorRut || rendidorRut === '14.238.192-8')) {
+        setRendidorNombre(preferred.razonSocial || preferred.nombreContacto || '');
+        setRendidorRut(preferred.rutCompleto || preferred.rut || '');
+        setRendidorEmail(preferred.emailContacto || preferred.emailDte || '');
+        setRendidorCargo(preferred.giroComercial || (preferred.tipo === 'EMPLEADO' ? 'Colaborador' : 'Rendidor Autorizado'));
+      }
 
       if (!centroCostoId && costCenters.length > 0) {
         setCentroCostoId(costCenters[0].id);
@@ -201,11 +211,24 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
                 className="w-full px-3 py-1.5 text-xs bg-white border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               >
                 <option value="">-- Proponer desde Auxiliares Registrados (Personal / Rendiciones) --</option>
-                {auxiliaries.map((aux, idx) => (
-                  <option key={aux.id || aux.rut || idx} value={aux.id || aux.rutCompleto || aux.rut}>
-                    {aux.razonSocial} ({aux.rutCompleto || aux.rut}) {aux.tipo ? `• [${aux.tipo}]` : ''}
-                  </option>
-                ))}
+                {auxiliaries.filter(a => a.tipo === 'RENDICION' || a.tipo === 'RENDICIONES' || a.tipo === 'EMPLEADO' || a.tipoAuxiliar === 'RENDICION' || a.tipoAuxiliar === 'EMPLEADO').length > 0 && (
+                  <optgroup label="⭐ Auxiliares de Rendición / Personal (Recomendados)">
+                    {auxiliaries.filter(a => a.tipo === 'RENDICION' || a.tipo === 'RENDICIONES' || a.tipo === 'EMPLEADO' || a.tipoAuxiliar === 'RENDICION' || a.tipoAuxiliar === 'EMPLEADO').map((aux, idx) => (
+                      <option key={aux.id || aux.rut || idx} value={aux.id || aux.rutCompleto || aux.rut}>
+                        {aux.razonSocial} ({aux.rutCompleto || aux.rut}) • [{aux.tipo || aux.tipoAuxiliar || 'PERSONAL'}]
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {auxiliaries.filter(a => !(a.tipo === 'RENDICION' || a.tipo === 'RENDICIONES' || a.tipo === 'EMPLEADO' || a.tipoAuxiliar === 'RENDICION' || a.tipoAuxiliar === 'EMPLEADO')).length > 0 && (
+                  <optgroup label="Otros Auxiliares">
+                    {auxiliaries.filter(a => !(a.tipo === 'RENDICION' || a.tipo === 'RENDICIONES' || a.tipo === 'EMPLEADO' || a.tipoAuxiliar === 'RENDICION' || a.tipoAuxiliar === 'EMPLEADO')).map((aux, idx) => (
+                      <option key={aux.id || aux.rut || idx} value={aux.id || aux.rutCompleto || aux.rut}>
+                        {aux.razonSocial} ({aux.rutCompleto || aux.rut}) {aux.tipo ? `• [${aux.tipo}]` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               <span className="text-[10px] text-slate-500 mt-0.5 block">
                 Seleccione un auxiliar registrado para autocompletar o ingrese/modifique los datos manualmente a continuación.

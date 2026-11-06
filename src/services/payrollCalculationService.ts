@@ -12,6 +12,7 @@ import { getMysqlDb, isRealMysqlConnected } from '../db/mysqlClient';
 import { IndicatorSyncService } from './indicatorSyncService';
 import { calculateImpuestoUnico } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
+import { diskPersistence } from './diskPersistenceService';
 
 // Tasas oficiales de cotización previsional de las AFPs chilenas (10% obligatorio + comisión de la administradora)
 export const CHILEAN_AFP_RATES: Record<string, number> = {
@@ -24,11 +25,11 @@ export const CHILEAN_AFP_RATES: Record<string, number> = {
   UNO: 0.1046, // 10% + 0.46%
 };
 
-// Parámetros legales laborales chilenos vigentes
+// Parámetros legales laborales chilenos vigentes (2026)
 export const LABOR_CONSTANTS = {
   IMM: 500000, // Ingreso Mínimo Mensual ($500.000 CLP)
-  TOPE_AFP_SALUD_UF: 84.3, // Tope imponible en UF para previsión y salud
-  TOPE_AFC_UF: 126.6, // Tope imponible en UF para seguro de cesantía
+  TOPE_AFP_SALUD_UF: 90.0, // Tope imponible en UF para previsión y salud (Vigente Chile 2026, Ley 21.735)
+  TOPE_AFC_UF: 135.2, // Tope imponible en UF para seguro de cesantía (Vigente Chile 2026)
   TASA_FONASA: 0.07, // 7% cotización legal obligatoria de salud
   TASA_SIS_EMPLEADOR: 0.0149, // 1.49% Seguro de Invalidez y Sobrevivencia
   TASA_MUTUAL_BASE: 0.0093, // 0.93% Mutual de Seguridad básica Ley 16.744
@@ -36,6 +37,7 @@ export const LABOR_CONSTANTS = {
   AFC_INDEFINIDO_EMPLEADOR: 0.024, // 2.4% empleador indefinido
   AFC_PLAZO_FIJO_TRABAJADOR: 0.0, // 0% trabajador plazo fijo / obra
   AFC_PLAZO_FIJO_EMPLEADOR: 0.03, // 3.0% empleador plazo fijo / obra
+  TASA_LEY_21735_EMPLEADOR: 0.010, // 1.0% Aporte previsional patronal Reforma de Pensiones Ley 21.735
 };
 
 export interface EmployeePayrollDetail {
@@ -70,6 +72,7 @@ export interface EmployeePayrollDetail {
   sisEmpleadorMonto: number;
   mutualEmpleadorMonto: number;
   afcEmpleadorMonto: number;
+  reformaPrevisionalLey21735Monto?: number;
   costoTotalEmpresa: number;
 }
 
@@ -89,6 +92,7 @@ export interface PayrollBatchSummary {
   totalAfcEmpleador: number;
   totalSisEmpleador: number;
   totalMutualEmpleador: number;
+  totalLey21735Empleador?: number;
   costoTotalEmpresa: number;
   detalles: EmployeePayrollDetail[];
   asientoCentralizacionId?: string;
@@ -158,6 +162,109 @@ const SEED_EMPLOYEES_DATA = [
     otrosDescuentos: '0.00',
     activo: true,
   },
+  {
+    rut: '19.231.874-5',
+    nombreCompleto: 'Valentina Belén Rojas Carvajal',
+    cargo: 'Asistente Contable y Operaciones',
+    departamento: 'Finanzas',
+    fechaIngreso: '2024-03-01',
+    tipoContrato: 'PLAZO_FIJO',
+    sueldoBase: '850000.00',
+    gratificacionModalidad: 'ART_50',
+    horasExtrasCantidad: '6.00',
+    comisionesBonosImponibles: '50000.00',
+    asignacionColacion: '75000.00',
+    asignacionMovilizacion: '65000.00',
+    viaticosAsignacionFamiliar: '0.00',
+    afpNombre: 'UNO',
+    saludTipo: 'FONASA',
+    saludPlanUf: '0.0000',
+    otrosDescuentos: '0.00',
+    activo: true,
+  },
+];
+
+const SEED_RETAIL_EMPLOYEES_DATA = [
+  {
+    rut: '18.456.789-2',
+    nombreCompleto: 'Gonzalo Tapia Morales',
+    cargo: 'Jefe de Finanzas y Control de Gestión',
+    departamento: 'Administración',
+    fechaIngreso: '2024-03-01',
+    tipoContrato: 'INDEFINIDO',
+    sueldoBase: '1850000.00',
+    gratificacionModalidad: 'ART_50',
+    horasExtrasCantidad: '4.00',
+    comisionesBonosImponibles: '150000.00',
+    asignacionColacion: '85000.00',
+    asignacionMovilizacion: '65000.00',
+    viaticosAsignacionFamiliar: '0.00',
+    afpNombre: 'HABITAT',
+    saludTipo: 'ISAPRE',
+    saludPlanUf: '4.5000',
+    otrosDescuentos: '0.00',
+    activo: true,
+  },
+  {
+    rut: '15.340.891-3',
+    nombreCompleto: 'Rosa Cárdenas Silva',
+    cargo: 'Supervisora de Logística y Bodega',
+    departamento: 'Operaciones',
+    fechaIngreso: '2023-08-15',
+    tipoContrato: 'INDEFINIDO',
+    sueldoBase: '1250000.00',
+    gratificacionModalidad: 'ART_50',
+    horasExtrasCantidad: '8.00',
+    comisionesBonosImponibles: '80000.00',
+    asignacionColacion: '80000.00',
+    asignacionMovilizacion: '60000.00',
+    viaticosAsignacionFamiliar: '0.00',
+    afpNombre: 'PROVIDA',
+    saludTipo: 'FONASA',
+    saludPlanUf: '0.0000',
+    otrosDescuentos: '0.00',
+    activo: true,
+  },
+  {
+    rut: '17.345.678-9',
+    nombreCompleto: 'Esteban Morales Peña',
+    cargo: 'Encargado de Despacho y Sucursales',
+    departamento: 'Logística',
+    fechaIngreso: '2024-01-10',
+    tipoContrato: 'INDEFINIDO',
+    sueldoBase: '950000.00',
+    gratificacionModalidad: 'ART_50',
+    horasExtrasCantidad: '6.00',
+    comisionesBonosImponibles: '50000.00',
+    asignacionColacion: '75000.00',
+    asignacionMovilizacion: '55000.00',
+    viaticosAsignacionFamiliar: '0.00',
+    afpNombre: 'PLANVITAL',
+    saludTipo: 'FONASA',
+    saludPlanUf: '0.0000',
+    otrosDescuentos: '0.00',
+    activo: true,
+  },
+  {
+    rut: '19.876.543-2',
+    nombreCompleto: 'Claudia Henríquez Soto',
+    cargo: 'Asistente de Operaciones Retail',
+    departamento: 'Operaciones',
+    fechaIngreso: '2024-06-01',
+    tipoContrato: 'PLAZO_FIJO',
+    sueldoBase: '650000.00',
+    gratificacionModalidad: 'ART_50',
+    horasExtrasCantidad: '2.00',
+    comisionesBonosImponibles: '30000.00',
+    asignacionColacion: '70000.00',
+    asignacionMovilizacion: '50000.00',
+    viaticosAsignacionFamiliar: '0.00',
+    afpNombre: 'UNO',
+    saludTipo: 'FONASA',
+    saludPlanUf: '0.0000',
+    otrosDescuentos: '0.00',
+    activo: true,
+  },
 ];
 
 export class PayrollCalculationService {
@@ -167,7 +274,10 @@ export class PayrollCalculationService {
   public static async getOrSeedEmployees(empresaId: string): Promise<EmployeeRecord[]> {
     const cleanEmpresaId = empresaId.replace(/\./g, '').trim().toUpperCase();
 
-    const isDemoCompany = cleanEmpresaId === 'DEMO' || cleanEmpresaId === 'CLIENT-RETAIL-01';
+    const isRetail = cleanEmpresaId.includes('RETAIL') || cleanEmpresaId.includes('AGRO') || cleanEmpresaId.includes('76104550-9') || cleanEmpresaId.includes('77210980-5');
+    const isInnovAgile = cleanEmpresaId.includes('INNOVAGILE') || cleanEmpresaId.includes('77798901-4') || cleanEmpresaId === 'DEMO' || cleanEmpresaId === 'CLIENT-INNOVAGILE';
+    const isSeedable = isRetail || isInnovAgile || cleanEmpresaId === 'DEMO';
+    const seedSet = isRetail ? SEED_RETAIL_EMPLOYEES_DATA : SEED_EMPLOYEES_DATA;
 
     const db = getMysqlDb();
 
@@ -181,10 +291,10 @@ export class PayrollCalculationService {
         return records;
       }
 
-      // Sembrar colaboradores iniciales ÚNICAMENTE si es la empresa demo configurada
-      if (isDemoCompany) {
-        console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa demo: ${cleanEmpresaId}`);
-        for (const emp of SEED_EMPLOYEES_DATA) {
+      // Sembrar colaboradores iniciales si la empresa está configurada
+      if (isSeedable) {
+        console.log(`[PayrollService] Sembrando nómina inicial de colaboradores para empresa: ${cleanEmpresaId}`);
+        for (const emp of seedSet) {
           const id = crypto.randomUUID();
           await db.insert(employees).values({
             id,
@@ -204,13 +314,12 @@ export class PayrollCalculationService {
           .where(and(eq(employees.empresaId, cleanEmpresaId), eq(employees.activo, true)));
       }
 
-      // Para cualquier cliente real que no tenga colaboradores aún, retornar lista vacía (cero datos mock)
       return [];
     }
 
-    // Si está en modo contingencia en memoria: retornar empleados solo si es empresa demo
-    if (isDemoCompany) {
-      return SEED_EMPLOYEES_DATA.map((e, idx) => ({
+    // Modo contingencia en memoria
+    if (isSeedable) {
+      return seedSet.map((e, idx) => ({
         id: `emp-local-${idx + 1}`,
         empresaId: cleanEmpresaId,
         rut: e.rut,
@@ -229,7 +338,7 @@ export class PayrollCalculationService {
         afpNombre: e.afpNombre,
         saludTipo: e.saludTipo,
         saludPlanUf: e.saludPlanUf,
-        seguroCesantiaActivo: e.seguroCesantiaActivo,
+        otrosDescuentos: e.otrosDescuentos,
         activo: e.activo,
         createdAt: new Date(),
       }));
@@ -319,9 +428,10 @@ export class PayrollCalculationService {
         ? LABOR_CONSTANTS.AFC_INDEFINIDO_EMPLEADOR
         : LABOR_CONSTANTS.AFC_PLAZO_FIJO_EMPLEADOR;
     const afcEmpleadorMonto = Math.round(baseAfc * afcEmpleadorTasa);
+    const reformaPrevisionalLey21735Monto = Math.round(baseAfpSalud * LABOR_CONSTANTS.TASA_LEY_21735_EMPLEADOR);
 
     const costoTotalEmpresa =
-      totalHaberesBrutos + sisEmpleadorMonto + mutualEmpleadorMonto + afcEmpleadorMonto;
+      totalHaberesBrutos + sisEmpleadorMonto + mutualEmpleadorMonto + afcEmpleadorMonto + reformaPrevisionalLey21735Monto;
 
     return {
       employeeId: emp.id,
@@ -355,6 +465,7 @@ export class PayrollCalculationService {
       sisEmpleadorMonto,
       mutualEmpleadorMonto,
       afcEmpleadorMonto,
+      reformaPrevisionalLey21735Monto,
       costoTotalEmpresa,
     };
   }
@@ -431,6 +542,7 @@ export class PayrollCalculationService {
     let totalAfcEmpleador = 0;
     let totalSisEmpleador = 0;
     let totalMutualEmpleador = 0;
+    let totalLey21735Empleador = 0;
     let costoTotalEmpresa = 0;
     let totalSueldosBase = 0;
     let totalGratificaciones = 0;
@@ -448,12 +560,13 @@ export class PayrollCalculationService {
       totalAfcEmpleador += d.afcEmpleadorMonto;
       totalSisEmpleador += d.sisEmpleadorMonto;
       totalMutualEmpleador += d.mutualEmpleadorMonto;
+      totalLey21735Empleador += d.reformaPrevisionalLey21735Monto || 0;
       costoTotalEmpresa += d.costoTotalEmpresa;
       totalSueldosBase += (d.sueldoBase + d.horasExtrasMonto + d.comisionesBonos);
       totalGratificaciones += d.gratificacionLegal;
     }
 
-    const totalAportesPatronales = totalAfcEmpleador + totalSisEmpleador + totalMutualEmpleador;
+    const totalAportesPatronales = totalAfcEmpleador + totalSisEmpleador + totalMutualEmpleador + totalLey21735Empleador;
 
     // 5. Persistir liquidaciones en la tabla `payroll_settlements`
     const db = getMysqlDb();
@@ -505,6 +618,39 @@ export class PayrollCalculationService {
       }
     }
 
+    // Persistir en diskPersistence para disponibilidad en modo contingencia y WhatsApp / Voz
+    diskPersistence.savePayrolls(
+      detalles.map((det) => ({
+        id: crypto.randomUUID(),
+        empresaId: cleanEmpresaId,
+        periodo,
+        employeeId: det.employeeId,
+        rutEmpleado: det.rut,
+        nombreEmpleado: det.nombreCompleto,
+        diasTrabajados: det.diasTrabajados,
+        sueldoBase: det.sueldoBase,
+        horasExtrasMonto: det.horasExtrasMonto,
+        gratificacionLegal: det.gratificacionLegal,
+        comisionesBonos: det.comisionesBonos,
+        totalImponible: det.totalHaberesImponibles,
+        totalNoImponible: det.totalHaberesNoImponibles,
+        totalBruto: det.totalHaberesBrutos,
+        afpNombre: det.afpNombre,
+        afpMonto: det.afpMonto,
+        saludTipo: det.saludTipo,
+        saludMonto: det.saludMonto,
+        afcTrabajadorMonto: det.afcTrabajadorMonto,
+        impuestoUnicoMonto: det.impuestoUnicoMonto,
+        totalDescuentos: det.totalDescuentos,
+        sueldoLiquido: det.sueldoLiquido,
+        sisEmpleadorMonto: det.sisEmpleadorMonto,
+        mutualEmpleadorMonto: det.mutualEmpleadorMonto,
+        afcEmpleadorMonto: det.afcEmpleadorMonto,
+        costoTotalEmpresa: det.costoTotalEmpresa,
+      })),
+      cleanEmpresaId
+    );
+
     // 6. Generar Asiento Contable de Centralización de Nómina con Partida Doble
     // DEBE: Costos y Gastos de Personal
     // HABER: Pasivos por Remuneraciones y Leyes Sociales
@@ -514,6 +660,7 @@ export class PayrollCalculationService {
       totalSalud +
       (totalAfcTrabajador + totalAfcEmpleador) +
       (totalMutualEmpleador + totalSisEmpleador) +
+      totalLey21735Empleador +
       totalImpuestoUnico;
 
     // Ajuste matemático de redondeo al sueldo líquido para cuadre perfecto (Σ Debe == Σ Haber)
@@ -547,10 +694,21 @@ export class PayrollCalculationService {
       {
         codigoCuenta: '5.2.04',
         nombreCuenta: 'Aportes Patronales (SIS, Mutual, AFC Empleador)',
-        debe: totalAportesPatronales,
+        debe: totalAfcEmpleador + totalSisEmpleador + totalMutualEmpleador,
         haber: 0,
         glosaDetalle: `Leyes sociales empleador periodo ${periodo}`,
       },
+      ...(totalLey21735Empleador > 0
+        ? [
+            {
+              codigoCuenta: '5.2.06',
+              nombreCuenta: 'Aporte Previsional Patronal Ley 21.735 (1%)',
+              debe: totalLey21735Empleador,
+              haber: 0,
+              glosaDetalle: `Aporte patronal reforma previsional Ley 21.735 periodo ${periodo}`,
+            },
+          ]
+        : []),
       // PASIVOS (HABER)
       {
         codigoCuenta: '2.1.08',
@@ -580,6 +738,17 @@ export class PayrollCalculationService {
         haber: totalMutualEmpleador + totalSisEmpleador,
         glosaDetalle: `Seguridad laboral y SIS ${periodo}`,
       },
+      ...(totalLey21735Empleador > 0
+        ? [
+            {
+              codigoCuenta: '2.1.12',
+              nombreCuenta: 'Aporte Previsional Ley 21.735 por Pagar (PreviRed)',
+              debe: 0,
+              haber: totalLey21735Empleador,
+              glosaDetalle: `Obligación previsional Ley 21.735 por pagar ${periodo}`,
+            },
+          ]
+        : []),
       ...(totalImpuestoUnico > 0
         ? [
             {
@@ -684,6 +853,7 @@ export class PayrollCalculationService {
       totalAfcEmpleador,
       totalSisEmpleador,
       totalMutualEmpleador,
+      totalLey21735Empleador,
       costoTotalEmpresa,
       detalles,
       asientoCentralizacionId: asientoId,

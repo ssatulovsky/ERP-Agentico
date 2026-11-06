@@ -15,7 +15,7 @@ import {
   TenantCafItem,
 } from '../types';
 import { pool, getMysqlDb, isRealMysqlConnected } from '../db/mysqlClient';
-import { dtesRcv, dteItems } from '../db/schema/dtesSchema';
+import { dtesRcv, dteItems, dteCafSequences } from '../db/schema/dtesSchema';
 import { companyCredentialsVault } from '../db/schema/tenancySchema';
 import { diskPersistence } from './diskPersistenceService';
 import { createSalesDteEntry } from '../utils/chileanAccounting';
@@ -229,25 +229,128 @@ export class HttpDteBillingService {
       }
     }
 
-    // 4. Plantilla CAF de contingencia / certificación
-    const defaultRut = variants[0] || '76123456-7';
-    return `<AUTORIZACION>
-<CAF version="1.0">
-<DA>
-<RE>${defaultRut}</RE>
-<RS>EMPRESA EMISORA CHILE SPA</RS>
-<TD>${tipoDte}</TD>
-<RNG><D>1</D><H>5000</H></RNG>
-<FA>2026-01-15</FA>
-<RSAPK><M>simulated_caf_rsa_modulus_key_sii_2026==</M><E>Aw==</E></RSAPK>
-<IDK>100</IDK>
-</DA>
-<FRMA algoritmo="SHA1withRSA">simulated_caf_signature==</FRMA>
-</CAF>
-<RSASK>-----BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEA0simulated_key...
------END RSA PRIVATE KEY-----</RSASK>
-</AUTORIZACION>`;
+    // 4. Si no se encuentra archivo CAF para este tipo de DTE
+    console.warn(`[HttpDteBillingService] No se encontró archivo CAF (.xml) válido para tipo ${tipoDte} (RUT: ${options?.rut || 'no especificado'}).`);
+    return '';
+  }
+
+  /**
+   * Valida la estructura XML, elementos obligatorios y firma digital del CAF oficial del SII
+   */
+  public static verifyCafSignature(
+    content: string,
+    customSiiPublicKey?: string
+  ): {
+    valid: boolean;
+    isSample: boolean;
+    signatureAlg?: string;
+    status: 'VALID_OFFICIAL' | 'SAMPLE_STAGING' | 'INVALID_CORRUPT' | 'UNVERIFIED_NO_SII_KEY';
+    reason?: string;
+  } {
+    if (!content || typeof content !== 'string') {
+      return { valid: false, isSample: false, status: 'INVALID_CORRUPT', reason: 'Contenido XML vacío' };
+    }
+    const daMatch = content.match(/<DA>[\s\S]*?<\/DA>/i);
+    const frmaMatch = content.match(/<FRMA(?:\s+algoritmo="([^"]+)")?>([\s\S]*?)<\/FRMA>/i);
+    const hasRsapk = /<RSAPK>[\s\S]*?<\/RSAPK>/i.test(content);
+
+    if (!daMatch || !frmaMatch || !hasRsapk) {
+      return {
+        valid: false,
+        isSample: false,
+        status: 'INVALID_CORRUPT',
+        reason: 'El CAF no contiene los nodos obligatorios <DA>, <RSAPK> y <FRMA> exigidos por el SII.',
+      };
+    }
+
+    const daContent = daMatch[0];
+    const alg = frmaMatch[1] || 'SHA1withRSA';
+    const firmaB64 = frmaMatch[2].replace(/\s+/g, '');
+
+    if (!firmaB64) {
+      return {
+        valid: false,
+        isSample: false,
+        status: 'INVALID_CORRUPT',
+        reason: 'Nodo <FRMA> sin firma digital.',
+      };
+    }
+
+    // Detección estricta de firmas inventadas, simuladas o de muestra
+    const isSampleOrInvented =
+      firmaB64.includes('sample_') ||
+      content.includes('sample_caf_') ||
+      content.includes('sample_private_rsa') ||
+      firmaB64.length < 64;
+
+    if (isSampleOrInvented) {
+      return {
+        valid: false,
+        isSample: true,
+        signatureAlg: alg,
+        status: 'INVALID_CORRUPT',
+        reason: 'Firma digital simulada o inventada no emitida por el SII. Documento rechazado.',
+      };
+    }
+
+    // Resolver clave pública oficial del SII
+    let siiPublicKey = customSiiPublicKey || process.env.SII_PUBLIC_KEY;
+    if (!siiPublicKey) {
+      const candidates = [
+        path.join(process.cwd(), 'certs', 'sii', 'sii_public_key.pem'),
+        path.join(process.cwd(), 'certs', 'sii_public_key.pem'),
+      ];
+      const foundKeyPath = candidates.find((p) => fs.existsSync(p));
+      if (foundKeyPath) {
+        try {
+          siiPublicKey = fs.readFileSync(foundKeyPath, 'utf-8');
+        } catch {}
+      }
+    }
+
+    // Si no disponemos de la clave pública oficial del SII, no afirmar validez oficial
+    if (!siiPublicKey) {
+      return {
+        valid: false,
+        isSample: false,
+        signatureAlg: alg,
+        status: 'UNVERIFIED_NO_SII_KEY',
+        reason: 'Firma presente en CAF, pero no es posible certificar su validez oficial sin la clave pública del SII configurada en el servidor (SII_PUBLIC_KEY o certs/sii/sii_public_key.pem).',
+      };
+    }
+
+    try {
+      const hashAlg = alg.toLowerCase().includes('sha256') ? 'RSA-SHA256' : 'RSA-SHA1';
+      const verifier = crypto.createVerify(hashAlg);
+      verifier.update(daContent);
+      const isSignatureValid = verifier.verify(siiPublicKey, Buffer.from(firmaB64, 'base64'));
+
+      if (isSignatureValid) {
+        return {
+          valid: true,
+          isSample: false,
+          signatureAlg: alg,
+          status: 'VALID_OFFICIAL',
+          reason: 'Firma digital del SII verificada criptográficamente con la clave pública oficial.',
+        };
+      } else {
+        return {
+          valid: false,
+          isSample: false,
+          signatureAlg: alg,
+          status: 'INVALID_CORRUPT',
+          reason: 'Firma digital FRMA no corresponde a la clave pública del SII o los datos del CAF fueron alterados.',
+        };
+      }
+    } catch (cryptoErr: any) {
+      return {
+        valid: false,
+        isSample: false,
+        signatureAlg: alg,
+        status: 'INVALID_CORRUPT',
+        reason: `Error en la verificación criptográfica de la firma del SII: ${cryptoErr?.message || 'clave pública o formato inválido'}.`,
+      };
+    }
   }
 
   /**
@@ -330,16 +433,19 @@ MIIEowIBAAKCAQEA0simulated_key...
           tipoDte: tipo,
           nombreTipo: nombre,
           exists: false,
+          cafStatus: 'NOT_FOUND',
         };
       }
 
-      // Parsear rango desde y hasta
+      // Parsear rango desde y hasta y verificar firma digital
       let rangoDesde: number | undefined;
       let rangoHasta: number | undefined;
       let fechaAutorizacion: string | undefined;
+      let cafVerification: { valid: boolean; isSample: boolean; signatureAlg?: string; status: 'VALID_OFFICIAL' | 'SAMPLE_STAGING' | 'INVALID_CORRUPT' | 'UNVERIFIED_NO_SII_KEY'; reason?: string } = { valid: false, isSample: false, status: 'INVALID_CORRUPT' };
 
       try {
         const content = fs.readFileSync(foundPath, 'utf-8');
+        cafVerification = this.verifyCafSignature(content);
         const rngMatch = content.match(/<RNG>\s*<D>(\d+)<\/D>\s*<H>(\d+)<\/H>\s*<\/RNG>/i);
         if (rngMatch) {
           rangoDesde = Number(rngMatch[1]);
@@ -366,6 +472,9 @@ MIIEowIBAAKCAQEA0simulated_key...
         fechaAutorizacion,
         foliosDisponibles,
         folioActualSugerido: rangoDesde,
+        firmaValida: cafVerification.valid,
+        cafStatus: cafVerification.status,
+        firmaAlgoritmo: cafVerification.signatureAlg,
       };
     });
 
@@ -575,32 +684,45 @@ MIIEowIBAAKCAQEA0simulated_key...
     const isExenta = tipoDteNum === 34;
 
     // Normalizar RUT Emisor (formato 12345678-9)
+    if (!company?.rut) throw new Error('Faltan datos obligatorios del emisor: RUT de la empresa no especificado.');
+    if (!company?.razonSocial) throw new Error('Faltan datos obligatorios del emisor: Razón Social no especificada; no se admiten valores por defecto.');
+    if (!company?.giro) throw new Error('Faltan datos obligatorios del emisor: Giro no especificado; no se admiten valores por defecto.');
+    if (!company?.direccion) throw new Error('Faltan datos obligatorios del emisor: Dirección no especificada; no se admiten valores por defecto.');
+    if (!company?.comuna) throw new Error('Faltan datos obligatorios del emisor: Comuna no especificada; no se admiten valores por defecto.');
+
     const cleanRutEmisor = company.rut.replace(/\./g, '').trim().toUpperCase();
 
     // Normalizar RUT Receptor
+    if (!draft?.rutReceptor) throw new Error('Faltan datos obligatorios del receptor: RUT del receptor no especificado.');
+    if (!draft?.razonSocialReceptor) throw new Error('Faltan datos obligatorios del receptor: Razón Social no especificada; no se admiten valores por defecto.');
+    if (!draft?.giroReceptor) throw new Error('Faltan datos obligatorios del receptor: Giro del receptor no especificado; no se admiten valores por defecto.');
+    if (!draft?.direccionReceptor) throw new Error('Faltan datos obligatorios del receptor: Dirección del receptor no especificada; no se admiten valores por defecto.');
+    if (!draft?.comunaReceptor) throw new Error('Faltan datos obligatorios del receptor: Comuna del receptor no especificada; no se admiten valores por defecto.');
+
     const cleanRutReceptor = draft.rutReceptor.replace(/\./g, '').trim().toUpperCase();
+    const actecoVal = Number(company.acteco || (company as any).actividadEconomicaCodigo || (company as any).codigoActeco) || 0;
 
     // 1. Datos del Emisor
     const emisor: HttpDteEmisor = {
       rut: cleanRutEmisor,
-      razonSocial: company.razonSocial || 'EMPRESA EMISORA SPA',
-      giro: company.giro || 'SERVICIOS INDUSTRIALES Y COMERCIALES',
-      acteco: Number(company.acteco) || 139400,
-      direccion: company.direccion || 'Av. Industrial 1000',
-      comuna: company.comuna || 'PUERTO MONTT',
-      ciudad: company.ciudad || company.comuna || 'PUERTO MONTT',
-      telefono: company.telefono || '+56 65 2123456',
-      correo: company.email || 'facturacion@empresa.cl',
+      razonSocial: company.razonSocial,
+      giro: company.giro,
+      acteco: actecoVal,
+      direccion: company.direccion,
+      comuna: company.comuna,
+      ciudad: company.ciudad || company.comuna,
+      telefono: company.telefono || undefined,
+      correo: company.email || undefined,
     };
 
     // 2. Datos del Receptor
     const receptor: HttpDteReceptor = {
       rut: cleanRutReceptor,
       razonSocial: draft.razonSocialReceptor,
-      giro: draft.giroReceptor || 'GIRO COMERCIAL GENERAL',
-      direccion: draft.direccionReceptor || 'Dirección Comercial 123',
-      comuna: draft.comunaReceptor || 'SANTIAGO',
-      ciudad: draft.ciudadReceptor || draft.comunaReceptor || 'SANTIAGO',
+      giro: draft.giroReceptor,
+      direccion: draft.direccionReceptor,
+      comuna: draft.comunaReceptor,
+      ciudad: draft.ciudadReceptor || draft.comunaReceptor,
       correo: draft.emailReceptorDte || undefined,
     };
 
@@ -647,6 +769,18 @@ MIIEowIBAAKCAQEA0simulated_key...
       : this.loadDigitalCertificate(undefined, { rut: cleanRutEmisor });
 
     const cafXml = overrides?.cafXml || this.loadCafXml(tipoDteNum, undefined, { rut: cleanRutEmisor });
+    if (!cafXml && process.env.ALLOW_OFFLINE_DTE_SIMULATION !== 'true') {
+      throw new Error(`Archivo CAF no disponible para DTE tipo ${tipoDteNum}. Cargue el archivo CAF (.xml) emitido por el SII en la bóveda criptográfica del contribuyente.`);
+    }
+
+    if (cafXml) {
+      const cafVerification = this.verifyCafSignature(cafXml);
+      if (cafVerification.status !== 'VALID_OFFICIAL') {
+        throw new Error(
+          `Bloqueo tributario estricto: El archivo CAF para DTE tipo ${tipoDteNum} no cuenta con certificación oficial válida del SII (${cafVerification.status}: ${cafVerification.reason}). Emisión DTE abortada para prevenir timbrado apócrifo.`
+        );
+      }
+    }
 
     // 6. Ambiente: 1 (Certificación) o 2 (Producción)
     const ambienteVal: 1 | 2 =
@@ -684,6 +818,129 @@ MIIEowIBAAKCAQEA0simulated_key...
   }
 
   /**
+   * Obtiene y asigna atómicamente el siguiente folio correlativo oficial para un tipo de DTE,
+   * empresa y ambiente según la secuencia autorizada por el SII.
+   * Prioridad de asignación:
+   * 1. MySQL 8.0 `dte_caf_sequences` con transacción y bloqueo `FOR UPDATE`.
+   * 2. Si no existe registro en secuencia, busca el `MAX(folio) + 1` en `dtes_rcv` o `rangoDesde` del CAF.
+   * 3. Respaldo atómico persistente en disco (`storage/sequences/`).
+   * CERO uso de Math.random().
+   */
+  public static async getOrAllocateNextFolio(
+    rutOrEmpresaId: string,
+    tipoDte: number,
+    ambiente: number = 1
+  ): Promise<number> {
+    const cleanRut = (rutOrEmpresaId || 'DEFAULT').replace(/[^0-9kK]/g, '').toUpperCase();
+    const storageDir = path.join(process.cwd(), 'storage', 'sequences');
+    if (!fs.existsSync(storageDir)) {
+      try {
+        fs.mkdirSync(storageDir, { recursive: true });
+      } catch {}
+    }
+    const seqFile = path.join(storageDir, `seq_${cleanRut}_${tipoDte}_amb${ambiente}.json`);
+
+    // 1. Asignación atómica mediante MySQL 8.0 si está conectado
+    if (isRealMysqlConnected) {
+      let conn: any = null;
+      try {
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        const [rows]: [any[], any] = await conn.query(
+          `SELECT id, ultimo_folio_emitido, folio_desde, folio_hasta FROM \`dte_caf_sequences\`
+           WHERE \`empresa_id\` = ? AND \`tipo_dte\` = ? AND \`ambiente\` = ? FOR UPDATE;`,
+          [cleanRut, tipoDte, ambiente]
+        );
+
+        let nextFolio = 1;
+        if (rows && rows.length > 0) {
+          const row = rows[0];
+          const ultimo = Number(row.ultimo_folio_emitido) || 0;
+          const desde = Number(row.folio_desde) || 1;
+          nextFolio = Math.max(ultimo + 1, desde);
+
+          await conn.query(
+            `UPDATE \`dte_caf_sequences\` SET \`ultimo_folio_emitido\` = ?, \`updated_at\` = NOW(3) WHERE \`id\` = ?;`,
+            [nextFolio, row.id]
+          );
+        } else {
+          // Obtener MAX(folio) registrado en dtes_rcv
+          const [maxRows]: [any[], any] = await conn.query(
+            `SELECT MAX(folio) as max_folio FROM \`dtes_rcv\` WHERE \`empresa_id\` = ? AND \`tipo_dte\` = ? AND \`tipo_operacion\` = 'VENTA';`,
+            [cleanRut, tipoDte]
+          );
+          const maxInDte = maxRows?.[0]?.max_folio ? Number(maxRows[0].max_folio) : 0;
+
+          // Buscar rangoDesde en archivos CAF del contribuyente
+          const cafInfo = this.getTenantVaultStatus(cleanRut).cafs.find((c) => c.tipoDte === tipoDte);
+          const rangoDesde = cafInfo?.rangoDesde || 1;
+          const rangoHasta = cafInfo?.rangoHasta || 5000;
+          nextFolio = Math.max(maxInDte + 1, rangoDesde);
+
+          const seqId = `seq-${Date.now()}-${cleanRut.slice(-4)}`;
+          await conn.query(
+            `INSERT INTO \`dte_caf_sequences\` (\`id\`, \`empresa_id\`, \`tipo_dte\`, \`ultimo_folio_emitido\`, \`folio_desde\`, \`folio_hasta\`, \`ambiente\`, \`activo\`, \`updated_at\`)
+             VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, NOW(3));`,
+            [seqId, cleanRut, tipoDte, nextFolio, rangoDesde, rangoHasta, ambiente]
+          );
+        }
+
+        await conn.commit();
+
+        // Espejo de seguridad en disco
+        try {
+          fs.writeFileSync(
+            seqFile,
+            JSON.stringify({ cleanRut, tipoDte, ambiente, ultimoFolio: nextFolio, updatedAt: new Date().toISOString() }, null, 2),
+            'utf-8'
+          );
+        } catch {}
+
+        console.log(`[HttpDteBillingService] Folio correlativo oficial asignado (MySQL): ${nextFolio} (Tipo ${tipoDte}, ${cleanRut})`);
+        return nextFolio;
+      } catch (dbErr: any) {
+        if (conn) {
+          await conn.rollback().catch(() => {});
+        }
+        console.warn(`[HttpDteBillingService] Falla al consultar secuencia en MySQL (${dbErr.message}). Utilizando persistencia atómica local.`);
+      } finally {
+        if (conn) conn.release();
+      }
+    }
+
+    // 2. Persistencia en disco local como respaldo estricto y secuencial
+    let lastSeq = 0;
+    if (fs.existsSync(seqFile)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(seqFile, 'utf-8'));
+        lastSeq = Number(raw.ultimoFolio) || 0;
+      } catch {}
+    }
+
+    if (lastSeq === 0) {
+      // Buscar en CAF
+      const cafInfo = this.getTenantVaultStatus(cleanRut).cafs.find((c) => c.tipoDte === tipoDte);
+      lastSeq = cafInfo?.rangoDesde ? cafInfo.rangoDesde - 1 : 0;
+      if (lastSeq < 0) lastSeq = 0;
+    }
+
+    const assigned = lastSeq + 1;
+    try {
+      fs.writeFileSync(
+        seqFile,
+        JSON.stringify({ cleanRut, tipoDte, ambiente, ultimoFolio: assigned, updatedAt: new Date().toISOString() }, null, 2),
+        'utf-8'
+      );
+    } catch (writeErr: any) {
+      console.error(`[HttpDteBillingService] Error guardando archivo de secuencia: ${writeErr.message}`);
+    }
+
+    console.log(`[HttpDteBillingService] Folio correlativo asignado (Local Storage): ${assigned} (Tipo ${tipoDte}, ${cleanRut})`);
+    return assigned;
+  }
+
+  /**
    * Envía el payload JSON a HTTP-DTE (http://localhost:8050/dte/emitir)
    * Gestiona reintentos con backoff exponencial para errores de red o timeouts,
    * sin levantar ningún navegador ni depender del DOM.
@@ -700,6 +957,27 @@ MIIEowIBAAKCAQEA0simulated_key...
     const url = `${baseUrl.replace(/\/+$/, '')}/dte/emitir`;
     const maxRetries = options?.maxRetries ?? this.DEFAULT_MAX_RETRIES;
     const timeoutMs = options?.timeoutMs ?? this.DEFAULT_TIMEOUT_MS;
+
+    // 0. Bloqueo estricto si el CAF adjunto no cuenta con firma oficial del SII
+    if (payload.caf) {
+      const cafVerification = this.verifyCafSignature(payload.caf);
+      if (cafVerification.status !== 'VALID_OFFICIAL') {
+        throw new Error(
+          `Bloqueo tributario estricto: El CAF adjunto para DTE tipo ${payload.tipoDte} no cuenta con certificación oficial válida del SII (${cafVerification.status}: ${cafVerification.reason}). No se permite la emisión legal de documentos tributarios con folios o timbres no certificados por el SII.`
+        );
+      }
+    } else if (process.env.ALLOW_OFFLINE_DTE_SIMULATION !== 'true') {
+      throw new Error(`Bloqueo tributario: No se proporcionó el archivo CAF (.xml) para DTE tipo ${payload.tipoDte}.`);
+    }
+
+    // Asegurar folio secuencial estricto antes del envío
+    if (!payload.folio || payload.folio <= 0) {
+      payload.folio = await this.getOrAllocateNextFolio(
+        payload.emisor.rut,
+        payload.tipoDte,
+        payload.ambiente || 1
+      );
+    }
 
     let lastError: Error | null = null;
     let attempt = 0;
@@ -732,7 +1010,7 @@ MIIEowIBAAKCAQEA0simulated_key...
 
           return {
             success: true,
-            folio: resJson.folio || payload.folio || (Math.floor(Math.random() * 500) + 1400),
+            folio: resJson.folio || payload.folio,
             tipoDte: payload.tipoDte,
             trackId: resJson.track_id || resJson.trackId || `TRK-SII-${Date.now()}`,
             ted: resJson.ted || resJson.timbre || `<TED version="1.0"><DD><RE>${payload.emisor.rut}</RE><TD>${payload.tipoDte}</TD><F>${resJson.folio || payload.folio}</F><FE>${payload.fechaEmision}</FE><RR>${payload.receptor.rut}</RR><RSR>${payload.receptor.razonSocial.slice(0, 40)}</RSR><MNT>${payload.totales?.montoTotal || 0}</MNT></DD><FRMT algoritmo="SHA1withRSA">TED_SIGNATURE_OK</FRMT></TED>`,
@@ -789,11 +1067,11 @@ MIIEowIBAAKCAQEA0simulated_key...
     const finalMsg = lastError?.message || 'Error desconocido al contactar instancia HTTP-DTE';
     console.error(`[HttpDteBillingService] No fue posible emitir DTE tras ${attempt} intentos: ${finalMsg}`);
 
-    // NOTA OPERACIONAL RESILIENTE: Si la instancia local en localhost:8050 no está levantada en la máquina del usuario,
-    // proveemos simulación de timbrado estricto para no bloquear el flujo contable del ERP mientras el usuario levanta el contenedor docker.
-    if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_OFFLINE_DTE_SIMULATION === 'true') {
-      console.warn(`[HttpDteBillingService] Retornando timbrado de contingencia/simulación (HTTP-DTE offline en ${baseUrl}).`);
-      const assignedFolio = payload.folio || (Math.floor(Math.random() * 400) + 1420);
+    // SEGURIDAD & INTEGRIDAD TRIBUTARIA: Por defecto la simulación está DESACTIVADA.
+    // Solo si el usuario configura explícitamente ALLOW_OFFLINE_DTE_SIMULATION=true se admite contingencia.
+    if (process.env.ALLOW_OFFLINE_DTE_SIMULATION === 'true') {
+      console.warn(`[HttpDteBillingService] Retornando timbrado de contingencia/simulación (ALLOW_OFFLINE_DTE_SIMULATION=true explícito).`);
+      const assignedFolio = payload.folio || (await this.getOrAllocateNextFolio(payload.emisor.rut, payload.tipoDte, payload.ambiente || 1));
       const generatedTrackId = `TRK-${Date.now().toString().slice(-8)}`;
       const generatedTed = `<TED version="1.0"><DD><RE>${payload.emisor.rut}</RE><TD>${payload.tipoDte}</TD><F>${assignedFolio}</F><FE>${payload.fechaEmision}</FE><RR>${payload.receptor.rut}</RR><RSR>${payload.receptor.razonSocial.slice(0, 40)}</RSR><MNT>${payload.totales?.montoTotal || 0}</MNT><IT1>${payload.detalles[0]?.NmbItem || 'VENTA'}</IT1><CAF version="1.0"><DA><RE>${payload.emisor.rut}</RE><RS>${payload.emisor.razonSocial}</RS><TD>${payload.tipoDte}</TD><RNG><D>1</D><H>5000</H></RNG><FA>2026-01-15</FA></DA></CAF></DD><FRMT algoritmo="SHA1withRSA">SIMULATED_TED_KEY_OK</FRMT></TED>`;
       const generatedXml = `<?xml version="1.0" encoding="ISO-8859-1"?><DTE version="1.0"><Documento ID="F${payload.tipoDte}T${assignedFolio}"><Encabezado><IdDoc><TipoDTE>${payload.tipoDte}</TipoDTE><Folio>${assignedFolio}</Folio><FchEmis>${payload.fechaEmision}</FchEmis></IdDoc><Emisor><RUTEmisor>${payload.emisor.rut}</RUTEmisor><RznSoc>${payload.emisor.razonSocial}</RznSoc></Emisor><Receptor><RUTRecep>${payload.receptor.rut}</RUTRecep><RznSocRecep>${payload.receptor.razonSocial}</RznSocRecep></Receptor></Encabezado></Documento></DTE>`;
@@ -816,7 +1094,7 @@ MIIEowIBAAKCAQEA0simulated_key...
 
     return {
       success: false,
-      error: `No se pudo conectar con el servicio HTTP-DTE en ${baseUrl} tras ${maxRetries} reintentos: ${finalMsg}`,
+      error: `[HttpDteBillingService] Servicio HTTP-DTE no disponible en ${baseUrl}: ${finalMsg}. Verifique que el servicio de timbrado esté activo y accesible.`,
     };
   }
 
@@ -829,8 +1107,8 @@ MIIEowIBAAKCAQEA0simulated_key...
     payload: HttpDteEmissionPayload,
     draft?: BillingEmissionDraft
   ): Promise<string> {
-    const dteId = `dte-http-emitted-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const folio = emissionRes.folio || payload.folio || 1421;
+    const dteId = `dte-http-emitted-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const folio = emissionRes.folio || payload.folio || (await this.getOrAllocateNextFolio(payload.emisor.rut, payload.tipoDte, payload.ambiente || 1));
     const periodo = payload.fechaEmision.slice(0, 7);
 
     // Guardar PDF en disco si vino en base64
@@ -852,6 +1130,8 @@ MIIEowIBAAKCAQEA0simulated_key...
     // 1. Crear documento DteDocument para el estado del ERP
     const newDteDoc: DteDocument = {
       id: dteId,
+      empresaId: payload.emisor.rut,
+      periodo,
       tipoDte: String(payload.tipoDte) as any,
       folio,
       tipoOperacion: 'VENTA',
@@ -983,8 +1263,12 @@ MIIEowIBAAKCAQEA0simulated_key...
       ambiente?: 1 | 2;
     }
   ): Promise<HttpDteEmissionResponse> {
-    // 1. Mapeo a estructura HTTP-DTE
-    const payload = this.mapErpToHttpDtePayload(draft, company, options);
+    // 1. Asignar folio secuencial oficial antes de mapear el payload
+    let folioSugerido = draft.folioSugerido;
+    if (!folioSugerido || folioSugerido <= 0) {
+      folioSugerido = await this.getOrAllocateNextFolio(company.rut, Number(draft.tipoDte) || 33, options?.ambiente || 1);
+    }
+    const payload = this.mapErpToHttpDtePayload({ ...draft, folioSugerido }, company, options);
 
     // 2. Emisión por POST HTTP directo
     const emissionRes = await this.emitirDte(payload, {

@@ -128,7 +128,7 @@ export interface PurchaseOrderRecord {
   totalNetoCLP: number;
   iva19CLP: number;
   totalBrutoCLP: number;
-  estado: 'BORRADOR' | 'ENVIADA_PROVEEDOR' | 'RECEPCIONADA_CONFORME' | 'FACTURADA_SII';
+  estado: 'BORRADOR' | 'EMITIDA' | 'ENVIADA_PROVEEDOR' | 'RECEPCIONADA_CONFORME' | 'FACTURADA_SII';
   motivoGeneracion: string;
   autorizadoPorAgente: boolean;
 }

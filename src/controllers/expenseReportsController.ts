@@ -9,6 +9,7 @@ import {
   expenseItems,
   expenseProjects,
 } from '../db/mysqlSchema';
+import { dtesRcv } from '../db/schema/erpModulesSchema';
 import { diskPersistence } from '../services/diskPersistenceService';
 import { postModuleTransaction } from '../services/centralizedJournalService';
 
@@ -108,7 +109,21 @@ expenseReportsRouter.get('/db-status', async (_req: Request, res: Response) => {
 // ============================================================================
 expenseReportsRouter.get('/reports', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || 'client-retail-01';
+    const authUser = (req as any).user;
+    const empresaId =
+      req.effectiveEmpresaId ||
+      (req as any).effectiveEmpresaId ||
+      (req.query.empresaId as string) ||
+      authUser?.empresaPrincipalId;
+
+    if (!empresaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'EMPRESA_REQUERIDA',
+        errorMessage: 'Debe especificar empresaId o autenticarse con una empresa principal.',
+      });
+    }
+
     const db = getMysqlDb();
     const normEmpresa = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
 
@@ -124,15 +139,6 @@ expenseReportsRouter.get('/reports', async (req: Request, res: Response) => {
           )
         )
         .orderBy(desc(expenseReports.createdAt));
-
-      // Si se consulta 'client-retail-01' o empresa por defecto y no hay registros, verificar si existen semillas
-      if (dbReports.length === 0 && (empresaId === 'client-retail-01' || normEmpresa === 'CLIENTRETAIL01')) {
-        dbReports = await db
-          .select()
-          .from(expenseReports)
-          .where(eq(expenseReports.empresaId, 'client-retail-01'))
-          .orderBy(desc(expenseReports.createdAt));
-      }
 
       // 2. Obtener sólo los comprobantes vinculados a estas rendiciones
       const reportIds = dbReports.map((r) => r.id);
@@ -435,6 +441,82 @@ expenseReportsRouter.post('/reports', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// 3.1. MODIFICAR RENDICIÓN DE GASTOS (DATOS DE CABECERA Y REASIGNACIÓN)
+// ============================================================================
+expenseReportsRouter.put('/reports/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const db = getMysqlDb();
+
+    // Obtener la rendición actual
+    let currentReport: any = null;
+    if (isRealMysqlConnected) {
+      const [rRow] = await db.select().from(expenseReports).where(eq(expenseReports.id, id));
+      currentReport = rRow;
+    } else {
+      currentReport = diskPersistence.getExpenseReports().find((r: any) => r.id === id);
+    }
+
+    if (!currentReport) {
+      return res.status(404).json({ success: false, error: 'Rendición no encontrada.' });
+    }
+
+    const fondoAsignado = updates.fondoAsignadoClp !== undefined
+      ? Number(updates.fondoAsignadoClp)
+      : Number(currentReport.fondoAsignadoClp || 0);
+    const montoRendido = Number(currentReport.montoTotalRendidoClp || 0);
+    const saldoReembolsar = Math.max(0, montoRendido - fondoAsignado);
+    const saldoReintegrar = Math.max(0, fondoAsignado - montoRendido);
+
+    const updateFields: any = {
+      updatedAt: new Date(),
+    };
+
+    if (updates.titulo !== undefined) updateFields.titulo = updates.titulo;
+    if (updates.rendidorNombre !== undefined) updateFields.rendidorNombre = updates.rendidorNombre;
+    if (updates.rendidorRut !== undefined) updateFields.rendidorRut = updates.rendidorRut;
+    if (updates.rendidorEmail !== undefined) updateFields.rendidorEmail = updates.rendidorEmail;
+    if (updates.rendidorCargo !== undefined) updateFields.rendidorCargo = updates.rendidorCargo;
+    if (updates.centroCostoId !== undefined) updateFields.centroCostoId = updates.centroCostoId;
+    if (updates.centroCostoCodigo !== undefined) updateFields.centroCostoCodigo = updates.centroCostoCodigo;
+    if (updates.centroCostoNombre !== undefined) updateFields.centroCostoNombre = updates.centroCostoNombre;
+    if (updates.proyectoId !== undefined) updateFields.proyectoId = updates.proyectoId;
+    if (updates.proyectoCodigo !== undefined) updateFields.proyectoCodigo = updates.proyectoCodigo;
+    if (updates.proyectoNombre !== undefined) updateFields.proyectoNombre = updates.proyectoNombre;
+    if (updates.fondoAsignadoClp !== undefined) updateFields.fondoAsignadoClp = fondoAsignado.toFixed(2);
+    updateFields.saldoReembolsarClp = saldoReembolsar.toFixed(2);
+    updateFields.saldoReintegrarClp = saldoReintegrar.toFixed(2);
+    if (updates.fechaInicio !== undefined) updateFields.fechaInicio = updates.fechaInicio;
+    if (updates.fechaCierre !== undefined) updateFields.fechaCierre = updates.fechaCierre;
+    if (updates.aprobadorNombre !== undefined) updateFields.aprobadorNombre = updates.aprobadorNombre;
+    if (updates.estado !== undefined) updateFields.estado = updates.estado;
+
+    if (isRealMysqlConnected) {
+      await db.update(expenseReports).set(updateFields).where(eq(expenseReports.id, id));
+    }
+
+    // Persistir también en disco
+    const updatedDisk = diskPersistence.updateExpenseReport(id, {
+      ...updates,
+      fondoAsignadoClp: fondoAsignado,
+      saldoReembolsarClp: saldoReembolsar,
+      saldoReintegrarClp: saldoReintegrar,
+    });
+
+    console.log(`[ExpenseReportsController] Rendición ${id} modificada exitosamente.`);
+    res.json({
+      success: true,
+      message: 'Rendición de gastos modificada exitosamente.',
+      data: updatedDisk || { id, ...updateFields },
+    });
+  } catch (error: any) {
+    console.error(`[ExpenseReportsController] Error en PUT /reports/${req.params.id}:`, error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
 // 4. ACTUALIZAR ESTADO DE LA RENDICIÓN (WORKFLOW DE APROBACIÓN)
 // ============================================================================
 expenseReportsRouter.put('/reports/:id/status', async (req: Request, res: Response) => {
@@ -707,13 +789,13 @@ expenseReportsRouter.delete('/items/:id', async (req: Request, res: Response) =>
 // ============================================================================
 expenseReportsRouter.get('/projects', async (req: Request, res: Response) => {
   try {
-    const empresaId = (req.query.empresaId as string) || 'client-retail-01';
+    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || 'client-retail-01';
     const db = getMysqlDb();
 
     const normEmpresa = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
 
     if (isRealMysqlConnected) {
-      const dbProjects = await db
+      let dbProjects = await db
         .select()
         .from(expenseProjects)
         .where(
@@ -723,6 +805,62 @@ expenseReportsRouter.get('/projects', async (req: Request, res: Response) => {
           )
         )
         .orderBy(desc(expenseProjects.createdAt));
+
+      if (dbProjects.length === 0) {
+        // Sembrar proyectos vigentes para la empresa en MySQL 8.0
+        const defaultSeeds = [
+          {
+            id: `pry-01-${normEmpresa.slice(0, 10)}`,
+            empresaId,
+            codigo: 'PRY-QUELLON-26',
+            nombre: 'Mantención Mayor Redes y Jaulas Balsas Quellón',
+            clienteNombre: 'Salmones Antártica S.A.',
+            presupuestoTotalClp: '45000000.00',
+            activo: true,
+            descripcion: 'Servicio integral de instalación de fondeos y redes loberas.',
+          },
+          {
+            id: `pry-02-${normEmpresa.slice(0, 10)}`,
+            empresaId,
+            codigo: 'PRY-STGO-EXP',
+            nombre: 'Expansión Comercial & Distribución Retail Santiago',
+            clienteNombre: 'Cencosud / Walmart Chile',
+            presupuestoTotalClp: '25000000.00',
+            activo: true,
+            descripcion: 'Apertura de nuevos canales de congelados y mariscos en cadenas de supermercados.',
+          },
+          {
+            id: `pry-03-${normEmpresa.slice(0, 10)}`,
+            empresaId,
+            codigo: 'PRY-LOG-FLOTA',
+            nombre: 'Habilitación Barcazas y Motores Fuera de Borda',
+            clienteNombre: 'Interno Flota Austral',
+            presupuestoTotalClp: '18000000.00',
+            activo: true,
+            descripcion: 'Overhaul mecánico preventivo de barcazas Don Víctor y Mar Austral II.',
+          },
+        ];
+
+        for (const seed of defaultSeeds) {
+          try {
+            await db.insert(expenseProjects).values({
+              ...seed,
+              createdAt: new Date(),
+            });
+          } catch {}
+        }
+
+        dbProjects = await db
+          .select()
+          .from(expenseProjects)
+          .where(
+            or(
+              eq(expenseProjects.empresaId, empresaId),
+              sql`REPLACE(REPLACE(REPLACE(${expenseProjects.empresaId}, '.', ''), '-', ''), ' ', '') = ${normEmpresa}`
+            )
+          )
+          .orderBy(desc(expenseProjects.createdAt));
+      }
 
       const formatted = dbProjects.map((p) => ({
         id: p.id,
@@ -738,7 +876,10 @@ expenseReportsRouter.get('/projects', async (req: Request, res: Response) => {
       return res.json({ success: true, source: 'MYSQL_8_0', count: formatted.length, data: formatted });
     }
 
-    const diskProjects = diskPersistence.getExpenseProjects(empresaId);
+    let diskProjects = diskPersistence.getExpenseProjects(empresaId);
+    if (!diskProjects || diskProjects.length === 0) {
+      diskProjects = diskPersistence.getExpenseProjects('client-retail-01');
+    }
     res.json({ success: true, source: 'LOCAL_DISK', count: diskProjects.length, data: diskProjects });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -845,6 +986,7 @@ expenseReportsRouter.delete('/projects/:id', async (req: Request, res: Response)
 // ============================================================================
 expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res: Response) => {
   try {
+    const { id } = req.params;
     const {
       periodo,
       fechaContabilizacion,
@@ -854,6 +996,10 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
       cuentaReembolsoNombre,
       cuentaReintegroCodigo,
       cuentaReintegroNombre,
+      cuentaProveedoresCodigo,
+      cuentaProveedoresNombre,
+      contabilizarFacturasContraProveedores = true,
+      incluirReintegroBanco = false,
     } = req.body;
     const db = getMysqlDb();
 
@@ -897,6 +1043,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
         montoTotalClp: Number(report.montoTotalRendidoClp),
         cuentaContableCodigo: '6.1.04.007',
         cuentaContableNombre: 'Gastos de Alimentación, Viáticos y Terreno',
+        proyectoCodigo: report.proyectoCodigo,
       }];
     }
 
@@ -912,7 +1059,8 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
 
     // Calcular montos y agrupar partidas al DEBE
     let totalIvaRecuperable = 0;
-    const debitLinesMap = new Map<string, { nombre: string; monto: number; centroCosto?: string }>();
+    const debitLinesMap = new Map<string, { nombre: string; monto: number; centroCosto?: string; proyecto?: string }>();
+    const facturasList: any[] = [];
 
     for (const item of items) {
       const ctaCod = item.cuentaContableCodigo || '4.2.01.009';
@@ -920,6 +1068,11 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
       const neto = Number(item.montoNeto || 0);
       const iva = Number(item.montoIva || 0);
       const totalItem = Number(item.montoTotalClp || 0);
+      const isFactura = item.tipoDocumento === 'FACTURA_ELECTRONICA_33' || item.tipoDocumento === 'FACTURA_EXENTA_34';
+
+      if (isFactura) {
+        facturasList.push(item);
+      }
 
       // Si es Factura Electrónica y no es gasto rechazado, separamos neto de IVA Crédito Fiscal
       if (item.tipoDocumento === 'FACTURA_ELECTRONICA_33' && iva > 0 && !item.esGastoRechazadoArt21) {
@@ -932,6 +1085,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
             nombre: ctaNom,
             monto: neto,
             centroCosto: item.centroCostoCodigo || report.centroCostoCodigo || undefined,
+            proyecto: item.proyectoCodigo || report.proyectoCodigo || undefined,
           });
         }
       } else {
@@ -944,6 +1098,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
             nombre: ctaNom,
             monto: totalItem,
             centroCosto: item.centroCostoCodigo || report.centroCostoCodigo || undefined,
+            proyecto: item.proyectoCodigo || report.proyectoCodigo || undefined,
           });
         }
       }
@@ -952,6 +1107,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
     const totalRendido = Number(report.montoTotalRendidoClp || 0);
     const fondoAnticipo = Number(report.fondoAsignadoClp || 0);
     const saldoReembolsar = Math.max(0, totalRendido - fondoAnticipo);
+    const saldoReintegrar = Math.max(0, fondoAnticipo - totalRendido);
 
     // Construir partidas del DEBE (Gastos + IVA Crédito)
     const journalLines: any[] = [];
@@ -963,6 +1119,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
         haber: 0,
         rutAuxiliar: report.rendidorRut,
         centroCosto: val.centroCosto,
+        proyecto: val.proyecto || report.proyectoCodigo || undefined,
       });
     });
 
@@ -973,7 +1130,73 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
         debe: totalIvaRecuperable,
         haber: 0,
         rutAuxiliar: report.rendidorRut,
+        proyecto: report.proyectoCodigo || undefined,
       });
+    }
+
+    // Si se activa contabilización contra Proveedores Nacionales (para afectar RCV del SII):
+    const effectiveCtaProvCod = cuentaProveedoresCodigo || '2.1.01.001';
+    const effectiveCtaProvNom = cuentaProveedoresNombre || 'Proveedores Nacionales (RCV SII)';
+
+    if (contabilizarFacturasContraProveedores !== false && facturasList.length > 0) {
+      for (const fac of facturasList) {
+        const facMonto = Number(fac.montoTotalClp || 0);
+        // Abono a Proveedores (Reconoce el documento fiscal en RCV)
+        journalLines.push({
+          codigoCuenta: effectiveCtaProvCod,
+          nombreCuenta: effectiveCtaProvNom,
+          debe: 0,
+          haber: facMonto,
+          rutAuxiliar: fac.proveedorRut || report.rendidorRut,
+          documentoRef: `Factura ${fac.folioDocumento}`,
+          fechaDocumentoRef: fac.fecha || effectiveDate,
+          centroCosto: fac.centroCostoCodigo || report.centroCostoCodigo || undefined,
+          proyecto: fac.proyectoCodigo || report.proyectoCodigo || undefined,
+        });
+
+        // Cargo a Proveedores (Cancela el documento pagado con los fondos de la rendición)
+        journalLines.push({
+          codigoCuenta: effectiveCtaProvCod,
+          nombreCuenta: `${effectiveCtaProvNom} (Liquidación Rendición ${report.folio})`,
+          debe: facMonto,
+          haber: 0,
+          rutAuxiliar: fac.proveedorRut || report.rendidorRut,
+          documentoRef: `Pago RDG ${report.folio}`,
+          fechaDocumentoRef: effectiveDate,
+          centroCosto: fac.centroCostoCodigo || report.centroCostoCodigo || undefined,
+          proyecto: fac.proyectoCodigo || report.proyectoCodigo || undefined,
+        });
+
+        // Sincronizar en tabla dtes_rcv si MySQL está activo
+        if (isRealMysqlConnected && fac.proveedorRut) {
+          try {
+            const cleanRut = (report.empresaId || 'client-retail-01').replace(/[\.\-\s]/g, '').toUpperCase();
+            const dteUuid = `dte-exp-${report.id}-${fac.id || Date.now()}`;
+            await db.insert(dtesRcv).values({
+              id: dteUuid,
+              empresaId: cleanRut,
+              periodo: effectivePeriod,
+              tipoOperacion: 'COMPRA',
+              tipoDte: fac.tipoDocumento === 'FACTURA_EXENTA_34' ? 34 : 33,
+              folio: Number(String(fac.folioDocumento || '0').replace(/\D/g, '')) || 1,
+              rutContraparte: fac.proveedorRut,
+              razonSocialContraparte: fac.proveedorRazonSocial || 'Proveedor Factura Rendición',
+              fechaEmision: fac.fecha || effectiveDate,
+              montoNeto: String(fac.montoNeto || 0),
+              montoIva: String(fac.montoIva || 0),
+              montoTotal: String(fac.montoTotalClp || 0),
+              estadoAcuse: 'ACEPTADO',
+              estadoContable: 'CENTRALIZADO',
+              glosa: `Rendición Gastos ${report.folio}: ${fac.descripcionGlosa || 'Factura rendida'}`,
+              centroCostoId: fac.centroCostoId || report.centroCostoId,
+              centroCostoCodigo: fac.centroCostoCodigo || report.centroCostoCodigo,
+              centroCostoNombre: report.centroCostoNombre,
+              cuentaGastoImputadaCodigo: fac.cuentaContableCodigo,
+              cuentaGastoImputadaNombre: fac.cuentaContableNombre,
+            }).catch(() => {});
+          } catch {}
+        }
+      }
     }
 
     // Construir partidas del HABER (Liquidación de Anticipo y/o Reembolso por Pagar)
@@ -987,17 +1210,46 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
     const effectiveCtaReintegroNom = cuentaReintegroNombre || 'Banco Santander Chile - Reintegro Sobrante de Fondo';
 
     if (fondoAnticipo > 0) {
-      const anticipoLiquidado = Math.min(fondoAnticipo, totalRendido);
-      journalLines.push({
-        codigoCuenta: effectiveCtaAnticipoCod,
-        nombreCuenta: effectiveCtaAnticipoNom,
-        debe: 0,
-        haber: anticipoLiquidado,
-        rutAuxiliar: report.rendidorRut,
-        documentoRef: report.folio,
-        fechaDocumentoRef: effectiveDate,
-        centroCosto: report.centroCostoCodigo || undefined,
-      });
+      if (incluirReintegroBanco && saldoReintegrar > 0) {
+        // Se liquida el 100% del fondo original entregado
+        journalLines.push({
+          codigoCuenta: effectiveCtaAnticipoCod,
+          nombreCuenta: effectiveCtaAnticipoNom,
+          debe: 0,
+          haber: fondoAnticipo,
+          rutAuxiliar: report.rendidorRut,
+          documentoRef: report.folio,
+          fechaDocumentoRef: effectiveDate,
+          centroCosto: report.centroCostoCodigo || undefined,
+          proyecto: report.proyectoCodigo || undefined,
+        });
+
+        // El reintegro a favor de la empresa se deposita en Banco/Caja (DEBE)
+        journalLines.unshift({
+          codigoCuenta: effectiveCtaReintegroCod,
+          nombreCuenta: effectiveCtaReintegroNom,
+          debe: saldoReintegrar,
+          haber: 0,
+          rutAuxiliar: report.rendidorRut,
+          documentoRef: `DEP-${report.folio}`,
+          fechaDocumentoRef: effectiveDate,
+          proyecto: report.proyectoCodigo || undefined,
+        });
+      } else {
+        // No se incluye reintegro inmediato: se liquida estrictamente lo gastado con cargo al fondo
+        const anticipoLiquidado = Math.min(fondoAnticipo, totalRendido);
+        journalLines.push({
+          codigoCuenta: effectiveCtaAnticipoCod,
+          nombreCuenta: effectiveCtaAnticipoNom,
+          debe: 0,
+          haber: anticipoLiquidado,
+          rutAuxiliar: report.rendidorRut,
+          documentoRef: report.folio,
+          fechaDocumentoRef: effectiveDate,
+          centroCosto: report.centroCostoCodigo || undefined,
+          proyecto: report.proyectoCodigo || undefined,
+        });
+      }
     }
 
     if (saldoReembolsar > 0) {
@@ -1010,21 +1262,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
         documentoRef: report.folio,
         fechaDocumentoRef: effectiveDate,
         centroCosto: report.centroCostoCodigo || undefined,
-      });
-    }
-
-    // Si el fondo era mayor al gasto rendido, el saldo a reintegrar se devuelve a Caja/Banco
-    const saldoReintegrar = Math.max(0, fondoAnticipo - totalRendido);
-    if (saldoReintegrar > 0) {
-      // En este caso, el DEBE ya totalizó `totalRendido`. Para cuadrar con el fondo liquidado, agregamos el reintegro a Banco/Caja al DEBE:
-      journalLines.unshift({
-        codigoCuenta: effectiveCtaReintegroCod,
-        nombreCuenta: effectiveCtaReintegroNom,
-        debe: saldoReintegrar,
-        haber: 0,
-        rutAuxiliar: report.rendidorRut,
-        documentoRef: report.folio,
-        fechaDocumentoRef: effectiveDate,
+        proyecto: report.proyectoCodigo || undefined,
       });
     }
 
@@ -1125,7 +1363,7 @@ Responde ÚNICAMENTE con el objeto JSON válido, sin backticks (\`\`\`json) ni t
           data: cleanBase64,
         },
         temperature: 0.1,
-        empresaId: (req.body.empresaId as string) || (req.query.empresaId as string) || 'client-retail-01',
+        empresaId: req.effectiveEmpresaId || (req.body.empresaId as string) || (req.query.empresaId as string) || 'client-retail-01',
         modulo: 'RINDE_GASTOS_OCR',
       });
 

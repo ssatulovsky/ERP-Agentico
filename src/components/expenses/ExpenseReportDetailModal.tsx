@@ -53,6 +53,7 @@ interface ExpenseReportDetailModalProps {
   onUpdateReportStatus: (reportId: string, newStatus: ExpenseReport['estado'], observations?: string, aprobadorNombre?: string) => void;
   onCommitAccountingEntry?: (entry: AccountingEntry) => void;
   chartOfAccounts?: HierarchicalAccountItem[];
+  onEditReportClick?: () => void;
 }
 
 export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> = ({
@@ -66,6 +67,7 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
   onUpdateReportStatus,
   onCommitAccountingEntry,
   chartOfAccounts = [],
+  onEditReportClick,
 }) => {
   const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<ExpenseItem | null>(null);
   const [rejectFeedback, setRejectFeedback] = useState('');
@@ -171,6 +173,16 @@ export const ExpenseReportDetailModal: React.FC<ExpenseReportDetailModalProps> =
           </div>
 
           <div className="flex items-center gap-2 print:hidden">
+            {onEditReportClick && (
+              <button
+                onClick={onEditReportClick}
+                className="p-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer border border-amber-400/30"
+                title="Modificar datos de la rendición (glosa, rendidor, proyecto, fechas o fondo)"
+              >
+                <Pencil className="w-4 h-4 text-amber-300" />
+                <span>Modificar</span>
+              </button>
+            )}
             <button
               onClick={handleDownloadCSV}
               className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"

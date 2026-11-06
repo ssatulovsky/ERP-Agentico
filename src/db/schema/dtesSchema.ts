@@ -126,3 +126,35 @@ export type NewDteRcv = typeof dtesRcv.$inferInsert;
 
 export type DteItemRecord = typeof dteItems.$inferSelect;
 export type NewDteItemRecord = typeof dteItems.$inferInsert;
+
+// ============================================================================
+// TABLA: dte_caf_sequences (Control Atómico Secuencial de Folios y CAF SII)
+// ============================================================================
+export const dteCafSequences = mysqlTable(
+  'dte_caf_sequences',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    empresaId: varchar('empresa_id', { length: 36 }).notNull(),
+    tipoDte: int('tipo_dte').notNull(), // 33, 34, 52, 56, 61, 39
+    ultimoFolioEmitido: bigint('ultimo_folio_emitido', { mode: 'number' }).notNull().default(0),
+    folioDesde: bigint('folio_desde', { mode: 'number' }).notNull().default(1),
+    folioHasta: bigint('folio_hasta', { mode: 'number' }).notNull().default(5000),
+    cafXml: text('caf_xml'), // Archivo CAF emitido por SII
+    fechaAutorizacion: date('fecha_autorizacion', { mode: 'string' }),
+    ambiente: int('ambiente').default(1), // 1: Certificación, 2: Producción
+    activo: boolean('activo').notNull().default(true),
+    updatedAt: datetime('updated_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  (table) => ({
+    uqEmpresaTipoDteAmbiente: uniqueIndex('uq_caf_empresa_tipo_ambiente').on(
+      table.empresaId,
+      table.tipoDte,
+      table.ambiente
+    ),
+    idxCafEmpresa: index('idx_caf_empresa').on(table.empresaId),
+  })
+);
+
+export type DteCafSequence = typeof dteCafSequences.$inferSelect;
+export type NewDteCafSequence = typeof dteCafSequences.$inferInsert;
+

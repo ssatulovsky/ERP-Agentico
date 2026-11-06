@@ -94,6 +94,14 @@ export async function downloadAllPiperVoices(customTargetDir?: string): Promise<
     try {
       await downloadFileWithProgress(urls.onnxUrl, onnxDest, `${voice.name} (.onnx)`);
       await downloadFileWithProgress(urls.jsonUrl, jsonDest, `${voice.name} (.json)`);
+      if (fs.existsSync(jsonDest)) {
+        try {
+          const raw = fs.readFileSync(jsonDest, 'utf8');
+          if (raw.includes('PhonemeType.ESPEAK')) {
+            fs.writeFileSync(jsonDest, raw.replace(/"phoneme_type":\s*"PhonemeType\.ESPEAK"/g, '"phoneme_type": "espeak"').replace(/PhonemeType\.ESPEAK/g, 'espeak'), 'utf8');
+          }
+        } catch {}
+      }
       downloadedCount++;
     } catch (err: any) {
       console.error(`  ✗ Error al descargar ${voice.name}:`, err.message);

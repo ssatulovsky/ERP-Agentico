@@ -38,6 +38,7 @@ billingDteRouter.get('/http-dte/status', async (req: Request, res: Response) => 
 billingDteRouter.post('/emitir-http-dte', async (req: Request, res: Response) => {
   try {
     const { draft, companyId, options } = req.body;
+    const targetCompanyId = req.effectiveEmpresaId || companyId;
 
     if (!draft || !draft.tipoDte) {
       return res.status(400).json({
@@ -47,21 +48,16 @@ billingDteRouter.post('/emitir-http-dte', async (req: Request, res: Response) =>
     }
 
     // Buscar datos de la empresa emisor
-    let company = INITIAL_CLIENTS.find(
-      (c) => c.id === companyId || c.rut.replace(/[^0-9kK]/g, '') === (companyId || '').replace(/[^0-9kK]/g, '')
+    const company = INITIAL_CLIENTS.find(
+      (c) => c.id === targetCompanyId || c.rut.replace(/[^0-9kK]/g, '') === (targetCompanyId || '').replace(/[^0-9kK]/g, '')
     );
 
     if (!company) {
-      company = {
-        id: 'client-empresa-default',
-        rut: req.body.rutEmisor || '76.123.456-7',
-        razonSocial: req.body.razonSocialEmisor || 'SOCIEDAD INDUSTRIAL PUERTO MONTT SPA',
-        giro: 'SERVICIOS INDUSTRIALES Y COMERCIALES',
-        acteco: 139400,
-        direccion: 'Av. Juan Soler Manfredini 101, Piso 8',
-        comuna: 'PUERTO MONTT',
-        ciudad: 'PUERTO MONTT',
-      } as any;
+      return res.status(400).json({
+        success: false,
+        error: 'EMPRESA_NO_ENCONTRADA',
+        errorMessage: `No se encontró la empresa emisora '${targetCompanyId || ''}'; no se admiten empresas inventadas.`,
+      });
     }
 
     console.log(`[BillingDteController] Solicitando emisión de DTE ${draft.tipoDte} para empresa ${company.rut} via HTTP-DTE...`);
@@ -94,16 +90,16 @@ billingDteRouter.post('/emitir-http-dte', async (req: Request, res: Response) =>
 billingDteRouter.post('/preview-payload', (req: Request, res: Response) => {
   try {
     const { draft, company } = req.body;
+    if (!company) {
+      return res.status(400).json({
+        success: false,
+        error: 'EMPRESA_NO_ENCONTRADA',
+        errorMessage: 'Faltan los datos obligatorios de la empresa emisora para previsualizar el DTE.',
+      });
+    }
     const mapped = HttpDteBillingService.mapErpToHttpDtePayload(
       draft,
-      company || {
-        rut: '76.123.456-7',
-        razonSocial: 'SOCIEDAD INDUSTRIAL PUERTO MONTT SPA',
-        giro: 'SERVICIOS INDUSTRIALES',
-        acteco: 139400,
-        direccion: 'Av. Industrial 1000',
-        comuna: 'PUERTO MONTT',
-      }
+      company
     );
 
     res.json({

@@ -75,6 +75,7 @@ import {
 import { WarehouseWithdrawalModal } from './WarehouseWithdrawalModal';
 import { RecipeManagementSection } from './inventory/RecipeManagementSection';
 import { AutoRfqManagementSection } from './inventory/AutoRfqManagementSection';
+import { getStoredAuthToken } from '../services/apiClient';
 
 interface InventoryAgentModuleProps {
   company: CompanyProfile;
@@ -308,19 +309,46 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
   }, [clientRequisitions]);
 
   // Trigger Autonomous Agent Diagnostic
-  const handleRunAgentDiagnostic = () => {
+  const handleRunAgentDiagnostic = async () => {
     setIsDiagnosingAgent(true);
     setAgentDiagnosticMessage(null);
 
-    setTimeout(() => {
-      setIsDiagnosingAgent(false);
-      // Run auto-replenishment evaluation
+    try {
+      // 1. Ejecutar análisis agéntico verificable en backend
+      const authToken = getStoredAuthToken();
+      const res = await fetch('/api/agents/autonomous/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          module: 'INVENTARIO',
+          modulo: 'INVENTARIO',
+          empresaId: activeClient.id,
+          query: `Auditar inventario físico y Kardex PMP. Total SKUs: ${clientItems.length}, Críticos: ${criticalStockCount}.`,
+          prompt: `Auditar inventario físico y Kardex PMP. Total SKUs: ${clientItems.length}, Críticos: ${criticalStockCount}.`,
+          context: {
+            empresa: activeClient,
+            items: clientItems,
+            warehouses: clientWarehouses.map(w => ({ id: w.id, nombre: w.nombre })),
+          },
+          contextData: {
+            empresa: activeClient,
+            items: clientItems,
+            warehouses: clientWarehouses.map(w => ({ id: w.id, nombre: w.nombre })),
+          },
+        }),
+      });
+      const agentRes = await res.json();
+      const agentDecision = agentRes.decision || agentRes.finalText || agentRes.data?.finalText || agentRes.data?.decision;
+
+      // 2. Ejecutar evaluación determinística de reposición de stock
       const newReqs: ReplenishmentRequisition[] = [...clientRequisitions];
       let newReqCount = 0;
 
       clientItems.forEach(item => {
         if (item.estadoStock === 'CRITICO' || item.estadoStock === 'BAJO_MINIMO') {
-          // Check if there's already an active requisition for this item
           const alreadyExists = newReqs.some(r => r.itemId === item.id && r.estado === 'PENDIENTE_APROBACION');
           if (!alreadyExists) {
             const targetWh = clientWarehouses[0];
@@ -333,22 +361,32 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
 
       if (newReqCount > 0) {
         onUpdateRequisitions(newReqs);
-        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente IA analizó ${clientItems.length} SKUs en ${clientWarehouses.length} bodegas. Se detectaron ${criticalStockCount} ítems en estado crítico y se generaron automáticamente ${newReqCount} nuevas Solicitudes de Reposición/Traspaso Inteligente.`);
+        const agentNote = agentRes.success && agentDecision ? ` | Dictamen Agente: ${agentDecision.slice(0, 150)}...` : '';
+        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente analizó ${clientItems.length} SKUs en ${clientWarehouses.length} bodegas. Se detectaron ${criticalStockCount} ítems en estado crítico y se generaron ${newReqCount} nuevas Solicitudes de Reposición/Traspaso Inteligente.${agentNote}`);
       } else {
-        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente IA verificó los stocks contra las tasas de consumo mensual y guías DTE 52. Todas las alertas activas ya cuentan con requisición en curso.`);
+        const agentNote = agentRes.success && agentDecision ? ` | Dictamen: ${agentDecision.slice(0, 150)}...` : '';
+        setAgentDiagnosticMessage(`Auditoría WMS Completa: El Agente verificó los stocks contra las tasas de consumo mensual y guías DTE 52. Todas las alertas activas ya cuentan con requisición en curso.${agentNote}`);
       }
       showToast('Diagnóstico del Agente de Inventario ejecutado exitosamente.');
-    }, 900);
+    } catch (err: any) {
+      console.warn('[InventoryAgent] Fallback determinístico:', err.message);
+      setAgentDiagnosticMessage(`Auditoría WMS ejecutada: ${clientItems.length} SKUs verificados. Stock crítico: ${criticalStockCount}.`);
+    } finally {
+      setIsDiagnosingAgent(false);
+    }
   };
 
   // Approve Requisition
   const handleApproveRequisition = (req: ReplenishmentRequisition) => {
+    const existingOcCount = clientRequisitions.filter(r => r.ordenCompraFolio).length;
+    const nextFolioOc = 10001 + existingOcCount;
+
     const updated = clientRequisitions.map(r => {
       if (r.id === req.id) {
         return {
           ...r,
           estado: r.tipoAccionRecomendada === 'TRASPASO_INTERNO' ? 'TRASPASO_INICIADO' as const : 'ORDEN_COMPRA_GENERADA' as const,
-          ordenCompraFolio: Math.floor(10000 + Math.random() * 90000),
+          ordenCompraFolio: nextFolioOc,
         };
       }
       return r;
@@ -358,10 +396,11 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
     // If it was a transfer, automatically create the transfer
     if (req.tipoAccionRecomendada === 'TRASPASO_INTERNO' && req.bodegaOrigenSugeridaTraspaso) {
       const origWh = clientWarehouses.find(w => w.nombre.includes(req.bodegaOrigenSugeridaTraspaso!)) || clientWarehouses[0];
+      const nextFolioGuia52 = 85001 + clientTransfers.length;
       const newTrans: WarehouseTransfer = {
         id: `trans-${Date.now()}`,
         empresaId: activeClient.id,
-        folioGuiaDespacho52: Math.floor(85000 + Math.random() * 1000),
+        folioGuiaDespacho52: nextFolioGuia52,
         fechaDespacho: new Date().toISOString().split('T')[0],
         fechaEstimadaLlegada: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
         bodegaOrigenId: origWh.id,
@@ -418,7 +457,7 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
     const neto = Math.round(req.costoEstimadoCLP);
     const iva = Math.round(neto * 0.19);
     const total = neto + iva;
-    const folioFactura = Math.floor(12000 + Math.random() * 80000);
+    const folioFactura = 12001 + (requisitions?.length || 0);
 
     // 1. Aumentar stock físico del SKU en la bodega destino
     const updatedItems = clientItems.map(item => {
@@ -567,7 +606,7 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
     const newTrans: WarehouseTransfer = {
       id: `trans-${Date.now()}`,
       empresaId: activeClient.id,
-      folioGuiaDespacho52: Math.floor(85100 + Math.random() * 900),
+      folioGuiaDespacho52: 85001 + clientTransfers.length,
       fechaDespacho: new Date().toISOString().split('T')[0],
       fechaEstimadaLlegada: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
       bodegaOrigenId: origWh.id,

@@ -26,6 +26,13 @@ export function savePersistentState<T>(key: string, data: T): void {
   }
 }
 
+type StorageSyncErrorHandler = (error: Error, context: { empresaId: string; key: string }) => void;
+let globalSyncErrorHandler: StorageSyncErrorHandler | null = null;
+
+export function setStorageSyncErrorHandler(handler: StorageSyncErrorHandler | null): void {
+  globalSyncErrorHandler = handler;
+}
+
 /**
  * Persistencia segregada por empresa o cliente (Multi-Tenant Local Persistence)
  */
@@ -38,13 +45,25 @@ export function saveClientState<T>(clientId: string, entityKey: string, data: T)
   const compositeKey = `client_${clientId}_${entityKey}`;
   savePersistentState<T>(compositeKey, data);
 
-  // Sincronización en segundo plano con el servidor (Multi-Tenant & Multi-Usuario)
+  // Sincronización con el servidor (Multi-Tenant & Multi-Usuario)
   if (typeof fetch !== 'undefined') {
     fetch('/api/accounting/client-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ empresaId: clientId, key: entityKey, data }),
-    }).catch(() => {});
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status} al sincronizar ${entityKey}`);
+        }
+      })
+      .catch((err) => {
+        console.error(`[StorageService] Error al sincronizar ${entityKey} con el servidor:`, err);
+        if (globalSyncErrorHandler) {
+          globalSyncErrorHandler(err, { empresaId: clientId, key: entityKey });
+        }
+      });
   }
 }
 

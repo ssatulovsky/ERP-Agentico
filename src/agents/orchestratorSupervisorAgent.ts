@@ -69,7 +69,10 @@ export interface SupervisorVerdict {
   learningsPrevented?: string[];
 }
 
-const SUPERVISOR_SECRET = process.env.SUPERVISOR_SECRET || 'SIEX_ORCHESTRATOR_SENIOR_AUDITOR_2026_KEY';
+const SUPERVISOR_SECRET: string = process.env.SUPERVISOR_SECRET || (() => {
+  console.warn('[Supervisor] ADVERTENCIA DE SEGURIDAD: SUPERVISOR_SECRET no configurado en entorno. Generando secreto aleatorio efímero de 256 bits.');
+  return crypto.randomBytes(32).toString('hex');
+})();
 
 /**
  * Genera la firma criptográfica pericial del Orquestador Contable Senior

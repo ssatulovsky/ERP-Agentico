@@ -167,6 +167,14 @@ export class SiiRcvService {
     return [];
   }
 
+  public static async getDocuments(
+    cleanRut: string,
+    periodo: string,
+    tipo: 'COMPRA' | 'VENTA'
+  ): Promise<DteRawRecord[]> {
+    return this.getOfficialTaxpayerLedgerRecords(cleanRut, periodo, tipo);
+  }
+
   /**
    * Parsea un archivo oficial CSV/TSV exportado del portal del SII, valida fila por fila con Zod,
    * e ingesta de manera atómica con upsert (ON DUPLICATE KEY UPDATE) en MySQL 8.0.

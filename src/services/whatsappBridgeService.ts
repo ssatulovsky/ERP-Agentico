@@ -5,6 +5,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { piperTtsService } from './piperTtsService';
 import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
+import { diskPersistence } from './diskPersistenceService';
+import { commercialProcurementService } from './commercialProcurementService';
 import {
   DEFAULT_SECURITY_RBAC_STATE,
   SecurityRbacStoreState,
@@ -14,6 +16,7 @@ import {
 } from './securityRbacService';
 
 const execAsync = promisify(exec);
+const safeDynamicImport = async (moduleSpecifier: string): Promise<any> => Function('m', 'return import(m)')(moduleSpecifier);
 
 export type WhatsAppAgentScope =
   | 'FLUJO_CAJA'
@@ -76,7 +79,7 @@ export const WHATSAPP_AGENT_SCOPES_CATALOG: WhatsAppAgentScopeMeta[] = [
     agenteResponsable: 'Roberto Soto (Jefe de Planta & Costeo)',
     descripcion: 'Avance físico de órdenes de fabricación en taller, consumo de materiales y desvío presupuestario.',
     icono: 'Factory',
-    ejemplosConsulta: ['¿Cuál es el estado de la orden de producción?', 'Avance de fabricación Salmones Austral'],
+    ejemplosConsulta: ['¿Cuál es el estado de la orden de producción?', 'Avance de fabricación en planta'],
   },
   {
     id: 'PRESUPUESTOS_COMERCIAL',
@@ -214,6 +217,7 @@ export interface WhatsAppWhitelistEntry {
   recibirReportesDirectos: boolean;
   responderConAudio: boolean;
   ultimaInteraccion?: string;
+  empresaId?: string;
 }
 
 export interface WhatsAppPrivacyConfig {
@@ -1075,6 +1079,96 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
   }
 
   /**
+   * Procesa un mensaje entrante ejecutando el bucle ReAct del Agente Autónomo
+   * cuando la consulta requiere análisis profundo, herramientas o gobernanza humana.
+   */
+  public processIncomingMessageWithAgent = (params: {
+    remoteJid: string;
+    extraCandidateJids?: string[];
+    messageText: string;
+    isGroup?: boolean;
+    fromMe?: boolean;
+    isOwnerSelfChat?: boolean;
+    simulateBypassPrefix?: boolean;
+  }) => this.executeIncomingMessageWithAgent(params);
+
+  public async executeIncomingMessageWithAgent(params: {
+    remoteJid: string;
+    extraCandidateJids?: string[];
+    messageText: string;
+    isGroup?: boolean;
+    fromMe?: boolean;
+    isOwnerSelfChat?: boolean;
+    simulateBypassPrefix?: boolean;
+  }): Promise<{
+    shouldIgnoreSilently: boolean;
+    ignoreReason?: string;
+    allowed: boolean;
+    whitelistEntry?: WhatsAppWhitelistEntry;
+    requiredScopes: WhatsAppAgentScope[];
+    deniedScopes: WhatsAppAgentScope[];
+    responseText?: string;
+    verbalSummaryForAudio?: string;
+    agentResult?: any;
+  }> {
+    const evalResult = this.evaluateIncomingMessage(params);
+    if (evalResult.shouldIgnoreSilently || !evalResult.allowed) {
+      return evalResult;
+    }
+
+    try {
+      const { AutonomousAgentEngine } = await import('./autonomousAgentEngine');
+      const empresaId = evalResult.whitelistEntry?.empresaId || 'client-retail-01';
+
+      // Mapear scope a módulo agéntico
+      let targetModule = 'CONTABILIDAD';
+      if (evalResult.requiredScopes.includes('FLUJO_CAJA')) targetModule = 'FLUJO_CAJA';
+      else if (evalResult.requiredScopes.includes('PRODUCCION_COSTEO')) targetModule = 'COSTOS_PRODUCCION';
+      else if (evalResult.requiredScopes.includes('BODEGA_INVENTARIO')) targetModule = 'INVENTARIO';
+      else if (evalResult.requiredScopes.includes('RRHH_REMUNERACIONES')) targetModule = 'RRHH';
+      else if (evalResult.requiredScopes.includes('TRIBUTARIO_F29')) targetModule = 'TRIBUTARIO_SII';
+      else if (evalResult.requiredScopes.includes('PRESUPUESTOS_COMERCIAL')) targetModule = 'COMERCIAL_COMPRAS';
+      else if (evalResult.requiredScopes.includes('RENDICIONES_GASTOS')) targetModule = 'RENDICIONES';
+
+      const agentRes = await AutonomousAgentEngine.executeAutonomousAgentLoop({
+        module: targetModule as any,
+        empresaId,
+        query: params.messageText,
+        agentRole: 'Vera — Interlocutora Ejecutiva WhatsApp',
+        context: {
+          empresaId,
+          usuario: evalResult.whitelistEntry?.nombre,
+          telefono: evalResult.whitelistEntry?.telefono,
+        },
+      });
+
+      const agentFinalText = agentRes ? (agentRes.finalText || (agentRes as any).decision || '') : '';
+      if (agentRes && agentFinalText) {
+        let text = `🤖 *Vera — Dictamen Agente (${targetModule})*\n\n${agentFinalText}`;
+        if (agentRes.governanceApproval) {
+          text += `\n\n⚠️ *Gobernanza Humana Requerida:*\nSe generó la solicitud formal #${agentRes.governanceApproval.id} (${agentRes.governanceApproval.operacionTipo}) que requiere aprobación humana.`;
+        }
+
+        const verbal = agentFinalText
+          .replace(/[*#_`]/g, '')
+          .replace(/\n+/g, '. ')
+          .slice(0, 240);
+
+        return {
+          ...evalResult,
+          responseText: text,
+          verbalSummaryForAudio: verbal,
+          agentResult: agentRes,
+        };
+      }
+    } catch (err) {
+      console.warn('[WhatsAppBridge] Fallback a respuesta estructurada:', err);
+    }
+
+    return evalResult;
+  }
+
+  /**
    * Construye el reporte ejecutivo para WhatsApp combinando todos los agentes requeridos y autorizados
    */
   private buildAgentResponseForScopes(
@@ -1091,96 +1185,133 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
     const sections: string[] = [];
     const verbalParts: string[] = [];
 
+    const empresaId = entry.empresaId || 'client-retail-01';
+
     for (const scope of scopes) {
       switch (scope) {
         case 'FLUJO_CAJA': {
-          const clpBanks = INITIAL_BANK_ACCOUNTS.filter((b) => (b.moneda || 'CLP') === 'CLP');
-          const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
-          const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
-          const disponibleHoyClp = totalClpBanks + totalCajas; // $71.182.013 CLP
-          const ingresosProy = 14850000;
-          const egresosProy = 11200000;
+          const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
+          const effectiveAccounts = tenantAccounts.length > 0
+            ? tenantAccounts
+            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+          const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
+          const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
+
+          const tenantMovements = diskPersistence.getBankMovements(empresaId);
+          const clpMovements = tenantMovements.filter((m: any) => !m.moneda || m.moneda === 'CLP');
+          const netMovements = clpMovements.reduce((acc: number, m: any) => acc + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0);
+          const totalClpBanks = initialBalance + netMovements;
+
+          const totalCajas = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+            ? INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0)
+            : 0;
+          const disponibleHoyClp = totalClpBanks + totalCajas;
+
+          const journalEntries = diskPersistence.getJournalEntries(empresaId);
+          const egresosEstimados = journalEntries
+            .filter((e: any) => e.tipo === 'EGRESO' || (e.concepto || '').toLowerCase().includes('pago'))
+            .reduce((acc: number, e: any) => acc + (Number(e.totalDebe) || 0), 0);
+          const egresosProy = egresosEstimados > 0 ? Math.round(egresosEstimados / 2) : 0;
+          const ingresosEstimados = journalEntries
+            .filter((e: any) => e.tipo === 'INGRESO' || (e.concepto || '').toLowerCase().includes('venta'))
+            .reduce((acc: number, e: any) => acc + (Number(e.totalHaber) || 0), 0);
+          const ingresosProy = ingresosEstimados > 0 ? Math.round(ingresosEstimados / 2) : 0;
           const cierreProy30d = disponibleHoyClp + ingresosProy - egresosProy;
 
-          const bankLines = clpBanks
-            .map(
-              (b) =>
-                `  ◦ *${b.banco}* (Cta ${b.tipoCuenta} N° ${b.numeroCuenta}): *$${formatCLP(b.saldoEnLinea)} CLP*`
-            )
-            .join('\n');
+          const bankLines = clpBanks.length > 0
+            ? clpBanks
+                .map(
+                  (b) =>
+                    `  ◦ *${b.banco}* (Cta ${b.tipoCuenta} N° ${b.numeroCuenta}): *$${formatCLP(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable ?? 0)} CLP*`
+                )
+                .join('\n')
+            : '  ◦ _Sin cuentas bancarias registradas_';
 
           sections.push(`📊 *FLUJO DE CAJA & LIQUIDEZ (ACTUALIZADO A HOY: ${fechaHoy})*
 👩‍💼 *Agente:* Vera Albornoz (Directora Financiera)
 • 🏦 *Bancos Moneda Nacional (${clpBanks.length} Cuentas):* *$${formatCLP(totalClpBanks)} CLP*
 ${bankLines}
-• 💼 *Cajas y Fondos Fijos (${INITIAL_CASH_ACCOUNTS.length} Cajas):* *$${formatCLP(totalCajas)} CLP*
+• 💼 *Cajas y Fondos Fijos:* *$${formatCLP(totalCajas)} CLP*
 • 💰 *Liquidez Disponible Hoy (CLP):* *$${formatCLP(disponibleHoyClp)} CLP*
 • 🟢 *Ingresos Proyectados (Próximos 30d):* +$${formatCLP(ingresosProy)} CLP
 • 🔴 *Egresos Comprometidos (Próximos 30d):* -$${formatCLP(egresosProy)} CLP
-  ◦ Remuneraciones: -$4.850.000 CLP
-  ◦ IVA F29 SII: -$1.890.000 CLP
-  ◦ Proveedores Operativos: -$4.460.000 CLP
-• 📈 *Saldo Final Proyectado (30 días):* *$${formatCLP(cierreProy30d)} CLP* (Solvencia Positiva)`);
+• 📈 *Saldo Final Proyectado (30 días):* *$${formatCLP(cierreProy30d)} CLP* (${cierreProy30d >= 0 ? 'Solvencia Positiva' : 'Déficit Proyectado'})`);
           verbalParts.push(
-            `En flujo de caja a partir de hoy, contamos con sesenta y tres millones seiscientos treinta y dos mil trece pesos en cuentas bancarias nacionales y siete millones quinientos cincuenta mil pesos en cajas, proyectando cerrar los próximos treinta días con setenta y cuatro millones ochocientos treinta y dos mil trece pesos.`
+            `En flujo de caja a partir de hoy, disponemos de $${formatCLP(totalClpBanks)} pesos en cuentas bancarias y $${formatCLP(totalCajas)} pesos en cajas, proyectando una posición final estimada a 30 días de $${formatCLP(cierreProy30d)} pesos.`
           );
           break;
         }
 
         case 'BANCOS_CONCILIACION': {
-          const clpBanks = INITIAL_BANK_ACCOUNTS.filter((b) => (b.moneda || 'CLP') === 'CLP');
-          const fxBanks = INITIAL_BANK_ACCOUNTS.filter((b) => b.moneda && b.moneda !== 'CLP');
-          const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
-          const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
+          const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
+          const effectiveAccounts = tenantAccounts.length > 0
+            ? tenantAccounts
+            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+          const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
+          const fxBanks = effectiveAccounts.filter((b) => b.moneda && b.moneda !== 'CLP');
+          const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
+
+          const tenantMovements = diskPersistence.getBankMovements(empresaId);
+          const netMovements = tenantMovements.filter((m: any) => !m.moneda || m.moneda === 'CLP').reduce((acc: number, m: any) => acc + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0);
+          const totalClpBanks = initialBalance + netMovements;
+          const totalCajas = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+            ? INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0)
+            : 0;
 
           const tcUsd = 945;
           const tcEur = 1035;
           let totalFxInClp = 0;
 
-          const clpDetails = clpBanks
-            .map((b, idx) => {
-              const ctaIfrs =
-                b.cuentaContableIfrs ||
-                (idx === 0 ? '1.1.02.001' : idx === 1 ? '1.1.02.002' : '1.1.02.005');
-              const tipoLabel =
-                b.tipoCuenta === 'CORRIENTE'
-                  ? 'Cuenta Corriente'
-                  : b.tipoCuenta === 'VISTA'
-                  ? 'Cuenta Vista Empresas'
-                  : b.tipoCuenta;
-              const estadoLabel =
-                b.estadoConexion === 'CONECTADO' ? '🟢 En Línea / Conciliada' : '🟢 Cartola Conciliada';
-              return `*${idx + 1}. ${b.banco}* ${b.esPrincipal ? '_(Principal)_' : ''}
+          const clpDetails = clpBanks.length > 0
+            ? clpBanks
+                .map((b, idx) => {
+                  const ctaIfrs =
+                    b.cuentaContableIfrs ||
+                    (idx === 0 ? '1.1.02.001' : idx === 1 ? '1.1.02.002' : '1.1.02.005');
+                  const tipoLabel =
+                    b.tipoCuenta === 'CORRIENTE'
+                      ? 'Cuenta Corriente'
+                      : b.tipoCuenta === 'VISTA'
+                      ? 'Cuenta Vista Empresas'
+                      : b.tipoCuenta;
+                  const estadoLabel =
+                    b.estadoConexion === 'CONECTADO' ? '🟢 En Línea / Conciliada' : '🟢 Cartola Conciliada';
+                  return `*${idx + 1}. ${b.banco}* ${b.esPrincipal ? '_(Principal)_' : ''}
    • *Tipo & N° Cuenta:* ${tipoLabel} N° \`${b.numeroCuenta}\`
    • *Cuenta Contable IFRS:* \`${ctaIfrs}\`
-   • *Saldo Disponible / Cartola:* *$${formatCLP(b.saldoEnLinea)} CLP*
+   • *Saldo Disponible / Cartola:* *$${formatCLP(b.saldoEnLinea ?? b.saldoInicial ?? 0)} CLP*
    • *Estado:* ${estadoLabel} ($0 dif.)`;
-            })
-            .join('\n\n');
+                })
+                .join('\n\n')
+            : '• ℹ️ _No se registran cuentas en moneda nacional para esta empresa._';
 
-          const fxDetails = fxBanks
-            .map((b, idx) => {
-              const isUsd = b.moneda === 'USD';
-              const symbol = isUsd ? 'US$' : '€';
-              const tc = isUsd ? tcUsd : tcEur;
-              const equivClp = Math.round((b.saldoEnLinea || 0) * tc);
-              totalFxInClp += equivClp;
-              const formattedForeign = (b.saldoEnLinea || 0).toLocaleString('es-CL', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              });
-              return `*${clpBanks.length + idx + 1}. ${b.banco}*
+          const fxDetails = fxBanks.length > 0
+            ? fxBanks
+                .map((b, idx) => {
+                  const isUsd = b.moneda === 'USD';
+                  const symbol = isUsd ? 'US$' : '€';
+                  const tc = isUsd ? tcUsd : tcEur;
+                  const equivClp = Math.round((Number(b.saldoEnLinea ?? b.saldoInicial ?? 0)) * tc);
+                  totalFxInClp += equivClp;
+                  const formattedForeign = (Number(b.saldoEnLinea ?? b.saldoInicial ?? 0)).toLocaleString('es-CL', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  });
+                  return `*${clpBanks.length + idx + 1}. ${b.banco}*
    • *Tipo & N° Cuenta:* Cta. Moneda Extranjera (${b.moneda}) N° \`${b.numeroCuenta}\`
    • *Cuenta Contable IFRS:* \`${b.cuentaContableIfrs || '1.1.02.003'}\`
    • *Saldo en Divisa:* *${symbol} ${formattedForeign}* _(Equiv. TC $${tc}: $${formatCLP(equivClp)} CLP)_
    • *Estado:* 🟢 En Línea / Conciliada`;
-            })
-            .join('\n\n');
+                })
+                .join('\n\n')
+            : '• ℹ️ _No se registran cuentas en moneda extranjera para esta empresa._';
 
-          const cashDetails = INITIAL_CASH_ACCOUNTS.map(
-            (c) =>
-              `• *${c.nombre}* (\`${c.codigoContable}\`): *$${formatCLP(c.montoSaldo)} CLP* _(${c.responsableNombre})_`
-          ).join('\n');
+          const cashDetails = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+            ? INITIAL_CASH_ACCOUNTS.map(
+                (c) =>
+                  `• *${c.nombre}* (\`${c.codigoContable}\`): *$${formatCLP(c.montoSaldo)} CLP* _(${c.responsableNombre})_`
+              ).join('\n')
+            : '• ℹ️ _Sin fondos fijos registrados._';
 
           const granTotalLiquidez = totalClpBanks + totalFxInClp + totalCajas;
 
@@ -1190,7 +1321,7 @@ ${bankLines}
 🇨🇱 *A) CUENTAS BANCARIAS MONEDA NACIONAL (CLP):*
 ${clpDetails}
 
-👉 *Subtotal Bancos Moneda Nacional (3 Cuentas):* *$${formatCLP(totalClpBanks)} CLP*
+👉 *Subtotal Bancos Moneda Nacional (${clpBanks.length} Cuentas):* *$${formatCLP(totalClpBanks)} CLP*
 
 🌎 *B) CUENTAS BANCARIAS MONEDA EXTRANJERA (USD / EUR):*
 ${fxDetails}
@@ -1204,94 +1335,198 @@ ${cashDetails}
 ────────────────────
 💰 *RESUMEN CONSOLIDADO Y CONCILIACIÓN BANCARIA:*
 • *Total Bancos CLP:* *$${formatCLP(totalClpBanks)} CLP*
-• *Total Bancos CLP + Divisas (USD/EUR):* *$${formatCLP(totalClpBanks + totalFxInClp)} CLP*
 • *Total Liquidez General (Bancos + Cajas):* *$${formatCLP(granTotalLiquidez)} CLP*
-• ✅ *Estado Conciliación Libro Mayor vs Cartolas:* *100% CONCILIADO* ($0 diferencia en las 5 cuentas bancarias)`);
+• ✅ *Estado Conciliación Libro Mayor vs Cartolas:* *100% CONCILIADO* ($0 diferencia)`);
 
           verbalParts.push(
-            `En saldos bancarios aperturados por cuenta y banco: en moneda nacional contamos con cuarenta y cuatro millones trescientos ochenta y dos mil trece pesos en la cuenta corriente de Banco Santander, seis millones ochocientos cincuenta mil pesos en la cuenta vista de Banco de Chile, y doce millones cuatrocientos mil pesos en la cuenta corriente de Banco B C I, sumando sesenta y tres millones seiscientos treinta y dos mil trece pesos. Adicionalmente, en moneda extranjera disponemos de treinta y ocho mil cuatrocientos cincuenta dólares en Banco Santander y catorce mil doscientos euros en Banco de Chile, más siete millones quinientos cincuenta mil pesos en cajas, todo cien por ciento conciliado.`
+            `En saldos bancarios para la empresa: disponemos de $${formatCLP(totalClpBanks)} pesos en bancos y $${formatCLP(totalCajas)} pesos en cajas, todo conciliado.`
           );
           break;
         }
 
         case 'RRHH_REMUNERACIONES': {
-          sections.push(`👥 *NÓMINA DE REMUNERACIONES & IMPOSICIONES PREVIRED*
+          const tenantPayrolls = diskPersistence.getPayrolls(empresaId);
+          if (tenantPayrolls && tenantPayrolls.length > 0) {
+            const count = tenantPayrolls.length;
+            const totalLiquido = tenantPayrolls.reduce((sum: number, p: any) => sum + (Number(p.sueldoLiquido) || 0), 0);
+            const totalPrevired = tenantPayrolls.reduce((sum: number, p: any) => sum + (Number(p.previredTotal || p.totalLeyesSociales || (p.afpMonto + p.saludMonto + p.afcMonto)) || 0), 0);
+            sections.push(`👥 *NÓMINA DE REMUNERACIONES & IMPOSICIONES PREVIRED*
 👩‍💼 *Agente Especialista:* Sofía Castro (Jefa de Nómina & Personas)
-• *Dotación Activa:* 6 Colaboradores (Planta Industrial & Administración)
-• 💵 *Total Sueldos Líquidos a Transferir:* *$4.850.000 CLP* (Día 30)
-• 🏛️ *Total Cotizaciones Previsionales (Previred):* *$1.690.000 CLP* (Vence día 13)
-  ◦ AFP (Capital/Provida/Habitat): $845.000 CLP
-  ◦ Salud (Fonasa / Isapres): $520.000 CLP
-  ◦ AFC + Mutual + SIS: $325.000 CLP
+• *Dotación Activa:* ${count} Colaborador(es)
+• 💵 *Total Sueldos Líquidos a Transferir:* *$${formatCLP(totalLiquido)} CLP*
+• 🏛️ *Total Cotizaciones Previsionales (Previred):* *$${formatCLP(totalPrevired)} CLP* (Vence día 13)
 • ✅ *Estado:* Liquidaciones emitidas y provisión contable cuadrada.`);
-          verbalParts.push(
-            'En recursos humanos, la nómina de seis colaboradores suma cuatro millones ochocientos cincuenta mil pesos en sueldos líquidos y un millón seiscientos noventa mil pesos para Previred.'
-          );
+            verbalParts.push(
+              `En recursos humanos, la nómina de ${count} colaboradores suma $${formatCLP(totalLiquido)} pesos en sueldos líquidos y $${formatCLP(totalPrevired)} pesos para Previred.`
+            );
+          } else {
+            sections.push(`👥 *NÓMINA DE REMUNERACIONES & IMPOSICIONES PREVIRED*
+👩‍💼 *Agente Especialista:* Sofía Castro (Jefa de Nómina & Personas)
+• *Dotación Activa:* 0 Colaboradores registrados
+• 💵 *Total Sueldos Líquidos:* $0 CLP
+• 🏛️ *Total Cotizaciones Previred:* $0 CLP
+• ✅ *Estado:* Sin liquidaciones pendientes para esta empresa.`);
+            verbalParts.push(
+              'En recursos humanos, no hay colaboradores ni liquidaciones pendientes registradas para esta empresa.'
+            );
+          }
           break;
         }
 
         case 'BODEGA_INVENTARIO': {
-          sections.push(`📦 *EXISTENCIAS EN BODEGA & STOCK CRÍTICO (VALORIZACIÓN PMP)*
+          const tenantItems = diskPersistence.getInventoryItems(empresaId);
+          if (tenantItems && tenantItems.length > 0) {
+            const totalVal = tenantItems.reduce((acc: number, it: any) => {
+              const stock = Number(it.stockActual ?? it.stockTotalActual ?? it.stockTotal ?? 0);
+              const pmp = Number(it.costoPromedioPonderado ?? it.costoPmpActual ?? it.costoUnitarioPMP ?? 0);
+              return acc + (stock * pmp);
+            }, 0);
+            const lines = tenantItems.slice(0, 4).map((it: any) => {
+              const stock = Number(it.stockActual ?? it.stockTotalActual ?? it.stockTotal ?? 0);
+              const pmp = Number(it.costoPromedioPonderado ?? it.costoPmpActual ?? it.costoUnitarioPMP ?? 0);
+              const total = stock * pmp;
+              return `• 🟢 *${it.nombre || it.sku}:* *${stock} un. disponibles* (PMP: $${formatCLP(pmp)} | Total: $${formatCLP(total)} CLP)`;
+            }).join('\n');
+            sections.push(`📦 *EXISTENCIAS EN BODEGA & STOCK (VALORIZACIÓN PMP)*
 👨‍🔧 *Agente Especialista:* Diego Morales (Jefe de Bodega & Inventarios)
-• 🟢 *Paño Red Dyneema SK78 (Alta Tenacidad):* *420 kg disponibles* (PMP: $26.500/kg | Total: $11.130.000 CLP)
-• 🟢 *Cabo Polipropileno Torcido 18mm:* *85 rollos disponibles* (Total: $7.225.000 CLP)
-• 🟢 *Grilletes Lira Galvanizados 3/4" Alta Carga:* *340 unidades* (Total: $2.890.000 CLP)
-• 🟢 *Hilo Trenzado Polietileno Reparación:* *150 bobinas* (Total: $2.775.000 CLP)
-• 💰 *Valorización Total Bodega (NIC 2):* *$24.020.000 CLP* (Sin quiebres de stock)`);
-          verbalParts.push(
-            'En bodega e inventario, contamos con cuatrocientos veinte kilos de paño Dyneema, ochenta y cinco rollos de cabo y trescientos cuarenta grilletes, totalizando veinticuatro millones veinte mil pesos en existencias.'
-          );
+${lines}
+• 💰 *Valorización Total Bodega (NIC 2):* *$${formatCLP(totalVal)} CLP* (${tenantItems.length} SKUs activos)`);
+            verbalParts.push(
+              `En bodega e inventario, disponemos de ${tenantItems.length} SKUs registrados con una valorización total de $${formatCLP(totalVal)} pesos bajo PMP.`
+            );
+          } else {
+            sections.push(`📦 *EXISTENCIAS EN BODEGA & STOCK (VALORIZACIÓN PMP)*
+👨‍🔧 *Agente Especialista:* Diego Morales (Jefe de Bodega & Inventarios)
+• ℹ️ *Estado:* No hay ítems ni existencias registradas en bodega para esta empresa.
+• 💰 *Valorización Total:* $0 CLP`);
+            verbalParts.push(
+              'En bodega e inventario, actualmente no existen ítems de inventario registrados para esta empresa.'
+            );
+          }
           break;
         }
 
         case 'PRODUCCION_COSTEO': {
-          sections.push(`🏭 *ESTADO DE ÓRDENES DE PRODUCCIÓN & COSTEO NIC 2*
+          const tenantOrders = diskPersistence.getProductionOrders(empresaId);
+          const activeOrders = tenantOrders.filter((o: any) => o.estado !== 'TERMINADA' && o.estado !== 'ANULADA');
+          if (activeOrders.length > 0) {
+            const first = activeOrders[0];
+            const avgAvance = Math.round(activeOrders.reduce((sum: number, o: any) => sum + (Number(o.porcentajeAvanceFisico) || (o.cantidadObjetivo > 0 ? (o.cantidadProducidaReal / o.cantidadObjetivo) * 100 : 0) || 0), 0) / activeOrders.length);
+            const totalCosto = activeOrders.reduce((sum: number, o: any) => sum + (Number(o.costoTotalReal || (o.costoMaterialesReal + o.costoModReal + o.costoCifReal)) || 0), 0);
+
+            const budgets = diskPersistence.getProductionBudgets(empresaId);
+            const budgetForOrders = budgets.filter((b: any) => activeOrders.some((o: any) => o.id === b.orderId || o.folio === b.orderFolio));
+            let desvioLabel = 'Sin presupuesto base comparativo';
+            if (budgetForOrders.length > 0) {
+              const totalPresupuestado = budgetForOrders.reduce((s: number, b: any) => s + (Number(b.montoTotalPresupuestado || b.totalPresupuesto) || 0), 0);
+              if (totalPresupuestado > 0) {
+                const diffPct = (((totalCosto - totalPresupuestado) / totalPresupuestado) * 100).toFixed(1);
+                desvioLabel = Number(diffPct) > 0 ? `+${diffPct}% (Sobre presupuesto)` : `${diffPct}% (Bajo presupuesto / Óptimo)`;
+              }
+            }
+
+            sections.push(`🏭 *ESTADO DE ÓRDENES DE PRODUCCIÓN & COSTEO NIC 2*
 👷‍♂️ *Agente Especialista:* Roberto Soto (Jefe de Planta & Costeo Industrial)
-• *Orden Activa:* *OP-2026-042* — Red Lobera Perimetral Dyneema 40x40m
-• *Cliente Destino:* Salmones Austral S.A. (Entrega: 28 del mes en curso)
-• ⚙️ *Avance Físico en Taller:* *68% completado* (Etapa: Relingado y Guarda-cabos)
-• 💰 *Costos Acumulados NIC 2:* *$12.450.000 CLP* (MPD: $10.150.000 | MOD: $1.850.000 | CIF: $450.000)
-• ✅ *Desvío Presupuestario:* *0,0% (En meta óptima)*`);
-          verbalParts.push(
-            'En planta, la orden de producción cero cuarenta y dos para Salmones Austral lleva un sesenta y ocho por ciento de avance físico con doce millones cuatrocientos cincuenta mil pesos acumulados sin desvíos.'
-          );
+• *Orden Activa:* *${first.folio || first.id}* — ${first.productoNombre || 'Producción Industrial'}
+• *Cliente Destino:* ${first.clienteNombre || 'Cliente Corporativo'}
+• ⚙️ *Avance Físico Promedio:* *${avgAvance}% completado* (${activeOrders.length} OP en curso)
+• 💰 *Costos Acumulados NIC 2:* *$${formatCLP(totalCosto)} CLP*
+• 📊 *Desvío Presupuestario:* *${desvioLabel}*`);
+            verbalParts.push(
+              `En planta, mantenemos ${activeOrders.length} orden(es) de producción en curso con un ${avgAvance}% de avance físico promedio y $${formatCLP(totalCosto)} pesos de costos acumulados.`
+            );
+          } else {
+            sections.push(`🏭 *ESTADO DE ÓRDENES DE PRODUCCIÓN & COSTEO NIC 2*
+👷‍♂️ *Agente Especialista:* Roberto Soto (Jefe de Planta & Costeo Industrial)
+• ℹ️ *Estado:* No hay órdenes de producción activas ni costos acumulados en planta para esta empresa.`);
+            verbalParts.push(
+              'En planta y operaciones, la empresa no cuenta con órdenes de producción activas en este período.'
+            );
+          }
           break;
         }
 
         case 'PRESUPUESTOS_COMERCIAL': {
-          sections.push(`📑 *PIPELINE DE PRESUPUESTOS & COTIZACIONES ENVIADAS*
+          const comState = commercialProcurementService.getState(empresaId);
+          const quotes = comState.cotizaciones || [];
+          if (quotes.length > 0) {
+            const totalNeto = quotes.reduce((sum, q) => sum + (Number(q.totalNetoCLP) || 0), 0);
+            const totalIvaIncl = Math.round(totalNeto * 1.19);
+            const quotesLines = quotes.slice(0, 3).map((q) => {
+              return `• 🟢 *${q.folio || q.id} (${q.clienteRazonSocial || 'Cliente'}):* $${formatCLP(q.totalNetoCLP)} CLP (+IVA) — _Margen: ${q.margenBrutoTotalPorcentaje || 28}%_`;
+            }).join('\n');
+            sections.push(`📑 *PIPELINE DE PRESUPUESTOS & COTIZACIONES ENVIADAS*
 👩‍💼 *Agente:* Vera Albornoz / Gestión Comercial
-• 🟡 *COT-039 (Salmones Austral S.A.):* $15.104.000 CLP (+IVA) — _En revisión técnica final (Margen: 28%)_
-• 🟢 *COT-040 (Blumar Seafoods S.A.):* $6.850.000 CLP (+IVA) — _Pre-aprobado para Orden de Compra (Margen: 32%)_
-• 📈 *Total Pipeline Activo:* *$21.954.000 CLP netos* ($26.125.260 CLP IVA incl.)`);
-          verbalParts.push(
-            'En presupuestos comerciales, mantenemos un pipeline activo de veintiún millones novecientos cincuenta y cuatro mil pesos netos entre Salmones Austral y Blumar.'
-          );
+${quotesLines}
+• 📈 *Total Pipeline Activo:* *$${formatCLP(totalNeto)} CLP netos* ($${formatCLP(totalIvaIncl)} CLP IVA incl.)`);
+            verbalParts.push(
+              `En presupuestos comerciales, mantenemos un pipeline activo de $${formatCLP(totalNeto)} pesos netos en cotizaciones vigentes.`
+            );
+          } else {
+            sections.push(`📑 *PIPELINE DE PRESUPUESTOS & COTIZACIONES ENVIADAS*
+👩‍💼 *Agente:* Vera Albornoz / Gestión Comercial
+• ℹ️ *Estado:* No hay cotizaciones comerciales activas ni propuestas en pipeline para esta empresa.`);
+            verbalParts.push(
+              'En presupuestos comerciales, no se registran cotizaciones activas en el pipeline para esta empresa.'
+            );
+          }
           break;
         }
 
         case 'TRIBUTARIO_F29': {
-          sections.push(`🏛️ *PROYECCIÓN TRIBUTARIA SII — FORMULARIO 29 (RCV)*
+          const tenantDtes = diskPersistence.getDtes(empresaId);
+          const ventas = tenantDtes.filter((d: any) => d.tipoOperacion === 'VENTA');
+          const compras = tenantDtes.filter((d: any) => d.tipoOperacion === 'COMPRA');
+          const debitoFiscal = ventas.reduce((s: number, d: any) => s + (Number(d.montoIva || d.iva) || 0), 0);
+          const creditoFiscal = compras.reduce((s: number, d: any) => s + (Number(d.montoIva || d.iva) || 0), 0);
+          const netoVentas = ventas.reduce((s: number, d: any) => s + (Number(d.montoNeto || d.neto) || 0), 0);
+          const ppm = Math.round(netoVentas * 0.01);
+          const totalF29 = (debitoFiscal - creditoFiscal + ppm) > 0 ? (debitoFiscal - creditoFiscal + ppm) : 0;
+
+          if (tenantDtes.length > 0) {
+            sections.push(`🏛️ *PROYECCIÓN TRIBUTARIA SII — FORMULARIO 29 (RCV)*
 👨‍💼 *Agente Especialista:* Jorge Rojas (Especialista Tributario SII)
-• *IVA Débito Fiscal (Ventas RCV):* $4.655.000 CLP
-• *IVA Crédito Fiscal (Compras RCV):* -$3.120.000 CLP
-• *PPM Obligatorio + Retención 2da Categoría (BHE):* $355.000 CLP
-• 💰 *Total Proyectado a Pagar F29:* *$1.890.000 CLP* (Vence día 20 en SII)`);
-          verbalParts.push(
-            'En materia tributaria F29, el monto total proyectado a pagar este mes en el Servicio de Impuestos Internos es de un millón ochocientos noventa mil pesos.'
-          );
+• *IVA Débito Fiscal (Ventas RCV):* $${formatCLP(debitoFiscal)} CLP
+• *IVA Crédito Fiscal (Compras RCV):* -$${formatCLP(creditoFiscal)} CLP
+• *PPM Obligatorio Estimado (1%):* $${formatCLP(ppm)} CLP
+• 💰 *Total Proyectado a Pagar F29:* *$${formatCLP(totalF29)} CLP* (Vence día 20 en SII)`);
+            verbalParts.push(
+              `En materia tributaria F29, el total proyectado a pagar según los DTEs registrados es de $${formatCLP(totalF29)} pesos.`
+            );
+          } else {
+            sections.push(`🏛️ *PROYECCIÓN TRIBUTARIA SII — FORMULARIO 29 (RCV)*
+👨‍💼 *Agente Especialista:* Jorge Rojas (Especialista Tributario SII)
+• ℹ️ *Estado:* Sin documentos DTE registrados en el período para cálculo de F29.`);
+            verbalParts.push(
+              'En materia tributaria F29, no se registran compras ni ventas en el sistema para este período.'
+            );
+          }
           break;
         }
 
         case 'FACTURACION_DTE': {
-          sections.push(`🧾 *FACTURACIÓN ELECTRÓNICA DTE & REGISTRO SII*
+          const tenantDtes = diskPersistence.getDtes(empresaId);
+          const ventas = tenantDtes.filter((d: any) => d.tipoOperacion === 'VENTA');
+          const totalNeto = ventas.reduce((s: number, d: any) => s + (Number(d.montoNeto || d.neto) || 0), 0);
+          const totalBruto = ventas.reduce((s: number, d: any) => s + (Number(d.montoTotal || d.total) || 0), 0);
+
+          if (ventas.length > 0) {
+            sections.push(`🧾 *FACTURACIÓN ELECTRÓNICA DTE & REGISTRO SII*
 👨‍💻 *Agente Especialista:* Juan Pablo Silva (Facturador Electrónico SII)
-• *Facturas Afectas (DTE 33) Emitidas Mes:* $24.500.000 CLP netos ($29.155.000 IVA incl.)
+• *Facturas Emitidas Mes (${ventas.length} DTEs):* $${formatCLP(totalNeto)} CLP netos ($${formatCLP(totalBruto)} IVA incl.)
 • *Estado CAF y Timbraje SII:* Folios activos y certificados vigentes
-• *Acuse de Recibo RCV Compras:* 100% dentro del plazo legal de 8 días`);
-          verbalParts.push(
-            'En facturación electrónica, las ventas emitidas del período suman veinticuatro millones quinientos mil pesos netos con todos los folios al día en el SII.'
-          );
+• *Acuse de Recibo RCV Compras:* Verificado`);
+            verbalParts.push(
+              `En facturación electrónica, las ventas emitidas del período suman $${formatCLP(totalNeto)} pesos netos con ${ventas.length} facturas registradas.`
+            );
+          } else {
+            sections.push(`🧾 *FACTURACIÓN ELECTRÓNICA DTE & REGISTRO SII*
+👨‍💻 *Agente Especialista:* Juan Pablo Silva (Facturador Electrónico SII)
+• ℹ️ *Estado:* No se registran facturas ni documentos de venta emitidos en el período.`);
+            verbalParts.push(
+              'En facturación electrónica, no se registran ventas emitidas en el período actual.'
+            );
+          }
           break;
         }
 
@@ -1320,16 +1555,41 @@ ${cashDetails}
         }
 
         case 'PANORAMA_DIRECTORIO': {
+          const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
+          const effectiveAccounts = tenantAccounts.length > 0
+            ? tenantAccounts
+            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+          const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
+          const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
+          const tenantMovements = diskPersistence.getBankMovements(empresaId);
+          const clpMovements = tenantMovements.filter((m: any) => !m.moneda || m.moneda === 'CLP');
+          const netMovements = clpMovements.reduce((acc: number, m: any) => acc + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0);
+          const totalClpBanks = initialBalance + netMovements;
+
+          const tenantPayrolls = diskPersistence.getPayrolls(empresaId);
+          const totalSueldos = tenantPayrolls.reduce((sum: number, p: any) => sum + (Number(p.sueldoLiquido) || 0), 0);
+          const totalPrevired = tenantPayrolls.reduce((sum: number, p: any) => sum + (Number(p.previredTotal || p.totalLeyesSociales || (p.afpMonto + p.saludMonto + p.afcMonto)) || 0), 0);
+
+          const tenantItems = diskPersistence.getInventoryItems(empresaId);
+          const totalInv = tenantItems.reduce((acc: number, it: any) => acc + (Number(it.stockActual ?? it.stockTotal ?? 0) * Number(it.costoPromedioPonderado ?? it.costoUnitarioPMP ?? 0)), 0);
+
+          const tenantOrders = diskPersistence.getProductionOrders(empresaId);
+          const activeOrders = tenantOrders.filter((o: any) => o.estado !== 'TERMINADA' && o.estado !== 'ANULADA');
+          const opDesc = activeOrders.length > 0 ? `${activeOrders.length} OP(s) en curso` : 'Sin órdenes de producción activas';
+
+          const comState = commercialProcurementService.getState(empresaId);
+          const pipelineVal = (comState.cotizaciones || []).reduce((sum, q) => sum + (Number(q.totalNetoCLP) || 0), 0);
+
           sections.push(`🌐 *RADIOGRAFÍA EJECUTIVA 360° — DIRECTORIO*
 👩‍💼 *Emitido por:* Vera Albornoz (Directora General & Socia Virtual)
-• 🏦 *Bancos Conciliados:* $18.450.000 CLP disponibles hoy
-• 📊 *Flujo Caja 30d:* Cierre estimado en +$22.100.000 CLP
-• 👥 *RRHH & Previred:* $4.850.000 sueldos + $1.690.000 Previred (100% cubiertos)
-• 📦 *Inventario Bodega:* $24.020.000 CLP valorizados (420 kg Dyneema)
-• 🏭 *Producción Planta:* OP-2026-042 al 68% de avance físico (0% desvío)
-• 📑 *Pipeline Comercial:* $21.954.000 CLP netos en cotizaciones activas`);
+• 🏦 *Bancos Conciliados:* $${formatCLP(totalClpBanks)} CLP disponibles hoy
+• 📊 *Flujo Caja 30d:* Cierre estimado en posición ${totalClpBanks >= 0 ? 'solvente' : 'en monitoreo'}
+• 👥 *RRHH & Previred:* $${formatCLP(totalSueldos)} sueldos + $${formatCLP(totalPrevired)} Previred
+• 📦 *Inventario Bodega:* $${formatCLP(totalInv)} CLP valorizados (${tenantItems.length} SKUs)
+• 🏭 *Producción Planta:* ${opDesc}
+• 📑 *Pipeline Comercial:* $${formatCLP(pipelineVal)} CLP netos en cotizaciones`);
           verbalParts.push(
-            'En el panorama trescientos sesenta de la empresa, mantenemos dieciocho millones cuatrocientos cincuenta mil pesos en bancos, nómina y F29 cubiertos, veinticuatro millones en inventario y la planta al sesenta y ocho por ciento de avance.'
+            `En el panorama trescientos sesenta de la empresa, mantenemos $${formatCLP(totalClpBanks)} pesos en bancos, nómina y F29 cubiertos, $${formatCLP(totalInv)} pesos en existencias y ${opDesc}.`
           );
           break;
         }
@@ -1440,7 +1700,7 @@ ${cashDetails}
 
   private async ensureDependenciesInstalled(): Promise<boolean> {
     try {
-      await import('@whiskeysockets/baileys');
+      await safeDynamicImport('@whiskeysockets/baileys');
       return true;
     } catch {
       console.log('[WhatsAppBridge] Instalando @whiskeysockets/baileys y qrcode en el servidor...');
@@ -1477,7 +1737,7 @@ ${cashDetails}
     }
 
     try {
-      const baileys: any = await import('@whiskeysockets/baileys');
+      const baileys: any = await safeDynamicImport('@whiskeysockets/baileys');
       const makeWASocket = baileys.default?.default || baileys.default || baileys.makeWASocket;
       const useMultiFileAuthState = baileys.useMultiFileAuthState;
       const DisconnectReason = baileys.DisconnectReason;
@@ -1547,7 +1807,7 @@ ${cashDetails}
           this.currentQrRaw = qr;
           this.connectionState = 'QR_READY';
           try {
-            const qrcodeMod: any = await import('qrcode');
+            const qrcodeMod: any = await safeDynamicImport('qrcode');
             const toDataURL = qrcodeMod.toDataURL || qrcodeMod.default?.toDataURL;
             if (toDataURL) {
               this.currentQrDataUrl = await toDataURL(qr, { width: 300, margin: 2 });
@@ -1692,7 +1952,7 @@ ${cashDetails}
                   ))
             );
 
-            const evalResult = this.evaluateIncomingMessage({
+            const evalResult = await this.executeIncomingMessageWithAgent({
               remoteJid,
               extraCandidateJids,
               messageText: textContent,
@@ -1786,7 +2046,7 @@ ${cashDetails}
 
     // Intentar cargar ffmpeg-static si está instalado o instalarlo automáticamente
     try {
-      const ffMod: any = await import('ffmpeg-static');
+      const ffMod: any = await safeDynamicImport('ffmpeg-static');
       const binPath = ffMod?.default || ffMod;
       if (typeof binPath === 'string' && fs.existsSync(binPath)) {
         this.cachedFfmpegBin = binPath;
@@ -1799,7 +2059,7 @@ ${cashDetails}
           cwd: process.cwd(),
           timeout: 90000,
         });
-        const ffMod2: any = await import('ffmpeg-static');
+        const ffMod2: any = await safeDynamicImport('ffmpeg-static');
         const binPath2 = ffMod2?.default || ffMod2;
         if (typeof binPath2 === 'string' && fs.existsSync(binPath2)) {
           this.cachedFfmpegBin = binPath2;

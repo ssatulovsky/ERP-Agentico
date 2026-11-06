@@ -1572,7 +1572,7 @@ export function buildOfficial8ColumnBalance(
   };
 
   return {
-    empresa_id: empresa.rut || empresa.id || '',
+    empresa_id: empresa.rut || (empresa as any).id || '',
     tipo_reporte: 'BALANCE_8_COLUMNAS',
     periodo_cierre: periodoStr,
     marco_contable: empresa.regimenTributario || '14D3_PROPYME_GENERAL',

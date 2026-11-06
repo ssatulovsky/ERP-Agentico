@@ -1,7 +1,8 @@
 {
-  "name": "react-example",
+  "name": "erpremia",
+  "version": "2.0.0",
+  "description": "ERPremIA - Sistema ERP Contable, Tributario y Agéntico Autónomo para Chile",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "node ./node_modules/tsx/dist/cli.mjs server.ts",
@@ -14,7 +15,9 @@
     "db:migrate:mysql": "node ./node_modules/tsx/dist/cli.mjs src/scripts/migrateMysql.ts",
     "download:voices": "bash scripts/download_all_piper_voices.sh",
     "download:voices:node": "node ./node_modules/tsx/dist/cli.mjs src/scripts/downloadPiperVoices.ts",
-    "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
+    "setup:install": "node ./node_modules/tsx/dist/cli.mjs src/scripts/installSystem.ts",
+    "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "test": "node ./node_modules/tsx/dist/cli.mjs tests/agent_tools.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/e2e_audit_verification.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_security_rbac.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/http_route_perimeter.test.ts && node ./node_modules/tsx/dist/cli.mjs tests/autonomous_agents_modules.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

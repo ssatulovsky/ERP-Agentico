@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -14,6 +15,14 @@ import { siiRcvRouter } from "./src/controllers/siiRcvController";
 import { payrollRouter } from "./src/controllers/payrollController";
 import { expenseReportsRouter } from "./src/controllers/expenseReportsController";
 import { billingDteRouter } from "./src/controllers/billingDteController";
+import { authRouter } from "./src/controllers/authController";
+import { autonomousAgentsRouter } from "./src/controllers/autonomousAgentsController";
+import { authenticateApiToken } from "./src/middlewares/authMiddleware";
+import { centralizedAuthorizationMiddleware, validateCompanyIdentifiers } from "./src/middlewares/centralizedAuthorizationMiddleware";
+import { sanitizeSecurityUser } from "./src/services/securityRbacService";
+import { decryptFromVaultString } from "./src/utils/vaultCrypto";
+import { z } from "zod";
+import { sanitizeContextForAi } from "./src/utils/aiSecuritySanitizer";
 import { SiiRcvService, SiiGatewayError } from "./src/services/siiRcvService";
 import { SiiPlaywrightRunner } from "./src/services/siiPlaywrightRunner";
 import { RcvIngestionService } from "./src/services/rcvIngestionService";
@@ -33,7 +42,7 @@ import { whatsappBridgeService } from "./src/services/whatsappBridgeService";
 import { aiRouterService } from "./src/services/aiRouterService";
 import { commercialProcurementService } from "./src/services/commercialProcurementService";
 
-dotenv.config({ override: true });
+dotenv.config({ path: [path.resolve(process.cwd(), ".env.local"), path.resolve(process.cwd(), ".env")], override: true });
 
 process.on("uncaughtException", (err) => {
   console.error("[Process] Uncaught Exception capturada (evitando caída 502):", err);
@@ -43,23 +52,41 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: "15mb" }));
 
+// VALIDACIÓN DE IDENTIFICADORES DE EMPRESA: Rechaza con 400 todo identificador que no sea un texto único
+app.use(validateCompanyIdentifiers);
+
+// GOBERNANZA DE SEGURIDAD & RBAC: Validación de Bearer Token en todas las rutas /api
+app.use(authenticateApiToken);
+// AUTORIZACIÓN CENTRALIZADA: Denegar por defecto, mapa canónico ruta -> módulo, y multi-tenant
+app.use(centralizedAuthorizationMiddleware);
+
 // Lazy initialization of Gemini client
 let aiClient: GoogleGenAI | null = null;
-function getAIClient(): GoogleGenAI {
+function getAIClient(customKey?: string): GoogleGenAI {
+  const apiKey = customKey || process.env.GEMINI_API_KEY || aiRouterService.getConfig().geminiApiKey;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured in the environment.");
+  }
+  if (customKey) {
+    return new GoogleGenAI({
+      apiKey: customKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "erpremia-voice",
+        },
+      },
+    });
+  }
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured in the environment.");
-    }
     aiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
-          "User-Agent": "aistudio-build",
+          "User-Agent": "erpremia-core",
         },
       },
     });
@@ -85,12 +112,13 @@ app.get("/api/indicators", async (req, res) => {
         utm: synced.utm,
         dolar: synced.dolar,
         ipc: synced.ipc,
-        imm: 500000,
-        topeImponibleAfpUf: 84.3,
-        topeImponibleAfcUf: 126.6,
-        retencionHonorariosTasa: 0.145, // 14.5% vigente en Chile
-        sisTasa: 0.0149,
-        mutualBaseTasa: 0.0093,
+        imm: DEFAULT_INDICATORS.imm,
+        topeImponibleAfpUf: DEFAULT_INDICATORS.topeImponibleAfpUf, // 90.0 UF (Vigente 2026)
+        topeImponibleAfcUf: DEFAULT_INDICATORS.topeImponibleAfcUf, // 135.2 UF (Vigente 2026)
+        retencionHonorariosTasa: DEFAULT_INDICATORS.retencionHonorariosTasa, // 14.5% vigente en Chile
+        sisTasa: DEFAULT_INDICATORS.sisTasa,
+        mutualBaseTasa: DEFAULT_INDICATORS.mutualBaseTasa,
+        ley21735AportePatronalTasa: DEFAULT_INDICATORS.ley21735AportePatronalTasa, // 1.0% Ley 21.735 Reforma Previsional
         fecha: synced.fecha,
         fuente: "sii.cl / dolarapi.com / mindicador.cl / MySQL",
       },
@@ -122,7 +150,7 @@ app.get("/api/indicators/current", async (req, res) => {
 // =======================================================
 app.get("/api/admin/ai-config", async (_req, res) => {
   try {
-    const config = aiRouterService.getConfig();
+    const config = aiRouterService.getMaskedConfig();
     const localStatus = await aiRouterService.testLocalServer();
     res.json({
       success: true,
@@ -137,11 +165,12 @@ app.get("/api/admin/ai-config", async (_req, res) => {
 app.post("/api/admin/ai-config", async (req, res) => {
   try {
     const patch = req.body;
-    const updated = aiRouterService.updateConfig(patch);
+    aiRouterService.updateConfig(patch);
+    const masked = aiRouterService.getMaskedConfig();
     const localStatus = await aiRouterService.testLocalServer();
     res.json({
       success: true,
-      config: updated,
+      config: masked,
       localStatus,
     });
   } catch (error: any) {
@@ -167,7 +196,7 @@ app.post("/api/admin/ai-test-local", async (req, res) => {
 
 app.get("/api/admin/ai-usage-report", async (req, res) => {
   try {
-    const empresaId = typeof req.query.empresaId === "string" ? req.query.empresaId : undefined;
+    const empresaId = req.effectiveEmpresaId || (typeof req.query.empresaId === "string" ? req.query.empresaId : undefined);
     const periodo = typeof req.query.periodo === "string" ? req.query.periodo : undefined;
     const report = aiRouterService.getUsageReport({ empresaId, periodo });
     res.json({
@@ -181,7 +210,7 @@ app.get("/api/admin/ai-usage-report", async (req, res) => {
 
 app.get("/api/admin/ai-usage-report/csv", (req, res) => {
   try {
-    const empresaId = typeof req.query.empresaId === "string" ? req.query.empresaId : undefined;
+    const empresaId = req.effectiveEmpresaId || (typeof req.query.empresaId === "string" ? req.query.empresaId : undefined);
     const periodo = typeof req.query.periodo === "string" ? req.query.periodo : undefined;
     const csv = aiRouterService.exportUsageReportCsv(empresaId, periodo);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -194,7 +223,8 @@ app.get("/api/admin/ai-usage-report/csv", (req, res) => {
 
 app.post("/api/admin/ai-company-override", (req, res) => {
   try {
-    const { empresaId, override } = req.body;
+    const empresaId = req.effectiveEmpresaId || req.body.empresaId;
+    const { override } = req.body;
     if (!empresaId) return res.status(400).json({ success: false, error: "empresaId es requerido" });
     aiRouterService.setCompanyOverride(empresaId, override);
     res.json({ success: true, config: aiRouterService.getConfig() });
@@ -208,7 +238,7 @@ app.post("/api/admin/ai-company-override", (req, res) => {
 // =======================================================
 app.get("/api/commercial-procurement/state", (req, res) => {
   try {
-    const empresaId = (req.query.empresaId as string) || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
     const state = commercialProcurementService.getState(empresaId);
     res.json({ success: true, state });
   } catch (error: any) {
@@ -218,7 +248,8 @@ app.get("/api/commercial-procurement/state", (req, res) => {
 
 app.post("/api/commercial-procurement/adjust-price", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", sku, nuevoPrecioVenta, motivo } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { sku, nuevoPrecioVenta, motivo } = req.body;
     if (!sku || nuevoPrecioVenta === undefined) {
       return res.status(400).json({ success: false, error: "sku y nuevoPrecioVenta son requeridos" });
     }
@@ -236,7 +267,8 @@ app.post("/api/commercial-procurement/adjust-price", (req, res) => {
 
 app.post("/api/commercial-procurement/purchase-order", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", ...orderData } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const orderData = req.body;
     if (!orderData.proveedorRut || !orderData.items || !orderData.items.length) {
       return res.status(400).json({ success: false, error: "Datos de orden de compra incompletos" });
     }
@@ -249,7 +281,8 @@ app.post("/api/commercial-procurement/purchase-order", (req, res) => {
 
 app.post("/api/commercial-procurement/quote", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", ...quoteData } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const quoteData = req.body;
     if (!quoteData.clienteRut || !quoteData.items || !quoteData.items.length) {
       return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
     }
@@ -262,7 +295,8 @@ app.post("/api/commercial-procurement/quote", (req, res) => {
 
 app.post("/api/commercial-procurement/ai-advisor", async (req, res) => {
   try {
-    const { empresaId = "client-retail-01", prompt, companyProfile } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { prompt, companyProfile } = req.body;
     if (!prompt) {
       return res.status(400).json({ success: false, error: "prompt es requerido" });
     }
@@ -281,7 +315,8 @@ app.post("/api/commercial-procurement/ai-advisor", async (req, res) => {
 // Emisión de Solicitudes de Cotización de Compra (RFQ)
 app.post("/api/commercial-procurement/rfq", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", titulo, diasPlazoRespuesta, items, proveedorRuts } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { titulo, diasPlazoRespuesta, items, proveedorRuts } = req.body;
     if (!titulo || !items || !items.length || !proveedorRuts || !proveedorRuts.length) {
       return res.status(400).json({ success: false, error: "Título, items y lista de proveedores son requeridos" });
     }
@@ -300,7 +335,8 @@ app.post("/api/commercial-procurement/rfq", (req, res) => {
 // Reiteración de Recordatorio a Proveedor (Seguimiento Activo)
 app.post("/api/commercial-procurement/rfq/reminder", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", rfqId, supplierRut } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { rfqId, supplierRut } = req.body;
     if (!rfqId || !supplierRut) {
       return res.status(400).json({ success: false, error: "rfqId y supplierRut son requeridos" });
     }
@@ -314,7 +350,8 @@ app.post("/api/commercial-procurement/rfq/reminder", (req, res) => {
 // Registro / Simulación de Oferta de Proveedor
 app.post("/api/commercial-procurement/rfq/quote", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", rfqId, supplierRut, quoteData } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { rfqId, supplierRut, quoteData } = req.body;
     if (!rfqId || !supplierRut || !quoteData || quoteData.montoNetoOfertado === undefined) {
       return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
     }
@@ -328,7 +365,8 @@ app.post("/api/commercial-procurement/rfq/quote", (req, res) => {
 // Adjudicación de RFQ al Mejor Proveedor y Emisión Automática de Orden de Compra (OC)
 app.post("/api/commercial-procurement/rfq/award", (req, res) => {
   try {
-    const { empresaId = "client-retail-01", rfqId, winningSupplierRut, motivoAdjudicacion } = req.body;
+    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const { rfqId, winningSupplierRut, motivoAdjudicacion } = req.body;
     if (!rfqId || !winningSupplierRut) {
       return res.status(400).json({ success: false, error: "rfqId y winningSupplierRut son requeridos" });
     }
@@ -343,6 +381,9 @@ app.post("/api/commercial-procurement/rfq/award", (req, res) => {
 app.post("/api/gemini/chat", async (req, res) => {
   try {
     const { messages, companyContext, firmContext, userRole, personaContext } = req.body;
+
+    const safeFirmContext = firmContext ? sanitizeContextForAi(firmContext) : null;
+    const safeCompanyContext = companyContext ? sanitizeContextForAi(companyContext) : null;
 
     const systemInstruction = `Eres un Agente Contable y Financiero Senior experto en la legislación chilena (SII, Dirección del Trabajo, Tesorería General de la República - TGR, Código del Trabajo, Ley de la Renta LIR, DL 825 de IVA e IFRS/NIIF 16).
 Tu objetivo es gestionar de manera integral la contabilidad, el flujo de caja, las proyecciones financieras y el cumplimiento tributario/laboral de la empresa en Chile, actuando bajo las directrices del Estudio Contable gestor.
@@ -373,8 +414,8 @@ TOTALES                              XXX.XXX      XXX.XXX
 4. Alerta inmediatamente si detectas inconsistencias entre el Registro de Compras y Ventas (RCV), el Formulario 29 (F29) o las proyecciones de caja.
 5. Brinda respuestas técnicas, precisas, con citas a leyes chilenas (Art. 47/50 Código del Trabajo, Art. 84 LIR para PPM, Art. 23 DL 825 para Crédito Fiscal IVA, Oficios del SII pertinentes).
 
-${firmContext ? `ESTUDIO CONTABLE GESTOR (CLIENTE PRINCIPAL):\n${JSON.stringify(firmContext, null, 2)}\n` : ""}
-${companyContext ? `EMPRESA CLIENTE EN REVISIÓN (INCLUYE ACCESO/CLAVE SII DEL AGENTE):\n${JSON.stringify(companyContext, null, 2)}` : ""}`;
+${safeFirmContext ? `ESTUDIO CONTABLE GESTOR (PERFIL AUDITADO):\n${JSON.stringify(safeFirmContext, null, 2)}\n` : ""}
+${safeCompanyContext ? `EMPRESA CLIENTE EN REVISIÓN (METADATOS SIN SECRETOS):\n${JSON.stringify(safeCompanyContext, null, 2)}` : ""}`;
 
     const promptText = Array.isArray(messages)
       ? messages.map((m: { role: string; content: string }) => `${m.role === "user" ? "Usuario" : "Agente"}: ${m.content}`).join("\n\n")
@@ -499,31 +540,198 @@ app.get("/api/voice/status", async (_req, res) => {
   }
 });
 
+function wrapPcmWithWavHeader(
+  pcmBuffer: Buffer,
+  sampleRate: number = 24000,
+  channels: number = 1,
+  bitsPerSample: number = 16
+): Buffer {
+  if (pcmBuffer.length >= 4 && pcmBuffer.toString("utf8", 0, 4) === "RIFF") {
+    return pcmBuffer;
+  }
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const dataSize = pcmBuffer.length;
+  const chunkSize = 36 + dataSize;
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(chunkSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // Subchunk1Size
+  header.writeUInt16LE(1, 20); // AudioFormat 1 = PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcmBuffer]);
+}
+
+function mapToGeminiVoice(voiceId?: string, personaName?: string, explicitGeminiVoice?: string): string {
+  if (explicitGeminiVoice && ['Aoede', 'Fenrir', 'Kore', 'Puck', 'Charon'].includes(explicitGeminiVoice)) {
+    return explicitGeminiVoice;
+  }
+  const v = (voiceId || '').toLowerCase();
+  const n = (personaName || '').toLowerCase();
+  if (v.includes('kore') || v.includes('camila') || n.includes('camila') || v.includes('ald')) return 'Kore';
+  if (v.includes('puck') || v.includes('esteban') || n.includes('esteban') || v.includes('compras')) return 'Puck';
+  if (v.includes('charon') || v.includes('roberto') || n.includes('roberto') || v.includes('planta') || v.includes('costos')) return 'Charon';
+  if (
+    v.includes('fenrir') ||
+    v.includes('jorge') ||
+    n.includes('jorge') ||
+    v.includes('tributario') ||
+    v.includes('diego') ||
+    v.includes('male') ||
+    v.includes('claude') ||
+    v.includes('sharvard') ||
+    v.includes('davefx')
+  ) {
+    return 'Fenrir';
+  }
+  return 'Aoede'; // Voz ejecutiva femenina por defecto (Vera / Sofía)
+}
+
+function getRuntimeGeminiKey(explicitKey?: string): string {
+  if (explicitKey && typeof explicitKey === "string" && explicitKey.trim()) {
+    return explicitKey.trim().replace(/^["']|["']$/g, "");
+  }
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+    return process.env.GEMINI_API_KEY.trim().replace(/^["']|["']$/g, "");
+  }
+  const routerKey = aiRouterService.getConfig().geminiApiKey;
+  if (routerKey && routerKey.trim()) {
+    return routerKey.trim().replace(/^["']|["']$/g, "");
+  }
+  try {
+    const envPaths = [path.resolve(process.cwd(), ".env.local"), path.resolve(process.cwd(), ".env")];
+    for (const ep of envPaths) {
+      if (fs.existsSync(ep)) {
+        const parsed = dotenv.parse(fs.readFileSync(ep));
+        if (parsed.GEMINI_API_KEY && parsed.GEMINI_API_KEY.trim()) {
+          return parsed.GEMINI_API_KEY.trim().replace(/^["']|["']$/g, "");
+        }
+      }
+    }
+  } catch {}
+  return "";
+}
+
 app.post("/api/voice/tts", async (req, res) => {
   try {
-    const { text, voiceId, rate, pitch } = req.body;
+    const { text, voiceId, personaName, geminiVoiceName, rate, pitch, apiKey } = req.body;
     if (!text || typeof text !== "string") {
       return res.status(400).json({ success: false, error: "El campo 'text' es requerido." });
     }
 
-    const result = await piperTtsService.synthesize(text, voiceId, { rate, pitch });
+    const effectiveGeminiKey = getRuntimeGeminiKey(apiKey);
 
-    if (req.headers.accept?.includes("audio/wav")) {
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("Content-Length", result.audioBuffer.length);
-      return res.send(result.audioBuffer);
+    // 1. MOTOR PRINCIPAL: Gemini Speech Generation (Voz ultra-natural hiperrealista)
+    if (effectiveGeminiKey) {
+      try {
+        const ai = getAIClient(effectiveGeminiKey);
+        const geminiVoice = mapToGeminiVoice(voiceId, personaName, geminiVoiceName);
+
+        // Modelos de Google Gen AI con soporte de modalidad de audio (TTS)
+        const ttsModelsToTry = [
+          process.env.GEMINI_TTS_MODEL,
+          "gemini-3.8-flash-tts",
+          "gemini-3.8-flash-lite-tts",
+          "gemini-2.5-flash-tts",
+          "gemini-2.5-flash",
+          "gemini-2.0-flash",
+        ].filter(Boolean) as string[];
+
+        for (const ttsModel of ttsModelsToTry) {
+          try {
+            const geminiResp = await ai.models.generateContent({
+              model: ttsModel,
+              contents: text,
+              config: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: geminiVoice,
+                    },
+                  },
+                },
+              },
+            });
+
+            const audioPart = geminiResp.candidates?.[0]?.content?.parts?.find(
+              (p: any) => p.inlineData && p.inlineData.mimeType?.startsWith("audio/")
+            );
+
+            if (audioPart && audioPart.inlineData?.data) {
+              const rawMime = audioPart.inlineData.mimeType || "audio/pcm;rate=24000";
+              const rawAudioBuffer = Buffer.from(audioPart.inlineData.data, "base64");
+              const sampleRateMatch = rawMime.match(/rate=(\d+)/);
+              const sampleRate = sampleRateMatch ? parseInt(sampleRateMatch[1], 10) : 24000;
+
+              // Convertir PCM crudo a WAV estándar con cabecera RIFF de 44 bytes para reproducción en navegadores
+              const wavBuffer = wrapPcmWithWavHeader(rawAudioBuffer, sampleRate);
+              const audioBase64 = wavBuffer.toString("base64");
+              const mimeType = "audio/wav";
+
+              if (req.headers.accept?.includes("audio/")) {
+                res.setHeader("Content-Type", mimeType);
+                res.setHeader("Content-Length", wavBuffer.length);
+                return res.send(wavBuffer);
+              }
+
+              return res.json({
+                success: true,
+                audioBase64,
+                mimeType,
+                modelUsed: `${ttsModel} (${geminiVoice})`,
+                voiceName: `Gemini Ultra-Natural (${geminiVoice})`,
+              });
+            }
+          } catch (modelErr: any) {
+            console.warn(`[Server TTS] Gemini TTS con modelo '${ttsModel}' falló: ${modelErr.message}`);
+          }
+        }
+      } catch (geminiTtsErr: any) {
+        console.warn("[Server TTS] Gemini Speech Generation no disponible o falló, activando Piper como fallback:", geminiTtsErr.message);
+      }
     }
 
-    res.json({
-      success: true,
-      audioBase64: result.audioBase64,
-      mimeType: result.mimeType,
-      modelUsed: result.modelUsed,
-      voiceName: result.voiceName,
+    // 2. MOTOR FALLBACK 1: Piper Neural TTS local (ONNX)
+    try {
+      const result = await piperTtsService.synthesize(text, voiceId, { rate, pitch });
+
+      if (req.headers.accept?.includes("audio/wav")) {
+        res.setHeader("Content-Type", "audio/wav");
+        res.setHeader("Content-Length", result.audioBuffer.length);
+        return res.send(result.audioBuffer);
+      }
+
+      return res.json({
+        success: true,
+        audioBase64: result.audioBase64,
+        mimeType: result.mimeType,
+        modelUsed: result.modelUsed,
+        voiceName: result.voiceName,
+      });
+    } catch (piperErr: any) {
+      console.warn("[Server TTS] Piper local no disponible:", piperErr.message);
+    }
+
+    // 3. MOTOR FALLBACK 2: Notificar al cliente que use síntesis local de navegador de contingencia
+    return res.status(503).json({
+      success: false,
+      fallbackToBrowser: true,
+      error: "Sintetizador neuronal de servidor no disponible. Usando sintetizador local del cliente.",
     });
   } catch (err: any) {
-    console.error("[Server] Error en /api/voice/tts:", err);
-    res.status(500).json({ success: false, error: err.message || "Error al sintetizar voz con Piper." });
+    console.error("[Server] Error general en /api/voice/tts:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -588,10 +796,18 @@ app.delete("/api/whatsapp/whitelist/:id", (req, res) => {
   }
 });
 
-app.post("/api/whatsapp/simulate-incoming", (req, res) => {
+app.post("/api/whatsapp/simulate-incoming", async (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(403).json({
+      success: false,
+      error: "ENDPOINT_DESHABILITADO_EN_PRODUCCION",
+      errorMessage: "El endpoint de simulación entrante está estrictamente deshabilitado en entornos de producción.",
+    });
+  }
+
   try {
     const { remoteJid, messageText, isGroup } = req.body;
-    const evaluation = whatsappBridgeService.evaluateIncomingMessage({
+    const evaluation = await whatsappBridgeService.processIncomingMessageWithAgent({
       remoteJid: remoteJid || "",
       messageText: messageText || "",
       isGroup: Boolean(isGroup),
@@ -642,10 +858,58 @@ app.post("/api/whatsapp/clear-logs", (_req, res) => {
 // CAPA DE SEGURIDAD RBAC DEL SISTEMA (EMPRESAS, USUARIOS, ROLES & WHATSAPP VERA)
 // ============================================================================
 
-app.get("/api/security/state", (_req, res) => {
+const securityStateSchema = z.object({
+  users: z.array(
+    z.object({
+      id: z.string(),
+      username: z.string(),
+      password: z.string().optional(),
+      nombreCompleto: z.string(),
+      cargo: z.string(),
+      email: z.string().optional().default(""),
+      telefonoWhatsapp: z.string().optional().default(""),
+      estado: z.enum(["ACTIVO", "INACTIVO"]),
+      rolId: z.string(),
+      empresaPrincipalId: z.string(),
+      empresasAnclasPermitidas: z.array(z.string()).optional().default([]),
+      recibirAudioWhatsapp: z.boolean().optional(),
+      debeCambiarPassword: z.boolean().optional(),
+    })
+  ),
+  roles: z.array(
+    z.object({
+      id: z.string(),
+      nombre: z.string(),
+      codigo: z.string(),
+      tipoSistema: z.enum(["SUPERADMIN", "ADMIN", "CUSTOM"]),
+      empresaScopeId: z.string(),
+      descripcion: z.string().optional().default(""),
+      modulosPermitidos: z.array(z.string()),
+      whatsappScopesPermitidos: z.array(z.string()).optional().default([]),
+      esEditable: z.boolean().optional().default(true),
+    })
+  ),
+  companiesConfig: z.array(z.any()).optional().default([]),
+});
+
+app.get("/api/security/state", (req, res) => {
   try {
+    const authUser = (req as any).user;
+    if (!authUser || !authUser.isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: "SUPERADMIN_REQUIRED",
+        errorMessage: "Acceso denegado: Se requiere rol SuperAdmin para consultar el estado de seguridad.",
+      });
+    }
+
     const rbacState = whatsappBridgeService.getRbacState();
-    res.json({ success: true, state: rbacState });
+    // Sanitizar usuarios: NUNCA devolver contraseñas ni hashes
+    const sanitizedState = {
+      ...rbacState,
+      users: (rbacState.users || []).map((u) => sanitizeSecurityUser(u)),
+    };
+    res.json({ success: true, state: sanitizedState });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -653,11 +917,99 @@ app.get("/api/security/state", (_req, res) => {
 
 app.post("/api/security/state", (req, res) => {
   try {
-    const updated = whatsappBridgeService.saveRbacStore(req.body);
+    const authUser = (req as any).user;
+    if (!authUser || !authUser.isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: "SUPERADMIN_REQUIRED",
+        errorMessage: "Acceso denegado: Se requiere rol SuperAdmin para actualizar el estado de seguridad.",
+      });
+    }
+
+    const parseResult = securityStateSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: "SCHEMA_VALIDATION_ERROR",
+        errorMessage: "El cuerpo de la solicitud no cumple con el esquema de seguridad RBAC.",
+        details: parseResult.error.format(),
+      });
+    }
+
+    const payload = parseResult.data;
+    const currentState = whatsappBridgeService.getRbacState();
+
+    // 1. Prohibir que un usuario modifique su propio rol o empresas asignadas
+    const currentSelf = currentState.users?.find((u) => u.id === authUser.userId);
+    const payloadSelf = payload.users?.find((u) => u.id === authUser.userId);
+    if (currentSelf && payloadSelf) {
+      const currentAnclas = [...(currentSelf.empresasAnclasPermitidas || [])].sort().join(",");
+      const payloadAnclas = [...(payloadSelf.empresasAnclasPermitidas || [])].sort().join(",");
+      if (
+        payloadSelf.rolId !== currentSelf.rolId ||
+        payloadSelf.empresaPrincipalId !== currentSelf.empresaPrincipalId ||
+        payloadAnclas !== currentAnclas
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: "SELF_ROLE_MODIFICATION_FORBIDDEN",
+          errorMessage: "Violación de gobernanza: Un usuario no puede modificar su propio rol o empresas asignadas.",
+        });
+      }
+    }
+
+    // 2. Prohibir dejar el sistema sin ningún SuperAdmin activo
+    const hasActiveSuperAdmin = payload.users.some((u) => {
+      const role = payload.roles.find((r) => r.id === u.rolId);
+      return (
+        u.estado === "ACTIVO" &&
+        (u.rolId === "role-superadmin" || role?.codigo === "SUPERADMIN" || role?.tipoSistema === "SUPERADMIN")
+      );
+    });
+
+    if (!hasActiveSuperAdmin) {
+      return res.status(400).json({
+        success: false,
+        error: "SYSTEM_REQUIRES_ACTIVE_SUPERADMIN",
+        errorMessage: "Operación rechazada: La configuración dejaría al sistema sin ningún SuperAdmin activo.",
+      });
+    }
+
+    // Preservar hashes de contraseñas existentes para los usuarios en el payload
+    const usersWithPasswords = payload.users.map((pu) => {
+      const existing = currentState.users?.find((eu) => eu.id === pu.id);
+      return {
+        ...pu,
+        password: pu.password && pu.password.trim().length > 0 ? pu.password : (existing?.password || ""),
+      };
+    });
+
+    // 3. Registrar log de auditoría inmutable
+    const updated = whatsappBridgeService.saveRbacStore({
+      version: currentState.version || 1,
+      ...payload,
+      roles: payload.roles as any,
+      users: usersWithPasswords as any,
+    });
+
+    diskPersistence.addAuditLog({
+      entidadTipo: "SECURITY_RBAC_STATE",
+      entidadId: "GLOBAL",
+      accion: "UPDATE_SECURITY_STATE",
+      usuarioId: authUser.userId,
+      usuarioNombre: `${authUser.nombreCompleto} (@${authUser.username})`,
+      empresaId: authUser.empresaPrincipalId,
+      datosPrevios: { usersCount: currentState.users?.length, rolesCount: currentState.roles?.length },
+      datosNuevos: { usersCount: updated.users?.length, rolesCount: updated.roles?.length },
+    });
+
     const waStatus = whatsappBridgeService.getStatusAndConfig();
     res.json({
       success: true,
-      state: updated,
+      state: {
+        ...updated,
+        users: updated.users?.map((u) => sanitizeSecurityUser(u)),
+      },
       whatsappWhitelist: waStatus.whitelist,
     });
   } catch (err: any) {
@@ -800,6 +1152,12 @@ app.get("/api/companies", async (_req, res) => {
 // Endpoint seguro para consultar la configuración SII de una empresa específica (utilizado por el script RPA / Worker)
 app.get("/api/companies/:idOrRut/sii-config", async (req, res) => {
   const { idOrRut } = req.params;
+  const { requireCompanyAccess } = await import("./src/middlewares/authMiddleware");
+  const compCheck = requireCompanyAccess(req, idOrRut);
+  if (!compCheck.allowed) {
+    return res.status(403).json({ success: false, error: "ACCESO_EMPRESA_DENEGADO", errorMessage: compCheck.reason });
+  }
+
   const company = await findCompanyByIdOrRut(idOrRut);
 
   if (!company) {
@@ -814,7 +1172,7 @@ app.get("/api/companies/:idOrRut/sii-config", async (req, res) => {
       razonSocial: company.razonSocial,
       nombreCorto: company.nombreCorto || company.razonSocial,
       rutAutenticacion: company.rutAutenticacion || company.rut,
-      claveSii: company.claveSii,
+      hasClaveSii: Boolean(company.claveSii || (company as any).claveSiiEncrypted),
       tipoAutenticacionSii: company.tipoAutenticacionSii || 'CLAVE_TRIBUTARIA',
       exentoIvaGiro: Boolean(company.exentoIvaGiro),
       descargaAutomaticaRcv: company.automatizacionesAgente?.descargaAutomaticaRcv ?? true,
@@ -832,7 +1190,7 @@ app.get("/api/companies/active-sii", (_req, res) => {
     razonSocial: c.razonSocial,
     nombreCorto: c.nombreCorto,
     rutAutenticacion: c.rutAutenticacion || c.rut,
-    claveSii: c.claveSii,
+    hasClaveSii: Boolean(c.claveSii || (c as any).claveSiiEncrypted),
     tipoAutenticacionSii: c.tipoAutenticacionSii,
     exentoIvaGiro: Boolean(c.exentoIvaGiro)
   }));
@@ -1103,12 +1461,10 @@ app.post("/api/sii/run-playwright", async (req, res) => {
                 rutEmisor: bhe.rutContraparte,
                 nombreEmisor: bhe.razonSocialContraparte,
                 fechaEmision: bhe.fechaEmision,
-                periodo: formattedPeriodo,
                 montoBruto: bruto.toFixed(2),
                 tasaRetencion: (bhe.retencionTasa ? (bhe.retencionTasa / 100) : 0.1450).toFixed(4),
                 retencionMonto: retencion.toFixed(2),
                 liquidoPagado: liquido.toFixed(2),
-                descripcionServicio: bhe.glosa || 'Honorarios profesionales',
                 estadoContable: 'PENDIENTE',
               }).onDuplicateKeyUpdate({
                 set: {
@@ -1179,7 +1535,7 @@ Responde EXCLUSIVAMENTE en formato JSON con la siguiente estructura:
       prompt,
       systemInstruction: "Eres un Auditor Contable experto en el Plan de Cuentas estándar chileno y normativa del SII.",
       temperature: 0.1,
-      empresaId: req.body.empresaId || rut,
+      empresaId: req.effectiveEmpresaId || req.body.empresaId || rut,
       modulo: 'SII_SUGERENCIA_IMPUTACION',
     });
 
@@ -1210,8 +1566,9 @@ app.post("/api/f29/senior-agent", async (req, res) => {
   try {
     let { empresa, dtes, payrolls, indicators, query, options } = req.body;
     if (!empresa) {
-      if (req.body.empresaId) {
-        empresa = await findCompanyByIdOrRut(req.body.empresaId);
+      const targetEmpresaId = req.effectiveEmpresaId || req.body.empresaId;
+      if (targetEmpresaId) {
+        empresa = await findCompanyByIdOrRut(targetEmpresaId);
       }
       if (!empresa) {
         empresa = INITIAL_CLIENTS[0];
@@ -1563,9 +1920,28 @@ Entrega:
 
       aiText = aiRes.text || "";
     } catch (e: any) {
-      console.warn("[Senior Accounting Orchestrator] Fallback determinístico:", e.message);
-      aiText = `Como Agente Orquestador Contable y Financiero Senior, he analizado la estructura contable bajo normativa IFRS y fiscal del SII para ${empresa?.razonSocial || "la empresa"}.
-Todos los registros en el Libro Diario cumplen con el principio de partida doble (Σ Débitos = Σ Créditos). Se verifica cuadre en cuentas de balance (Activo = Pasivo + Patrimonio) e integridad en el Balance General Tributario de 8 Columnas.`;
+      console.warn("[Senior Accounting Orchestrator] LLM no disponible, ejecutando auditoría contable determinística real:", e.message);
+      const companyId = empresa?.rut || empresa?.id || "";
+      const entries = diskPersistence.getJournalEntries(companyId);
+      const totalDebe = entries.reduce((s, ent) => s + (Number(ent.totalDebe) || 0), 0);
+      const totalHaber = entries.reduce((s, ent) => s + (Number(ent.totalHaber) || 0), 0);
+      const diff = Math.abs(totalDebe - totalHaber);
+      const estaCuadrado = diff < 0.01;
+
+      aiText = `[AUDITORÍA CONTABLE DETERMINÍSTICA EN TIEMPO REAL - MOTOR TRIBUTARIO CHILENO]
+Empresa: ${empresa?.razonSocial || "Empresa en revisión"} (${companyId || "Sin RUT"})
+Asientos en Libro Diario analizados: ${entries.length} registros reales
+Total Débitos Auditados: $${Math.round(totalDebe).toLocaleString("es-CL")} CLP
+Total Créditos Auditados: $${Math.round(totalHaber).toLocaleString("es-CL")} CLP
+Diferencia de Cuadre: $${Math.round(diff).toLocaleString("es-CL")} CLP
+Estado Matemático: ${estaCuadrado ? "LIBRO DIARIO CUADRADO (Partida doble estricta cumplida)" : `DESCUADRE DETECTADO POR $${Math.round(diff).toLocaleString("es-CL")} CLP`}.
+Dictamen Técnico: ${
+        entries.length === 0
+          ? "No se registran comprobantes contables en el período seleccionado. Se requiere ingresar aperturas o ingestar compras/ventas desde RCV."
+          : estaCuadrado
+          ? "Todos los asientos verificados en base de datos cumplen con la igualdad de débitos y créditos bajo PCGA e IFRS."
+          : "ALERTA: Se han detectado comprobantes asimétricos que requieren ajuste contable previo al cierre del Balance de 8 Columnas."
+      }`;
     }
 
     res.json({
@@ -1899,6 +2275,12 @@ Analiza la conversación considerando las DIRECTIVAS DE VERACIDAD. Si faltan pre
   }
 });
 
+// RUTAS DE AUTENTICACIÓN SEGURA Y SESIONES (POST /api/auth/login, GET /api/auth/me, POST /api/auth/logout)
+app.use("/api/auth", authRouter);
+
+// RUTAS DEL MOTOR DE AGENTES AUTÓNOMOS (RE-ACT MULTI-TURNO, FUNCTION CALLING Y HUMAN-IN-THE-LOOP)
+app.use("/api/agents/autonomous", autonomousAgentsRouter);
+
 // RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
 app.use("/api/tenancy", tenancyRouter);
 
@@ -1907,6 +2289,7 @@ app.use("/api/modules", erpModulesRouter);
 
 // RUTAS DEL SUBSISTEMA DE GOBERNANZA, CONTEXTO E INSTRUCCIONES ESPECIALES (SUPERVISOR & MEMORIA)
 app.use("/api/governance", agentGovernanceRouter);
+app.use("/api/agents/governance", agentGovernanceRouter);
 
 // RUTAS DEL AGENTE SUPERVISOR CONTABLE (POST /api/accounting/commit-entry, GET /api/accounting/entries)
 app.use("/api/accounting", supervisorLedgerRouter);
@@ -1987,11 +2370,15 @@ async function startServer() {
       console.warn(`[Contable Chile] Error en healthcheck MySQL: ${err.message}`);
     });
 
-  // Precarga y sincronización asíncrona no bloqueante de indicadores económicos chilenos en MySQL
+  // Precarga y sincronización asíncrona no bloqueante de indicadores económicos chilenos
   const todayStr = new Date().toISOString().split("T")[0];
   IndicatorSyncService.syncAllCurrentIndicators(todayStr)
     .then(() => {
-      console.log("[Contable Chile] Indicadores económicos diarios sincronizados con éxito en MySQL.");
+      if (isRealMysqlConnected) {
+        console.log("[Contable Chile] Indicadores económicos diarios sincronizados con éxito en base de datos MySQL.");
+      } else {
+        console.log("[Contable Chile] Indicadores económicos cargados en memoria y snapshot local (MySQL no disponible/offline).");
+      }
     })
     .catch((indErr: any) => {
       console.warn("[Contable Chile] Aviso al sincronizar indicadores iniciales:", indErr.message);
@@ -2031,9 +2418,20 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  return app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Contable Chile] Servidor ejecutándose en http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+export { app, startServer };
+
+const isMainScript = Boolean(
+  process.argv[1] &&
+  (process.argv[1].endsWith('server.ts') ||
+   process.argv[1].endsWith('server.cjs') ||
+   process.argv[1].endsWith('server.js'))
+);
+
+if (process.env.NODE_ENV !== 'test' && isMainScript) {
+  startServer();
+}

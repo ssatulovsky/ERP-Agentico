@@ -326,6 +326,7 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
         trimmed,
         selectedPersona,
         {
+          clientId: activeClientId,
           clientName: company.razonSocial || company.nombreFantasia,
           rut: company.rut,
           dtesCount: dtes.length,
@@ -364,9 +365,36 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
         } else if (result.actionToExecute.type === 'CALCULATE_F29' && onCalculateF29) {
           await onCalculateF29();
           actionFeedback = '✅ F29 recalculado y actualizado en el sistema.';
-        } else if (result.actionToExecute.type === 'CENTRALIZE_EXPENSES' && onCentralizeExpenses) {
-          await onCentralizeExpenses();
-          actionFeedback = '✅ Rendiciones de gastos aprobadas y centralizadas.';
+        } else if (result.actionToExecute.type === 'CENTRALIZE_EXPENSES') {
+          // Gobernanza Human-in-the-Loop: No auto-ejecutar sin aprobación humana
+          try {
+            const res = await fetch('/api/governance/request-approval', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                empresaId: company.rut || company.id,
+                modulo: 'RENDICIONES',
+                agenteNombre: selectedPersona?.nombre || 'Agente de Rendiciones y Gastos',
+                operacionTipo: 'CENTRALIZACION_RENDICIONES_GASTOS',
+                titulo: 'Centralización de Rendiciones de Gastos',
+                descripcion: `Solicitud de centralización contable para ${expensesCount || 0} rendición(es) de gastos.`,
+                impactoFinancieroClp: 0,
+                nivelRiesgo: 'MEDIO',
+                datosOperacion: {
+                  rendicionesPendientesCount: expensesCount || 0,
+                },
+              }),
+            });
+            if (res.ok) {
+              const json = await res.json();
+              actionFeedback = `⏳ Solicitud de centralización creada exitosamente en Gobernanza (Folio: ${json.data?.id || 'OK'}) para aprobación humana.`;
+            } else {
+              const errJson = await res.json().catch(() => ({}));
+              actionFeedback = `⚠️ No se pudo registrar la solicitud en Gobernanza: ${errJson.message || 'Error en servidor'}.`;
+            }
+          } catch (err: any) {
+            actionFeedback = `⚠️ Error de red al registrar solicitud en Gobernanza: ${err.message}.`;
+          }
         } else if (result.actionToExecute.type === 'NAVIGATE' && onNavigateToTab && result.actionToExecute.targetTab) {
           onNavigateToTab(result.actionToExecute.targetTab);
           actionFeedback = `✅ Te he redirigido al módulo correspondiente.`;
@@ -611,13 +639,18 @@ export const VoiceAgentDialogueModal: React.FC<VoiceAgentDialogueModalProps> = (
           </div>
 
           <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-2">
-            {selectedPersona.voz.neuralModel === 'piper' ? (
+            {(selectedPersona.voz.neuralModel || 'gemini') === 'gemini' ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-500/15 border border-teal-500/30 text-teal-300 font-sans font-semibold">
+                <Sparkles className="w-3 h-3 text-teal-400" />
+                Voz Gemini Ultra-Natural: {selectedPersona.voz.geminiVoiceName || (selectedPersona.sexo === 'MASCULINO' ? 'Fenrir' : 'Aoede')}
+              </span>
+            ) : selectedPersona.voz.neuralModel === 'piper' ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-sans font-semibold">
                 <Sparkles className="w-3 h-3 text-purple-400" />
                 Voz Neuronal Piper: {selectedPersona.voz.piperVoiceId || (selectedPersona.sexo === 'MASCULINO' ? 'es_ES-davefx-medium' : 'es_AR-daniela-high')}
               </span>
             ) : (
-              <span>Voz: {selectedPersona.voz.voiceURI ? selectedPersona.voz.voiceURI.slice(0, 25) : 'Auto'} • Tono: {selectedPersona.voz.pitch.toFixed(2)}</span>
+              <span>Voz Navegador: {selectedPersona.voz.voiceURI ? selectedPersona.voz.voiceURI.slice(0, 25) : 'Auto'} • Tono: {selectedPersona.voz.pitch.toFixed(2)}</span>
             )}
           </div>
         </div>

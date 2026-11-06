@@ -106,6 +106,13 @@ for item in "${VOICES[@]}"; do
   download_file "$rel_path" "$file_name" "$label"
 done
 
+# Sanear JSONs para evitar error 'PhonemeType.ESPEAK' en Python 3.12/3.13
+for json_file in "$TARGET_DIR"/*.json; do
+  if [ -f "$json_file" ]; then
+    sed -i 's/"phoneme_type": *"PhonemeType\.ESPEAK"/"phoneme_type": "espeak"/g' "$json_file" 2>/dev/null || sed -i '' 's/"phoneme_type": *"PhonemeType\.ESPEAK"/"phoneme_type": "espeak"/g' "$json_file" 2>/dev/null || true
+  fi
+done
+
 echo ""
 echo "========================================================================"
 echo "  ¡DESCARGA COMPLETADA CON ÉXITO!"

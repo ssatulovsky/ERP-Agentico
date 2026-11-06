@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { diskPersistence } from './diskPersistenceService';
+
+const getDiskPersistence = (): any => (globalThis as any)?.__diskPersistence;
 
 export type AiCapability = 'CODE_JSON' | 'VISION_OCR' | 'REASONING_AUDIT' | 'GENERAL_CHAT';
 export type AiProviderType = 'GEMINI' | 'LOCAL_OLLAMA' | 'CUSTOM_OPENAI';
@@ -69,6 +70,7 @@ class AiRouterService {
   private logs: AiUsageLogEntry[] = [];
   private aiClient: GoogleGenAI | null = null;
   private readonly usdToClpRate = 955.0;
+  private isLoaded = false;
 
   constructor() {
     this.config = {
@@ -90,39 +92,67 @@ class AiRouterService {
 
   private loadPersistedState() {
     try {
-      const snap = diskPersistence.getSnapshot();
-      if ((snap as any).aiConfig) {
-        this.config = { ...this.config, ...(snap as any).aiConfig };
+      const dp = getDiskPersistence();
+      if (typeof dp?.getSnapshot === 'function') {
+        const snap = dp.getSnapshot();
+        if ((snap as any)?.aiConfig) {
+          this.config = { ...this.config, ...(snap as any).aiConfig };
+        }
+        if (Array.isArray((snap as any)?.aiUsageLogs)) {
+          this.logs = (snap as any).aiUsageLogs;
+        }
+        this.isLoaded = true;
       }
-      if (Array.isArray((snap as any).aiUsageLogs)) {
-        this.logs = (snap as any).aiUsageLogs;
-      }
-    } catch (e) {
-      console.warn('[AiRouterService] Precarga en disco no disponible, usando defaults:', e);
+    } catch {
+      // Si la persistencia en disco aún se está inicializando, se cargará perezosamente al primer acceso
     }
   }
 
   private persistState() {
     try {
-      diskPersistence.updateCollection('aiConfig' as any, [this.config]);
-      diskPersistence.updateCollection('aiUsageLogs' as any, this.logs);
-      diskPersistence.scheduleDiskSave();
+      const dp = getDiskPersistence();
+      if (typeof dp?.updateCollection === 'function') {
+        dp.updateCollection('aiConfig' as any, [this.config]);
+        dp.updateCollection('aiUsageLogs' as any, this.logs);
+      }
+      if (typeof dp?.scheduleDiskSave === 'function') {
+        dp.scheduleDiskSave();
+      }
     } catch (e) {
       console.warn('[AiRouterService] Error guardando estado de IA en snapshot:', e);
     }
   }
 
   public getConfig(): AiRouterConfig {
+    if (!this.isLoaded) {
+      this.loadPersistedState();
+    }
     return { ...this.config };
   }
 
+  public getMaskedConfig(): AiRouterConfig & { hasGeminiApiKey: boolean } {
+    if (!this.isLoaded) {
+      this.loadPersistedState();
+    }
+    const rawKey = this.config.geminiApiKey || process.env.GEMINI_API_KEY || '';
+    return {
+      ...this.config,
+      geminiApiKey: rawKey ? `${rawKey.slice(0, 8)}...****` : '',
+      hasGeminiApiKey: Boolean(rawKey),
+    };
+  }
+
   public updateConfig(patch: Partial<AiRouterConfig>): AiRouterConfig {
+    const cleanPatch = { ...patch };
+    if (cleanPatch.geminiApiKey && cleanPatch.geminiApiKey.includes('****')) {
+      delete cleanPatch.geminiApiKey;
+    }
     this.config = {
       ...this.config,
-      ...patch,
+      ...cleanPatch,
       perCompanyOverrides: {
         ...this.config.perCompanyOverrides,
-        ...(patch.perCompanyOverrides || {}),
+        ...(cleanPatch.perCompanyOverrides || {}),
       },
     };
     this.persistState();

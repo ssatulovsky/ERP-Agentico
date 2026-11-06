@@ -1,4 +1,4 @@
-import { diskPersistence } from './diskPersistenceService';
+const getDiskPersistence = (): any => (globalThis as any)?.__diskPersistence;
 import { aiRouterService } from './aiRouterService';
 import type {
   ProductMarginAnalysis,
@@ -39,10 +39,90 @@ class CommercialProcurementService {
 
   constructor() {
     this.initDefaultState('client-retail-01');
-    this.initDefaultState('client-retail-logistics');
   }
 
   private initDefaultState(empresaId: string) {
+    if (empresaId !== 'client-retail-01') {
+      const dp = getDiskPersistence();
+      const tenantItems = dp ? dp.getInventoryItems(empresaId) : [];
+      const tenantRfqs = dp ? dp.getAutoRfqs(empresaId) : [];
+      const margenes: ProductMarginAnalysis[] = tenantItems.map((it: any) => {
+        const costoPMP = Number(it.costoPromedioPonderado || it.costoUnitarioPMP || it.costoUnitario || 1000);
+        const pVenta = Number(it.precioVentaLista || it.precioVenta || Math.round(costoPMP * 1.35));
+        const margenCLP = pVenta - costoPMP;
+        const margenPct = pVenta > 0 ? Number(((margenCLP / pVenta) * 100).toFixed(2)) : 0;
+        return {
+          itemId: it.id || `item-${it.sku}`,
+          sku: it.sku,
+          nombre: it.nombre || it.descripcion || it.sku,
+          categoria: it.categoria || 'GENERAL',
+          costoUnitarioPMP: costoPMP,
+          ultimoPrecioCompra: Number(it.ultimoPrecioCompra || costoPMP),
+          variacionCostoPorcentaje: 0,
+          precioVentaLista: pVenta,
+          margenBrutoCLP: margenCLP,
+          margenBrutoPorcentaje: margenPct,
+          margenTargetPorcentaje: 30.0,
+          estadoMargen: margenPct >= 30 ? 'OPTIMO' : margenPct >= 20 ? 'AJUSTADO' : 'CRITICO',
+          precioVentaSugeridoTarget: Math.round(costoPMP / (1 - 0.3)),
+          alertaAgente: margenPct < 20 ? `¡Margen bajo (${margenPct}%)! Revisar costos.` : 'Margen controlado.',
+        };
+      });
+
+      const sinergiaStock: StockSinergyItem[] = tenantItems.map((it: any) => {
+        const stockFisico = Number(it.stockActual ?? it.stockTotal ?? 0);
+        const stockMin = Number(it.stockMinimo || 5);
+        const riesgo = stockFisico <= stockMin;
+        return {
+          itemId: it.id || `item-${it.sku}`,
+          sku: it.sku,
+          nombre: it.nombre || it.descripcion || it.sku,
+          categoria: it.categoria || 'GENERAL',
+          stockFisico,
+          stockComprometido: 0,
+          stockDisponible: stockFisico,
+          cotizacionesAbiertas: 0,
+          ventasProyectadas30Dias: stockMin * 2,
+          balanceDisponibilidad: stockFisico,
+          riesgoQuiebre: riesgo,
+          diasCobertura: stockFisico > 0 ? Math.round(stockFisico / 2) : 0,
+          sobreStockDias: false,
+          valorCapitalInmovilizado: stockFisico * Number(it.costoPromedioPonderado || it.costoUnitarioPMP || 0),
+          accionRecomendada: riesgo ? 'COMPRA_URGENTE' : 'BALANCEADO',
+          alertaAgente: riesgo ? `¡Stock bajo mínimo! (${stockFisico} un. / mín: ${stockMin})` : 'Stock normal.',
+        };
+      });
+
+      this.statesByCompany[empresaId] = {
+        empresaId,
+        kpis: {
+          facturacionMesCLP: 0,
+          metaFacturacionMesCLP: 10000000,
+          porcentajeCumplimientoMeta: 0,
+          margenBrutoPonderadoPorcentaje: margenes.length > 0
+            ? Number((margenes.reduce((acc, m) => acc + m.margenBrutoPorcentaje, 0) / margenes.length).toFixed(1))
+            : 0,
+          presupuestoComprasAprobadoCLP: 0,
+          presupuestoComprasEjecutadoCLP: 0,
+          porcentajePresupuestoEjecutado: 0,
+          itemsEnRiesgoQuiebreCount: sinergiaStock.filter(s => s.riesgoQuiebre).length,
+          capitalInmovilizadoSobreStockCLP: 0,
+          slaCumplimientoProveedoresPromedio: 100,
+        },
+        margenes,
+        sinergiaStock,
+        proveedores: [],
+        forecasting: [],
+        clientesClave: [],
+        presupuestoCategorias: [],
+        ordenesCompra: [],
+        cotizaciones: [],
+        rfqs: tenantRfqs,
+        ultimaActualizacion: new Date().toISOString(),
+      };
+      return;
+    }
+
     const defaultMargenes: ProductMarginAnalysis[] = [
       {
         itemId: 'item-01',
@@ -720,6 +800,12 @@ class CommercialProcurementService {
   public getState(empresaId: string = 'client-retail-01'): CommercialProcurementState {
     if (!this.statesByCompany[empresaId]) {
       this.initDefaultState(empresaId);
+    } else if (empresaId !== 'client-retail-01') {
+      const dp = getDiskPersistence();
+      const tenantRfqs = dp ? dp.getAutoRfqs(empresaId) : [];
+      if (tenantRfqs.length > 0) {
+        this.statesByCompany[empresaId].rfqs = tenantRfqs;
+      }
     }
     return this.statesByCompany[empresaId];
   }
@@ -766,15 +852,16 @@ class CommercialProcurementService {
     data: {
       proveedorRut: string;
       proveedorRazonSocial: string;
-      condicionPago: string;
-      plazoEntregaDias: number;
+      condicionPago?: string;
+      plazoEntregaDias?: number;
       items: Array<{
         sku: string;
         nombre: string;
         cantidad: number;
         precioUnitarioCLP: number;
       }>;
-      motivoGeneracion: string;
+      motivoGeneracion?: string;
+      estado?: PurchaseOrderRecord['estado'];
     }
   ): PurchaseOrderRecord {
     const state = this.getState(empresaId);
@@ -802,7 +889,7 @@ class CommercialProcurementService {
       totalNetoCLP,
       iva19CLP,
       totalBrutoCLP,
-      estado: 'ENVIADA_PROVEEDOR',
+      estado: data.estado || 'EMITIDA',
       motivoGeneracion: data.motivoGeneracion || 'Orden de compra ejecutada por Esteban Morales (Gerente Comercial & Aprovisionamiento Sr.)',
       autorizadoPorAgente: true,
     };
@@ -967,8 +1054,11 @@ class CommercialProcurementService {
     state.rfqs.unshift(newRfq);
     state.ultimaActualizacion = new Date().toISOString();
 
-    diskPersistence.saveRfqRequest(newRfq);
-    proveedoresInvitados.forEach((resp) => diskPersistence.saveRfqSupplierResponse(resp));
+    const dp = getDiskPersistence();
+    if (dp) {
+      dp.saveRfqRequest(newRfq);
+      proveedoresInvitados.forEach((resp) => dp.saveRfqSupplierResponse(resp));
+    }
 
     return newRfq;
   }
@@ -991,10 +1081,10 @@ class CommercialProcurementService {
       supplierResp.estadoSeguimiento = 'NO_RESPONDE_RETRASADO';
     }
 
-    const msg = `Recordatorio formal #${supplierResp.cantidadReiteraciones} emitido por Esteban Morales a '${supplierResp.proveedorRazonSocial}' (${supplierResp.emailContacto}) para la licitación ${rfq.folioRfq}.`;
+    const msg = `Recordatorio #${supplierResp.cantidadReiteraciones} registrado internamente por Esteban Morales para '${supplierResp.proveedorRazonSocial}' (${supplierResp.emailContacto}) en la licitación ${rfq.folioRfq} (sin pasarela SMTP configurada).`;
     state.ultimaActualizacion = new Date().toISOString();
 
-    diskPersistence.saveRfqSupplierResponse(supplierResp);
+    getDiskPersistence()?.saveRfqSupplierResponse(supplierResp);
 
     return { success: true, message: msg, response: supplierResp };
   }
@@ -1058,8 +1148,11 @@ class CommercialProcurementService {
     }
 
     state.ultimaActualizacion = new Date().toISOString();
-    diskPersistence.saveRfqRequest(rfq);
-    diskPersistence.saveRfqSupplierResponse(supplierResp);
+    const dp = getDiskPersistence();
+    if (dp) {
+      dp.saveRfqRequest(rfq);
+      dp.saveRfqSupplierResponse(supplierResp);
+    }
 
     return {
       success: true,
@@ -1138,7 +1231,7 @@ class CommercialProcurementService {
       totalNetoCLP,
       iva19CLP,
       totalBrutoCLP,
-      estado: 'ENVIADA_PROVEEDOR',
+      estado: 'EMITIDA',
       motivoGeneracion: `Generada automáticamente tras adjudicación de ${rfq.folioRfq}. ${rfq.motivoAdjudicacion}`,
       autorizadoPorAgente: true,
     };
@@ -1164,9 +1257,12 @@ class CommercialProcurementService {
     state.kpis.itemsEnRiesgoQuiebreCount = state.sinergiaStock.filter((s) => s.riesgoQuiebre).length;
     state.ultimaActualizacion = new Date().toISOString();
 
-    diskPersistence.saveRfqRequest(rfq);
-    diskPersistence.saveRfqSupplierResponse(winningSupplier);
-    diskPersistence.savePurchaseOrder(newOc);
+    const dpAward = getDiskPersistence();
+    if (dpAward) {
+      dpAward.saveRfqRequest(rfq);
+      dpAward.saveRfqSupplierResponse(winningSupplier);
+      dpAward.savePurchaseOrder(newOc);
+    }
 
     return {
       success: true,
