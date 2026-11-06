@@ -46,6 +46,7 @@ import {
   seedProvisionesEgresos,
   getInitialPayrollsForClient,
 } from './data/seedData';
+import { demoSeed, isDemoClient } from './config/demoMode';
 import {
   seedFixedAssets,
   seedProductionOrders,
@@ -112,7 +113,7 @@ import {
   ExpenseReport,
 } from './types';
 import { expenseApiService } from './services/expenseApiService';
-import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from './data/erpMasterConfig';
+import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from './config/erpMasterConfig';
 import {
   INITIAL_MEDICAL_LEAVES,
   INITIAL_VACATION_RECORDS,
@@ -288,12 +289,12 @@ export default function App() {
 
   // Core Data States with Multi-Tenant Local Persistence (Sin datos fijos, almacenamiento real segregado)
   const [dtes, setDtes] = useState<DteDocument[]>(() => {
-    const isDemo = activeClient.id === 'client-retail-01' || (activeClient as any)?.isDemo;
-    return loadClientState<DteDocument[]>(activeClientId, 'dtes', isDemo ? seedDtes : []);
+    return loadClientState<DteDocument[]>(activeClientId, 'dtes', demoSeed(activeClient, seedDtes));
   });
   const [f29, setF29] = useState<F29Declaration>(() => {
     const isExento = Boolean((activeClient as any)?.exentoIvaGiro);
-    if (isExento) {
+    // Fuera de modo demostración (o para clientes nuevos) el F29 parte en cero: nunca con montos semilla.
+    if (isExento || !isDemoClient(activeClient)) {
       return {
         ...seedF29,
         rutContribuyente: activeClient.rut,
@@ -320,62 +321,62 @@ export default function App() {
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
     const raw = loadClientState<EmployeePayroll[]>(activeClientId, 'payrolls', []);
-    return (!raw || raw.length === 0) ? getInitialPayrollsForClient(activeClientId) : raw;
+    return (!raw || raw.length === 0) ? demoSeed(activeClient, () => getInitialPayrollsForClient(activeClientId)) : raw;
   });
   const [leases, setLeases] = useState<LeaseContract[]>(() => {
-    return loadClientState<LeaseContract[]>(activeClientId, 'leases', seedLeases);
+    return loadClientState<LeaseContract[]>(activeClientId, 'leases', demoSeed(activeClient, seedLeases));
   });
   const [movements, setMovements] = useState<CashFlowMovement[]>(() => {
-    return loadClientState<CashFlowMovement[]>(activeClientId, 'movements', seedMovements);
+    return loadClientState<CashFlowMovement[]>(activeClientId, 'movements', demoSeed(activeClient, seedMovements));
   });
 
   // Bank Reconciliation & Open Banking States (Cada cliente tiene sus cuentas bancarias persistidas)
   const [bankAccounts, setBankAccounts] = useState<BankAccountConfig[]>(() => {
-    return loadClientState<BankAccountConfig[]>(activeClientId, 'bankAccounts', seedBankAccounts);
+    return loadClientState<BankAccountConfig[]>(activeClientId, 'bankAccounts', demoSeed(activeClient, seedBankAccounts));
   });
   const [cashAccounts, setCashAccounts] = useState<CashAccountConfig[]>(() => {
-    return loadClientState<CashAccountConfig[]>(activeClientId, 'cashAccounts', INITIAL_CASH_ACCOUNTS);
+    return loadClientState<CashAccountConfig[]>(activeClientId, 'cashAccounts', demoSeed(activeClient, INITIAL_CASH_ACCOUNTS));
   });
   const [bankMovements, setBankMovements] = useState<BankStatementMovement[]>(() => {
-    const raw = loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', seedBankMovements);
+    const raw = loadClientState<BankStatementMovement[]>(activeClientId, 'bankMovements', demoSeed(activeClient, seedBankMovements));
     // Sanear y depurar registros espurios o contrapartidas ficticias inyectadas previamente en la cartola (id: bmov-...)
     return (raw || []).filter(m => !m.id.startsWith('bmov-'));
   });
 
   // Treasury, Cheques, Debt & Provisions States
   const [chequesCartera, setChequesCartera] = useState<ChequeCartera[]>(() => {
-    return loadClientState<ChequeCartera[]>(activeClientId, 'chequesCartera', seedChequesCartera);
+    return loadClientState<ChequeCartera[]>(activeClientId, 'chequesCartera', demoSeed(activeClient, seedChequesCartera));
   });
   const [chequesEmitidos, setChequesEmitidos] = useState<ChequeEmitido[]>(() => {
-    return loadClientState<ChequeEmitido[]>(activeClientId, 'chequesEmitidos', seedChequesEmitidos);
+    return loadClientState<ChequeEmitido[]>(activeClientId, 'chequesEmitidos', demoSeed(activeClient, seedChequesEmitidos));
   });
   const [deudasFinancieras, setDeudasFinancieras] = useState<DeudaFinanciera[]>(() => {
-    return loadClientState<DeudaFinanciera[]>(activeClientId, 'deudasFinancieras', seedDeudasFinancieras);
+    return loadClientState<DeudaFinanciera[]>(activeClientId, 'deudasFinancieras', demoSeed(activeClient, seedDeudasFinancieras));
   });
   const [provisionesEgresos, setProvisionesEgresos] = useState<ProvisionEgreso[]>(() => {
-    return loadClientState<ProvisionEgreso[]>(activeClientId, 'provisionesEgresos', seedProvisionesEgresos);
+    return loadClientState<ProvisionEgreso[]>(activeClientId, 'provisionesEgresos', demoSeed(activeClient, seedProvisionesEgresos));
   });
 
   // HR & People States (Contratos, Licencias Médicas, Vacaciones, Sanciones y Ausentismo con integridad relacional por empresa)
   const [contracts, setContracts] = useState<LaborContract[]>(() => {
     const raw = loadClientState<LaborContract[]>(activeClientId, 'contracts', []);
-    return (!raw || raw.length === 0) ? getInitialContractsForClient(activeClientId) : raw;
+    return (!raw || raw.length === 0) ? demoSeed(activeClient, () => getInitialContractsForClient(activeClientId)) : raw;
   });
   const [medicalLeaves, setMedicalLeaves] = useState<MedicalLeave[]>(() => {
-    return loadClientState<MedicalLeave[]>(activeClientId, 'medicalLeaves', getInitialMedicalLeavesForClient(activeClientId));
+    return loadClientState<MedicalLeave[]>(activeClientId, 'medicalLeaves', demoSeed(activeClient, () => getInitialMedicalLeavesForClient(activeClientId)));
   });
   const [vacations, setVacations] = useState<VacationRecord[]>(() => {
     const raw = loadClientState<VacationRecord[]>(activeClientId, 'vacations', []);
-    return (!raw || raw.length === 0) ? getInitialVacationsForClient(activeClientId) : raw;
+    return (!raw || raw.length === 0) ? demoSeed(activeClient, () => getInitialVacationsForClient(activeClientId)) : raw;
   });
   const [absenteeismList, setAbsenteeismList] = useState<AbsenteeismRecord[]>(() => {
-    return loadClientState<AbsenteeismRecord[]>(activeClientId, 'absenteeismList', getInitialAbsenteeismForClient(activeClientId));
+    return loadClientState<AbsenteeismRecord[]>(activeClientId, 'absenteeismList', demoSeed(activeClient, () => getInitialAbsenteeismForClient(activeClientId)));
   });
   const [sanctions, setSanctions] = useState<DisciplinarySanction[]>(() => {
-    return loadClientState<DisciplinarySanction[]>(activeClientId, 'sanctions', getInitialSanctionsForClient(activeClientId));
+    return loadClientState<DisciplinarySanction[]>(activeClientId, 'sanctions', demoSeed(activeClient, () => getInitialSanctionsForClient(activeClientId)));
   });
   const [benefits, setBenefits] = useState<HrBenefit[]>(() => {
-    return loadClientState<HrBenefit[]>(activeClientId, 'benefits', INITIAL_HR_BENEFITS);
+    return loadClientState<HrBenefit[]>(activeClientId, 'benefits', demoSeed(activeClient, INITIAL_HR_BENEFITS));
   });
   const [karinCases, setKarinCases] = useState<KarinInvestigationCase[]>(() => {
     return loadClientState<KarinInvestigationCase[]>(activeClientId, 'karinCases', [
@@ -526,7 +527,7 @@ export default function App() {
   };
 
   // Inventory & Multi-Warehouse States (Agente de Inventarios & Bodegas - Servidor Fuente de Verdad)
-  const isDefaultRetail = activeClientId === 'client-retail-01';
+  const isDefaultRetail = activeClientId === 'client-retail-01' && isDemoClient(activeClientId);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() =>
     loadClientState<Warehouse[]>(activeClientId, 'warehouses', isDefaultRetail ? seedWarehouses : [])
   );
@@ -1166,26 +1167,26 @@ export default function App() {
       periodosCerrados: loadedPeriodos,
     });
     const isExento = Boolean((selected as any)?.exentoIvaGiro);
-    const isDemo = selected.id === 'client-retail-01' || (selected as any)?.isDemo;
+    const isDemo = isDemoClient(selected);
 
-    const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', isDemo ? seedDtes : []);
+    const loadedDtes = loadClientState<DteDocument[]>(clientId, 'dtes', demoSeed(selected, seedDtes));
     const rawPayrolls = loadClientState<EmployeePayroll[]>(clientId, 'payrolls', []);
-    const loadedPayrolls = (!rawPayrolls || rawPayrolls.length === 0) ? getInitialPayrollsForClient(clientId) : rawPayrolls;
-    const loadedMovements = loadClientState<CashFlowMovement[]>(clientId, 'movements', seedMovements);
-    const loadedBanks = loadClientState<BankAccountConfig[]>(clientId, 'bankAccounts', seedBankAccounts);
-    const loadedBankMovs = loadClientState<BankStatementMovement[]>(clientId, 'bankMovements', seedBankMovements);
-    const loadedChequesCart = loadClientState<ChequeCartera[]>(clientId, 'chequesCartera', seedChequesCartera);
-    const loadedChequesEmit = loadClientState<ChequeEmitido[]>(clientId, 'chequesEmitidos', seedChequesEmitidos);
-    const loadedDeudas = loadClientState<DeudaFinanciera[]>(clientId, 'deudasFinancieras', seedDeudasFinancieras);
-    const loadedProvisiones = loadClientState<ProvisionEgreso[]>(clientId, 'provisionesEgresos', seedProvisionesEgresos);
+    const loadedPayrolls = (!rawPayrolls || rawPayrolls.length === 0) ? demoSeed(selected, () => getInitialPayrollsForClient(clientId)) : rawPayrolls;
+    const loadedMovements = loadClientState<CashFlowMovement[]>(clientId, 'movements', demoSeed(selected, seedMovements));
+    const loadedBanks = loadClientState<BankAccountConfig[]>(clientId, 'bankAccounts', demoSeed(selected, seedBankAccounts));
+    const loadedBankMovs = loadClientState<BankStatementMovement[]>(clientId, 'bankMovements', demoSeed(selected, seedBankMovements));
+    const loadedChequesCart = loadClientState<ChequeCartera[]>(clientId, 'chequesCartera', demoSeed(selected, seedChequesCartera));
+    const loadedChequesEmit = loadClientState<ChequeEmitido[]>(clientId, 'chequesEmitidos', demoSeed(selected, seedChequesEmitidos));
+    const loadedDeudas = loadClientState<DeudaFinanciera[]>(clientId, 'deudasFinancieras', demoSeed(selected, seedDeudasFinancieras));
+    const loadedProvisiones = loadClientState<ProvisionEgreso[]>(clientId, 'provisionesEgresos', demoSeed(selected, seedProvisionesEgresos));
     const rawContracts = loadClientState<LaborContract[]>(clientId, 'contracts', []);
-    const loadedContracts = (!rawContracts || rawContracts.length === 0) ? getInitialContractsForClient(clientId) : rawContracts;
-    const loadedMedicalLeaves = loadClientState<MedicalLeave[]>(clientId, 'medicalLeaves', getInitialMedicalLeavesForClient(clientId));
+    const loadedContracts = (!rawContracts || rawContracts.length === 0) ? demoSeed(selected, () => getInitialContractsForClient(clientId)) : rawContracts;
+    const loadedMedicalLeaves = loadClientState<MedicalLeave[]>(clientId, 'medicalLeaves', demoSeed(selected, () => getInitialMedicalLeavesForClient(clientId)));
     const rawVacations = loadClientState<VacationRecord[]>(clientId, 'vacations', []);
-    const loadedVacations = (!rawVacations || rawVacations.length === 0) ? getInitialVacationsForClient(clientId) : rawVacations;
-    const loadedAbsenteeism = loadClientState<AbsenteeismRecord[]>(clientId, 'absenteeismList', getInitialAbsenteeismForClient(clientId));
-    const loadedSanctions = loadClientState<DisciplinarySanction[]>(clientId, 'sanctions', getInitialSanctionsForClient(clientId));
-    const loadedBenefits = loadClientState<HrBenefit[]>(clientId, 'benefits', INITIAL_HR_BENEFITS);
+    const loadedVacations = (!rawVacations || rawVacations.length === 0) ? demoSeed(selected, () => getInitialVacationsForClient(clientId)) : rawVacations;
+    const loadedAbsenteeism = loadClientState<AbsenteeismRecord[]>(clientId, 'absenteeismList', demoSeed(selected, () => getInitialAbsenteeismForClient(clientId)));
+    const loadedSanctions = loadClientState<DisciplinarySanction[]>(clientId, 'sanctions', demoSeed(selected, () => getInitialSanctionsForClient(clientId)));
+    const loadedBenefits = loadClientState<HrBenefit[]>(clientId, 'benefits', demoSeed(selected, INITIAL_HR_BENEFITS));
 
     setDtes(loadedDtes);
     setPayrolls(loadedPayrolls);
@@ -1204,7 +1205,7 @@ export default function App() {
     setBenefits(loadedBenefits);
 
     // Carga segregada y persistente de WMS, Activo Fijo y Producción (Servidor Fuente de Verdad)
-    const isRetailClient = clientId === 'client-retail-01';
+    const isRetailClient = clientId === 'client-retail-01' && isDemoClient(clientId);
     const loadedWarehouses = loadClientState<Warehouse[]>(clientId, 'warehouses', isRetailClient ? seedWarehouses : []);
     const loadedItems = loadClientState<InventoryItem[]>(clientId, 'inventoryItems', isRetailClient ? seedInventoryItems : []);
     const loadedTransfers = loadClientState<WarehouseTransfer[]>(clientId, 'transfers', isRetailClient ? seedTransfers : []);
@@ -1236,7 +1237,7 @@ export default function App() {
     // Sincronización completa desde el servidor (Servidor como fuente de verdad)
     syncCompanyDataFromServer(clientId);
 
-    if (isExento) {
+    if (isExento || !isDemo) {
       setF29({
         ...seedF29,
         rutContribuyente: selected.rut,
@@ -1961,7 +1962,12 @@ export default function App() {
   };
 
   // Reset demo movements to initial state with novelties for testing
+  // Solo disponible en modo demostración para empresas de ejemplo: nunca sobrescribe cartolas reales.
   const handleResetBankMovements = () => {
+    if (!isDemoClient(activeClient)) {
+      console.warn('[Demo] Restablecer cartola de ejemplo solo está disponible con DEMO_MODE=true en empresas de demostración.');
+      return;
+    }
     setBankMovements(seedBankMovements);
     saveClientState(activeClientId, 'bankMovements', seedBankMovements);
     persistBankMovementsToServer(seedBankMovements, true);

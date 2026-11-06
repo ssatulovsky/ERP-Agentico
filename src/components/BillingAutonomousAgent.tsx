@@ -46,7 +46,7 @@ import {
   Key,
 } from 'lucide-react';
 import { InvoiceLayoutDesigner } from './billing/InvoiceLayoutDesigner';
-import { INITIAL_CLIENTS } from '../data/seedData';
+import { getDemoClients } from '../data/seedData';
 import { getStoredAuthToken } from '../services/apiClient';
 import {
   BillingEmissionDraft,
@@ -1517,7 +1517,10 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                     onChange={(e) => setSelectedVaultRut(e.target.value)}
                     className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-xs text-white font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
                   >
-                    {INITIAL_CLIENTS.map((c) => (
+                    {[
+                      { id: (company as any).id || company.rut, rut: company.rut, razonSocial: company.razonSocial || '' },
+                      ...getDemoClients().filter((c) => c.rut !== company.rut),
+                    ].map((c) => (
                       <option key={c.id} value={c.rut}>
                         {c.rut} - {c.razonSocial.slice(0, 32)}
                       </option>

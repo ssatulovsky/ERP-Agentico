@@ -1,9 +1,13 @@
+/**
+ * Datos maestros del ERP (no transaccionales): planes, parámetros, regiones/comunas
+ * y plan de cuentas base. Se cargan para todo cliente, en producción y en demostración.
+ * Los datos semilla de empresas de ejemplo viven en src/data/seed* y solo se usan con DEMO_MODE.
+ */
 import { 
   ErpSubscriptionPlan, 
   SystemGeneralParameters, 
   AccountGroupClassification, 
-  AccountCreationDefinition, 
-  ClientAuxiliaryMasterRecord 
+  AccountCreationDefinition 
 } from '../types';
 
 export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
@@ -193,115 +197,4 @@ export const INITIAL_ACCOUNT_GROUPS: AccountGroupClassification[] = [
   { codigo: '5', codPadre: 'Raíz del Catálogo', tipoCuenta: 'RESULTADO', descripcion: 'COSTOS Y GASTOS' },
   { codigo: '5.1', codPadre: '5', tipoCuenta: 'RESULTADO', descripcion: 'Costo de Ventas y Fabricación' },
   { codigo: '5.2', codPadre: '5', tipoCuenta: 'RESULTADO', descripcion: 'Gastos de Administración y Ventas' },
-];
-
-export const INITIAL_CLIENT_AUXILIARIES: ClientAuxiliaryMasterRecord[] = [
-  {
-    id: 'aux-innovagile',
-    rutCompleto: '77.798.901-4',
-    codigoAuxiliar: 'CLI-001',
-    razonSocial: 'InnovAgile Group SpA',
-    nombreFantasia: 'InnovAgile',
-    giroComercial: 'CONSULTORÍA DE INFORMÁTICA Y SOFTWARE',
-    inactivo: false,
-    telefonoPrincipal: '+56 9 8451 9022',
-    emailContacto: 'finanzas@innovagile.cl',
-    nombreContacto: 'Mauricio Larraín Echenique',
-    emailDte: 'dte@innovagile.cl',
-    direccion: 'Av. Andrés Bello 2457, Of. 1402',
-    region: 'Región Metropolitana de Santiago',
-    ciudad: 'Santiago',
-    comuna: 'Providencia',
-    tipoAuxiliar: 'CLIENTE',
-    sucursales: [
-      { id: 'suc-1', nombre: 'Casa Matriz Costanera', direccion: 'Av. Andrés Bello 2457', comuna: 'Providencia' }
-    ]
-  },
-  {
-    id: 'aux-retail',
-    rutCompleto: '77.210.980-5',
-    codigoAuxiliar: 'CLI-002',
-    razonSocial: 'RETAIL LOGISTICS CHILE S.A.',
-    nombreFantasia: 'Retail Logistics',
-    giroComercial: 'TRANSPORTE Y ALMACENAMIENTO DE CARGA',
-    inactivo: false,
-    telefonoPrincipal: '+56 9 9342 1100',
-    emailContacto: 'contabilidad@retaillogistics.cl',
-    nombreContacto: 'Claudia Navarrete Ruiz',
-    emailDte: 'facturacion@retaillogistics.cl',
-    direccion: 'Camino Lo Echevers 550, Galpón 4',
-    region: 'Región Metropolitana de Santiago',
-    ciudad: 'Santiago',
-    comuna: 'Quilicura',
-    tipoAuxiliar: 'CLIENTE',
-  },
-  {
-    id: 'aux-minera',
-    rutCompleto: '96.540.320-1',
-    codigoAuxiliar: 'CLI-003',
-    razonSocial: 'MINERA DEL SUR CHILE SPA',
-    nombreFantasia: 'Minera del Sur',
-    giroComercial: 'EXTRACCIÓN DE MINERALES Y SERVICIOS DE FAENA',
-    inactivo: false,
-    telefonoPrincipal: '+56 55 264 8900',
-    emailContacto: 'adquisiciones@mineradelsur.cl',
-    nombreContacto: 'Ing. Rodrigo Cifuentes',
-    emailDte: 'dte@mineradelsur.cl',
-    direccion: 'Av. Balmaceda 1020, Of. 504',
-    region: 'Región de Antofagasta',
-    ciudad: 'Antofagasta',
-    comuna: 'Antofagasta',
-    tipoAuxiliar: 'CLIENTE',
-  },
-  {
-    id: 'aux-rend-01',
-    rutCompleto: '14.238.192-8',
-    codigoAuxiliar: 'EMP-001',
-    razonSocial: 'Gonzalo Silva Valenzuela',
-    nombreFantasia: 'Gonzalo Silva',
-    giroComercial: 'Supervisor Comercial & Operaciones',
-    inactivo: false,
-    telefonoPrincipal: '+56 9 7844 2200',
-    emailContacto: 'gonzalo.silva@maraustral.cl',
-    nombreContacto: 'Gonzalo Silva Valenzuela',
-    direccion: 'Costanera 890',
-    region: 'Región de Los Lagos',
-    ciudad: 'Quellón',
-    comuna: 'Quellón',
-    tipoAuxiliar: 'EMPLEADO',
-  },
-  {
-    id: 'aux-rend-02',
-    rutCompleto: '14.140.598-5',
-    codigoAuxiliar: 'EMP-002',
-    razonSocial: 'Mario Vargas Da Silva',
-    nombreFantasia: 'Mario Vargas',
-    giroComercial: 'Jefe de Proyectos & Mantención Balsas',
-    inactivo: false,
-    telefonoPrincipal: '+56 9 9123 4455',
-    emailContacto: 'mario.vargas@maraustral.cl',
-    nombreContacto: 'Mario Vargas Da Silva',
-    direccion: 'Ruta 5 Sur Km 12',
-    region: 'Región de Los Lagos',
-    ciudad: 'Castro',
-    comuna: 'Castro',
-    tipoAuxiliar: 'EMPLEADO',
-  },
-  {
-    id: 'aux-rend-03',
-    rutCompleto: '15.342.119-4',
-    codigoAuxiliar: 'EMP-003',
-    razonSocial: 'Carla Morales Troncoso',
-    nombreFantasia: 'Carla Morales',
-    giroComercial: 'Jefa de Administración & Finanzas',
-    inactivo: false,
-    telefonoPrincipal: '+56 9 8877 6655',
-    emailContacto: 'carla.morales@maraustral.cl',
-    nombreContacto: 'Carla Morales Troncoso',
-    direccion: 'Av. El Golf 40',
-    region: 'Región Metropolitana de Santiago',
-    ciudad: 'Santiago',
-    comuna: 'Las Condes',
-    tipoAuxiliar: 'EMPLEADO',
-  },
 ];

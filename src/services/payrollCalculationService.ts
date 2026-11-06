@@ -1,3 +1,4 @@
+import { isDemoClient, isDemoModeEnabled } from '../config/demoMode';
 import crypto from 'node:crypto';
 import { eq, and, sql } from 'drizzle-orm';
 import {
@@ -275,8 +276,8 @@ export class PayrollCalculationService {
     const cleanEmpresaId = empresaId.replace(/\./g, '').trim().toUpperCase();
 
     const isRetail = cleanEmpresaId.includes('RETAIL') || cleanEmpresaId.includes('AGRO') || cleanEmpresaId.includes('76104550-9') || cleanEmpresaId.includes('77210980-5');
-    const isInnovAgile = cleanEmpresaId.includes('INNOVAGILE') || cleanEmpresaId.includes('77798901-4') || cleanEmpresaId === 'DEMO' || cleanEmpresaId === 'CLIENT-INNOVAGILE';
-    const isSeedable = isRetail || isInnovAgile || cleanEmpresaId === 'DEMO';
+    // Solo empresas de ejemplo y solo con DEMO_MODE=true: nunca se siembra nómina en clientes reales.
+    const isSeedable = isDemoClient(empresaId) || (isDemoModeEnabled() && cleanEmpresaId === 'DEMO');
     const seedSet = isRetail ? SEED_RETAIL_EMPLOYEES_DATA : SEED_EMPLOYEES_DATA;
 
     const db = getMysqlDb();

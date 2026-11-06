@@ -1,3 +1,4 @@
+import './setup/enableDemoMode';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { Socket } from 'node:net';
 import assert from 'node:assert';

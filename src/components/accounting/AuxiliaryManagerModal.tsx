@@ -19,7 +19,7 @@ import {
   AlertCircle,
   Filter,
 } from 'lucide-react';
-import { CHILEAN_REGIONS_WITH_COMMUNES } from '../../data/erpMasterConfig';
+import { CHILEAN_REGIONS_WITH_COMMUNES } from '../../config/erpMasterConfig';
 import { validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
 import { saveClientState, loadClientState } from '../../utils/storageService';
 import {

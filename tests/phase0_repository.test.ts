@@ -9,6 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { whatsappBridgeService, WhatsAppBridgeService } from '../src/services/whatsappBridgeService';
+import { demoSeed, isDemoModeEnabled } from '../src/config/demoMode';
+import { getDemoClients } from '../src/data/seedData';
+import { PayrollCalculationService } from '../src/services/payrollCalculationService';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -50,9 +53,53 @@ async function run() {
     }
   });
 
-  await test('0.1 Los 10 módulos de src/data/ existen', () => {
-    const files = fs.readdirSync(path.join(ROOT, 'src/data')).filter((f) => f.endsWith('.ts'));
-    assert.ok(files.length >= 10, `Se esperaban al menos 10 módulos y hay ${files.length}`);
+  await test('0.1/0.2 Módulos de datos presentes: semillas en src/data/, maestros en src/config/', () => {
+    const seeds = fs.readdirSync(path.join(ROOT, 'src/data')).filter((f) => f.endsWith('.ts'));
+    for (const f of seeds) assert.ok(f.startsWith('seed'), `src/data/ solo debe contener semillas (seed*): ${f}`);
+    assert.ok(seeds.length >= 8, `Se esperaban al menos 8 módulos semilla y hay ${seeds.length}`);
+    for (const f of ['erpMasterConfig.ts', 'defaultAgentPersonas.ts', 'defaultInvoiceLayouts.ts', 'demoMode.ts']) {
+      assert.ok(fs.existsSync(path.join(ROOT, 'src/config', f)), `Falta src/config/${f}`);
+    }
+    const master = fs.readFileSync(path.join(ROOT, 'src/config/erpMasterConfig.ts'), 'utf8');
+    assert.ok(!master.includes('INITIAL_CLIENT_AUXILIARIES'), 'Los auxiliares de ejemplo no son datos maestros');
+  });
+
+  await test('0.2 Con DEMO_MODE=false ninguna empresa recibe datos semilla', async () => {
+    const prev = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'false';
+    try {
+      assert.strictEqual(isDemoModeEnabled(), false);
+      assert.deepStrictEqual(demoSeed('client-innovagile', [1, 2, 3]), []);
+      assert.deepStrictEqual(demoSeed({ id: 'client-retail-01' }, () => [1]), []);
+      assert.deepStrictEqual(getDemoClients(), []);
+      const employees = await PayrollCalculationService.getOrSeedEmployees('client-agro-nuevo');
+      assert.strictEqual(employees.length, 0, 'Se sembró nómina de ejemplo con DEMO_MODE=false');
+    } finally {
+      process.env.DEMO_MODE = prev;
+    }
+  });
+
+  await test('0.2 Con DEMO_MODE=true un cliente nuevo tampoco recibe datos semilla', async () => {
+    const prev = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'true';
+    try {
+      assert.deepStrictEqual(demoSeed('client-1730912345-nuevo', [1]), []);
+      assert.deepStrictEqual(demoSeed({ id: 'c-nuevo', rut: '11.111.111-1' }, [1]), []);
+      assert.deepStrictEqual(demoSeed('client-innovagile', [1]), [1], 'Las empresas de ejemplo sí reciben la semilla en demo');
+      assert.ok(getDemoClients().length > 0);
+      const employees = await PayrollCalculationService.getOrSeedEmployees('client-nuevo-agrovalle');
+      assert.strictEqual(employees.length, 0, 'Un cliente nuevo con "agro" en su id no debe recibir la nómina de ejemplo');
+    } finally {
+      process.env.DEMO_MODE = prev;
+    }
+  });
+
+  await test('0.2 App.tsx no usa semillas como respaldo directo de datos por empresa', () => {
+    const app = fs.readFileSync(path.join(ROOT, 'src/App.tsx'), 'utf8');
+    const raw = app.match(/loadClientState<[^>]+>\([^,]+,\s*'[A-Za-z]+',\s*(seed[A-Z]\w*|INITIAL_[A-Z_]+|SEED_[A-Z_]+|getInitial\w+ForClient\([^)]*\))\s*\)/g) || [];
+    assert.deepStrictEqual(raw, [], `Respaldos semilla sin demoSeed(): ${raw.join(' | ')}`);
+    const payrollFallbacks = app.match(/\?\s*getInitial\w+ForClient\(/g) || [];
+    assert.deepStrictEqual(payrollFallbacks, [], 'getInitial*ForClient debe pasar por demoSeed()');
   });
 
   await test('0.3 Dependencias del puente WhatsApp declaradas como opcionales', () => {

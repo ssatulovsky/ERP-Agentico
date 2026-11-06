@@ -31,7 +31,7 @@ import { isRedisConfigured } from "./src/queues/redisConfig";
 import { IndicatorSyncService } from "./src/services/indicatorSyncService";
 import { checkMySqlConnection, ensureMysqlSchemaInitialized, isRealMysqlConnected } from "./src/db/mysqlClient";
 import { diskPersistence } from "./src/services/diskPersistenceService";
-import { INITIAL_CLIENTS, seedDtes, seedPayrolls } from "./src/data/seedData";
+import { getDemoClients } from "./src/data/seedData";
 import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
   normalizeAndValidateJournalEntry,
@@ -1058,8 +1058,8 @@ async function findCompanyByIdOrRut(idOrRut?: string): Promise<any | null> {
   if (!idOrRut) return null;
   const cleanParam = idOrRut.replace(/[^0-9kK]/g, "").toUpperCase();
 
-  // 1. Buscar en INITIAL_CLIENTS
-  let found = INITIAL_CLIENTS.find(
+  // 1. Buscar en empresas de ejemplo (solo existen con DEMO_MODE=true)
+  let found = getDemoClients().find(
     c => c.id === idOrRut || c.rut.replace(/[^0-9kK]/g, "").toUpperCase() === cleanParam
   );
   if (found) return found;
@@ -1099,8 +1099,8 @@ app.get("/api/companies", async (_req, res) => {
   try {
     const companyMap = new Map<string, any>();
 
-    // Cargar empresas de semillas iniciales
-    INITIAL_CLIENTS.forEach(c => {
+    // Cargar empresas de ejemplo (solo con DEMO_MODE=true)
+    getDemoClients().forEach(c => {
       companyMap.set(c.rut.replace(/[^0-9kK]/g, "").toUpperCase(), {
         id: c.id,
         rut: c.rut,
@@ -1182,7 +1182,7 @@ app.get("/api/companies/:idOrRut/sii-config", async (req, res) => {
 
 // Endpoint para listar todas las empresas con sincronización automática activa (Modo Batch Multi-Empresa)
 app.get("/api/companies/active-sii", (_req, res) => {
-  const activeCompanies = INITIAL_CLIENTS.filter(
+  const activeCompanies = getDemoClients().filter(
     c => c.activa !== false && c.automatizacionesAgente?.descargaAutomaticaRcv !== false
   ).map(c => ({
     id: c.id,
@@ -1571,7 +1571,11 @@ app.post("/api/f29/senior-agent", async (req, res) => {
         empresa = await findCompanyByIdOrRut(targetEmpresaId);
       }
       if (!empresa) {
-        empresa = INITIAL_CLIENTS[0];
+        return res.status(400).json({
+          success: false,
+          code: 'EMPRESA_NO_ENCONTRADA',
+          error: 'Debe indicar una empresa existente; no se usa una empresa por defecto.',
+        });
       }
     }
     if (dtes === undefined || !Array.isArray(dtes)) {

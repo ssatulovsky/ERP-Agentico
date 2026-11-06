@@ -4,6 +4,7 @@ import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
+import { isDemoClient } from '../config/demoMode';
 import { piperTtsService } from './piperTtsService';
 import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
 import { diskPersistence } from './diskPersistenceService';
@@ -1194,7 +1195,7 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
           const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
           const effectiveAccounts = tenantAccounts.length > 0
             ? tenantAccounts
-            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+            : (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics') ? INITIAL_BANK_ACCOUNTS : []);
           const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
           const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
 
@@ -1203,7 +1204,7 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
           const netMovements = clpMovements.reduce((acc: number, m: any) => acc + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0);
           const totalClpBanks = initialBalance + netMovements;
 
-          const totalCajas = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+          const totalCajas = (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics'))
             ? INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0)
             : 0;
           const disponibleHoyClp = totalClpBanks + totalCajas;
@@ -1247,7 +1248,7 @@ ${bankLines}
           const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
           const effectiveAccounts = tenantAccounts.length > 0
             ? tenantAccounts
-            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+            : (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics') ? INITIAL_BANK_ACCOUNTS : []);
           const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
           const fxBanks = effectiveAccounts.filter((b) => b.moneda && b.moneda !== 'CLP');
           const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
@@ -1255,7 +1256,7 @@ ${bankLines}
           const tenantMovements = diskPersistence.getBankMovements(empresaId);
           const netMovements = tenantMovements.filter((m: any) => !m.moneda || m.moneda === 'CLP').reduce((acc: number, m: any) => acc + (Number(m.abono) || 0) - (Number(m.cargo) || 0), 0);
           const totalClpBanks = initialBalance + netMovements;
-          const totalCajas = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+          const totalCajas = (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics'))
             ? INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0)
             : 0;
 
@@ -1307,7 +1308,7 @@ ${bankLines}
                 .join('\n\n')
             : '• ℹ️ _No se registran cuentas en moneda extranjera para esta empresa._';
 
-          const cashDetails = (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics')
+          const cashDetails = (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics'))
             ? INITIAL_CASH_ACCOUNTS.map(
                 (c) =>
                   `• *${c.nombre}* (\`${c.codigoContable}\`): *$${formatCLP(c.montoSaldo)} CLP* _(${c.responsableNombre})_`
@@ -1559,7 +1560,7 @@ ${quotesLines}
           const tenantAccounts = diskPersistence.getBankAccounts(empresaId);
           const effectiveAccounts = tenantAccounts.length > 0
             ? tenantAccounts
-            : (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics' ? INITIAL_BANK_ACCOUNTS : []);
+            : (isDemoClient(empresaId) && (empresaId === 'client-retail-01' || empresaId === 'client-retail-logistics') ? INITIAL_BANK_ACCOUNTS : []);
           const clpBanks = effectiveAccounts.filter((b) => (b.moneda || 'CLP') === 'CLP');
           const initialBalance = clpBanks.reduce((sum, b) => sum + (Number(b.saldoEnLinea ?? b.saldoInicial ?? b.saldoContable) || 0), 0);
           const tenantMovements = diskPersistence.getBankMovements(empresaId);

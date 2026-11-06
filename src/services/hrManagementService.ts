@@ -20,7 +20,8 @@ import {
   calculatePayroll, 
   enrichEntryWithChartAttributes 
 } from '../utils/chileanAccounting';
-import { INITIAL_CLIENTS, INITIAL_FIRM } from '../data/seedData';
+import { INITIAL_FIRM, getDemoClients } from '../data/seedData';
+import { isDemoModeEnabled } from '../config/demoMode';
 import { commercialProcurementService } from './commercialProcurementService';
 
 const getDiskPersistence = (): any => (globalThis as any).__diskPersistence;
@@ -99,8 +100,10 @@ export class HrManagementService {
   private static socialSecurityPaymentsStore: SocialSecurityHistoricalPayment[] = [];
 
   static {
-    // Inicializar datos semilla para pruebas y demostración de producción
-    this.seedInitialHistoricalData();
+    // Datos históricos de ejemplo: solo en modo demostración (DEMO_MODE=true)
+    if (isDemoModeEnabled()) {
+      this.seedInitialHistoricalData();
+    }
   }
 
   private static normalizeId(id: string): string {
@@ -1538,13 +1541,13 @@ export class HrManagementService {
             });
           }
           if (!company) {
-            company = INITIAL_CLIENTS.find((c: any) => {
+            company = getDemoClients().find((c: any) => {
               const cId = (c.id || '').replace(/[\.\-\s]/g, '').toUpperCase();
               const cRut = (c.rut || '').replace(/[\.\-\s]/g, '').toUpperCase();
               return cId === cleanTargetId || cRut === cleanTargetId || c.id === item.empresaId || c.rut === item.empresaId;
             });
           }
-          if (!company) {
+          if (!company && isDemoModeEnabled()) {
             const firm = INITIAL_FIRM;
             const firmRut = (firm.rut || '').replace(/[\.\-\s]/g, '').toUpperCase();
             if (firmRut === cleanTargetId || firm.id === item.empresaId) {
@@ -1590,7 +1593,7 @@ export class HrManagementService {
               receptorAux = auxList.find((a: any) => (a.rut || '').replace(/[\.\-\s]/g, '').toUpperCase() === cleanRecRut);
             }
             if (!receptorAux) {
-              receptorAux = INITIAL_CLIENTS.find((c: any) => (c.rut || '').replace(/[\.\-\s]/g, '').toUpperCase() === cleanRecRut);
+              receptorAux = getDemoClients().find((c: any) => (c.rut || '').replace(/[\.\-\s]/g, '').toUpperCase() === cleanRecRut);
             }
 
             const razonSocialReceptor = (item.datosOperacion?.receptorRazonSocial || item.datosOperacion?.razonSocialReceptor || receptorAux?.razonSocial || receptorAux?.nombreCorto || '').trim();

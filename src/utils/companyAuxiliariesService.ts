@@ -1,4 +1,4 @@
-import { INITIAL_CLIENT_AUXILIARIES } from '../data/erpMasterConfig';
+import { INITIAL_CLIENT_AUXILIARIES } from '../data/seedClientAuxiliaries';
 import { loadClientState, saveClientState } from './storageService';
 
 export interface CompanyAuxiliaryItem {

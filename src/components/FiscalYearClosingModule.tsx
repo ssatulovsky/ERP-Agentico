@@ -33,7 +33,7 @@ import {
   PeriodLockValidationResult,
   SystemGeneralParameters,
 } from '../types';
-import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../data/erpMasterConfig';
+import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../config/erpMasterConfig';
 import {
   getFiscalYearDates,
   validateEntryFiscalPeriod,

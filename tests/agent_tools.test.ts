@@ -1,3 +1,4 @@
+import './setup/enableDemoMode';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { AutonomousAgentEngine, type AutonomousAgentRequest } from '../src/services/autonomousAgentEngine';

@@ -53,7 +53,7 @@ import {
   formatRutChileno 
 } from '../utils/chileanAccounting';
 import { AgentGovernancePanel } from './AgentGovernancePanel';
-import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../data/erpMasterConfig';
+import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../config/erpMasterConfig';
 import { NewErpClientOnboardingModal } from './tenancy/NewErpClientOnboardingModal';
 import { AnchorClientMasterModal } from './tenancy/AnchorClientMasterModal';
 import { SystemGeneralConfigModal } from './tenancy/SystemGeneralConfigModal';

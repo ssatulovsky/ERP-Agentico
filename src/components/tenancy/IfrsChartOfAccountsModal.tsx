@@ -16,7 +16,7 @@ import {
   Filter
 } from 'lucide-react';
 import { AccountGroupClassification, AccountCreationDefinition } from '../../types';
-import { INITIAL_ACCOUNT_GROUPS } from '../../data/erpMasterConfig';
+import { INITIAL_ACCOUNT_GROUPS } from '../../config/erpMasterConfig';
 import { STANDARD_ACCOUNT_PLAN } from '../../utils/chileanAccounting';
 
 interface IfrsChartOfAccountsModalProps {

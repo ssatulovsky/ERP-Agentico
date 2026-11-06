@@ -1,4 +1,19 @@
-# CHANGELOG — Auditoría y Reingeniería Agéntica ERPremIA v2.0.0
+# CHANGELOG — ERPremIA
+
+## Plan de corrección · Fase 0: repositorio ejecutable (6 nov 2026)
+
+| Tarea | Cambio | Verificación |
+| :--- | :--- | :--- |
+| **0.1** Recuperar `src/data/` | `.gitignore` ignora solo `/data/` y `/storage/` de la raíz; `src/data/` queda versionado. El snapshot `data/db_disk_snapshot.json` deja de versionarse. | Clon limpio: `tsc --noEmit` sin errores; `tests/phase0_repository.test.ts` |
+| **0.2** Semilla vs. maestros | Maestros a `src/config/` (`erpMasterConfig`, `defaultAgentPersonas`, `defaultInvoiceLayouts`); auxiliares de ejemplo a `src/data/seedClientAuxiliaries.ts`. Nuevo `src/config/demoMode.ts` (`DEMO_MODE`, `demoSeed`, `isDemoClient`). Con `DEMO_MODE=false` (valor por defecto) ninguna empresa recibe DTEs, F29, nóminas, contratos, cartolas, cuentas, cheques ni inventario semilla; con `DEMO_MODE=true` solo las empresas de ejemplo. El servidor deja de usar la primera empresa semilla como respaldo (worker F29, `/api/f29/senior-agent`, emisión DTE) y deja de sembrar nómina en MySQL para clientes reales. | `tests/phase0_repository.test.ts` (0.2) |
+| **0.3** Dependencias WhatsApp | `@whiskeysockets/baileys`, `qrcode` y `ffmpeg-static` en `optionalDependencies`. El servidor ya no ejecuta `npm install` en tiempo de ejecución: si faltan, el puente informa `NOT_INSTALLED` y la UI muestra "NO INSTALADO". Se retira el respaldo que enviaba el QR de sesión a `api.qrserver.com`. | `tests/phase0_repository.test.ts` (0.3) |
+| **0.4** Integración continua | `.github/workflows/ci.yml`: `npm ci`, `npm run lint`, `npm test` y `npm run build`, con y sin las dependencias del puente. | CI en verde |
+
+Las suites de integración existentes usan las empresas de ejemplo como fixtures y corren con `DEMO_MODE=true` (`tests/setup/enableDemoMode.ts`).
+
+---
+
+## Auditoría y Reingeniería Agéntica ERPremIA v2.0.0
 
 Este documento certifica y detalla la resolución integral de todas las observaciones levantadas por la auditoría técnica y de seguridad sobre **ERPremIA** (Sistema ERP Contable, Tributario y Agéntico Autónomo para Chile).
 

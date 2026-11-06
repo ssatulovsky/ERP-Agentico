@@ -32,7 +32,7 @@ import {
   CompanyProfile,
   ClientCompany
 } from '../../types';
-import { DEFAULT_INVOICE_LAYOUTS, COLOR_PALETTE_PRESETS } from '../../data/defaultInvoiceLayouts';
+import { DEFAULT_INVOICE_LAYOUTS, COLOR_PALETTE_PRESETS } from '../../config/defaultInvoiceLayouts';
 import { InvoiceDocumentSheet } from './InvoiceDocumentSheet';
 
 interface InvoiceLayoutDesignerProps {

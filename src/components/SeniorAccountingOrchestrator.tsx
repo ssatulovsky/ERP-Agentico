@@ -165,7 +165,7 @@ import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceH
 import { ExtraordinaryFiscalYearReopenModal } from './accounting/ExtraordinaryFiscalYearReopenModal';
 import { EditAccountingEntryModal } from './accounting/EditAccountingEntryModal';
 import { SEED_COST_CENTERS } from '../data/seedCostCenters';
-import { INITIAL_CLIENT_AUXILIARIES } from '../data/erpMasterConfig';
+import { INITIAL_CLIENT_AUXILIARIES } from '../data/seedClientAuxiliaries';
 import { FinancialStatementNotesView } from './accounting/FinancialStatementNotesView';
 import {
   loadCompanyFinancialNotes,

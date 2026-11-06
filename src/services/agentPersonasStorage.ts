@@ -1,5 +1,5 @@
 import { AgentPersona, AgentVoiceConfig } from '../types/agentPersona';
-import { DEFAULT_AGENT_PERSONAS } from '../data/defaultAgentPersonas';
+import { DEFAULT_AGENT_PERSONAS } from '../config/defaultAgentPersonas';
 
 const STORAGE_KEY_PREFIX = 'erp_agent_personas_v1';
 

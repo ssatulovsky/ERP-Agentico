@@ -30,7 +30,7 @@ import {
 import { 
   ERP_SUBSCRIPTION_PLANS, 
   CHILEAN_REGIONS_WITH_COMMUNES 
-} from '../../data/erpMasterConfig';
+} from '../../config/erpMasterConfig';
 import { STANDARD_ACCOUNT_PLAN, formatCLP, validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
 
 interface NewErpClientOnboardingModalProps {

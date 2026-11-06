@@ -1,3 +1,4 @@
+import { isDemoModeEnabled } from '../config/demoMode';
 import {
   CompanyProfile,
   AccountingFirmProfile,
@@ -1848,3 +1849,10 @@ export const seedDisciplinarySanctions = INITIAL_DISCIPLINARY_SANCTIONS;
 export const seedHrAlerts = INITIAL_HR_ALERTS;
 
 
+
+// ---------------------------------------------------------------------------
+// Acceso controlado a las empresas de ejemplo (tarea 0.2): fuera de DEMO_MODE no existen.
+// ---------------------------------------------------------------------------
+export function getDemoClients(): ClientCompany[] {
+  return isDemoModeEnabled() ? INITIAL_CLIENTS : [];
+}

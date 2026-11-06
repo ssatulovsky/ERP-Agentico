@@ -1,3 +1,4 @@
+import './setup/enableDemoMode';
 import assert from 'node:assert';
 import { diskPersistence } from '../src/services/diskPersistenceService';
 import { AutonomousAgentEngine, type AutonomousAgentRequest } from '../src/services/autonomousAgentEngine';
@@ -5,7 +6,7 @@ import { HrManagementService } from '../src/services/hrManagementService';
 import { commercialProcurementService } from '../src/services/commercialProcurementService';
 import { whatsappBridgeService } from '../src/services/whatsappBridgeService';
 import { voiceAssistantEngine } from '../src/services/voiceAssistantEngine';
-import { DEFAULT_AGENT_PERSONAS } from '../src/data/defaultAgentPersonas';
+import { DEFAULT_AGENT_PERSONAS } from '../src/config/defaultAgentPersonas';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
 
 async function runE2eAuditSuite() {

@@ -12,9 +12,8 @@ import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormal
 import { QUEUE_NAMES } from '../queues/types';
 import { getRedisConnectionOptions } from '../queues/redisConfig';
 import { calculatePreF29, type PreF29Options } from '../utils/f29SeniorEngine';
-import {
-  INITIAL_CLIENTS,
-} from '../data/seedData';
+import { getDemoClients } from '../data/seedData';
+import { diskPersistence } from '../services/diskPersistenceService';
 import { PayrollCalculationService } from '../services/payrollCalculationService';
 import { pool, isRealMysqlConnected, inMemoryDtesRcv } from '../db/mysqlClient';
 
@@ -306,11 +305,14 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
     );
 
     const cleanLookup = empresaId.replace(/[^0-9kK]/g, '').toUpperCase();
+    // Nunca se usa otra empresa como respaldo: si no existe, el trabajo falla con error explícito.
     const clientCompany =
-      INITIAL_CLIENTS.find((c) => {
+      diskPersistence.getClient(empresaId) ||
+      getDemoClients().find((c) => {
         const cClean = c.rut.replace(/[^0-9kK]/g, '').toUpperCase();
         return c.id === empresaId || c.rut === empresaId || (cleanLookup.length >= 7 && cClean === cleanLookup);
-      }) || INITIAL_CLIENTS[0];
+      }) ||
+      null;
 
     if (!clientCompany) {
       throw new Error(`Empresa con identificador '${empresaId}' no encontrada en el sistema.`);

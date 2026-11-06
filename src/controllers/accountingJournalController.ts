@@ -402,7 +402,7 @@ accountingJournalRouter.get('/auxiliaries', async (req: Request, res: Response) 
     }
 
     // 3. Semilla predeterminada si no hay registros
-    const { INITIAL_CLIENT_AUXILIARIES } = await import('../data/erpMasterConfig');
+    const { INITIAL_CLIENT_AUXILIARIES } = await import('../data/seedClientAuxiliaries');
     const defaultList = INITIAL_CLIENT_AUXILIARIES.map((a: any) => ({
       id: a.id,
       rut: a.rutCompleto,

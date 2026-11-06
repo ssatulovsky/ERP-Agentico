@@ -1,3 +1,4 @@
+import './setup/enableDemoMode';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { AutonomousAgentEngine, type AutonomousAgentRequest } from '../src/services/autonomousAgentEngine';
@@ -8,7 +9,7 @@ import { HttpDteBillingService } from '../src/services/httpDteBillingService';
 import { commercialProcurementService } from '../src/services/commercialProcurementService';
 import { voiceAssistantEngine } from '../src/services/voiceAssistantEngine';
 import { whatsappBridgeService } from '../src/services/whatsappBridgeService';
-import { DEFAULT_AGENT_PERSONAS } from '../src/data/defaultAgentPersonas';
+import { DEFAULT_AGENT_PERSONAS } from '../src/config/defaultAgentPersonas';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
 import type { CompanyProfile, FixedAsset, ProductionOrder, ExpenseReport } from '../src/types';
 

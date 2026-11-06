@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { HttpDteBillingService } from '../services/httpDteBillingService';
 import { BillingEmissionDraft } from '../types';
-import { INITIAL_CLIENTS } from '../data/seedData';
+import { getDemoClients } from '../data/seedData';
+import { diskPersistence } from '../services/diskPersistenceService';
 
 export const billingDteRouter = Router();
 
@@ -48,9 +49,11 @@ billingDteRouter.post('/emitir-http-dte', async (req: Request, res: Response) =>
     }
 
     // Buscar datos de la empresa emisor
-    const company = INITIAL_CLIENTS.find(
-      (c) => c.id === targetCompanyId || c.rut.replace(/[^0-9kK]/g, '') === (targetCompanyId || '').replace(/[^0-9kK]/g, '')
-    );
+    const company =
+      (targetCompanyId ? diskPersistence.getClient(targetCompanyId) : null) ||
+      getDemoClients().find(
+        (c) => c.id === targetCompanyId || c.rut.replace(/[^0-9kK]/g, '') === (targetCompanyId || '').replace(/[^0-9kK]/g, '')
+      );
 
     if (!company) {
       return res.status(400).json({

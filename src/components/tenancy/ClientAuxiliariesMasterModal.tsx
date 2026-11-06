@@ -18,7 +18,8 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { ClientAuxiliaryMasterRecord } from '../../types';
-import { INITIAL_CLIENT_AUXILIARIES, CHILEAN_REGIONS_WITH_COMMUNES } from '../../data/erpMasterConfig';
+import { CHILEAN_REGIONS_WITH_COMMUNES } from '../../config/erpMasterConfig';
+import { INITIAL_CLIENT_AUXILIARIES } from '../../data/seedClientAuxiliaries';
 import { validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
 import {
   loadCompanyAuxiliaries,

@@ -1,11 +1,16 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), tailwindcss()],
+    define: {
+      // Modo demostración (src/config/demoMode.ts): solo con DEMO_MODE=true se cargan datos semilla en el navegador.
+      __ERP_DEMO_MODE__: JSON.stringify(process.env.DEMO_MODE ?? env.DEMO_MODE ?? 'false'),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

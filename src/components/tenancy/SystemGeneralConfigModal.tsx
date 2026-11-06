@@ -16,7 +16,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { SystemGeneralParameters } from '../../types';
-import { DEFAULT_SYSTEM_PARAMETERS } from '../../data/erpMasterConfig';
+import { DEFAULT_SYSTEM_PARAMETERS } from '../../config/erpMasterConfig';
 import { STANDARD_ACCOUNT_PLAN } from '../../utils/chileanAccounting';
 
 interface SystemGeneralConfigModalProps {
