@@ -156,12 +156,17 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
       if (!res.ok) return;
       const data = await res.json();
       if (data.success) {
-        setConnectionState(data.connectionState || 'DISCONNECTED');
+        const missingDeps: string[] = Array.isArray(data.missingDependencies) ? data.missingDependencies : [];
+        const serverState = data.connectionState || 'DISCONNECTED';
+        setConnectionState(serverState === 'DISCONNECTED' && missingDeps.length > 0 ? 'NOT_INSTALLED' : serverState);
+        if (serverState === 'DISCONNECTED' && missingDeps.length > 0 && !data.lastErrorMessage) {
+          setLastErrorMessage(`Puente WhatsApp no instalado: faltan ${missingDeps.join(', ')} en el servidor.`);
+        }
         setQrRaw(data.qrRaw || null);
         setQrDataUrl(data.qrDataUrl || null);
         setConnectedPhoneNumber(data.connectedPhoneNumber || null);
         setConnectedPushName(data.connectedPushName || null);
-        setLastErrorMessage(data.lastErrorMessage || null);
+        if (data.lastErrorMessage || missingDeps.length === 0) setLastErrorMessage(data.lastErrorMessage || null);
         if (data.privacyConfig) setPrivacyConfig(data.privacyConfig);
         if (Array.isArray(data.whitelist)) setWhitelist(data.whitelist);
         if (Array.isArray(data.auditLogs)) setAuditLogs(data.auditLogs);
@@ -192,7 +197,9 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
       if (data.qrDataUrl) setQrDataUrl(data.qrDataUrl);
       if (data.qrRaw) setQrRaw(data.qrRaw);
       if (data.lastErrorMessage) setLastErrorMessage(data.lastErrorMessage);
-      showToast('Iniciando vinculación WhatsApp Web Multi-Device...');
+      if (data.connectionState !== 'NOT_INSTALLED' && data.connectionState !== 'ERROR') {
+        showToast('Iniciando vinculación WhatsApp Web Multi-Device...');
+      }
     } catch (err: any) {
       setLastErrorMessage(err.message || 'Error al solicitar código QR.');
     }
@@ -500,7 +507,11 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
                   <QrCode className="w-3.5 h-3.5" />
                   ESPERANDO ESCANEO QR
                 </span>
-              ) : connectionState === 'CONNECTING' || connectionState === 'INSTALLING_DEPS' ? (
+              ) : connectionState === 'NOT_INSTALLED' ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                  NO INSTALADO
+                </span>
+              ) : connectionState === 'CONNECTING' ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-blue-500/20 text-blue-300 border border-blue-500/40 flex items-center gap-1.5">
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   INICIANDO MOTOR...
@@ -523,7 +534,7 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
               {connectionState !== 'CONNECTED' ? (
                 <button
                   onClick={handleStartConnect}
-                  disabled={connectionState === 'CONNECTING' || connectionState === 'INSTALLING_DEPS'}
+                  disabled={connectionState === 'CONNECTING' || connectionState === 'NOT_INSTALLED'}
                   className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-lg text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <QrCode className="w-4 h-4" />
@@ -583,14 +594,11 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
                     </p>
                   </div>
                 </div>
-              ) : qrDataUrl || qrRaw ? (
+              ) : qrDataUrl ? (
                 <div className="space-y-3">
                   <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-md inline-block">
                     <img
-                      src={
-                        qrDataUrl ||
-                        `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(qrRaw || '')}`
-                      }
+                      src={qrDataUrl}
                       alt="Código QR WhatsApp Web"
                       className="w-56 h-56 object-contain"
                     />
@@ -599,14 +607,18 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
                     Escanea este código desde WhatsApp &rarr; Dispositivos vinculados
                   </p>
                 </div>
-              ) : connectionState === 'CONNECTING' || connectionState === 'INSTALLING_DEPS' ? (
+              ) : connectionState === 'NOT_INSTALLED' ? (
+                <div className="space-y-2 py-6">
+                  <XCircle className="w-10 h-10 text-rose-600 mx-auto" />
+                  <div className="text-xs font-bold text-slate-800">Puente WhatsApp no instalado</div>
+                  <p className="text-[11px] text-slate-600 max-w-xs mx-auto">
+                    {lastErrorMessage || 'Faltan dependencias opcionales en el servidor.'}
+                  </p>
+                </div>
+              ) : connectionState === 'CONNECTING' ? (
                 <div className="space-y-3 py-6">
                   <RefreshCw className="w-10 h-10 text-emerald-600 animate-spin mx-auto" />
-                  <div className="text-xs font-bold text-slate-700">
-                    {connectionState === 'INSTALLING_DEPS'
-                      ? 'Instalando motor ligero WhatsApp (@whiskeysockets/baileys) en el VPS...'
-                      : 'Negociando llave criptográfica con WhatsApp Web...'}
-                  </div>
+                  <div className="text-xs font-bold text-slate-700">Negociando llave criptográfica con WhatsApp Web...</div>
                   <p className="text-[11px] text-slate-500 max-w-xs">
                     El código QR aparecerá en este recuadro en unos segundos.
                   </p>

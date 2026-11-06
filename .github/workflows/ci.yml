@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    name: Lint y pruebas (${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "full": instalación completa; "sin-opcionales": verifica que el ERP compile y
+        # pase las pruebas sin el puente WhatsApp (dependencias opcionales ausentes).
+        deps: [full, sin-opcionales]
+    env:
+      NODE_ENV: test
+      GEMINI_API_KEY: ""
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Retirar dependencias del puente WhatsApp
+        if: matrix.deps == 'sin-opcionales'
+        # No se usa --omit=optional porque también eliminaría binarios nativos (rollup, esbuild).
+        run: rm -rf node_modules/@whiskeysockets node_modules/qrcode node_modules/ffmpeg-static
+      - name: Lint (tsc --noEmit)
+        run: npm run lint
+      - name: Pruebas
+        run: npm test
+      - name: Build
+        if: matrix.deps == 'full'
+        run: npm run build

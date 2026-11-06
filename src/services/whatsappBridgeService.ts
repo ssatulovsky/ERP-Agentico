@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { createRequire } from 'module';
 import { piperTtsService } from './piperTtsService';
 import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
 import { diskPersistence } from './diskPersistenceService';
@@ -315,7 +316,7 @@ export class WhatsAppBridgeService {
   private rbacState: SecurityRbacStoreState;
 
   // Estado de conexión en vivo
-  private connectionState: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED' | 'INSTALLING_DEPS' | 'ERROR' =
+  private connectionState: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED' | 'NOT_INSTALLED' | 'ERROR' =
     'DISCONNECTED';
   private currentQrRaw: string | null = null;
   private currentQrDataUrl: string | null = null;
@@ -1632,6 +1633,7 @@ ${quotesLines}
       connectedPhoneNumber: this.connectedPhoneNumber,
       connectedPushName: this.connectedPushName,
       lastErrorMessage: this.lastErrorMessage,
+      missingDependencies: this.getMissingBridgeDependencies(),
       privacyConfig: this.store.privacyConfig,
       whitelist: this.store.whitelist,
       auditLogs: this.store.auditLogs,
@@ -1698,34 +1700,37 @@ ${quotesLines}
   // CONEXIÓN WHATSAPP WEB MULTI-DEVICE (VÍA BAILEYS + QRCODE)
   // ============================================================================
 
-  private async ensureDependenciesInstalled(): Promise<boolean> {
-    try {
-      await safeDynamicImport('@whiskeysockets/baileys');
-      return true;
-    } catch {
-      console.log('[WhatsAppBridge] Instalando @whiskeysockets/baileys y qrcode en el servidor...');
-      this.connectionState = 'INSTALLING_DEPS';
+  /**
+   * Dependencias opcionales del puente (declaradas en optionalDependencies de package.json).
+   * El servidor NUNCA las instala en tiempo de ejecución: si faltan, el puente informa NOT_INSTALLED.
+   */
+  public static readonly REQUIRED_OPTIONAL_DEPENDENCIES = ['@whiskeysockets/baileys', 'qrcode'] as const;
+
+  public getMissingBridgeDependencies(): string[] {
+    const req = createRequire(path.join(process.cwd(), 'package.json'));
+    return WhatsAppBridgeService.REQUIRED_OPTIONAL_DEPENDENCIES.filter((dep) => {
       try {
-        await execAsync('npm install @whiskeysockets/baileys qrcode pino --no-save --legacy-peer-deps', {
-          cwd: process.cwd(),
-          timeout: 120000,
-        });
-        return true;
-      } catch (err: any) {
-        console.error('[WhatsAppBridge] Error instalando paquetes de WhatsApp:', err.message);
-        this.lastErrorMessage = `No se pudo instalar @whiskeysockets/baileys automáticamente. Ejecute en el VPS: npm install @whiskeysockets/baileys qrcode pino`;
-        this.connectionState = 'ERROR';
+        req.resolve(dep);
         return false;
+      } catch {
+        return true;
       }
-    }
+    });
+  }
+
+  private async ensureDependenciesInstalled(): Promise<boolean> {
+    const missing = this.getMissingBridgeDependencies();
+    if (missing.length === 0) return true;
+    this.connectionState = 'NOT_INSTALLED';
+    this.lastErrorMessage =
+      `Puente WhatsApp no instalado: faltan las dependencias opcionales ${missing.join(', ')}. ` +
+      'Instálelas en el servidor con "npm install --include=optional" y reinicie el servicio.';
+    return false;
   }
 
   public async startWhatsAppLink(): Promise<{ status: string; message: string }> {
     if (this.connectionState === 'CONNECTED') {
       return { status: 'CONNECTED', message: 'WhatsApp ya se encuentra vinculado y activo.' };
-    }
-    if (this.connectionState === 'INSTALLING_DEPS') {
-      return { status: 'INSTALLING_DEPS', message: 'Instalando motor WhatsApp Web en el servidor...' };
     }
 
     this.lastErrorMessage = null;
@@ -1733,7 +1738,7 @@ ${quotesLines}
 
     const ready = await this.ensureDependenciesInstalled();
     if (!ready) {
-      return { status: 'ERROR', message: this.lastErrorMessage || 'Error de dependencias.' };
+      return { status: 'NOT_INSTALLED', message: this.lastErrorMessage || 'Puente WhatsApp no instalado.' };
     }
 
     try {
@@ -2044,7 +2049,7 @@ ${quotesLines}
       }
     } catch {}
 
-    // Intentar cargar ffmpeg-static si está instalado o instalarlo automáticamente
+    // Usar ffmpeg-static si está instalado (dependencia opcional). Nunca se instala en tiempo de ejecución.
     try {
       const ffMod: any = await safeDynamicImport('ffmpeg-static');
       const binPath = ffMod?.default || ffMod;
@@ -2053,19 +2058,7 @@ ${quotesLines}
         return binPath;
       }
     } catch {
-      try {
-        console.log('[WhatsAppBridge] Instalando ffmpeg-static para notas de voz OGG/Opus de WhatsApp...');
-        await execAsync('npm install ffmpeg-static --no-save --legacy-peer-deps', {
-          cwd: process.cwd(),
-          timeout: 90000,
-        });
-        const ffMod2: any = await safeDynamicImport('ffmpeg-static');
-        const binPath2 = ffMod2?.default || ffMod2;
-        if (typeof binPath2 === 'string' && fs.existsSync(binPath2)) {
-          this.cachedFfmpegBin = binPath2;
-          return binPath2;
-        }
-      } catch {}
+      console.warn('[WhatsAppBridge] ffmpeg no disponible: las notas de voz no se convertirán a OGG/Opus.');
     }
 
     return null;

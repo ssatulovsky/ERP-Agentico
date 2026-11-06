@@ -752,7 +752,7 @@ app.post("/api/whatsapp/connect", async (_req, res) => {
   try {
     const result = await whatsappBridgeService.startWhatsAppLink();
     const status = whatsappBridgeService.getStatusAndConfig();
-    res.json({ success: true, ...result, ...status });
+    res.json({ success: result.status !== "NOT_INSTALLED" && result.status !== "ERROR", ...result, ...status });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
