@@ -88,7 +88,7 @@ async function runAutomatedAgentSuite() {
   // 2. TOOL 1: tool_hr_calculate_finiquito
   // ==========================================================================
   await test('Tool 1 [tool_hr_calculate_finiquito]: Cálculo legal de finiquito con tope 90 UF y descuento AFC', async () => {
-    const res = await (AutonomousAgentEngine as any).executeTool(
+    const sinDatos = await (AutonomousAgentEngine as any).executeTool(
       'tool_hr_calculate_finiquito',
       {
         colaboradorId: 'emp-1',
@@ -99,7 +99,26 @@ async function runAutomatedAgentSuite() {
       baseRequest
     );
 
-    assert.strictEqual(res.status, 'SUCCESS', 'Cálculo de finiquito debe retornar SUCCESS');
+    // 2.2 (hallazgo #6): sin sueldo ni fecha de ingreso ya no se calcula con valores por defecto.
+    assert.strictEqual(sinDatos.status, 'MISSING_PARAMS', 'Sin sueldo ni fecha de ingreso debe pedir los datos');
+    assert.ok(sinDatos.faltantes.includes('sueldoBase') && sinDatos.faltantes.includes('fechaIngreso'));
+    assert.strictEqual(sinDatos.totalFiniquitoLiquido, undefined, 'No debe entregar un monto de finiquito');
+
+    const res = await (AutonomousAgentEngine as any).executeTool(
+      'tool_hr_calculate_finiquito',
+      {
+        rut: '14.892.301-2',
+        sueldoBase: 1000000,
+        fechaIngreso: '2024-01-01',
+        fechaTermino: '2026-03-31',
+        causalLegal: 'NECESIDADES_EMPRESA_ART_161',
+        diasVacacionesPendientes: 14.5,
+        diasAvisoPrevioOtorgados: 0,
+      },
+      baseRequest
+    );
+
+    assert.strictEqual(res.status, 'SUCCESS', 'Con datos completos el cálculo de finiquito debe retornar SUCCESS');
     assert.ok(res.indemnizacionAnosServicio > 0, 'Indemnización por años de servicio calculada');
     assert.ok(res.indemnizacionAvisoPrevio > 0, 'Indemnización sustitutiva de preaviso calculada');
     assert.ok(res.descuentoAfcEmpleador > 0, 'Descuento AFC empleador aplicado conforme Art. 13 Ley 19.728');
@@ -115,6 +134,11 @@ async function runAutomatedAgentSuite() {
       {
         colaboradorId: 'emp-1',
         periodo: '2026-03',
+        rut: '14.892.301-2',
+        nombreCompleto: 'Colaborador de Prueba',
+        afpNombre: 'HABITAT',
+        saludTipo: 'FONASA',
+        tipoContrato: 'INDEFINIDO',
         sueldoBase: 950000,
         horasExtrasCantidad: 6,
       },
@@ -669,9 +693,17 @@ async function runAutomatedAgentSuite() {
     assert.ok(Array.isArray(f29Res.asiento_contable_f29), 'Debe incluir asiento_contable_f29');
 
     // 2. RRHH Payroll Contract
-    const hrRes = await (AutonomousAgentEngine as any).executeTool(
+    const hrMissing = await (AutonomousAgentEngine as any).executeTool(
       'tool_hr_calculate_payroll',
       { mes: 3, anio: 2026 },
+      baseRequest
+    );
+    // 2.4: sin datos del trabajador la herramienta pide los datos en vez de usar un sueldo de ejemplo
+    assert.strictEqual(hrMissing.status, 'MISSING_PARAMS');
+    assert.ok(hrMissing.faltantes.includes('sueldoBase'));
+    const hrRes = await (AutonomousAgentEngine as any).executeTool(
+      'tool_hr_calculate_payroll',
+      { mes: 3, anio: 2026, rut: '14.892.301-2', nombreCompleto: 'Colaborador de Prueba', sueldoBase: 1200000, afpNombre: 'HABITAT', saludTipo: 'FONASA', tipoContrato: 'INDEFINIDO' },
       baseRequest
     );
     assert.strictEqual(hrRes.status, 'SUCCESS');

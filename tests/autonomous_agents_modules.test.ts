@@ -276,9 +276,17 @@ async function runAutonomousModulesSuite() {
     const currentOps = diskPersistence.getProductionOrders(tenantRut);
     diskPersistence.saveProductionOrders(tenantRut, [...currentOps, testOp]);
 
-    const prop = await (AutonomousAgentEngine as any).executeTool(
+    let prop = await (AutonomousAgentEngine as any).executeTool(
       'tool_production_propose_closure_entry',
       { folioOP: testOp.folioOP },
+      baseRequest
+    );
+    // 2.4: la fecha de cierre ya no se supone "hoy"
+    assert.strictEqual(prop.status, 'MISSING_PARAMS');
+    assert.ok(prop.faltantes.includes('fechaCierre'));
+    prop = await (AutonomousAgentEngine as any).executeTool(
+      'tool_production_propose_closure_entry',
+      { folioOP: testOp.folioOP, fechaCierre: '2026-10-31' },
       baseRequest
     );
 

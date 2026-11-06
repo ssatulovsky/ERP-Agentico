@@ -81,10 +81,13 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
     const result = await AutonomousAgentEngine.executeAutonomousAgentLoop(agentRequest);
     const isSuccess = result.success !== false;
 
-    res.status(isSuccess ? 200 : 422).json({
+    const failureStatus = result.code === 'LLM_UNAVAILABLE' || result.code === 'LLM_EMPTY_RESPONSE' ? 503 : 422;
+    res.status(isSuccess ? 200 : failureStatus).json({
       success: isSuccess,
       data: result,
-      error: !isSuccess ? 'COMPLIANCE_REQUIREMENT_MISSING' : undefined,
+      code: result.code,
+      missingParams: result.missingParams,
+      error: !isSuccess ? result.code || 'COMPLIANCE_REQUIREMENT_MISSING' : undefined,
       errorMessage: !isSuccess ? result.finalText : undefined,
       // Alias de compatibilidad total para todos los componentes del frontend
       finalText: result.finalText,

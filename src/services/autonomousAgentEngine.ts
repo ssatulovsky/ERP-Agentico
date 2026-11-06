@@ -17,6 +17,8 @@ import { calculatePreF29 } from '../utils/f29SeniorEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
 import { aiRouterService } from './aiRouterService';
 import { diskPersistence } from './diskPersistenceService';
+import { getDemoClients } from '../data/seedData';
+import { parseSiiRcvCsv } from '../utils/siiAutomation';
 import { sanitizeContextForAi } from '../utils/aiSecuritySanitizer';
 import { commercialProcurementService } from './commercialProcurementService';
 import { HttpDteBillingService } from './httpDteBillingService';
@@ -76,6 +78,10 @@ export interface AutonomousAgentResponse {
   technicalPayload?: any;
   governanceApproval?: ModuleAgentApprovalRequest;
   executionMode: 'AUTONOMOUS_REACT_LOOP' | 'DETERMINISTIC_COMPLIANCE_CORE';
+  /** Código de error honesto cuando success es false (p. ej. LLM_UNAVAILABLE, MISSING_PARAMS). */
+  code?: string;
+  /** Parámetros que faltan para ejecutar la operación (status MISSING_PARAMS). */
+  missingParams?: string[];
   modelUsed: string;
   timestamp: string;
 }
@@ -100,7 +106,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
         diasVacacionesPendientes: { type: 'NUMBER' as const, description: 'Días hábiles de feriado proporcional pendientes' },
         diasAvisoPrevioOtorgados: { type: 'NUMBER' as const, description: 'Días de aviso previo otorgados (0 si no hubo preaviso)' },
       },
-      required: ['rut', 'sueldoBase', 'fechaIngreso', 'fechaDespido'],
+      required: ['rut', 'sueldoBase', 'fechaIngreso', 'fechaDespido', 'causal', 'diasVacacionesPendientes'],
     },
   },
   {
@@ -119,7 +125,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
         bonosImponibles: { type: 'NUMBER' as const, description: 'Bonos y comisiones imponibles' },
         tipoContrato: { type: 'STRING' as const, description: 'INDEFINIDO o PLAZO_FIJO' },
       },
-      required: ['rut', 'sueldoBase', 'afpNombre', 'saludTipo'],
+      required: ['rut', 'nombreCompleto', 'sueldoBase', 'afpNombre', 'saludTipo', 'tipoContrato'],
     },
   },
   {
@@ -271,7 +277,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
         folioOP: { type: 'STRING' as const, description: 'Folio de la orden a liquidar' },
         fechaCierre: { type: 'STRING' as const, description: 'Fecha efectiva de término YYYY-MM-DD' },
       },
-      required: ['folioOP'],
+      required: ['folioOP', 'fechaCierre'],
     },
   },
   {
@@ -410,7 +416,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
           },
         },
       },
-      required: ['tipoDte', 'receptorRut', 'receptorRazonSocial', 'items'],
+      required: ['tipoDte', 'receptorRut', 'receptorRazonSocial', 'giroReceptor', 'items'],
     },
   },
   {
@@ -466,6 +472,49 @@ export const AGENT_FUNCTION_DECLARATIONS = [
   },
 ];
 
+
+// ============================================================================
+// 2.2 / 2.4 (hallazgo #6): las herramientas nunca completan datos contables con valores fijos.
+// Si falta un monto, fecha, RUT, período o empresa, devuelven MISSING_PARAMS y el modelo los pide.
+// La tabla de clasificación de cada default está en docs/plan-correccion/tabla-defaults-herramientas.md.
+// ============================================================================
+const isBlank = (v: any) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function missingParamsResult(herramienta: string, faltantes: string[]): Record<string, any> {
+  return {
+    status: 'MISSING_PARAMS',
+    herramienta,
+    faltantes,
+    observacion: `OBSERVACIÓN: faltan datos obligatorios para ${herramienta}: ${faltantes.join(', ')}. Pídelos al usuario; no los supongas ni uses valores de ejemplo.`,
+  };
+}
+
+function findMissing(args: Record<string, any>, required: string[]): string[] {
+  return required.filter((k) => {
+    const alternatives = k.split('|');
+    return alternatives.every((alt) => isBlank(args[alt]));
+  });
+}
+
+/** Período AAAA-MM obligatorio: del argumento o del período seleccionado en la UI. Nunca uno fijo ni "el mes actual". */
+function resolvePeriodo(args: Record<string, any>, request: AutonomousAgentRequest): string | null {
+  const raw = String(args.periodo || request.context?.selectedPeriod || '').trim();
+  return PERIOD_RE.test(raw) ? raw : null;
+}
+
+/** Empresa real: contexto, persistencia o empresa de ejemplo (solo DEMO_MODE). Nunca "Empresa Cliente SpA". */
+function resolveCompany(request: AutonomousAgentRequest): CompanyProfile | null {
+  const fromContext = (request.context?.company || request.context?.empresa) as any;
+  if (fromContext && (fromContext.rut || fromContext.id)) return fromContext as CompanyProfile;
+  const stored = diskPersistence.getClient(request.empresaId);
+  if (stored) return stored as CompanyProfile;
+  const demo = getDemoClients().find(
+    (c) => c.id === request.empresaId || c.rut.replace(/[^0-9kK]/g, '') === String(request.empresaId || '').replace(/[^0-9kK]/g, '')
+  );
+  return (demo as unknown as CompanyProfile) || null;
+}
+
 export class AutonomousAgentEngine {
   /**
    * Ejecuta una herramienta real del ERP en el backend según la invocación del modelo
@@ -476,25 +525,28 @@ export class AutonomousAgentEngine {
     request: AutonomousAgentRequest
   ): Promise<Record<string, any>> {
     const indicators = request.context?.indicators || DEFAULT_INDICATORS;
-    const company = (request.context?.company || request.context?.empresa || {
-      id: request.empresaId,
-      rut: request.empresaId,
-      razonSocial: 'Empresa Cliente SpA',
-      giro: 'Servicios Profesionales',
-      direccion: 'Av. Providencia 1208',
-      comuna: 'Providencia',
-    }) as unknown as CompanyProfile;
+    const company = resolveCompany(request);
 
     switch (toolName) {
       case 'tool_hr_calculate_finiquito': {
-        const sueldoBase = Number(args.sueldoBase) || 1000000;
+        const faltantesFiniquito = findMissing(args, ['sueldoBase', 'fechaIngreso', 'fechaDespido|fechaTermino', 'causal|causalLegal', 'diasVacacionesPendientes']);
+        if (!isBlank(args.sueldoBase) && !(Number(args.sueldoBase) > 0)) faltantesFiniquito.push('sueldoBase (monto válido)');
+        const causalTxt = String(args.causal || args.causalLegal || '').toUpperCase();
+        if ((causalTxt.includes('161') || causalTxt.includes('NECESIDADES')) && isBlank(args.diasAvisoPrevioOtorgados)) {
+          faltantesFiniquito.push('diasAvisoPrevioOtorgados');
+        }
+        if (faltantesFiniquito.length > 0) return missingParamsResult('tool_hr_calculate_finiquito', faltantesFiniquito);
+        const sueldoBase = Number(args.sueldoBase);
         const gratificacion = Math.min(Math.round(sueldoBase * 0.25), Math.round((4.75 * indicators.imm) / 12));
         const remuneracionMensual = sueldoBase + gratificacion;
         const topeRemuneracion = Math.round(90 * indicators.uf);
         const baseComputable = Math.min(remuneracionMensual, topeRemuneracion);
 
-        const fechaIng = new Date(args.fechaIngreso || '2024-01-01');
-        const fechaDes = new Date(args.fechaDespido || args.fechaTermino || new Date().toISOString().split('T')[0]);
+        const fechaIng = new Date(args.fechaIngreso);
+        const fechaDes = new Date(args.fechaDespido || args.fechaTermino);
+        if (isNaN(fechaIng.getTime()) || isNaN(fechaDes.getTime()) || fechaDes < fechaIng) {
+          return missingParamsResult('tool_hr_calculate_finiquito', ['fechaIngreso y fechaDespido válidas (AAAA-MM-DD, término posterior al ingreso)']);
+        }
         const diffMs = fechaDes.getTime() - fechaIng.getTime();
         const diffAnos = diffMs / (1000 * 60 * 60 * 24 * 365.25);
 
@@ -514,11 +566,11 @@ export class AutonomousAgentEngine {
           ? aniosComputables * baseComputable
           : 0;
 
-        const indemnizacionAvisoPrevio = (isArt161 && Number(args.diasAvisoPrevioOtorgados || 0) < 30)
+        const indemnizacionAvisoPrevio = (isArt161 && Number(args.diasAvisoPrevioOtorgados) < 30)
           ? baseComputable
           : 0;
 
-        const diasVacaciones = Number(args.diasVacacionesPendientes) || 0;
+        const diasVacaciones = Number(args.diasVacacionesPendientes);
         const valorDiaHabil = Math.round(remuneracionMensual / 30);
         const montoFeriadoProporcional = Math.round(diasVacaciones * valorDiaHabil);
 
@@ -551,23 +603,27 @@ export class AutonomousAgentEngine {
           indemnizacionAvisoPrevio,
           montoFeriadoProporcional,
           descuentoAfcEmpleador,
+          descuentoAfcEsEstimado: isArt161 && aniosComputables > 0 && isBlank(args.aporteAfcEmpleadorReal) && isBlank(args.descuentoAfcEmpleador),
           totalFiniquitoLiquido,
           fundamentoLegal: 'Art. 161, 162, 163 y 172 Código del Trabajo; Art. 13 Ley 19.728.',
         };
       }
 
       case 'tool_hr_calculate_payroll': {
+        const faltantesNomina = findMissing(args, ['rut', 'nombreCompleto', 'sueldoBase', 'afpNombre', 'saludTipo', 'tipoContrato']);
+        if (faltantesNomina.length > 0) return missingParamsResult('tool_hr_calculate_payroll', faltantesNomina);
         const p = calculatePayroll({
-          sueldoBase: Number(args.sueldoBase) || 1200000,
-          afpNombre: args.afpNombre || 'HABITAT',
-          saludTipo: args.saludTipo || 'FONASA',
+          sueldoBase: Number(args.sueldoBase),
+          afpNombre: args.afpNombre,
+          saludTipo: args.saludTipo,
+          // Haberes variables: su ausencia significa "sin horas extras / sin bonos" (parámetro documentado)
           horasExtrasCantidad: Number(args.horasExtrasCantidad) || 0,
           comisionesBonosImponibles: Number(args.bonosImponibles) || 0,
-          tipoContrato: args.tipoContrato || 'INDEFINIDO',
-          nombreCompleto: args.nombreCompleto || 'Colaborador',
-          rut: args.rut || '15.342.119-4',
-          cargo: args.cargo || 'Especialista',
-        }, indicators);
+          tipoContrato: args.tipoContrato,
+          nombreCompleto: args.nombreCompleto,
+          rut: args.rut,
+          cargo: args.cargo || '',
+        } as any, indicators);
 
         return {
           status: 'SUCCESS',
@@ -594,6 +650,8 @@ export class AutonomousAgentEngine {
         const totalHaber = lineas.reduce((s: number, l: any) => s + (Number(l.haber) || 0), 0);
         const diff = Math.abs(totalDebe - totalHaber);
 
+        if (!company) return missingParamsResult('tool_accounting_propose_entry', ['empresa (no registrada en el ERP)']);
+        if (lineas.length === 0) return missingParamsResult('tool_accounting_propose_entry', ['lineas']);
         try {
           const validated = normalizeAndValidateJournalEntry({
             empresaId: company.rut,
@@ -636,9 +694,11 @@ export class AutonomousAgentEngine {
       }
 
       case 'tool_sii_query_rcv': {
-        const periodo = args.periodo || '2026-08';
-        const tipo = (args.tipoOperacion || 'COMPRAS').toUpperCase();
-        const rutEmpresa = args.empresaRut || company.rut || request.empresaId;
+        const periodo = resolvePeriodo(args, request);
+        const faltantesRcv = [...(periodo ? [] : ['periodo (AAAA-MM)']), ...findMissing(args, ['tipoOperacion'])];
+        if (faltantesRcv.length > 0) return missingParamsResult('tool_sii_query_rcv', faltantesRcv);
+        const tipo = String(args.tipoOperacion).toUpperCase();
+        const rutEmpresa = args.empresaRut || company?.rut || request.empresaId;
 
         try {
           const docs = await SiiRcvService.getDocuments(rutEmpresa, periodo, tipo as any);
@@ -697,10 +757,17 @@ export class AutonomousAgentEngine {
       }
 
       case 'tool_tax_calculate_f29': {
-        const periodo = args.periodo || '2026-08';
-        const rutEmpresa = args.empresaRut || company.rut || request.empresaId;
+        const periodo = resolvePeriodo(args, request);
+        const rutEmpresa = args.empresaRut || company?.rut || request.empresaId;
         const esExenta = Boolean(args.esExentaIva);
-        const tasaPpm = Number(args.tasaPpm) || 0.015;
+        // Tasa PPM: del argumento o de la ficha de la empresa; nunca una tasa supuesta.
+        const tasaPpm = Number(args.tasaPpm) || Number((company as any)?.tasaPpm) || 0;
+        const faltantesF29 = [
+          ...(periodo ? [] : ['periodo (AAAA-MM)']),
+          ...(company ? [] : ['empresa (no registrada en el ERP)']),
+          ...(tasaPpm > 0 ? [] : ['tasaPpm']),
+        ];
+        if (faltantesF29.length > 0) return missingParamsResult('tool_tax_calculate_f29', faltantesF29);
 
         // Obtener DTEs y remuneraciones reales del contexto o base de datos
         const dtes = (request.context?.dtes && Array.isArray(request.context.dtes))
@@ -743,24 +810,13 @@ export class AutonomousAgentEngine {
         });
 
         const indicators = (request.context?.indicators || DEFAULT_INDICATORS) as ChileIndicators;
-        const companyProfile: CompanyProfile = (request.context?.company || request.context?.empresa || diskPersistence.getClient(rutEmpresa) || {
-          id: rutEmpresa,
-          rut: rutEmpresa,
-          razonSocial: 'Empresa Contribuyente SpA',
-          giro: 'Giro Comercial General',
-          direccion: 'Dirección Comercial 123',
-          comuna: 'Santiago',
-          ciudad: 'Santiago',
-          region: 'Metropolitana',
-          telefono: '+56 2 2222 3333',
-          email: 'contacto@empresa.cl',
-          regimenTributario: '14D3_PROPYME_GENERAL',
-          tasaPpm: tasaPpm || 0.015,
-          remanenteCreditoFiscalClp: Number(args.remanenteMesAnteriorClp || 0),
-          remanenteCreditoFiscalUtm: Number(args.remanenteMesAnteriorUtm || 0),
-          esExportador: false,
-          retencionCambioSujeto: false,
-        }) as CompanyProfile;
+        // Ficha real de la empresa (validada arriba); el remanente de crédito fiscal viene del argumento o de la ficha.
+        const companyProfile: CompanyProfile = {
+          ...(company as CompanyProfile),
+          tasaPpm,
+          remanenteCreditoFiscalClp: Number(args.remanenteMesAnteriorClp ?? (company as any).remanenteCreditoFiscalClp ?? 0),
+          remanenteCreditoFiscalUtm: Number(args.remanenteMesAnteriorUtm ?? (company as any).remanenteCreditoFiscalUtm ?? 0),
+        } as CompanyProfile;
 
         // EJECUTAR MOTOR DETERMINÍSTICO SENIOR F29 (DL 825, Arts. 23 y 28, LIR Art. 84, Ley 19.983)
         const f29Result = calculatePreF29(
@@ -1033,7 +1089,8 @@ export class AutonomousAgentEngine {
       }
 
       case 'tool_fixed_assets_depreciate_period': {
-        const periodo = args.periodo || new Date().toISOString().slice(0, 7);
+        const periodo = resolvePeriodo(args, request);
+        if (!periodo) return missingParamsResult('tool_fixed_assets_depreciate_period', ['periodo (AAAA-MM)']);
         const rutEmpresa = request.empresaId;
         const allAssets = diskPersistence.getFixedAssets(rutEmpresa);
         const eligibleAssets = allAssets.filter(
@@ -1098,7 +1155,8 @@ export class AutonomousAgentEngine {
       }
 
       case 'tool_fixed_assets_propose_entry': {
-        const periodo = args.periodo || new Date().toISOString().slice(0, 7);
+        const periodo = resolvePeriodo(args, request);
+        if (!periodo) return missingParamsResult('tool_fixed_assets_propose_entry', ['periodo (AAAA-MM)']);
         const rutEmpresa = request.empresaId;
         const allAssets = diskPersistence.getFixedAssets(rutEmpresa);
         const eligibleAssets = allAssets.filter(
@@ -1340,7 +1398,8 @@ export class AutonomousAgentEngine {
           };
         }
 
-        const fechaCierre = args.fechaCierre || new Date().toISOString().slice(0, 10);
+        if (isBlank(args.fechaCierre)) return missingParamsResult('tool_production_propose_closure_entry', ['fechaCierre']);
+        const fechaCierre = String(args.fechaCierre);
         const updatedOp = {
           ...op,
           fechaRealTermino: fechaCierre,
@@ -1493,12 +1552,15 @@ export class AutonomousAgentEngine {
 
       case 'tool_procurement_create_rfq': {
         const rutEmpresa = request.empresaId;
+        const faltantesRfq = Array.isArray(args.items) && args.items.length > 0 ? [] : ['items'];
+        if (faltantesRfq.length > 0) return missingParamsResult('tool_procurement_create_rfq', faltantesRfq);
         const rfq = commercialProcurementService.createRfq(
           rutEmpresa,
           {
-            titulo: args.titulo || 'RFQ Adquisición Insumos',
-            items: args.items || [],
-            proveedorRuts: args.proveedoresRuts || [],
+            titulo: args.titulo || 'Solicitud de cotización',
+            items: args.items,
+            // Sin lista explícita se invita a los proveedores registrados (parámetro técnico documentado)
+            proveedorRuts: Array.isArray(args.proveedoresRuts) ? args.proveedoresRuts : [],
           }
         );
 
@@ -1562,7 +1624,8 @@ export class AutonomousAgentEngine {
 
       case 'tool_procurement_award_purchase_order': {
         const rutEmpresa = request.empresaId;
-        const montoNeto = Number(args.montoTotalNeto || 0);
+        if (!(Number(args.montoTotalNeto) > 0)) return missingParamsResult('tool_procurement_award_purchase_order', ['montoTotalNeto']);
+        const montoNeto = Number(args.montoTotalNeto);
         const comState = commercialProcurementService.getState(rutEmpresa);
         const rfqTarget = String(args.rfqId || '').toUpperCase();
         const rfq = (comState.rfqs || []).find(
@@ -1733,9 +1796,16 @@ export class AutonomousAgentEngine {
 
       case 'tool_billing_draft_dte': {
         const rutEmpresa = request.empresaId;
-        const tipoDte = Number(args.tipoDte || 33);
         const items = Array.isArray(args.items) ? args.items : [];
-        const montoNeto = items.reduce((s: number, it: any) => s + (Number(it.cantidad || 1) * Number(it.precioUnitario || 0)), 0);
+        const faltantesDte = [
+          ...findMissing(args, ['tipoDte', 'receptorRut', 'receptorRazonSocial', 'giroReceptor']),
+          ...(items.length > 0 && items.every((it: any) => Number(it.cantidad) > 0 && Number(it.precioUnitario) > 0)
+            ? []
+            : ['items (con cantidad y precioUnitario)']),
+        ];
+        if (faltantesDte.length > 0) return missingParamsResult('tool_billing_draft_dte', faltantesDte);
+        const tipoDte = Number(args.tipoDte);
+        const montoNeto = items.reduce((s: number, it: any) => s + Number(it.cantidad) * Number(it.precioUnitario), 0);
         const montoIva = tipoDte === 34 ? 0 : Math.round(montoNeto * 0.19);
         const montoTotal = montoNeto + montoIva;
 
@@ -1745,7 +1815,7 @@ export class AutonomousAgentEngine {
           emisorRut: rutEmpresa,
           receptorRut: args.receptorRut,
           receptorRazonSocial: args.receptorRazonSocial,
-          giroReceptor: args.giroReceptor || 'Comercio General',
+          giroReceptor: args.giroReceptor,
           tipoDte,
           items,
           montoNeto,
@@ -1796,24 +1866,40 @@ export class AutonomousAgentEngine {
 
       case 'tool_sii_ingest_csv': {
         const rutEmpresa = request.empresaId;
-        const tipo = String(args.tipoOperacion || 'COMPRAS').toUpperCase();
-        const periodo = args.periodo || new Date().toISOString().slice(0, 7);
-        const lines = String(args.csvContent || '').split('\n').filter(l => l.trim().length > 0);
-
+        const periodo = resolvePeriodo(args, request);
+        const faltantesCsv = [
+          ...findMissing(args, ['tipoOperacion', 'csvContent']),
+          ...(periodo ? [] : ['periodo (AAAA-MM)']),
+        ];
+        if (faltantesCsv.length > 0) return missingParamsResult('tool_sii_ingest_csv', faltantesCsv);
+        const tipo = String(args.tipoOperacion).toUpperCase();
+        const tipoDefault = tipo.startsWith('VENTA') ? 'VENTA' : tipo.startsWith('HONOR') ? 'HONORARIOS' : 'COMPRA';
+        // Ingesta real: se parsea el CSV oficial y se persisten los documentos (antes solo se contaban líneas).
+        const docs = parseSiiRcvCsv(String(args.csvContent), tipoDefault as any);
+        if (docs.length === 0) {
+          return {
+            status: 'NO_DATA',
+            empresaId: rutEmpresa,
+            periodo,
+            mensaje: 'El CSV no contiene documentos RCV reconocibles; no se ingresó nada.',
+          };
+        }
+        diskPersistence.saveDtes(rutEmpresa, docs.map((d) => ({ ...d, periodo: (d as any).periodo || periodo })));
         return {
           status: 'SUCCESS',
           empresaId: rutEmpresa,
           periodo,
           tipoOperacion: tipo,
-          lineasProcesadas: Math.max(0, lines.length - 1),
+          documentosIngresados: docs.length,
           origenDatos: 'CSV_OFICIAL_SII_RCV',
-          mensaje: `Archivo CSV RCV procesado formalmente: ${Math.max(0, lines.length - 1)} registros ingresados en la base de datos local.`,
+          mensaje: `CSV RCV procesado: ${docs.length} documentos guardados para ${rutEmpresa}.`,
         };
       }
 
       case 'tool_sii_reconcile_rcv_vs_ledger': {
         const rutEmpresa = request.empresaId;
-        const periodo = args.periodo || new Date().toISOString().slice(0, 7);
+        const periodo = resolvePeriodo(args, request);
+        if (!periodo) return missingParamsResult('tool_sii_reconcile_rcv_vs_ledger', ['periodo (AAAA-MM)']);
         const dtes = diskPersistence.getDtes(rutEmpresa, periodo);
         const entries = diskPersistence.getJournalEntries(rutEmpresa);
 
@@ -1858,6 +1944,8 @@ export class AutonomousAgentEngine {
       }
 
       case 'tool_submit_governance_approval': {
+        const faltantesGob = findMissing(args, ['titulo', 'descripcion']);
+        if (faltantesGob.length > 0) return missingParamsResult('tool_submit_governance_approval', faltantesGob);
         const approval = HrManagementService.requestModuleApproval({
           empresaId: request.empresaId,
           modulo: args.modulo || request.module,
@@ -1981,7 +2069,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
         // Si no hay más herramientas que llamar, el agente ha formulado su respuesta final
         if (functionCalls.length === 0) {
-          finalAnswerText = thoughtContent || response.text || 'Operación analizada y dictaminada por el agente.';
+          finalAnswerText = thoughtContent || response.text || '';
           break;
         }
 
@@ -2063,6 +2151,24 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         });
       }
 
+      // Sin dictamen del modelo (respuesta vacía o límite de iteraciones) no se informa éxito.
+      if (!finalAnswerText.trim()) {
+        return {
+          success: false,
+          code: 'LLM_EMPTY_RESPONSE',
+          module: request.module,
+          agentName: agentDef.agenteNombre,
+          agentRole: request.agentRole,
+          finalText: `El modelo de IA no entregó un dictamen tras ${iteration} iteraciones. No se ejecutó ninguna operación adicional.`,
+          steps,
+          technicalPayload: generatedTechnicalPayload,
+          governanceApproval: governanceApprovalResult,
+          executionMode,
+          modelUsed,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
       return {
         success: true,
         module: request.module,
@@ -2087,6 +2193,27 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
    * Núcleo determinista de cumplimiento: Se activa con honestidad cuando no hay conexión a LLM,
    * garantizando que los cálculos son 100% exactos bajo la ley chilena sin inventar respuestas.
    */
+  private static missingParamsResponse(
+    request: AutonomousAgentRequest,
+    agentDef: any,
+    toolOutput: Record<string, any>
+  ): AutonomousAgentResponse {
+    const faltantes: string[] = Array.isArray(toolOutput.faltantes) ? toolOutput.faltantes : [];
+    return {
+      success: false,
+      code: 'MISSING_PARAMS',
+      missingParams: faltantes,
+      module: request.module,
+      agentName: agentDef.agenteNombre,
+      agentRole: request.agentRole,
+      finalText: `Para continuar necesito estos datos: ${faltantes.join(', ')}. No se calculó ni registró nada con valores supuestos.`,
+      steps: [],
+      executionMode: 'DETERMINISTIC_COMPLIANCE_CORE',
+      modelUsed: 'DETERMINISTIC_EXPERT_SYSTEM',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   private static async executeDeterministicComplianceCore(
     request: AutonomousAgentRequest,
     agentDef: any,
@@ -2115,15 +2242,20 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         };
       }
 
+      // 2.2: sin fecha de ingreso, fecha de término, causal o feriado pendiente no se calcula (sin valores por defecto).
+      const extra = (request.context?.extraData || {}) as Record<string, any>;
       const toolOutput = await this.executeTool('tool_hr_calculate_finiquito', {
         rut: emp.rut,
         sueldoBase: emp.sueldoBase,
-        fechaIngreso: emp.fechaIngreso || '2024-01-01',
-        fechaDespido: new Date().toISOString().split('T')[0],
-        causal: 'ART_161_NECESIDADES_DE_LA_EMPRESA',
-        diasVacacionesPendientes: Number(emp.diasVacacionesPendientes) || 0,
-        diasAvisoPrevioOtorgados: 0,
+        fechaIngreso: emp.fechaIngreso,
+        fechaDespido: extra.fechaDespido || extra.fechaTermino || emp.fechaTermino || emp.fechaDespido,
+        causal: extra.causal || emp.causalTermino,
+        diasVacacionesPendientes: extra.diasVacacionesPendientes ?? emp.diasVacacionesPendientes,
+        diasAvisoPrevioOtorgados: extra.diasAvisoPrevioOtorgados ?? emp.diasAvisoPrevioOtorgados,
       }, request);
+      if (toolOutput.status === 'MISSING_PARAMS') {
+        return this.missingParamsResponse(request, agentDef, toolOutput);
+      }
 
       steps.push({
         step: 1,
@@ -2148,11 +2280,13 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         riesgoNivel: toolOutput.totalFiniquitoLiquido > 5000000 ? 'ALTO' : 'MEDIO',
       });
     } else if (qLower.includes('f29') || qLower.includes('iva') || qLower.includes('impuesto')) {
-      const currentPeriod = new Date().toISOString().substring(0, 7);
       const toolOutput = await this.executeTool('tool_tax_calculate_f29', {
-        periodo: currentPeriod,
         empresaRut: request.empresaId,
       }, request);
+      if (toolOutput.status === 'MISSING_PARAMS') {
+        return this.missingParamsResponse(request, agentDef, toolOutput);
+      }
+      const currentPeriod = toolOutput.periodo || request.context?.selectedPeriod;
 
       steps.push({
         step: 1,
@@ -2165,11 +2299,13 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Auditoría y Liquidación Determinista de Formulario 29 (${currentPeriod})\n\nValores tributarios calculados a partir de los documentos registrados en el ERP:\n\n- **Documentos de Venta Auditados:** ${toolOutput.documentosVentaProcesados}\n- **Documentos de Compra Auditados:** ${toolOutput.documentosCompraProcesados}\n- **Ventas Netas Totales:** ${formatCLP(toolOutput.ventasNetas)}\n- **Compras Netas Totales:** ${formatCLP(toolOutput.comprasNetas)}\n- **Débito Fiscal IVA:** ${formatCLP(toolOutput.debitoFiscalIva)}\n- **Crédito Fiscal IVA:** ${formatCLP(toolOutput.creditoFiscalIva)}\n- **PPM Determinado:** ${formatCLP(toolOutput.ppmDeterminado)} (tasa: ${(toolOutput.tasaPpm * 100).toFixed(2)}%)\n- **Retención Honorarios 14.5%:** ${formatCLP(toolOutput.retencionHonorarios145)}\n- **Impuesto Único 2da Categoría:** ${formatCLP(toolOutput.impuestoUnicoSegundaCategoria)}\n\n**Monto Total F29 Determinado:** **${formatCLP(toolOutput.totalPagarF29)}**.\n\n*Acreditación:* Conforme al Art. 23 DL 825 y Art. 84 LIR.`;
     } else if (request.module === 'ACTIVO_FIJO' || qLower.includes('depreci') || qLower.includes('activo fijo') || qLower.includes('baja')) {
-      const currentPeriod = new Date().toISOString().substring(0, 7);
       const toolOutput = await this.executeTool('tool_fixed_assets_depreciate_period', {
-        periodo: currentPeriod,
         empresaId: request.empresaId,
       }, request);
+      if (toolOutput.status === 'MISSING_PARAMS') {
+        return this.missingParamsResponse(request, agentDef, toolOutput);
+      }
+      const currentPeriod = request.context?.selectedPeriod as string;
 
       steps.push({
         step: 1,
@@ -2306,7 +2442,19 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Conciliación Bancaria Automática\n\n- **Movimientos Auditados:** ${recOutput.movimientosCartolaAuditados}\n- **Conciliados Automáticamente:** ${recOutput.movimientosConciliadosAutomaticamente}\n- **Partidas Pendientes:** ${recOutput.movimientosPendientes}\n- **Efectividad de Calce:** ${recOutput.tasaEfectividadCalce}%`;
     } else {
-      finalText = `El Agente **${agentDef.agenteNombre}** (${request.agentRole}) ha procesado la consulta en el módulo **${request.module}** utilizando los registros reales del ERP.\n${fallbackReason ? `(Nota: Modo determinista activado por: ${fallbackReason})` : ''}`;
+      // 2.1 (hallazgo #5): sin IA no hay respuesta genérica de éxito. Solo las ramas con herramienta deterministas responden.
+      return {
+        success: false,
+        code: 'LLM_UNAVAILABLE',
+        module: request.module,
+        agentName: agentDef.agenteNombre,
+        agentRole: request.agentRole,
+        finalText: `El motor de IA no está disponible (${fallbackReason || 'sin GEMINI_API_KEY configurada'}) y la consulta no corresponde a una operación que el núcleo de reglas pueda resolver. No se procesó ni registró nada.`,
+        steps: [],
+        executionMode: 'DETERMINISTIC_COMPLIANCE_CORE',
+        modelUsed: 'NONE',
+        timestamp: new Date().toISOString(),
+      };
     }
 
     return {
