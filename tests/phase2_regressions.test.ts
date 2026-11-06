@@ -8,6 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AutonomousAgentEngine } from '../src/services/autonomousAgentEngine';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
+import { contarResultadoConciliacion, mensajeResultadoConciliacion, saldoLibroMayorCuenta } from '../src/utils/bankReconciliationReport';
+import { executionModeLabel } from '../src/utils/executionModeLabel';
+import { voiceAssistantEngine } from '../src/services/voiceAssistantEngine';
+import { DEFAULT_AGENT_PERSONAS } from '../src/config/defaultAgentPersonas';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -144,6 +148,76 @@ async function run() {
   await test('#6 La ingesta de CSV RCV guarda documentos reales (ya no solo cuenta líneas)', async () => {
     const empty = await tool('tool_sii_ingest_csv', { tipoOperacion: 'COMPRAS', periodo: '2026-10', csvContent: 'encabezado\n' });
     assert.notStrictEqual(empty.status, 'SUCCESS', 'Un CSV sin documentos no puede informar éxito');
+  });
+
+  const read = (f: string) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+
+  // ---------------------------------------------------------------- 2.5 / 2.6 (#7)
+  await test('#7 "Sincronizar API" ya no marca cuentas como CONECTADO', () => {
+    const src = read('src/components/BankReconciliation.tsx');
+    assert.ok(!src.includes("'Sincronizar API'"), 'El botón debe ser "Importar cartola"');
+    const sync = src.slice(src.indexOf('const handleSyncBankApi'), src.indexOf('// Automated Smart Reconciliation Engine'));
+    assert.ok(!sync.includes("'CONECTADO'"), 'handleSyncBankApi no puede asignar CONECTADO');
+    assert.ok(!src.includes('saldoEnLinea: 44382013'), 'No debe existir una cuenta de respaldo con saldo inventado');
+  });
+
+  await test('#7 Con 1 movimiento sin calce el mensaje muestra 1 pendiente y no "100% cuadrado"', () => {
+    const movs: any[] = [
+      { id: 'a', estado: 'CONCILIADO', abono: 1000, cargo: 0, saldo: 1000 },
+      { id: 'b', estado: 'PENDIENTE', abono: 500, cargo: 0, saldo: 1500 },
+    ];
+    const r = contarResultadoConciliacion(movs, 1500, 1500);
+    assert.deepStrictEqual([r.conciliados, r.ambiguos, r.pendientes], [1, 0, 1]);
+    const m = mensajeResultadoConciliacion('Banco X', r);
+    assert.strictEqual(m.cuadrado, false);
+    assert.match(m.texto, /1 pendientes/);
+    assert.ok(!/100% cuadrado/i.test(m.texto));
+  });
+
+  await test('#7 "100% cuadrado" solo con 0 pendientes y diferencia de saldo $0', () => {
+    const movs: any[] = [{ id: 'a', estado: 'CONCILIADO', abono: 1000, cargo: 0, saldo: 1000 }];
+    const entries: any[] = [{ id: 'e', lineas: [{ cuentaCodigo: '1.1.02.001', debe: 1000, haber: 0 }] }];
+    const libro = saldoLibroMayorCuenta(entries, '1.1.02.001');
+    assert.strictEqual(mensajeResultadoConciliacion('B', contarResultadoConciliacion(movs, 1000, libro)).cuadrado, true);
+    assert.strictEqual(mensajeResultadoConciliacion('B', contarResultadoConciliacion(movs, 1200, libro)).cuadrado, false);
+    assert.strictEqual(mensajeResultadoConciliacion('B', contarResultadoConciliacion(movs, 1000, saldoLibroMayorCuenta(entries, undefined))).cuadrado, false);
+  });
+
+  // ---------------------------------------------------------------- 2.7 (#9)
+  await test('#9 El prompt del chat ya no pide "cifras numéricas realistas"', () => {
+    const src = read('server.ts');
+    assert.ok(!src.includes('cifras numéricas realistas'));
+    assert.match(src, /SOLO cifras que estén en el contexto/);
+  });
+
+  // ---------------------------------------------------------------- 2.8 (#10)
+  await test('#10 Formularios nuevos sin folio aleatorio ni $1.000.000; cartolas de ejemplo solo en demo', () => {
+    const dte = read('src/components/DteManager.tsx');
+    assert.ok(!/folio: Math\.floor\(Math\.random/.test(dte), 'Folio aleatorio en el formulario DTE');
+    assert.ok(!/montoNeto: 1000000/.test(dte), 'Monto de ejemplo en el formulario DTE');
+    assert.ok(!/'76\.000\.000-0'/.test(dte), 'RUT inventado en la ingesta');
+    const bank = read('src/components/BankReconciliation.tsx');
+    assert.ok(bank.includes("importMethod === 'PRESET' && isDemoModeEnabled()"));
+  });
+
+  // ---------------------------------------------------------------- 2.9 (#5)
+  await test('#5 Cada respuesta del motor muestra su modo de ejecución', async () => {
+    const prev = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'false';
+    try {
+      assert.strictEqual(executionModeLabel('AUTONOMOUS_REACT_LOOP'), 'IA + herramientas');
+      assert.strictEqual(executionModeLabel('DETERMINISTIC_COMPLIANCE_CORE'), 'Reglas');
+      assert.match(executionModeLabel('DETERMINISTIC_COMPLIANCE_CORE', { success: false, code: 'LLM_UNAVAILABLE' }), /sin ejecución \(LLM_UNAVAILABLE\)/);
+    } finally {
+      process.env.DEMO_MODE = prev;
+    }
+    assert.match(executionModeLabel('DETERMINISTIC_COMPLIANCE_CORE'), /^Demostración · Reglas$/);
+    const ctrl = read('src/controllers/autonomousAgentsController.ts');
+    assert.ok(ctrl.includes('withExecutionModeTag') && ctrl.includes('executionModeLabel: modeLabel'));
+    const r = await voiceAssistantEngine.processDialogue('¿cuánto stock queda en bodega?', DEFAULT_AGENT_PERSONAS[0], {
+      clientId: '761045509', clientName: 'Retail', rut: '76.104.550-9', inventoryItems: [],
+    } as any);
+    assert.match(r.displayMarkdown, /Modo: Demostración · Reglas/);
   });
 
   process.env.GEMINI_API_KEY = prevKey;

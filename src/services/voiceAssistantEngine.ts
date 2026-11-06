@@ -11,6 +11,7 @@ import {
   ExpenseReport 
 } from '../types';
 import { formatCLP } from '../utils/chileanAccounting';
+import { executionModeLabel } from '../utils/executionModeLabel';
 import { commercialProcurementService } from './commercialProcurementService';
 
 const getDiskPersistence = (): any => (globalThis as any)?.__diskPersistence;
@@ -1565,7 +1566,7 @@ Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutar
         company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
       };
 
-      let agentResult: { success?: boolean; finalText?: string; decision?: string; steps?: any[]; approvalRequired?: boolean; governanceApproval?: any } | null = null;
+      let agentResult: { success?: boolean; finalText?: string; decision?: string; steps?: any[]; approvalRequired?: boolean; governanceApproval?: any; executionMode?: string; executionModeLabel?: string; code?: string } | null = null;
 
       if (typeof window !== 'undefined') {
         const authToken = localStorage.getItem('erpremia_auth_token') || localStorage.getItem('erp_auth_token');
@@ -1608,9 +1609,11 @@ Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutar
       }
 
       const fullResp = agentResult.decision || agentResult.finalText || '';
-      const verbal = fullResp.replace(/[#*`_>]/g, '').replace(/\n+/g, '. ').substring(0, 240);
+      const verbal = fullResp.replace(/^\[Modo: [^\]]*\]\s*/, '').replace(/[#*`_>]/g, '').replace(/\n+/g, '. ').substring(0, 240);
 
-      let displayMd = `### 🤖 ${persona.nombre} (${persona.cargo})\n> *Ejecutado con motor agéntico de ${mappedModule}*\n\n${fullResp}`;
+      const modeLabel = agentResult.executionModeLabel || executionModeLabel(agentResult.executionMode, { success: agentResult.success, code: agentResult.code });
+      const cleanResp = fullResp.replace(/^\[Modo: [^\]]*\]\s*/, '');
+      let displayMd = `### 🤖 ${persona.nombre} (${persona.cargo})\n> *Motor agéntico · ${mappedModule}* · **Modo: ${modeLabel}**\n\n${cleanResp}`;
       if (agentResult.steps && agentResult.steps.length > 0) {
         displayMd += `\n\n#### 🔍 Pasos de Razonamiento del Agente:\n`;
         agentResult.steps.forEach((step: any, idx: number) => {

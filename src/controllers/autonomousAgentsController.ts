@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { AutonomousAgentEngine, type AutonomousAgentRequest } from '../services/autonomousAgentEngine';
+import { executionModeLabel, withExecutionModeTag } from '../utils/executionModeLabel';
 
 export const autonomousAgentsRouter = Router();
 
@@ -81,6 +82,9 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
     const result = await AutonomousAgentEngine.executeAutonomousAgentLoop(agentRequest);
     const isSuccess = result.success !== false;
 
+    // 2.9: cada respuesta lleva su modo de ejecución visible ("IA + herramientas", "Reglas" o "Demostración")
+    const modeLabel = executionModeLabel(result.executionMode, { success: result.success, code: result.code });
+    const taggedText = withExecutionModeTag(result.finalText, modeLabel);
     const failureStatus = result.code === 'LLM_UNAVAILABLE' || result.code === 'LLM_EMPTY_RESPONSE' ? 503 : 422;
     res.status(isSuccess ? 200 : failureStatus).json({
       success: isSuccess,
@@ -88,10 +92,11 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
       code: result.code,
       missingParams: result.missingParams,
       error: !isSuccess ? result.code || 'COMPLIANCE_REQUIREMENT_MISSING' : undefined,
-      errorMessage: !isSuccess ? result.finalText : undefined,
-      // Alias de compatibilidad total para todos los componentes del frontend
-      finalText: result.finalText,
-      decision: result.finalText,
+      errorMessage: !isSuccess ? taggedText : undefined,
+      // Alias de compatibilidad total para todos los componentes del frontend (con la etiqueta de modo)
+      finalText: taggedText,
+      decision: taggedText,
+      executionModeLabel: modeLabel,
       steps: result.steps,
       thoughtTrace: result.steps,
       toolCallsExecuted: (result.steps || []).map(s => s.toolCall),

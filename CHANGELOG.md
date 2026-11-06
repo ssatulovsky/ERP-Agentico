@@ -1,5 +1,23 @@
 # CHANGELOG — ERPremIA
 
+## Plan de corrección · Fase 2: motor y herramientas honestos (6 nov 2026)
+
+| Tarea | Hallazgo | Cambio | Verificación |
+| :--- | :---: | :--- | :--- |
+| **2.1** Respaldo sin IA honesto | #5 | La rama genérica del núcleo determinista devuelve `success: false, code: 'LLM_UNAVAILABLE'`; una respuesta vacía del modelo devuelve `LLM_EMPTY_RESPONSE`. El endpoint responde 503/422 con `code` y `missingParams`. Las ramas con herramienta conservan `DETERMINISTIC_COMPLIANCE_CORE`. | `tests/phase2_regressions.test.ts` (#5) |
+| **2.2** Finiquito sin defaults | #6 | Sin `sueldoBase`, `fechaIngreso`, `fechaDespido`, causal, feriado pendiente (y aviso previo en Art. 161) → `MISSING_PARAMS`. El núcleo determinista ya no usa `'2024-01-01'` ni "hoy". | #6 + `agent_tools` actualizado |
+| **2.3** Período explícito | #8 | Nuevo `src/utils/periodo.ts`. RCV, F29, activo fijo, CSV y reconciliación RCV exigen período (argumento o `context.selectedPeriod`). La UI propone el mes en curso y lista los últimos 18 meses; descarga RCV con selector de período. Se eliminan el F29 "VALIDADO" con folio y montos fijos de `/api/modules/f29/declarations`, el caso Ley Karin, los registros de marketing/tickets, el catálogo de inventario y las bodegas de ejemplo. El historial de RRHH de ejemplo pasa a `src/data/seedHrHistory.ts`. Cero `2026-08` fuera de `src/data/seed*`. | #8 |
+| **2.4** Revisión de defaults | #6 | Tabla en `docs/plan-correccion/tabla-defaults-herramientas.md`. Sin `'Empresa Cliente SpA'`/`'Empresa Contribuyente SpA'`; nómina, DTE, RFQ, orden de compra, cierre de producción y gobernanza exigen sus datos. `tool_sii_ingest_csv` ahora guarda los documentos (antes solo contaba líneas). Rutas sin empresa por defecto (`client-retail-01`, `76.892.410-K` en `erpModulesController`). | #6 |
+| **2.5** Banco sin conexión simulada | #7 | "Sincronizar API" se reemplaza por "Importar cartola"; nunca asigna `CONECTADO`. Sin cuentas no se crea una cuenta de respaldo con saldo $44.382.013. | #7 |
+| **2.6** Mensaje de conciliación | #7 | `src/utils/bankReconciliationReport.ts`: informa conciliados, ambiguos y pendientes; "100% cuadrado" solo con 0 pendientes/ambiguos y diferencia cartola vs. libro mayor = $0. | #7 |
+| **2.7** Prompt del chat | #9 | El chat usa solo cifras del contexto o del usuario y pide las faltantes; no emite ni registra. | #9 |
+| **2.8** Formularios sin datos precargados | #10 | Formulario DTE sin folio aleatorio ni $1.000.000 (estado `PENDIENTE`); la ingesta pegada omite líneas incompletas en vez de inventar RUT/folio/monto; cartolas de ejemplo y "restablecer cartola" solo con `DEMO_MODE`. | #10 |
+| **2.9** Modo de ejecución visible | #5 | Cada respuesta del motor lleva `[Modo: IA + herramientas | Reglas | Demostración · …]` y el campo `executionModeLabel`; Vera lo muestra en su encabezado. | #5 |
+
+Pendiente para la re-auditoría: empresa por defecto `76.892.410-K` en otros controladores y servicios (ver la tabla de defaults).
+
+---
+
 ## Plan de corrección · Fase 1: éxitos falsos de gravedad alta (6 nov 2026)
 
 | Tarea | Hallazgo | Cambio | Verificación |
