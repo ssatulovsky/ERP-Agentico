@@ -1,7 +1,7 @@
 import React from 'react';
 import { SeniorAccountingOrchestrator } from './SeniorAccountingOrchestrator';
 import { AccountingEntry, CompanyProfile, AccountingFirmProfile, ChileIndicators, DteDocument, EmployeePayroll, F29Declaration, LeaseContract, BankStatementMovement } from '../types';
-import { initialCompanyProfile, seedFirm } from '../data/seedData';
+import { EMPTY_FIRM, NO_CLIENT_PLACEHOLDER } from '../config/emptyProfiles';
 import { DEFAULT_INDICATORS } from '../utils/chileanAccounting';
 
 export interface AccountingLedgerProps {
@@ -20,8 +20,8 @@ export interface AccountingLedgerProps {
 export const AccountingLedger: React.FC<AccountingLedgerProps> = (props) => {
   return (
     <SeniorAccountingOrchestrator
-      company={props.company || initialCompanyProfile}
-      firm={props.firm || seedFirm}
+      company={props.company || (NO_CLIENT_PLACEHOLDER as any)}
+      firm={props.firm || EMPTY_FIRM}
       indicators={props.indicators || DEFAULT_INDICATORS}
       entries={props.entries}
       onAddEntry={props.onAddEntry}

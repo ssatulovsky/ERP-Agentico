@@ -46,7 +46,9 @@ import {
   seedProvisionesEgresos,
   getInitialPayrollsForClient,
 } from './data/seedData';
-import { demoSeed, isDemoClient } from './config/demoMode';
+import { demoSeed, isDemoClient, isDemoModeEnabled } from './config/demoMode';
+import { EMPTY_FIRM, NO_CLIENT_PLACEHOLDER } from './config/emptyProfiles';
+import { NewErpClientOnboardingModal } from './components/tenancy/NewErpClientOnboardingModal';
 import {
   seedFixedAssets,
   seedProductionOrders,
@@ -193,14 +195,18 @@ export default function App() {
   };
   
   // Multi-Company & Accounting Firm (Estudio Contable) Context State
-  const [firm, setFirm] = useState<AccountingFirmProfile>(seedFirm);
+  // Cierre 0.2: el estudio y la cartera de ejemplo solo existen con DEMO_MODE=true
+  const [firm, setFirm] = useState<AccountingFirmProfile>(() =>
+    loadPersistentState<AccountingFirmProfile>('erp_firm_profile_v1', isDemoModeEnabled() ? seedFirm : EMPTY_FIRM)
+  );
   const [clients, setClients] = useState<ClientCompany[]>(() =>
-    loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', seedClients)
+    loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', isDemoModeEnabled() ? seedClients : [])
   );
   const [activeClientId, setActiveClientId] = useState<string>(() => {
     const savedSession = loadActiveAuthSession();
-    return savedSession?.empresaId || seedClients[0].id;
+    return savedSession?.empresaId || (isDemoModeEnabled() ? seedClients[0].id : '');
   });
+  const [isFirstClientOnboardingOpen, setIsFirstClientOnboardingOpen] = useState(false);
 
   // Security & RBAC State (Empresas, Usuarios, Roles y Permisos WhatsApp Vera)
   const [securityState, setSecurityState] = useState<SecurityRbacStoreState>(() => {
@@ -256,12 +262,12 @@ export default function App() {
   };
 
   // Active Client derived object (backward-compatible with company)
-  const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
+  const activeClient = clients.find(c => c.id === activeClientId) || clients[0] || NO_CLIENT_PLACEHOLDER;
   const [company, setCompany] = useState<ClientCompany>(() => {
     const savedPeriodos = loadClientState<string[]>(
       activeClient.id, 
       'periodosCerrados', 
-      activeClient.periodosCerrados || ['2026-01', '2026-02']
+      activeClient.periodosCerrados || []
     );
     return {
       ...activeClient,
@@ -1146,7 +1152,7 @@ export default function App() {
     const selected = clients.find(c => c.id === clientId);
     if (!selected) return;
     setActiveClientId(clientId);
-    const loadedPeriodos = loadClientState<string[]>(clientId, 'periodosCerrados', selected.periodosCerrados || ['2026-01', '2026-02']);
+    const loadedPeriodos = loadClientState<string[]>(clientId, 'periodosCerrados', selected.periodosCerrados || []);
     setCompany({
       ...selected,
       periodosCerrados: loadedPeriodos,
@@ -2277,6 +2283,36 @@ export default function App() {
           }
         }}
       />
+    );
+  }
+
+  // Sin empresas registradas (instalación nueva sin DEMO_MODE): alta de la primera empresa
+  if (clients.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-slate-800 flex items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 text-center">
+          <h1 className="text-lg font-bold text-slate-900">No hay empresas registradas</h1>
+          <p className="text-sm text-slate-600">
+            Registre la primera empresa cliente para comenzar. Ningún módulo muestra datos hasta que la empresa tenga información propia.
+          </p>
+          <button
+            onClick={() => setIsFirstClientOnboardingOpen(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold cursor-pointer"
+          >
+            Registrar primera empresa
+          </button>
+        </div>
+        <NewErpClientOnboardingModal
+          isOpen={isFirstClientOnboardingOpen}
+          onClose={() => setIsFirstClientOnboardingOpen(false)}
+          onSaveClient={(newClient) => {
+            handleAddClient(newClient);
+            setActiveClientId(newClient.id);
+            setIsFirstClientOnboardingOpen(false);
+          }}
+          existingClientsCount={0}
+        />
+      </div>
     );
   }
 
