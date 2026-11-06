@@ -2548,7 +2548,7 @@ export function validateEntryFiscalPeriod(
       permitido: false,
       codigoError: 'FUERA_DE_RANGO',
       motivo: `Formato de fecha inválido (${fecha}). Debe ser YYYY-MM-DD.`,
-      sugerencia: 'Indique una fecha válida en formato ISO (ej: 2026-08-31).',
+      sugerencia: 'Indique una fecha válida en formato ISO (formato AAAA-MM-DD).',
     };
   }
 

@@ -124,6 +124,7 @@ import {
   getInitialMedicalLeavesForClient,
   getInitialSanctionsForClient,
   getInitialAbsenteeismForClient,
+  getDemoKarinCases,
 } from './data/seedHrData';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { VoiceAgentDialogueModal } from './components/voice/VoiceAgentDialogueModal';
@@ -379,23 +380,7 @@ export default function App() {
     return loadClientState<HrBenefit[]>(activeClientId, 'benefits', demoSeed(activeClient, INITIAL_HR_BENEFITS));
   });
   const [karinCases, setKarinCases] = useState<KarinInvestigationCase[]>(() => {
-    return loadClientState<KarinInvestigationCase[]>(activeClientId, 'karinCases', [
-      {
-        id: 'karin-01',
-        empresaId: activeClientId,
-        folioCaso: 'KARIN-2026-004',
-        fechaDenuncia: '2026-08-20',
-        tipoAcoso: 'ACOSO_LABORAL',
-        denuncianteRutAnonimizado: '18.***.***-2',
-        denunciadoCargo: 'Jefatura de Turno Logístico',
-        estado: 'INVESTIGACION_INTERNA',
-        medidasDeResguardo: 'Separación inmediata de turnos y cambio de dependencia física preventiva.',
-        plazoLegalDias: 30,
-        fechaLimiteInforme: '2026-09-19',
-        responsableInvestigacion: 'Comité Paritario & Oficial de Cumplimiento RRHH',
-        conclusionesYAcciones: 'Entrevistas de testigos en curso bajo estricta confidencialidad según Ley 21.643.',
-      }
-    ]);
+    return loadClientState<KarinInvestigationCase[]>(activeClientId, 'karinCases', demoSeed(activeClient, () => getDemoKarinCases(activeClientId)));
   });
 
   // Efectos de Sincronización Automática en LocalStorage por Cliente
@@ -1502,7 +1487,8 @@ export default function App() {
 
   // Descarga RCV real vía Playwright (1.3): devuelve la bitácora real del robot para mostrarla tal cual.
   const handleDownloadClientDtes = async (
-    client: ClientCompany
+    client: ClientCompany,
+    periodo: string
   ): Promise<{ success: boolean; logs: string[]; documentos: number; error?: string }> => {
     const timestamp = new Date().toLocaleString('es-CL');
     try {
@@ -1512,7 +1498,7 @@ export default function App() {
         body: JSON.stringify({
           empresaId: client.id,
           rut: client.rutAutenticacion || client.rut,
-          periodo: '2026-08',
+          periodo,
           tipo: 'ALL',
         }),
       });

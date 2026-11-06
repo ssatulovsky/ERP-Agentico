@@ -161,7 +161,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
     parameters: {
       type: 'OBJECT' as const,
       properties: {
-        periodo: { type: 'STRING' as const, description: 'Período en formato YYYY-MM (ej: 2026-08)' },
+        periodo: { type: 'STRING' as const, description: 'Período en formato AAAA-MM' },
         tipoOperacion: { type: 'STRING' as const, description: 'COMPRAS o VENTAS' },
         empresaRut: { type: 'STRING' as const, description: 'RUT de la empresa consultante' },
       },
@@ -214,7 +214,7 @@ export const AGENT_FUNCTION_DECLARATIONS = [
       type: 'OBJECT' as const,
       properties: {
         empresaId: { type: 'STRING' as const, description: 'Identificador o RUT de la empresa' },
-        periodo: { type: 'STRING' as const, description: 'Período en formato YYYY-MM (ej: 2026-08)' },
+        periodo: { type: 'STRING' as const, description: 'Período en formato AAAA-MM' },
         ipcRatePeriod: { type: 'NUMBER' as const, description: 'Tasa IPC del período para corrección monetaria opcional (ej: 0.3)' },
       },
       required: ['periodo'],

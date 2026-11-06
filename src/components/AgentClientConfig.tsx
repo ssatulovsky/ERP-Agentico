@@ -61,6 +61,7 @@ import { IfrsChartOfAccountsModal } from './tenancy/IfrsChartOfAccountsModal';
 import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterModal';
 import { AgentPersonasConfigSection } from './voice/AgentPersonasConfigSection';
 import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePanel';
+import { periodoActual } from '../utils/periodo';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -72,7 +73,8 @@ interface AgentClientConfigProps {
   onUpdateClient: (client: ClientCompany) => void;
   onDeleteClient: (clientId: string) => void;
   onDownloadClientDtes: (
-    client: ClientCompany
+    client: ClientCompany,
+    periodo: string
   ) => Promise<{ success: boolean; logs: string[]; documentos: number; error?: string }>;
   systemParams?: SystemGeneralParameters;
   onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
@@ -313,14 +315,17 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   };
 
   // 1.3 (hallazgos #3 y #10): la bitácora muestra solo los pasos que ejecutó el robot Playwright en el servidor.
+  // 2.3: la descarga RCV usa el período elegido por el usuario (no un mes fijo).
+  const [periodoRcv, setPeriodoRcv] = useState<string>(periodoActual());
+
   const handleTriggerAgentDownload = async (client: ClientCompany) => {
     setIsSimulatingAgentRun(true);
     setTerminalLogs((prev) => [
-      `[${new Date().toLocaleTimeString()}] Solicitando descarga RCV al servidor para ${client.nombreCorto} (RUT ${client.rut})...`,
+      `[${new Date().toLocaleTimeString()}] Solicitando descarga RCV ${periodoRcv} al servidor para ${client.nombreCorto} (RUT ${client.rut})...`,
       ...prev,
     ]);
     try {
-      const result = await onDownloadClientDtes(client);
+      const result = await onDownloadClientDtes(client, periodoRcv);
       const summary = result.success
         ? `[${new Date().toLocaleTimeString()}] ✅ Descarga terminada: ${result.documentos} documentos recibidos del SII.`
         : `[${new Date().toLocaleTimeString()}] ❌ Descarga no completada: ${result.error || 'sin detalle del servidor'}.`;
@@ -1065,6 +1070,15 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-slate-300">
+                <span>Período RCV</span>
+                <input
+                  type="month"
+                  value={periodoRcv}
+                  onChange={(e) => e.target.value && setPeriodoRcv(e.target.value)}
+                  className="bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-xs text-white font-mono"
+                />
+              </label>
               <button
                 disabled={isSimulatingAgentRun}
                 onClick={() => activeClient && handleTriggerAgentDownload(activeClient)}

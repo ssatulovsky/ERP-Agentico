@@ -23,6 +23,12 @@ import { diskPersistence } from '../services/diskPersistenceService';
 import { postModuleTransaction } from '../services/centralizedJournalService';
 import { requireCompanyAccess } from '../middlewares/authMiddleware';
 
+
+/** Empresa de la sesión o de la consulta; nunca una empresa por defecto. */
+function resolveEmpresaId(req: Request): string {
+  return String(req.effectiveEmpresaId || (req.query.empresaId as string) || (req.body?.empresaId as string) || '').trim();
+}
+
 export const erpModulesRouter = Router();
 
 // Control de acceso y aislamiento multi-tenant perimetral en todas las rutas de módulos ERP
@@ -142,34 +148,21 @@ erpModulesRouter.post('/banking/reconcile', async (req: Request, res: Response) 
 
 erpModulesRouter.get('/f29/declarations', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
-    const periodo = (req.query.periodo as string) || '2026-08';
-
-    const defaultF29 = {
-      id: 'f29-2026-08',
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'] });
+    const periodo = String(req.query.periodo || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)) {
+      return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['periodo'], error: 'Indique el período (AAAA-MM).' });
+    }
+    // 2.3: antes devolvía un F29 "VALIDADO" con folio y montos fijos. No existe aún un registro de
+    // declaraciones presentadas en el servidor, así que se informa honestamente que no hay datos.
+    res.status(404).json({
+      success: false,
+      code: 'NO_DATA',
       empresaId,
       periodo,
-      folioSii: '9882194',
-      totalIvaDebito: '4850000.00',
-      totalIvaCredito: '3120000.00',
-      remanenteMesAnterior: '0.00',
-      remanenteSiguienteMes: '0.00',
-      ppmDeterminado: '450000.00', // Tasa 1.5% o 0.25% según régimen 14 D3
-      retencionesSegundaCat: '435000.00', // 14.5% retención honorarios
-      totalAPagar: '2615000.00',
-      estado: 'VALIDADO',
-      capitalPropioTributario: '124800000.00',
-      jsonCasillas: {
-        c538: 4850000,
-        c537: 3120000,
-        c089: 1730000,
-        c151: 450000,
-        c048: 435000,
-        c091: 2615000,
-      },
-    };
-
-    res.json({ success: true, data: defaultF29 });
+      error: 'No hay una declaración F29 registrada para el período. Use el cálculo del F29 en el módulo Tributario.',
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -181,52 +174,11 @@ erpModulesRouter.get('/f29/declarations', async (req: Request, res: Response) =>
 
 erpModulesRouter.get('/wms/inventory', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = resolveEmpresaId(req);
     let items = diskPersistence.getInventoryItems(empresaId);
 
-    // Si aún no existen ítems en persistencia para esta empresa, inicializar catálogo base para la empresa
-    if (!items || items.length === 0) {
-      const defaultItems = [
-        {
-          id: `item-${Date.now()}-001`,
-          empresaId,
-          sku: 'HARINA-IND-50KG',
-          descripcion: 'Saco Harina Trigo Panadera 50kg Especial',
-          stockActual: 420,
-          costoPromedioPonderado: 28500,
-          costoUnitarioPMP: 28500,
-          totalValorizado: 11970000,
-          stockMinimo: 100,
-          categoria: 'MATERIAS_PRIMAS',
-        },
-        {
-          id: `item-${Date.now()}-002`,
-          empresaId,
-          sku: 'ACEITE-MAR-5L',
-          descripcion: 'Aceite Vegetal Maravilla Bidón 5 Litros',
-          stockActual: 850,
-          costoPromedioPonderado: 7800,
-          costoUnitarioPMP: 7800,
-          totalValorizado: 6630000,
-          stockMinimo: 150,
-          categoria: 'INSUMOS',
-        },
-        {
-          id: `item-${Date.now()}-003`,
-          empresaId,
-          sku: 'AZUCAR-GRAN-25KG',
-          descripcion: 'Saco Azúcar Blanca Granulada 25kg',
-          stockActual: 310,
-          costoPromedioPonderado: 19400,
-          costoUnitarioPMP: 19400,
-          totalValorizado: 6014000,
-          stockMinimo: 80,
-          categoria: 'MATERIAS_PRIMAS',
-        },
-      ];
-      diskPersistence.setInventoryItems(empresaId, defaultItems);
-      items = diskPersistence.getInventoryItems(empresaId);
-    }
+    // 2.4: ya no se crea un catálogo de ejemplo (harina, etc.) para empresas sin inventario.
+    items = items || [];
 
     const valorTotalInventario = items.reduce(
       (acc: number, it: any) =>
@@ -264,6 +216,13 @@ erpModulesRouter.post('/wms/inventory/items', async (req: Request, res: Response
 erpModulesRouter.post('/wms/movement', async (req: Request, res: Response) => {
   try {
     const { firmId, empresaId, sku, tipoMovimiento, cantidad, costoUnitario, dteFolioRef, warehouseId } = req.body;
+    // 2.4: sin empresa, bodega, SKU, tipo, cantidad o costo no se registra el movimiento (sin valores por defecto)
+    const faltantesMov = ['empresaId', 'warehouseId', 'sku', 'tipoMovimiento', 'cantidad', 'costoUnitario'].filter(
+      (k) => req.body[k] === undefined || req.body[k] === null || String(req.body[k]).trim() === ''
+    );
+    if (faltantesMov.length > 0 || !(Number(cantidad) > 0) || !(Number(costoUnitario) >= 0)) {
+      return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: faltantesMov.length ? faltantesMov : ['cantidad/costoUnitario válidos'] });
+    }
 
     const montoTotal = Math.round(Number(cantidad) * Number(costoUnitario));
     const now = new Date();
@@ -273,10 +232,10 @@ erpModulesRouter.post('/wms/movement', async (req: Request, res: Response) => {
     // 1. Registrar movimiento físico y actualizar existencias en persistencia de disco / DB
     const movementRecord = {
       id: crypto.randomUUID(),
-      empresaId: empresaId || '76.892.410-K',
-      warehouseId: warehouseId || 'bodega-central-01',
+      empresaId,
+      warehouseId,
       sku,
-      tipoMovimiento: tipoMovimiento || 'SALIDA',
+      tipoMovimiento,
       cantidad: Number(cantidad),
       costoUnitario: Number(costoUnitario),
       dteFolioRef: dteFolioRef || null,
@@ -331,25 +290,8 @@ erpModulesRouter.get('/wms/warehouses', async (req: Request, res: Response) => {
   try {
     const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '';
     let list = diskPersistence.getWarehouses(empresaId);
-    if (!list || list.length === 0) {
-      list = [
-        {
-          id: `wh-${Date.now()}-01`,
-          empresaId: empresaId || '76.892.410-K',
-          codigo: 'BOD-CENTRAL',
-          nombre: 'Bodega Central de Almacenamiento & Distribución',
-          direccion: 'Av. Industrial 4500, Galpón 4, San Bernardo',
-          tipo: 'CENTRAL',
-          responsableNombre: 'Diego Morales - Jefe de Bodega',
-          capacidadM3: 2500,
-          ocupacionActualM3: 1450,
-          activo: true,
-        },
-      ];
-      if (empresaId) {
-        diskPersistence.setWarehouses(empresaId, list);
-      }
-    }
+    // 2.4: ya no se crean bodegas de ejemplo para empresas sin bodegas registradas.
+    list = list || [];
     res.json({ success: true, count: list.length, data: list });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -430,7 +372,7 @@ erpModulesRouter.post('/wms/requisitions', async (req: Request, res: Response) =
 
 erpModulesRouter.get('/cashflow/forecast', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = resolveEmpresaId(req);
 
     const projection = {
       empresaId,
@@ -475,7 +417,7 @@ erpModulesRouter.get('/cashflow/forecast', async (req: Request, res: Response) =
 
 erpModulesRouter.get('/leases/contracts', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = resolveEmpresaId(req);
 
     const contracts = [
       {
@@ -584,23 +526,10 @@ erpModulesRouter.post('/leases/amortize', async (req: Request, res: Response) =>
 
 erpModulesRouter.get('/karin/records', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
-
-    const records = [
-      {
-        id: 'karin-001',
-        empresaId,
-        fechaIncidente: '2026-08-12',
-        canalRecepcion: 'CANAL_DENUNCIA_ETICA_CIFRADO',
-        estadoInvestigacion: 'CERRADO',
-        protocoloActivado: 'PROTOCOLO_PREVENCION_ACOSO_LABORAL_DT',
-        hashConfidencial: '7a8f9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a',
-        auditorTraceId: 'trace-karin-audit-2026',
-        createdAt: new Date('2026-08-12T14:30:00Z'),
-      },
-    ];
-
-    res.json({ success: true, count: records.length, data: records });
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'] });
+    // Antes devolvía un registro de ejemplo fijo. Sin almacenamiento de denuncias Ley Karin en el servidor, la lista es vacía.
+    res.json({ success: true, count: 0, data: [], empresaId });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -612,25 +541,10 @@ erpModulesRouter.get('/karin/records', async (req: Request, res: Response) => {
 
 erpModulesRouter.get('/anchor/marketing-logs', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
-    const logs = [
-      {
-        id: 'mkt-001',
-        empresaId,
-        campanaNombre: 'Campaña Primavera Alimentos al Mayor',
-        plataforma: 'META',
-        gastoPresupuesto: '1500000.00',
-        conversionesRegistradas: 84,
-        metricasJson: {
-          roas: 4.8,
-          cpa: 17857,
-          impresiones: 245000,
-          clicks: 6120,
-        },
-      },
-    ];
-
-    res.json({ success: true, count: logs.length, data: logs });
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'] });
+    // Antes devolvía un registro de ejemplo fijo. Sin almacenamiento de registros de marketing en el servidor, la lista es vacía.
+    res.json({ success: true, count: 0, data: [], empresaId });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -638,22 +552,10 @@ erpModulesRouter.get('/anchor/marketing-logs', async (req: Request, res: Respons
 
 erpModulesRouter.get('/anchor/tickets', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
-    const tickets = [
-      {
-        id: 'tick-001',
-        empresaId,
-        clienteRUT: '14.223.456-7',
-        canal: 'WHATSAPP',
-        consultaTexto: '¿Cuándo llega el despacho de la factura 1041?',
-        respuestaAgenteIa:
-          'Hola! Su pedido de harina y abarrotes se encuentra en tránsito con la Guía de Despacho N° 52-9842. Entrega programada hoy antes de las 17:00 hrs.',
-        resolucionAutomatica: true,
-        tiempoRespuestaMs: 420,
-      },
-    ];
-
-    res.json({ success: true, count: tickets.length, data: tickets });
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'] });
+    // Antes devolvía un registro de ejemplo fijo. Sin almacenamiento de tickets de atención en el servidor, la lista es vacía.
+    res.json({ success: true, count: 0, data: [], empresaId });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

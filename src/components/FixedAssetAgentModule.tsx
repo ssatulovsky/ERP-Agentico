@@ -43,6 +43,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { getStoredAuthToken } from '../services/apiClient';
+import { periodoActual } from '../utils/periodo';
 
 interface FixedAssetAgentModuleProps {
   currentClient: ClientCompany;
@@ -90,7 +91,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
   // Periodo para ejecución de depreciación
-  const [depreciationPeriod, setDepreciationPeriod] = useState<string>('2026-08');
+  const [depreciationPeriod, setDepreciationPeriod] = useState<string>(periodoActual());
   const [ipcRatePeriod, setIpcRatePeriod] = useState<number>(0.3); // 0.3% IPC mensual de ejemplo
 
   // Form State para Nuevo Activo Fijo

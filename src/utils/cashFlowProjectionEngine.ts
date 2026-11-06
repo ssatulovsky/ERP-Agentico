@@ -158,7 +158,7 @@ export function analyzeHistoricalSales(dtes: DteDocument[] = [], growthRatePct: 
   const monthMap: Record<string, { neto: number; bruto: number; count: number }> = {};
 
   salesDtes.forEach(d => {
-    const period = d.fechaEmision ? d.fechaEmision.substring(0, 7) : '2026-08';
+    const period = d.fechaEmision ? d.fechaEmision.substring(0, 7) : 'SIN_FECHA';
     if (!monthMap[period]) {
       monthMap[period] = { neto: 0, bruto: 0, count: 0 };
     }

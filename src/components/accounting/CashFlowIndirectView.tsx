@@ -33,6 +33,7 @@ import {
   downloadFile,
   formatCLP,
 } from '../../utils/cashFlowIndirectAgent';
+import { ultimosPeriodos, etiquetaPeriodo } from '../../utils/periodo';
 
 interface CashFlowIndirectViewProps {
   empresaRut: string;
@@ -134,11 +135,9 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
               onChange={(e) => setPeriodo(e.target.value)}
               className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 font-mono font-semibold text-slate-700 focus:outline-none focus:border-blue-500"
             >
-              <option value="2026-10">Octubre 2026</option>
-              <option value="2026-09">Septiembre 2026</option>
-              <option value="2026-08">Agosto 2026</option>
-              <option value="2026-07">Julio 2026</option>
-              <option value="2026-06">Junio 2026</option>
+              {ultimosPeriodos(18).map((p) => (
+                <option key={p} value={p}>{etiquetaPeriodo(p)}</option>
+              ))}
               <option value="2026-12">Acumulado Anual 2026</option>
             </select>
 

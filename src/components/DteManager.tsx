@@ -44,6 +44,7 @@ import { SiiIntegrationModal } from './SiiIntegrationModal';
 import { SiiAutonomousEngineModal } from './SiiAutonomousEngineModal';
 import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 import { getStoredAuthToken } from '../services/apiClient';
+import { periodoActual } from '../utils/periodo';
 
 interface DteManagerProps {
   dtes: DteDocument[];
@@ -229,6 +230,9 @@ export const DteManager: React.FC<DteManagerProps> = ({
     } catch {}
   };
 
+  // 2.3: período RCV elegido por el usuario (por defecto el mes en curso, editable)
+  const [periodoRcv, setPeriodoRcv] = useState<string>(periodoActual());
+
   // Consulta directa y verídica al Servicio de Impuestos Internos
   const handleLoadVentasFromSii = async () => {
     setIsConnectingSii(true);
@@ -243,7 +247,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
         },
         body: JSON.stringify({
           tipo: 'VENTA',
-          periodo: '2026-08',
+          periodo: periodoRcv,
           rut: company.rut,
           empresaId: (company as any).id,
         }),
@@ -286,11 +290,12 @@ export const DteManager: React.FC<DteManagerProps> = ({
               module: 'TRIBUTARIO_SII',
               modulo: 'TRIBUTARIO_SII',
               empresaId: company.rut,
-              query: `Conciliar ${receivedDocs.length} documentos RCV con el Libro Diario para el período 2026-08.`,
+              query: `Conciliar ${receivedDocs.length} documentos RCV con el Libro Diario para el período ${periodoRcv}.`,
               context: {
                 empresa: company,
                 company,
-                periodo: '2026-08',
+                periodo: periodoRcv,
+                selectedPeriod: periodoRcv,
                 dtes: receivedDocs,
               },
             }),
@@ -897,7 +902,14 @@ export const DteManager: React.FC<DteManagerProps> = ({
             </button>
           </div>
 
-          {/* Botón Cargar Registro de Ventas Oficial desde SII */}
+          {/* Botón Cargar Registro de Ventas Oficial desde SII (período explícito) */}
+          <input
+            type="month"
+            value={periodoRcv}
+            onChange={(e) => e.target.value && setPeriodoRcv(e.target.value)}
+            title="Período del Registro de Ventas a descargar"
+            className="border border-blue-300 rounded-md px-2 py-1 text-xs font-mono text-blue-900 bg-white"
+          />
           <button
             onClick={handleLoadVentasFromSii}
             disabled={isConnectingSii}

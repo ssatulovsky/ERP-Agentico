@@ -440,7 +440,7 @@ export class SiiPlaywrightRunner {
       const mesPad = String(mesNum).padStart(2, '0');
       const mesSimple = String(mesNum);
       const periodoAAAAMM = `${anio}${mesPad}`; // ej: "202608"
-      const periodoGuion = `${anio}-${mesPad}`;  // ej: "2026-08"
+      const periodoGuion = `${anio}-${mesPad}`;  // formato "AAAA-MM"
       const mesNames = [
         'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
         'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'

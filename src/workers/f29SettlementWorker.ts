@@ -46,7 +46,7 @@ export interface F29JobProgress {
 export interface F29SettlementJobData {
   traceId: string;
   empresaId: string;
-  periodo: string; // Formato 'YYYY-MM', ej: '2026-08'
+  periodo: string; // Formato 'YYYY-MM'
   aplicarPostergacionIva: boolean;
   tasaPpmManual?: number;
   tasaPpmVoluntariaManual?: number;

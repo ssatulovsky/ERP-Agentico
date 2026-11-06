@@ -1616,7 +1616,11 @@ app.post("/api/f29/senior-agent", async (req, res) => {
     }
 
     // 1. Cálculos de base tributaria en el backend
-    const periodo = options?.periodo || "2026-08";
+    // 2.3: período explícito (el de la UI); sin él no se calcula el F29.
+    const periodo = options?.periodo;
+    if (!periodo || !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(periodo))) {
+      return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['periodo'], error: 'Indique el período tributario (AAAA-MM).' });
+    }
     const utmActual = indicators?.utm || 68320;
     const utmAnterior = Math.round(utmActual / 1.004);
 

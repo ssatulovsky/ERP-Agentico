@@ -1,3 +1,4 @@
+import type { KarinInvestigationCase } from '../types';
 import { 
   LaborContract, 
   MedicalLeave, 
@@ -841,3 +842,25 @@ export function getInitialAbsenteeismForClient(clientId?: string): AbsenteeismRe
   return INITIAL_ABSENTEEISM;
 }
 
+
+
+/** Caso Ley Karin de ejemplo (solo DEMO_MODE, vía demoSeed). */
+export function getDemoKarinCases(empresaId: string): KarinInvestigationCase[] {
+  return [
+        {
+          id: 'karin-01',
+          empresaId,
+          folioCaso: 'KARIN-2026-004',
+          fechaDenuncia: '2026-08-20',
+          tipoAcoso: 'ACOSO_LABORAL',
+          denuncianteRutAnonimizado: '18.***.***-2',
+          denunciadoCargo: 'Jefatura de Turno Logístico',
+          estado: 'INVESTIGACION_INTERNA',
+          medidasDeResguardo: 'Separación inmediata de turnos y cambio de dependencia física preventiva.',
+          plazoLegalDias: 30,
+          fechaLimiteInforme: '2026-09-19',
+          responsableInvestigacion: 'Comité Paritario & Oficial de Cumplimiento RRHH',
+          conclusionesYAcciones: 'Entrevistas de testigos en curso bajo estricta confidencialidad según Ley 21.643.',
+        }
+      ];
+}

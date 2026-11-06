@@ -1003,7 +1003,7 @@ if __name__ == "__main__":
                   <div>
                     <h5 className="font-bold text-slate-900">Selección de Periodo & Descarga de Detalles</h5>
                     <p className="text-slate-600 mt-0.5">
-                      Seleccione el RUT de la empresa y el mes a procesar (ej. 2026-08). En la pestaña <strong>Ventas</strong> o <strong>Compras</strong>, haga clic en el botón <span className="font-semibold text-emerald-700">"Descargar Detalles"</span> (se generará un archivo <code className="font-mono text-slate-800">.csv</code> o <code className="font-mono text-slate-800">.txt</code> separado por punto y coma).
+                      Seleccione el RUT de la empresa y el mes a procesar (formato AAAA-MM). En la pestaña <strong>Ventas</strong> o <strong>Compras</strong>, haga clic en el botón <span className="font-semibold text-emerald-700">"Descargar Detalles"</span> (se generará un archivo <code className="font-mono text-slate-800">.csv</code> o <code className="font-mono text-slate-800">.txt</code> separado por punto y coma).
                     </p>
                   </div>
                 </div>

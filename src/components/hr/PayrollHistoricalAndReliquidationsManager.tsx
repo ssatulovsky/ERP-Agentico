@@ -38,6 +38,7 @@ import { formatCLP, formatNumberCL } from '../../utils/chileanAccounting';
 import { HrManagementService, RetroactiveAdjustmentInput } from '../../services/hrManagementService';
 import { HistoricalPayslipModal } from './HistoricalPayslipModal';
 import { HistoricalPreviredPaymentModal } from './HistoricalPreviredPaymentModal';
+import { periodoActual, etiquetaPeriodo } from '../../utils/periodo';
 
 interface Props {
   company: CompanyProfile;
@@ -53,7 +54,7 @@ export const PayrollHistoricalAndReliquidationsManager: React.FC<Props> = ({
   onAddAccountingEntry,
 }) => {
   const [activeTab, setActiveTab] = useState<'HISTORICAL' | 'CONCEPT_EVOLUTION' | 'PREVIRED_PAYMENTS' | 'RELIQUIDATIONS' | 'NEW_RELIQUIDATION'>('HISTORICAL');
-  const [selectedPeriodo, setSelectedPeriodo] = useState<string>('2026-08');
+  const [selectedPeriodo, setSelectedPeriodo] = useState<string>(periodoActual());
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(payrolls[0]?.id || '');
   const [selectedEmployeeForEvolution, setSelectedEmployeeForEvolution] = useState<string>(payrolls[0]?.rut || payrolls[0]?.id || '17.890.342-8');
   
@@ -94,7 +95,7 @@ export const PayrollHistoricalAndReliquidationsManager: React.FC<Props> = ({
 
   // Formulario de nueva reliquidación retroactiva
   const [periodoDevengado, setPeriodoDevengado] = useState<string>('2026-06');
-  const [periodoPago, setPeriodoPago] = useState<string>('2026-08');
+  const [periodoPago, setPeriodoPago] = useState<string>(periodoActual());
   const [motivoAjuste, setMotivoAjuste] = useState<RetroactiveAdjustmentInput['motivoAjuste']>(
     'AUMENTO_SUELDO_RETROACTIVO'
   );
@@ -301,7 +302,7 @@ export const PayrollHistoricalAndReliquidationsManager: React.FC<Props> = ({
                 className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 font-mono font-bold text-slate-800 cursor-pointer"
               >
                 {availablePeriods.map(p => (
-                  <option key={p} value={p}>{p} ({p === '2026-08' ? 'Agosto' : p === '2026-07' ? 'Julio' : p === '2026-06' ? 'Junio' : p === '2026-05' ? 'Mayo' : p})</option>
+                  <option key={p} value={p}>{p} ({etiquetaPeriodo(p)})</option>
                 ))}
               </select>
             </div>
@@ -971,7 +972,7 @@ export const PayrollHistoricalAndReliquidationsManager: React.FC<Props> = ({
                 value={periodoPago}
                 onChange={(e) => setPeriodoPago(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 font-mono font-bold text-slate-800"
-                placeholder="2026-08"
+                placeholder="AAAA-MM"
               />
             </div>
           </div>

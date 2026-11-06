@@ -26,7 +26,7 @@ export interface RcvSyncJobData {
   traceId?: string;
   empresaId: string;
   rutEmpresa?: string;
-  periodo: string; // Formato 'AAAA-MM', ej: '2026-08'
+  periodo: string; // Formato 'AAAA-MM'
   modo: 'COMPRAS' | 'VENTAS' | 'CONSOLIDADO';
   source?: 'FILE_UPLOAD' | 'DIRECT_API';
   payloadBase64?: string;

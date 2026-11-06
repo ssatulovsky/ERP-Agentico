@@ -21,6 +21,15 @@ import {
   HierarchicalAccountItem,
 } from '../types';
 import { computeNoteBreakdown } from './financialNotesService';
+import { describirPeriodos, periodoActual, esPeriodoValido, etiquetaPeriodo } from './periodo';
+/** "31 de Octubre de 2026" para un período AAAA-MM. */
+function fechaCierreLabel(periodo: string): string {
+  if (!esPeriodoValido(periodo)) return periodo;
+  const [y, m] = periodo.split('-').map(Number);
+  const ultimoDia = new Date(y, m, 0).getDate();
+  return `${ultimoDia} de ${etiquetaPeriodo(periodo).split(' ')[0]} de ${y}`;
+}
+
 
 // Helper to format Chilean Peso
 export function fmtClp(num: number | undefined | null): string {
@@ -273,9 +282,11 @@ export function downloadRcvExcel(dtes: DteDocument[] = [], company: ClientCompan
 export function downloadRcvPdf(
   dtes: DteDocument[] = [], 
   company: ClientCompany, 
-  periodo = '2026-08'
+  periodoParam?: string
 ) {
   const safeDtes = Array.isArray(dtes) ? dtes : [];
+  // 2.3: el período del informe es el indicado o el de los documentos incluidos (nunca un mes fijo)
+  const periodo = periodoParam || describirPeriodos(safeDtes as any);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   
   addPdfHeader(
@@ -357,8 +368,9 @@ export function downloadRcvPdf(
 export function downloadBalance8ColExcel(
   balance8Col: Balance8ColumnasReport, 
   company: ClientCompany,
-  periodo = '2026-08'
+  periodoParam?: string
 ) {
+  const periodo = periodoParam || (balance8Col as any)?.periodo || 'Sin período';
   const wb = XLSX.utils.book_new();
 
   const data = (balance8Col?.cuentas || []).map(c => ({
@@ -417,8 +429,9 @@ export function downloadBalance8ColExcel(
 export function downloadBalance8ColPdf(
   balance8Col: Balance8ColumnasReport, 
   company: ClientCompany,
-  periodo = '2026-08'
+  periodoParam?: string
 ) {
+  const periodo = periodoParam || (balance8Col as any)?.periodo || 'Sin período';
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   
   addPdfHeader(
@@ -528,15 +541,16 @@ export function downloadBalance8ColCsv(balance8Col: Balance8ColumnasReport) {
 export function downloadFinancialStatementsPdf(
   ifrs: any, 
   company: ClientCompany,
-  periodo = '2026-08'
+  periodoParam?: string
 ) {
+  const periodo: string = periodoParam || ifrs?.periodo || periodoActual();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   
   addPdfHeader(
     doc, 
     company, 
     'Estados Financieros IFRS Clasificados', 
-    `Período al 31 de Agosto de ${periodo.split('-')[0]} - Normas Internacionales de Información Financiera (NIIF / IFRS)`,
+    `Período al ${fechaCierreLabel(periodo)} - Normas Internacionales de Información Financiera (NIIF / IFRS)`,
     false
   );
 
@@ -956,8 +970,9 @@ export function downloadF29Csv(f29: F29Declaration) {
 // 6. REMUNERACIONES Y NÓMINA (RRHH / PREVIRED)
 // ============================================================================
 
-export function downloadPayrollPdf(payrolls: EmployeePayroll[] = [], company: ClientCompany, periodo = '2026-08') {
+export function downloadPayrollPdf(payrolls: EmployeePayroll[] = [], company: ClientCompany, periodoParam?: string) {
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
+  const periodo = periodoParam || describirPeriodos(safePayrolls as any);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   
   addPdfHeader(

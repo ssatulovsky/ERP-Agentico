@@ -354,7 +354,7 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
                       required
                       value={notaPedidoFolio}
                       onChange={(e) => setNotaPedidoFolio(e.target.value)}
-                      placeholder="ej: NP-2026-0819"
+                      placeholder="ej: NP-AAAA-NNNN"
                       className="w-full p-2 bg-white border border-slate-300 rounded font-mono font-bold text-slate-900"
                     />
                   </div>

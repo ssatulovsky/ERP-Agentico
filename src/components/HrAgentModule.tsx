@@ -95,6 +95,9 @@ import { HrAgentTeamSelectorBar } from './hr/HrAgentTeamSelectorBar';
 import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 import { HrAgentRole } from '../services/hrAgentTeamService';
 import { getStoredAuthToken } from '../services/apiClient';
+import { demoSeed } from '../config/demoMode';
+import { periodoActual } from '../utils/periodo';
+import { getDemoKarinCases } from '../data/seedHrData';
 
 export type HrSubTab =
   | 'collaborators'
@@ -194,23 +197,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
   const [alerts, setAlerts] = useState<HrAgentAlert[]>(INITIAL_HR_ALERTS);
 
   // Ley Karin Cases State
-  const [localKarinCases, setLocalKarinCases] = useState<KarinInvestigationCase[]>([
-    {
-      id: 'karin-01',
-      empresaId: activeEmpresaId,
-      folioCaso: 'KARIN-2026-004',
-      fechaDenuncia: '2026-08-20',
-      tipoAcoso: 'ACOSO_LABORAL',
-      denuncianteRutAnonimizado: '18.***.***-2',
-      denunciadoCargo: 'Jefatura de Turno Logístico',
-      estado: 'INVESTIGACION_INTERNA',
-      medidasDeResguardo: 'Separación inmediata de turnos y cambio de dependencia física preventiva.',
-      plazoLegalDias: 30,
-      fechaLimiteInforme: '2026-09-19',
-      responsableInvestigacion: 'Comité Paritario & Oficial de Cumplimiento RRHH',
-      conclusionesYAcciones: 'Entrevistas de testigos en curso bajo estricta confidencialidad según Ley 21.643.',
-    }
-  ]);
+  const [localKarinCases, setLocalKarinCases] = useState<KarinInvestigationCase[]>(demoSeed(activeEmpresaId, () => getDemoKarinCases(activeEmpresaId)));
 
   const activeContracts = contracts ?? localContracts;
   const activeMedicalLeaves = medicalLeaves ?? localMedicalLeaves;
@@ -1804,7 +1791,11 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  const res = generatePrevired105Fields(payrolls, activeClient, '2026-08');
+                  const res = generatePrevired105Fields(
+                    payrolls,
+                    activeClient,
+                    String((payrolls.find((p: any) => p.periodo) as any)?.periodo || periodoActual())
+                  );
                   const blob = new Blob([res.archivoContenido], { type: 'text/plain;charset=utf-8;' });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');

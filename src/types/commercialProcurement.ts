@@ -135,7 +135,7 @@ export interface PurchaseOrderRecord {
 
 export interface CommercialQuoteRecord {
   id: string;
-  folio: string; // ej: "COT-2026-089"
+  folio: string; // ej: "COT-AAAA-NNN"
   fechaEmision: string;
   clienteRut: string;
   clienteRazonSocial: string;

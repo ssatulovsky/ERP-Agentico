@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { EmployeePayroll, CompanyProfile } from '../../types';
 import { formatCLP } from '../../utils/chileanAccounting';
+import { periodoActual, ultimosPeriodos, etiquetaPeriodo } from '../../utils/periodo';
 
 interface LegalBooksDTManagerProps {
   employees: EmployeePayroll[];
@@ -24,7 +25,7 @@ export const LegalBooksDTManager: React.FC<LegalBooksDTManagerProps> = ({
   employees,
   company,
 }) => {
-  const [periodo, setPeriodo] = useState('2026-08');
+  const [periodo, setPeriodo] = useState(periodoActual());
   const [estadoEnvio, setEstadoEnvio] = useState<'PENDIENTE_ENVIO' | 'ENVIADO_ACEPTADO_DT'>('ENVIADO_ACEPTADO_DT');
   const [folioCertificado, setFolioCertificado] = useState('CERT-DT-202608-99410');
 
@@ -182,8 +183,9 @@ export const LegalBooksDTManager: React.FC<LegalBooksDTManagerProps> = ({
             onChange={(e) => setPeriodo(e.target.value)}
             className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-lg px-3 py-1.5 font-mono font-semibold"
           >
-            <option value="2026-08">Agosto 2026</option>
-            <option value="2026-09">Septiembre 2026</option>
+{ultimosPeriodos(18).map((p) => (
+                  <option key={p} value={p}>{etiquetaPeriodo(p)}</option>
+                ))}
           </select>
 
           <button

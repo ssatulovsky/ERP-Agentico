@@ -55,6 +55,7 @@ import { JournalEntryView } from './accounting/JournalEntryView';
 import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModal';
 import { getStoredAuthToken } from '../services/apiClient';
 import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
+import { periodoActual, ultimosPeriodos, etiquetaPeriodo } from '../utils/periodo';
 
 interface F29SeniorAgentProps {
   f29: F29Declaration;
@@ -80,7 +81,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
 
   // Estado general
   const [activeSubTab, setActiveSubTab] = useState<'panel' | 'terminal' | 'rcv_audit' | 'patente_f22' | 'queue_tracker'>('panel');
-  const [selectedPeriod, setSelectedPeriod] = useState<string>(f29?.periodo || '2026-08');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(f29?.periodo || periodoActual());
   const [isPostergacionActive, setIsPostergacionActive] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedAsiento, setCopiedAsiento] = useState(false);
@@ -363,9 +364,9 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                 onChange={(e) => setSelectedPeriod(e.target.value)}
                 className="bg-transparent text-slate-900 font-bold focus:outline-none cursor-pointer"
               >
-                <option value="2026-08">2026-08 (Agosto)</option>
-                <option value="2026-07">2026-07 (Julio)</option>
-                <option value="2026-09">2026-09 (Septiembre)</option>
+                {ultimosPeriodos(18).map((p) => (
+                  <option key={p} value={p}>{p} ({etiquetaPeriodo(p)})</option>
+                ))}
               </select>
             </div>
 

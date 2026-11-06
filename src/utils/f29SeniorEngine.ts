@@ -40,7 +40,11 @@ export function calculatePreF29(
   // 1.4: los DTE simulados (sin validez tributaria) nunca se declaran en el F29.
   const safeDtes = (Array.isArray(dtes) ? dtes : []).filter((d) => !isSimulatedDte(d as any));
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
-  const periodo = options.periodo || '2026-08';
+  // 2.3: el período tributario es obligatorio; no se declara un mes supuesto.
+  if (!options.periodo || !/^\d{4}-(0[1-9]|1[0-2])$/.test(options.periodo)) {
+    throw new Error('Período tributario (AAAA-MM) requerido para calcular el F29.');
+  }
+  const periodo = options.periodo;
   const utmActual = options.utmActual || indicators?.utm || 68320;
   // Si no se especifica UTM anterior, se aproxima con variación IPC mensual (~0.4%)
   const utmAnterior = options.utmAnterior || Math.round(utmActual / 1.004);

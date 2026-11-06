@@ -12,6 +12,7 @@ import {
 import { formatCLP, createPurchaseDteEntry, createSalesDteEntry, createHonorariosEntry } from './chileanAccounting';
 
 // Catálogo inicial de memoria contable por RUT para proveedores y servicios habituales en Chile
+// Catálogo base de imputación por proveedor: sin historial de uso (vecesUsado/ultimaFecha se llenan con el uso real).
 export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
   {
     id: 'rule-enel',
@@ -20,9 +21,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.05',
     cuentaNombre: 'Gasto Electricidad y Energía',
     conceptoDefecto: 'Suministro eléctrico sucursal y oficina central',
-    vecesUsado: 14,
-    ultimaFecha: '2026-08-15',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-aguas',
@@ -31,9 +32,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.06',
     cuentaNombre: 'Gasto Agua Potable y Alcantarillado',
     conceptoDefecto: 'Consumo mensual agua potable matriz',
-    vecesUsado: 12,
-    ultimaFecha: '2026-08-12',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-entel',
@@ -42,9 +43,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.04',
     cuentaNombre: 'Gasto Telecomunicaciones e Internet',
     conceptoDefecto: 'Planes corporativos móviles y enlace fibra óptica',
-    vecesUsado: 16,
-    ultimaFecha: '2026-08-20',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-copec',
@@ -53,9 +54,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.08',
     cuentaNombre: 'Gasto Combustibles y Lubricantes',
     conceptoDefecto: 'Carga diesel y gasolina vehículos operacionales',
-    vecesUsado: 22,
-    ultimaFecha: '2026-08-28',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-sodimac',
@@ -64,9 +65,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '1.1.09',
     cuentaNombre: 'Existencias y Materiales de Operación',
     conceptoDefecto: 'Materiales ferretería y herramientas de mantención',
-    vecesUsado: 9,
-    ultimaFecha: '2026-08-10',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-walmart',
@@ -75,9 +76,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.15',
     cuentaNombre: 'Insumos de Oficina y Aseo',
     conceptoDefecto: 'Artículos de aseo, cafetería y oficina',
-    vecesUsado: 8,
-    ultimaFecha: '2026-08-05',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-aws',
@@ -86,9 +87,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.18',
     cuentaNombre: 'Software, Nube y Licencias TI',
     conceptoDefecto: 'Servidores cloud hosting y base de datos',
-    vecesUsado: 15,
-    ultimaFecha: '2026-08-31',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-google',
@@ -97,9 +98,9 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.18',
     cuentaNombre: 'Software, Nube y Licencias TI',
     conceptoDefecto: 'Google Workspace y servicios en la nube',
-    vecesUsado: 11,
-    ultimaFecha: '2026-08-25',
-    esFrecuente: true
+    vecesUsado: 0,
+    ultimaFecha: '',
+    esFrecuente: false
   },
   {
     id: 'rule-notaria',
@@ -108,8 +109,8 @@ export const DEFAULT_SUPPLIER_RULES: SupplierAccountRule[] = [
     cuentaCodigo: '5.1.12',
     cuentaNombre: 'Gastos Legales y Notariales',
     conceptoDefecto: 'Protocolización de escrituras y legalización de poderes',
-    vecesUsado: 5,
-    ultimaFecha: '2026-07-14',
+    vecesUsado: 0,
+    ultimaFecha: '',
     esFrecuente: false
   },
 ];
@@ -219,7 +220,10 @@ export function detectPendingSiiMonths(
       totalDocumentosRegistrados: dtesPeriodo.length,
       estado,
       documentosPendientesContabilizar: pendientesContabilizar,
-      ultimaActualizacion: dtesPeriodo.length > 0 ? '2026-08-30' : undefined
+      // Fecha real del documento más reciente del período (antes era una fecha fija)
+      ultimaActualizacion: dtesPeriodo.length > 0
+        ? dtesPeriodo.map((d: any) => String(d.fechaRecepcion || d.fechaEmision || '')).filter(Boolean).sort().pop()
+        : undefined
     });
   }
 

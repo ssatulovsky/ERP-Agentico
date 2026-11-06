@@ -71,6 +71,7 @@ import {
   ACCESSIBLE_ACCOUNTS
 } from '../utils/siiAutomation';
 import { getStoredAuthToken } from '../services/apiClient';
+import { periodoActual, ultimosPeriodos, etiquetaPeriodo } from '../utils/periodo';
 
 interface SiiAutonomousEngineModalProps {
   isOpen: boolean;
@@ -130,7 +131,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   }, [company, clientData]);
 
   // Período de trabajo
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('2026-08');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(periodoActual());
 
   // Reglas de proveedores con historial contable
   const [supplierRules, setSupplierRules] = useState<SupplierAccountRule[]>(DEFAULT_SUPPLIER_RULES);
@@ -724,15 +725,9 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                 onChange={(e) => setSelectedPeriod(e.target.value)}
                 className="bg-transparent font-bold text-white outline-none cursor-pointer"
               >
-                <option value="2026-09" className="bg-slate-800">Septiembre 2026</option>
-                <option value="2026-08" className="bg-slate-800">Agosto 2026</option>
-                <option value="2026-07" className="bg-slate-800">Julio 2026</option>
-                <option value="2026-06" className="bg-slate-800">Junio 2026</option>
-                <option value="2026-05" className="bg-slate-800">Mayo 2026</option>
-                <option value="2026-04" className="bg-slate-800">Abril 2026</option>
-                <option value="2026-03" className="bg-slate-800">Marzo 2026</option>
-                <option value="2026-02" className="bg-slate-800">Febrero 2026</option>
-                <option value="2026-01" className="bg-slate-800">Enero 2026</option>
+                {ultimosPeriodos(18).map((p) => (
+                  <option key={p} value={p} className="bg-slate-800">{etiquetaPeriodo(p)}</option>
+                ))}
               </select>
             </div>
 
@@ -2217,7 +2212,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
                     type="text"
                     value={logSearchQuery}
                     onChange={(e) => setLogSearchQuery(e.target.value)}
-                    placeholder="Buscar en logs (ej: Error, 2026-08, zeusr, Token, Captura)..."
+                    placeholder="Buscar en logs (ej: Error, zeusr, Token, Captura)..."
                     className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                   {logSearchQuery && (

@@ -800,7 +800,7 @@ export interface SocialSecurityEmployeeDetail {
 }
 
 export interface SocialSecurityHistoricalPayment {
-  id: string; // ej: 'prev-2026-08'
+  id: string; // ej: 'prev-AAAA-MM'
   empresaId: string;
   rutEmpresa: string;
   razonSocial: string;
@@ -1397,7 +1397,7 @@ export interface AccountingEntry {
   id: string;
   fecha: string;
   concepto: string;
-  documento: string; // ej: "Factura N° 1240", "F29 Periodo 2026-08", "Liquidación Juan Pérez", "Contrato Arriendo #102"
+  documento: string; // ej: "Factura N° 1240", "F29 Periodo AAAA-MM", "Liquidación Juan Pérez", "Contrato Arriendo #102"
   documentoReferencia?: string;
   tipoDocumentoRef?: TipoDocumentoRespaldo;
   folioDocumentoRef?: string;
