@@ -358,6 +358,23 @@ async function run() {
     assert.ok(!/44\.382\.013|2\.150\.000|Caja Central Oficina Principal|100% CUADRADO/.test(bank), bank.slice(0, 300));
   });
 
+  // ---------------------------------------------------------------- 1.6 (#1, #10) y cierre 0.2
+  await test('1.6 Franja DEMOSTRACIÓN en toda la UI solo con DEMO_MODE; sin DEMO_MODE no hay cartera ni estudio de ejemplo', () => {
+    const main = fs.readFileSync(path.join(ROOT, 'src/main.tsx'), 'utf8');
+    assert.ok(main.includes('<DemoModeBanner />'));
+    const banner = fs.readFileSync(path.join(ROOT, 'src/components/DemoModeBanner.tsx'), 'utf8');
+    assert.ok(banner.includes('if (!isDemoModeEnabled()) return null;'));
+    const app = fs.readFileSync(path.join(ROOT, 'src/App.tsx'), 'utf8');
+    assert.ok(app.includes("isDemoModeEnabled() ? seedClients : []"), 'La cartera de ejemplo debe depender de DEMO_MODE');
+    assert.ok(app.includes("isDemoModeEnabled() ? seedFirm : EMPTY_FIRM"), 'El estudio de ejemplo debe depender de DEMO_MODE');
+    assert.ok(!app.includes("['2026-01', '2026-02']"), 'Períodos cerrados inventados');
+  });
+
+  await test('Cierre: la app compilada no usa node:crypto en el navegador (antes: pantalla en blanco)', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'src/services/securityRbacService.ts'), 'utf8');
+    assert.ok(src.includes("typeof (crypto as any)?.randomBytes !== 'function'"));
+  });
+
   console.log(`\nRESULTADO FASE 1: ${passed} de ${total} pruebas pasaron.`);
   process.exit(passed === total ? 0 : 1);
 }

@@ -14,6 +14,10 @@ export function generateRandomInitialPassword(length = 20): string {
  * Retorna el hash scrypt de una contraseña inicial recién generada de forma aleatoria.
  */
 export function generateRandomScryptHash(): string {
+  // En el navegador no existe node:crypto (Vite lo externaliza y randomBytes es undefined): antes esto
+  // rompía la carga de la app compilada (pantalla en blanco). Las contraseñas solo se generan y verifican
+  // en el servidor; en el cliente el usuario por defecto queda con una contraseña inutilizable.
+  if (typeof (crypto as any)?.randomBytes !== 'function') return 'BLOQUEADA_EN_CLIENTE';
   return hashPassword(generateRandomInitialPassword());
 }
 
