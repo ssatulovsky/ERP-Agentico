@@ -331,22 +331,24 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
   // Manual DTE form state
   const [newDte, setNewDte] = useState<Partial<DteDocument>>({
+    // 2.8 (hallazgo #10): formulario nuevo sin folio aleatorio ni montos de ejemplo.
+    // El folio lo ingresa el usuario (el del documento o el siguiente del CAF disponible).
     tipoDte: '33',
-    folio: Math.floor(Math.random() * 9000) + 1000,
+    folio: undefined,
     tipoOperacion: 'VENTA',
     rutContraparte: '',
     razonSocialContraparte: '',
     fechaEmision: new Date().toISOString().split('T')[0],
     fechaVencimiento: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-    montoNeto: 1000000,
+    montoNeto: 0,
     montoExento: 0,
-    montoIva: 190000,
-    montoTotal: 1190000,
+    montoIva: 0,
+    montoTotal: 0,
     retencionTasa: 0.145,
     retencionMonto: 0,
-    estadoSii: 'ACEPTADO',
+    estadoSii: 'PENDIENTE',
     estadoPago: 'PENDIENTE',
-    glosa: 'Servicios Profesionales de Desarrollo y Consultoría',
+    glosa: '',
   });
 
   // Filtered DTEs
@@ -426,7 +428,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
       montoTotal: Number(newDte.montoTotal || 0),
       retencionTasa: newDte.retencionTasa,
       retencionMonto: newDte.retencionMonto,
-      estadoSii: (newDte.estadoSii as any) || 'ACEPTADO',
+      estadoSii: (newDte.estadoSii as any) || 'PENDIENTE',
       estadoPago: (newDte.estadoPago as any) || 'PENDIENTE',
       centroCostoId: newDte.centroCostoId,
       centroCostoCodigo: newDte.centroCostoCodigo,
@@ -492,6 +494,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
 
     const lines = rawText.trim().split('\n');
     let addedCount = 0;
+    let skippedLines = 0;
 
     lines.forEach((line, index) => {
       // Skip header if contains 'folio' or 'rut'
@@ -500,12 +503,16 @@ export const DteManager: React.FC<DteManagerProps> = ({
       const delimiter = line.includes(';') ? ';' : line.includes('\t') ? '\t' : ',';
       const parts = line.split(delimiter).map(p => p.trim().replace(/^["']|["']$/g, ''));
 
-      if (parts.length >= 3) {
-        const folio = parseInt(parts[0], 10) || (1000 + Math.floor(Math.random() * 5000));
-        const rut = parts[1] || '76.000.000-0';
-        const razonSocial = parts[2] || 'EMPRESA INGESTADA SII';
-        const netoRaw = parts[3] ? parseInt(parts[3].replace(/[$.]/g, ''), 10) : 1000000;
-        const neto = isNaN(netoRaw) ? 1000000 : netoRaw;
+      if (parts.length >= 4) {
+        // 2.8: una línea sin folio, RUT, razón social o monto válidos se omite (no se completa con valores inventados)
+        const folio = parseInt(parts[0], 10);
+        const rut = parts[1];
+        const razonSocial = parts[2];
+        const neto = parseInt((parts[3] || '').replace(/[$.]/g, ''), 10);
+        if (!folio || !rut || !razonSocial || isNaN(neto)) {
+          skippedLines++;
+          return;
+        }
         const isExento = isCompanyExento && ingestType === 'VENTA';
         const finalTipoDte = ingestType === 'HONORARIOS' ? 'BHE' : (isExento ? '34' : '33');
         const iva = (ingestType === 'HONORARIOS' || isExento) ? 0 : Math.round(neto * 0.19);
@@ -552,7 +559,10 @@ export const DteManager: React.FC<DteManagerProps> = ({
       }
     });
 
-    setIngestSuccessMsg(`¡Se procesaron e ingresaron exitosamente ${addedCount} documentos al RCV!`);
+    setIngestSuccessMsg(
+      `Se ingresaron ${addedCount} documentos al RCV.` +
+        (skippedLines > 0 ? ` Se omitieron ${skippedLines} líneas sin folio, RUT, razón social o monto válidos.` : '')
+    );
     setTimeout(() => {
       setIngestSuccessMsg(null);
       setRawText('');
@@ -1416,7 +1426,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
                     onChange={(e) => {
                       const t = e.target.value as DteType;
                       setNewDte(prev => ({ ...prev, tipoDte: t }));
-                      handleNetoChange(newDte.montoNeto || 1000000, t);
+                      handleNetoChange(newDte.montoNeto || 0, t);
                     }}
                     className="w-full bg-slate-50 border border-slate-300 rounded-md p-2 text-slate-800 focus:outline-none focus:border-[#2563eb]"
                   >
