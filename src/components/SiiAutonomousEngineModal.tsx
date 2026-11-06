@@ -514,7 +514,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
   // Ejecución de Centralización de Compras o Ventas (Resumen o Detallado) con Certificación Agéntica
   const handleGenerateCentralization = async (tipo: 'COMPRA' | 'VENTA') => {
     try {
-      // 1. Auditoría y certificación por el Agente Autónomo Tributario SII (ReAct Loop)
+      // 1. Auditoría y certificación por el Asistente con herramientas Tributario SII (ReAct Loop)
       try {
         const authToken = getStoredAuthToken();
         const docsCount = safeDtes.filter(d => (tipo === 'COMPRA' ? d.tipoOperacion === 'COMPRA' : d.tipoOperacion === 'VENTA') && (d.periodo === selectedPeriod || d.fechaEmision?.startsWith(selectedPeriod))).length;
@@ -704,7 +704,7 @@ export const SiiAutonomousEngineModal: React.FC<SiiAutonomousEngineModalProps> =
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold">Agente Autónomo SII & Imputación Contable</h2>
+                <h2 className="text-lg font-bold">Asistente con herramientas SII & Imputación Contable</h2>
                 <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded-full font-mono font-medium border border-emerald-500/30">
                   RCV + BHE + Centralización
                 </span>

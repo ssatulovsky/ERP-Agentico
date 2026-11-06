@@ -86,7 +86,7 @@ export const learningCategoryEnumValues = [
 export type LearningCategory = (typeof learningCategoryEnumValues)[number];
 
 // ============================================================================
-// 1. TABLA: enterprise_agent_profiles (Padrón de Agentes Autónomos por Empresa)
+// 1. TABLA: enterprise_agent_profiles (Padrón de Asistentes con herramientas por Empresa)
 // ============================================================================
 export const enterpriseAgentProfiles = mysqlTable(
   'enterprise_agent_profiles',

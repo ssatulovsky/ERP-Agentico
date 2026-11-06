@@ -89,7 +89,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
     new Set(projectedMovements.map(m => m.id))
   );
 
-  // Estado del Motor Agéntico Autónomo
+  // Estado del Motor de asistentes con herramientas
   const [isExecutingAgent, setIsExecutingAgent] = useState(false);
   const [agentThoughtTrace, setAgentThoughtTrace] = useState<any[] | null>(null);
   const [agentDecisionText, setAgentDecisionText] = useState<string | null>(null);
@@ -179,7 +179,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-bold text-white">
-                  Agente Autónomo de Proyección de Compromisos ERP
+                  Asistente con herramientas de Proyección de Compromisos ERP
                 </h3>
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
                   Rolling Forecast
@@ -215,7 +215,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
             <div className="bg-indigo-950/50 border border-indigo-500/40 rounded-xl p-4 space-y-2">
               <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold">
                 <Bot className="w-4 h-4 text-amber-300" />
-                <span>Dictamen del Agente Autónomo de Flujo de Caja (30-60-90 Días):</span>
+                <span>Dictamen del Asistente con herramientas de Flujo de Caja (30-60-90 Días):</span>
               </div>
               <p className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-950/70 p-3 rounded-lg border border-slate-800">
                 {agentDecisionText}

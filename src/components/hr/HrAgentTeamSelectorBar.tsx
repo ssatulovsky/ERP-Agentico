@@ -69,7 +69,7 @@ export const HrAgentTeamSelectorBar: React.FC<Props> = ({
             </span>
           </div>
           <span className="text-[11px] text-slate-400 font-mono">
-            7 Agentes Autónomos con Aprobación Humana
+            7 asistentes con herramientas y aprobación humana
           </span>
         </div>
 
@@ -174,7 +174,7 @@ export const HrAgentTeamSelectorBar: React.FC<Props> = ({
               <div className="space-y-2">
                 <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  Acciones Autónomas que Ejecuta
+                  Acciones que propone (con aprobación humana)
                 </div>
                 <ul className="text-xs text-slate-600 space-y-1 pl-4 list-disc">
                   {showDetailModal.accionesAutonomas.map((acc, i) => (

@@ -145,7 +145,7 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
     dteFolioFactura: undefined as number | undefined,
   });
 
-  // Estado del Motor Agéntico Autónomo
+  // Estado del Motor de asistentes con herramientas
   const [isExecutingAgent, setIsExecutingAgent] = useState(false);
   const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
     title: string;

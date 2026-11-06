@@ -558,7 +558,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
                   Flujo de Caja Proyectado Real (Rolling Cash Forecast)
                 </h2>
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
-                  Agente Autónomo de Liquidez
+                  Asistente de liquidez con herramientas
                 </span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {horizonLabel}

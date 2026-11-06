@@ -938,7 +938,7 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
               <span>Control de Inventario, Bodegas & Agente Logístico</span>
             </h1>
             <p className="text-sm text-slate-500 max-w-3xl">
-              Monitoreo autónomo de existencias valorizadas según norma PMP (Art. 30 LIR), transferencias entre sucursales con Guía de Despacho DTE 52, alertas preventivas y requisiciones automáticas.
+              Monitoreo de existencias valorizadas según norma PMP (Art. 30 LIR), transferencias entre sucursales con Guía de Despacho DTE 52, alertas preventivas y requisiciones automáticas.
             </p>
           </div>
 
@@ -1138,7 +1138,7 @@ export const InventoryAgentModule: React.FC<InventoryAgentModuleProps> = ({
             }`}
           >
             <Radio className="w-4 h-4 text-emerald-500" />
-            <span>Abastecimiento Autónomo (RFQ)</span>
+            <span>Abastecimiento automático (RFQ)</span>
             {autoRfqConfig?.activo && (
               <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-emerald-100 text-emerald-800 font-mono font-bold">
                 {autoRfqConfig.radioMaximoKm} KM

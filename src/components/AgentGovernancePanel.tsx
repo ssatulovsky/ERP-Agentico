@@ -343,7 +343,7 @@ export const AgentGovernancePanel: React.FC<AgentGovernancePanelProps> = ({
               </h2>
             </div>
             <p className="text-sm text-slate-300 max-w-2xl">
-              Subsistema de inyección contextual en 4 capas y supervisión pericial estricta. Ningún agente autónomo emite declaraciones ni asientos sin la tutela y firma digital del Orquestador Senior.
+              Subsistema de inyección contextual en 4 capas y supervisión pericial estricta. Ningún asistente con herramientas emite declaraciones ni asientos sin la tutela y firma digital del Orquestador Senior.
             </p>
           </div>
 

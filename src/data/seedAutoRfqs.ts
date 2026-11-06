@@ -10,7 +10,7 @@ export const DEFAULT_AUTO_RFQ_CONFIG: AutoRfqRuleConfig = {
   enviarEmailAutomatico: true,
   solicitarMinimoCotizaciones: 2,
   copiaEmailCompras: 'adquisiciones@maraustral.cl',
-  mensajePersonalizadoRfq: 'Solicitud automática de cotización expedita generada por Agente Autónomo ERPremIA por reposición de stock mínimo en Bodega Central Quellón.',
+  mensajePersonalizadoRfq: 'Solicitud automática de cotización expedita generada por Asistente con herramientas ERPremIA por reposición de stock mínimo en Bodega Central Quellón.',
 };
 
 export const SEED_ZONE_SUPPLIERS: RfqSupplierContact[] = [

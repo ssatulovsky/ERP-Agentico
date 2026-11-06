@@ -181,7 +181,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
 
     try {
       const authToken = getStoredAuthToken();
-      // Invocar al Agente Autónomo Especialista Tributario con bucle ReAct
+      // Invocar al Asistente con herramientas especialista Tributario con bucle ReAct
       const response = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
         headers: {
@@ -334,7 +334,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                 </span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Motor Autónomo Activo
+                  Asistente con herramientas
                 </span>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 font-medium">

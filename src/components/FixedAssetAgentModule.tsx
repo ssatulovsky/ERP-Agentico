@@ -128,7 +128,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
   // Form State para Edición de Activo
   const [editAssetForm, setEditAssetForm] = useState<Partial<FixedAsset>>({});
 
-  // Estado del Motor Agéntico Autónomo
+  // Estado del Motor de asistentes con herramientas
   const [isExecutingAgent, setIsExecutingAgent] = useState(false);
   const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
     title: string;
@@ -389,11 +389,11 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
 
     if (agentResultData?.approvalRequired) {
       triggerSuccess(
-        `Depreciación ${depreciationPeriod} analizada por el Agente Autónomo. Solicitud de gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'} generada.`
+        `Depreciación ${depreciationPeriod} analizada por el Asistente con herramientas. Solicitud de gobernanza humana #${agentResultData.approvalDetails?.id?.slice(-6) || 'PEND'} generada.`
       );
     } else {
       triggerSuccess(
-        `Proceso de Depreciación ${depreciationPeriod} ejecutado exitosamente con Agente Autónomo NIC 16. Asiento contable de ${formatCLP(
+        `Proceso de Depreciación ${depreciationPeriod} ejecutado exitosamente con Asistente con herramientas NIC 16. Asiento contable de ${formatCLP(
           depEntry.totalDebe
         )} contabilizado en Libro Diario.`
       );
@@ -542,7 +542,7 @@ export const FixedAssetAgentModule: React.FC<FixedAssetAgentModuleProps> = ({
       );
     } else {
       triggerSuccess(
-        `Activo ${asset.codigoPlaca} dado de baja/enajenado. Asiento de retiro y resultado extraordinario asentado en Libro Diario por Agente Autónomo.`
+        `Activo ${asset.codigoPlaca} dado de baja/enajenado. Asiento de retiro y resultado extraordinario asentado en Libro Diario por Asistente con herramientas.`
       );
     }
   };

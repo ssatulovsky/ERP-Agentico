@@ -110,7 +110,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   const [showArchitectureModal, setShowArchitectureModal] = useState(false);
   const [showMobileApp, setShowMobileApp] = useState(false);
 
-  // Estado del Motor Agéntico Autónomo
+  // Estado del Motor de asistentes con herramientas
   const [isExecutingAgent, setIsExecutingAgent] = useState(false);
   const [agentDiagnosticModal, setAgentDiagnosticModal] = useState<{
     title: string;
@@ -1253,7 +1253,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
                 <h4 className="text-xs font-bold text-slate-900">Archivo JSON de Auditoría</h4>
               </div>
               <p className="text-xs text-slate-600">
-                Datos brutos con scoring de auditoría del Agente Autónomo para integración con ERPs y APIs externas.
+                Datos brutos con scoring de auditoría del Asistente con herramientas para integración con ERPs y APIs externas.
               </p>
               <button
                 type="button"

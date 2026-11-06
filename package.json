@@ -1,7 +1,7 @@
 {
   "name": "erpremia",
   "version": "2.0.0",
-  "description": "ERPremIA - Sistema ERP Contable, Tributario y Agéntico Autónomo para Chile",
+  "description": "ERPremIA - Sistema ERP Contable y Tributario con asistentes de IA para Chile",
   "private": true,
   "type": "module",
   "scripts": {

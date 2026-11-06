@@ -750,11 +750,11 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     }
 
     setIsAutoReconciling(true);
-    setReconcileProgressStep('Invocando Agente Autónomo Especialista en Conciliación Bancaria...');
+    setReconcileProgressStep('Invocando Asistente con herramientas especialista en Conciliación Bancaria...');
 
     try {
       const authToken = getStoredAuthToken();
-      // Invocar al Agente Autónomo Especialista en Conciliación en el backend
+      // Invocar al Asistente con herramientas especialista en Conciliación en el backend
       const response = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
         headers: {
@@ -799,10 +799,10 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 asientoGeneradoId: match.asientoId,
                 movimientoIdConciliado: match.asientoId,
                 matchCerteza: match.score || 95,
-                matchCriterio: `Calce validado por Agente Autónomo (${match.calidadCalce || 'ALTA_CONFIANZA'})`,
+                matchCriterio: `Calce validado por Asistente con herramientas (${match.calidadCalce || 'ALTA_CONFIANZA'})`,
                 codigoConciliacion: code,
                 fechaConciliacion: new Date().toISOString(),
-                usuarioConciliador: resData.agentName || 'Agente Autónomo de Conciliación',
+                usuarioConciliador: resData.agentName || 'Asistente con herramientas de Conciliación',
                 esAmbiguo: false,
                 partidaContableDetalle: entry ? {
                   entryId: entry.id,
@@ -869,7 +869,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
               matchCriterio: best.reasons.join(', '),
               codigoConciliacion: code,
               fechaConciliacion: new Date().toISOString(),
-              usuarioConciliador: 'Agente Autónomo de Conciliación',
+              usuarioConciliador: 'Asistente con herramientas de Conciliación',
               esAmbiguo: false,
               candidatosMatchesCount: undefined,
               partidaContableDetalle: {
@@ -901,7 +901,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 matchCriterio: topCand.reasons.join(', '),
                 codigoConciliacion: code,
                 fechaConciliacion: new Date().toISOString(),
-                usuarioConciliador: 'Agente Autónomo de Conciliación',
+                usuarioConciliador: 'Asistente con herramientas de Conciliación',
                 esAmbiguo: false,
                 candidatosMatchesCount: undefined,
                 partidaContableDetalle: {
@@ -942,7 +942,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 fechaConciliacion: new Date().toISOString(),
                 matchCerteza: 90,
                 matchCriterio: 'Calce con movimiento de flujo de caja de tesorería',
-                usuarioConciliador: 'Agente Autónomo de Conciliación',
+                usuarioConciliador: 'Asistente con herramientas de Conciliación',
               };
             }
           }
@@ -1327,7 +1327,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
 
     const newMovements = [...importParsedResult.movements];
 
-    // Auditoría en caliente si el Agente Autónomo está activo
+    // Auditoría en caliente si el Asistente con herramientas está activo
     if (isRealTimeAgentActive) {
       newMovements.forEach((m) => {
         const netAmt = m.abono > 0 ? m.abono : m.cargo;
@@ -2821,7 +2821,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                       Previsualización de Partidas a Incorporar:
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      El Agente Autónomo cruzará automáticamente con el Libro Diario y Facturas
+                      El Asistente con herramientas cruzará automáticamente con el Libro Diario y Facturas
                     </div>
                   </div>
                   <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
@@ -3622,7 +3622,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 </div>
                 <div className="sm:text-right text-[11px] font-mono text-slate-600">
                   <div><strong>Emisión:</strong> {viewingActaMovement.fechaConciliacion ? new Date(viewingActaMovement.fechaConciliacion).toLocaleString('es-CL') : 'Automática'}</div>
-                  <div className="text-[10px] text-slate-500">Auditor: {viewingActaMovement.usuarioConciliador || 'Agente Autónomo CMF'}</div>
+                  <div className="text-[10px] text-slate-500">Auditor: {viewingActaMovement.usuarioConciliador || 'Asistente con herramientas CMF'}</div>
                 </div>
               </div>
 

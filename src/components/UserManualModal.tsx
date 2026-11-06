@@ -197,7 +197,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                   <div className="p-3 bg-white grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div className="font-mono font-bold text-blue-800">Clave Tributaria / Certificado</div>
                     <div className="sm:col-span-2 text-slate-700">
-                      Clave de acceso al portal tributario y certificado digital (.pfx) que habilita al agente autónomo para sincronizar en tiempo real el RCV (Registro de Compras y Ventas).
+                      Clave de acceso al portal tributario y certificado digital (.pfx) que habilita al asistente con herramientas para sincronizar en tiempo real el RCV (Registro de Compras y Ventas).
                     </div>
                   </div>
                   <div className="p-3 bg-white grid grid-cols-1 sm:grid-cols-3 gap-2">

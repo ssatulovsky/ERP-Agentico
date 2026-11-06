@@ -1081,7 +1081,7 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
   }
 
   /**
-   * Procesa un mensaje entrante ejecutando el bucle ReAct del Agente Autónomo
+   * Procesa un mensaje entrante ejecutando el bucle ReAct del Asistente con herramientas
    * cuando la consulta requiere análisis profundo, herramientas o gobernanza humana.
    */
   public processIncomingMessageWithAgent = (params: {

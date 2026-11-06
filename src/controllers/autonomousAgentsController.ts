@@ -6,7 +6,7 @@ export const autonomousAgentsRouter = Router();
 
 /**
  * POST /api/agents/autonomous/execute
- * Ejecuta el bucle ReAct del Agente Autónomo con Function Calling real en el backend
+ * Ejecuta el bucle ReAct del Asistente con herramientas con Function Calling real en el backend
  */
 autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
   try {
@@ -15,7 +15,7 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
       return res.status(401).json({
         success: false,
         error: 'AUTH_REQUIRED',
-        errorMessage: 'Autenticación requerida para ejecutar el agente autónomo.',
+        errorMessage: 'Autenticación requerida para ejecutar el asistente con herramientas.',
       });
     }
 
@@ -24,7 +24,7 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         error: 'DATOS_INCOMPLETOS',
-        errorMessage: 'Debe especificar empresaId para invocar al agente autónomo.',
+        errorMessage: 'Debe especificar empresaId para invocar al asistente con herramientas.',
       });
     }
 
@@ -47,7 +47,7 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         error: 'DATOS_INCOMPLETOS',
-        errorMessage: 'Debe especificar module (o modulo) y query (o prompt) para invocar al agente autónomo.',
+        errorMessage: 'Debe especificar module (o modulo) y query (o prompt) para invocar al asistente con herramientas.',
       });
     }
 
@@ -110,7 +110,7 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'AGENT_EXECUTION_ERROR',
-      errorMessage: error.message || 'Error interno ejecutando bucle del agente autónomo.',
+      errorMessage: error.message || 'Error interno ejecutando bucle del asistente con herramientas.',
     });
   }
 });

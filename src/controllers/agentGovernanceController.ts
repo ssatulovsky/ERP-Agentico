@@ -416,7 +416,7 @@ agentGovernanceRouter.post('/request-approval', async (req: Request, res: Respon
 
     const solicitadoPor = authUser
       ? `${authUser.nombreCompleto} (@${authUser.username})`
-      : 'Agente Especialista Autónomo';
+      : 'Asistente especialista con herramientas';
 
     const approval = HrManagementService.requestModuleApproval({
       empresaId,

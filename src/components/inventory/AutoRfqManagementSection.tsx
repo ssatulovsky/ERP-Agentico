@@ -148,7 +148,7 @@ export const AutoRfqManagementSection: React.FC<AutoRfqManagementSectionProps> =
 
       if (generatedCount > 0) {
         setEngineSuccessMessage(
-          `Motor Autónomo ejecutado con éxito: Se emitieron ${generatedCount} Solicitudes de Cotización (RFQs) automáticas contactando a ${eligibleSuppliers.length} proveedores ubicados en el radio de ${ruleConfig.radioMaximoKm} km.`
+          `Motor de reposición ejecutado: Se emitieron ${generatedCount} Solicitudes de Cotización (RFQs) automáticas contactando a ${eligibleSuppliers.length} proveedores ubicados en el radio de ${ruleConfig.radioMaximoKm} km.`
         );
       } else {
         setEngineSuccessMessage(
@@ -185,7 +185,7 @@ export const AutoRfqManagementSection: React.FC<AutoRfqManagementSectionProps> =
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
                 <Radio className="w-3.5 h-3.5 text-emerald-700" />
-                Abastecimiento Autónomo por Proximidad (RFQ)
+                Abastecimiento automático por proximidad (RFQ)
               </span>
               <span className="text-slate-400 text-xs">|</span>
               <span className="text-xs text-slate-500 font-mono">
@@ -196,7 +196,7 @@ export const AutoRfqManagementSection: React.FC<AutoRfqManagementSectionProps> =
               <span>Automatización de Solicitudes de Cotización a Proveedores Locales</span>
             </h2>
             <p className="text-xs text-slate-500 max-w-3xl leading-relaxed">
-              Configura el motor autónomo para que, al caer el stock de cualquier mercadería bajo su umbral mínimo,
+              Configura el motor de reposición para que, al caer el stock de cualquier mercadería bajo su umbral mínimo,
               genere y envíe de manera automática solicitudes de cotización (RFQ) exclusivamente a proveedores calificados
               ubicados dentro del radio geográfico definido (ej: 50 km).
             </p>
@@ -215,7 +215,7 @@ export const AutoRfqManagementSection: React.FC<AutoRfqManagementSectionProps> =
             ) : (
               <>
                 <Bot className="w-4 h-4" />
-                <span>Ejecutar Motor Autónomo de Reposición</span>
+                <span>Ejecutar motor de reposición</span>
               </>
             )}
           </button>

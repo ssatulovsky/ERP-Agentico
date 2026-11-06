@@ -445,7 +445,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
       const authToken = getStoredAuthToken();
       let assistantText = '';
 
-      // 1. Invocar al Agente Autónomo Especialista con ReAct y Function Calling
+      // 1. Invocar al Asistente con herramientas especialista con ReAct y Function Calling
       try {
         const agentRes = await fetch('/api/agents/autonomous/execute', {
           method: 'POST',
@@ -820,7 +820,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
                     <th className="py-2.5 px-3 text-center">Margen Real %</th>
                     <th className="py-2.5 px-3 text-center">Target %</th>
                     <th className="py-2.5 px-3 text-center">Estado</th>
-                    <th className="py-2.5 px-3 text-center">Acción Autónoma Sr.</th>
+                    <th className="py-2.5 px-3 text-center">Acción sugerida</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

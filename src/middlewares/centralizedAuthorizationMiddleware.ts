@@ -642,7 +642,7 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     if ('companyId' in req.body) req.body.companyId = effectiveEmpresaId;
   }
 
-  // 5. Regla A5: Motor Agéntico Autónomo (/api/agents/autonomous/execute)
+  // 5. Regla A5: Motor de asistentes con herramientas (/api/agents/autonomous/execute)
   if (urlPath === '/api/agents/autonomous/execute') {
     const reqModule = (req.body?.module || req.body?.modulo || '').toString().toUpperCase();
     if (reqModule) {

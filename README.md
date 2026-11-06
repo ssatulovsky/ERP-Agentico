@@ -1,8 +1,11 @@
-# ERPremIA — Sistema ERP Contable, Tributario y Agéntico Autónomo para Chile
+# ERPremIA — Sistema ERP Contable y Tributario con asistentes de IA para Chile
+
+
+> **Estado (plan de corrección, nov 2026):** los módulos funcionan como *asistentes con herramientas*: responden cuando el usuario los invoca, usan herramientas con datos reales y piden aprobación humana. La autonomía (herramientas por agente, memoria y ejecuciones programadas) corresponde a la Fase 3 del plan y aún no está implementada. Con `DEMO_MODE=true` se cargan empresas y datos de ejemplo con una franja visible "DEMOSTRACIÓN".
 
 **ERPremIA** es una plataforma integral de planificación de recursos empresariales (ERP) diseñada bajo la normativa legal, contable y tributaria de la República de Chile (Servicio de Impuestos Internos - SII, Dirección del Trabajo - DT, Superintendencia de Pensiones). 
 
-El sistema combina un núcleo transaccional ACID en **MySQL 8.0**, sincronización automática con el SII vía DTE y RCV, un motor de remuneraciones adaptado a la reforma previsional **Ley 21.735**, y un equipo de **Agentes de Inteligencia Artificial Autónomos** con control de gobernanza y aprobación humana (*Human-in-the-Loop*).
+El sistema combina un núcleo transaccional ACID en **MySQL 8.0**, sincronización automática con el SII vía DTE y RCV, un motor de remuneraciones adaptado a la reforma previsional **Ley 21.735**, y un equipo de **asistentes de IA con herramientas** con control de gobernanza y aprobación humana (*Human-in-the-Loop*).
 
 ---
 
@@ -70,7 +73,7 @@ El sistema combina un núcleo transaccional ACID en **MySQL 8.0**, sincronizaci�
 - **Proyectos de Faena:** Asignación de centros de costo y proyectos verificados en MySQL (`PRY-QUELLON-26`, `PRY-STGO-EXP`, etc.).
 - **Edición y Corrección:** Interfaz y endpoint `PUT /api/expenses/reports/:id` para subsanar errores en rendiciones antes o después de la rendición.
 
-### 6. Motor Agéntico Autónomo (ReAct Loop, Function Calling & Human-in-the-Loop)
+### 6. Motor de asistentes con herramientas (ReAct Loop, Function Calling & Human-in-the-Loop)
 - **Arquitectura Híbrida Verificable:**
   - *Núcleo Determinístico:* Todos los cálculos contables, tributarios (F29, IVA Art. 23 DL 825) y laborales (Art. 161/163 CT, Topes UF, Ley 21.735, Previred 105 campos) son ejecutados por funciones matemáticas y normativas determinísticas sin riesgo de alucinación ni redondeos ficticios.
   - *Capa Agéntica con Function Calling:* Motor multi-turno ReAct (`src/services/autonomousAgentEngine.ts`) donde los agentes razonan, planifican, invocan herramientas reales del servidor (`tool_hr_calculate_finiquito`, `tool_sii_query_rcv`, `tool_accounting_propose_entry`, etc.) e inspeccionan las salidas antes de emitir un dictamen.

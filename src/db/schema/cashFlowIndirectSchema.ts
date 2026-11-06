@@ -47,7 +47,7 @@ export const cashFlowIndirectReports = mysqlTable(
     desgloseEfectivo: json('desglose_efectivo').notNull(),
     diagnosticoAgente: json('diagnostico_agente').notNull(),
     
-    // Gobernanza y Trazabilidad del Agente Autónomo
+    // Gobernanza y Trazabilidad del Asistente con herramientas
     agenteAuditorNombre: varchar('agente_auditor_nombre', { length: 100 }).notNull().default('Agente Especialista Flujo Efectivo NIC 7'),
     agenteSignature: varchar('agente_signature', { length: 128 }).notNull(),
     hashIntegridadSha256: varchar('hash_integridad_sha256', { length: 64 }).notNull(),

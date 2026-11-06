@@ -1295,7 +1295,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                     <Key className="w-5 h-5 text-[#2563eb]" />
                     <div>
                       <h4 className="font-extrabold text-blue-950 text-sm">
-                        2. Credenciales del SII para el Agente Autónomo
+                        2. Credenciales del SII para el Asistente con herramientas
                       </h4>
                       <p className="text-[11px] text-blue-800">
                         El Agente Contable utilizará estas credenciales para acceder a <strong>zeusr.sii.cl</strong> y descargar automáticamente compras, ventas y honorarios.
@@ -1583,7 +1583,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
 
                       <div className="space-y-1.5">
                         <span className="block font-bold text-slate-800 mb-1">
-                          Políticas Autónomas del Agente:
+                          Políticas del asistente:
                         </span>
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input

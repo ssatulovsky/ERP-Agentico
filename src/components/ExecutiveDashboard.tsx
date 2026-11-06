@@ -207,7 +207,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               <span>•</span>
               <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Agentes Autónomos Sincronizados
+                Asistentes con herramientas
               </span>
               <span>•</span>
               <span>Régimen: <strong className="text-slate-700">{company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : '14 A General'}</strong></span>

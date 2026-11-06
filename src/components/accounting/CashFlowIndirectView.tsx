@@ -59,7 +59,7 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
   const [manualInitialBalance, setManualInitialBalance] = useState<number | undefined>(undefined);
   const [showConfigModal, setShowConfigModal] = useState(false);
 
-  // Generación reactiva del reporte por el Agente Autónomo
+  // Generación reactiva del reporte por el Asistente con herramientas
   const report: CashFlowIndirectReport = useMemo(() => {
     return buildCashFlowIndirectReport({
       empresaRut,
@@ -105,7 +105,7 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
             <div className="flex items-center gap-2 mb-1">
               <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded font-mono flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                AGENTE NIC 7 AUTÓNOMO ACTIVO
+                ASISTENTE NIC 7 ACTIVO
               </span>
               <span className="bg-blue-50 text-blue-700 text-[11px] font-semibold px-2 py-0.5 rounded font-mono">
                 MÉTODO INDIRECTO NIF / IAS 7 / CMF
@@ -278,7 +278,7 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400" />
               <span className="text-xs font-bold uppercase tracking-wider text-amber-300 font-mono">
-                Dictamen del Agente Contable Autónomo • Auditoría de Liquidez
+                Dictamen del Asistente contable con herramientas • Auditoría de Liquidez
               </span>
             </div>
             <p className="text-xs text-slate-200 leading-relaxed">
@@ -834,7 +834,7 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
                 Informe Pericial de Auditoría y Control de Liquidez
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Emitido por el Agente Autónomo Especialista en Flujo de Efectivo NIF / NIC 7.
+                Emitido por el Asistente con herramientas especialista en Flujo de Efectivo NIF / NIC 7.
               </p>
             </div>
             <div className="text-right">

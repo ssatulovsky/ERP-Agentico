@@ -597,7 +597,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
     const qLower = query.toLowerCase();
 
     try {
-      // 1. Invocar el agente autónomo con Function Calling en backend
+      // 1. Invocar el asistente con herramientas con Function Calling en backend
       const authToken = getStoredAuthToken();
       const response = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
@@ -756,7 +756,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                   Agente de Administración y Gestión de Personas / RRHH
                 </h2>
                 <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200 uppercase tracking-wide">
-                  Autónomo & Legal 100% Chile (2026)
+                  Legal 100% Chile (2026)
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -885,7 +885,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-4 mb-2 pb-1.5 border-b border-slate-100 text-[10px] font-semibold text-slate-400">
-                      <span>{msg.sender === 'user' ? 'Usuario ERP' : 'Agente Autónomo de RRHH'}</span>
+                      <span>{msg.sender === 'user' ? 'Usuario ERP' : 'Asistente con herramientas de RRHH'}</span>
                       <span>{msg.timestamp}</span>
                     </div>
 

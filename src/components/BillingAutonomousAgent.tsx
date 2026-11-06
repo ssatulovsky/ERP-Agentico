@@ -451,10 +451,10 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
     addLog(`🚀 [HTTP-DTE] Iniciando emisión directa de DTE ${draft.tipoDte} para RUT Emisor: ${company.rut}...`);
     addLog(`📦 [Mapeo] Mapeando datos internos ERP: ${draft.items.length} ítems. Total: $${draft.montoTotal.toLocaleString('es-CL')} CLP.`);
 
-    // 1. Verificación previa con el Agente Autónomo Especialista (ReAct Loop)
+    // 1. Verificación previa con el Asistente con herramientas especialista (ReAct Loop)
     const authToken = getStoredAuthToken();
     try {
-      addLog(`🧠 [Agente Autónomo] Validando normativa tributaria SII y estructura del borrador DTE...`);
+      addLog(`🧠 [Asistente con herramientas] Validando normativa tributaria SII y estructura del borrador DTE...`);
       const agentRes = await fetch('/api/agents/autonomous/execute', {
         method: 'POST',
         headers: {
@@ -476,13 +476,13 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
       if (agentRes.ok) {
         const aData = await agentRes.json();
         const shortDecision = (aData.decision || aData.finalText || 'Validación conforme').slice(0, 120);
-        addLog(`📋 [Agente Autónomo] Dictamen: ${shortDecision}...`);
+        addLog(`📋 [Asistente con herramientas] Dictamen: ${shortDecision}...`);
         if (aData.approvalRequired) {
           addLog(`⚠️ [Gobernanza Humana] Solicitud #${aData.approvalDetails?.id?.slice(-6) || 'PEND'} creada para autorización.`);
         }
       }
     } catch (agentErr: any) {
-      addLog(`⚠️ [Agente Autónomo] Aviso en verificación preliminar: ${agentErr.message}`);
+      addLog(`⚠️ [Asistente con herramientas] Aviso en verificación preliminar: ${agentErr.message}`);
     }
 
     addLog(`🔑 [Criptografía] Leyendo CAF (XML) y Certificado Digital PKCS#12 (.p12/.pfx) almacenados localmente...`);
@@ -718,7 +718,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Banner Superior Agente Autónomo */}
+      {/* Banner Superior Asistente con herramientas */}
       <div className="bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f172a] rounded-xl p-5 text-white shadow-md border border-slate-700/60">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-start gap-3.5">
@@ -728,7 +728,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold tracking-tight text-white">
-                  Agente Autónomo de Facturación y Cobranza (HTTP-DTE / LibreDTE)
+                  Asistente con herramientas de Facturación y Cobranza (HTTP-DTE / LibreDTE)
                 </h1>
                 <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded text-[10px] font-mono font-semibold">
                   REST http://localhost:8050

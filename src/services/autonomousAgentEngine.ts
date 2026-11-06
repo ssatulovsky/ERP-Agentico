@@ -667,7 +667,7 @@ export class AutonomousAgentEngine {
               documentoRef: l.documentoRef || 'MEMORANDUM_INTERNO',
             })),
             origenModulo: 'MANUAL',
-            creadoPorAgente: 'Agente Contable Autónomo',
+            creadoPorAgente: 'Asistente contable con herramientas',
           });
 
           return {
@@ -1975,7 +1975,7 @@ export class AutonomousAgentEngine {
   }
 
   /**
-   * Bucle ReAct de Agente Autónomo (Reasoning + Tool Calling + Observation + Decision)
+   * Bucle ReAct de Asistente con herramientas (Reasoning + Tool Calling + Observation + Decision)
    */
   public static async executeAutonomousAgentLoop(
     request: AutonomousAgentRequest
@@ -1983,7 +1983,7 @@ export class AutonomousAgentEngine {
     const startTime = new Date().toISOString();
     const steps: AgentExecutionStep[] = [];
     const agentDef = MODULE_AGENTS_REGISTRY.find(a => a.moduloId === request.module) || {
-      agenteNombre: request.agentRole || 'Agente Autónomo ERPremIA',
+      agenteNombre: request.agentRole || 'Asistente con herramientas ERPremIA',
       agenteCargo: 'Especialista Operativo',
       responsabilidad: 'Ejecuta operaciones y valida cumplimiento legal en el ERP.',
     };
@@ -2017,7 +2017,7 @@ export class AutonomousAgentEngine {
 Tu responsabilidad principal: ${agentDef.responsabilidad}.
 
 INSTRUCCIONES CRÍTICAS AGÉNTICAS:
-1. Eres un agente corporativo autónomo, NO un chatbot pasivo.
+1. Eres un asistente corporativo con herramientas, NO un chatbot pasivo: resuelves usando herramientas reales y la aprobación humana.
 2. Para resolver la consulta o solicitud del usuario, DEBES invocar una o más herramientas reales (function calling). NO inventes datos, folios ni montos.
 3. Si el usuario solicita un finiquito, liquidación, asiento contable, revisión de impuestos o conciliación, utiliza las herramientas declaradas para obtener el cálculo oficial.
 4. Toda operación que involucre pago de fondos, emisión de DTEs o modificación de libros legales debe culminar solicitando autorización humana con "tool_submit_governance_approval".

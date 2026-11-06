@@ -65,7 +65,7 @@ export function generateExpenseReportPDF({
   doc.setFontSize(8.5);
   doc.setTextColor(191, 219, 254); // blue-200
   doc.text(`RUT: ${empresaRut} • ERP Agéntico Contable MySQL 8.0`, 14, 17);
-  doc.text('AUDITORÍA Y ADMINISTRACIÓN AUTÓNOMA DE RENDICIONES DE GASTOS', 14, 22);
+  doc.text('AUDITORÍA Y ADMINISTRACIÓN DE RENDICIONES DE GASTOS', 14, 22);
 
   // Folio y Fecha Emisión a la derecha
   doc.setFont('helvetica', 'bold');

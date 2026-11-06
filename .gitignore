@@ -12,3 +12,5 @@ coverage/
 *.tmp*
 *.zip
 .erp_src_snapshot.tgz
+# Copia duplicada del proyecto (extraída del zip): no se versiona
+/agentic/

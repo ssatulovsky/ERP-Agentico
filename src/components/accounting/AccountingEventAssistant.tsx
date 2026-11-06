@@ -251,7 +251,7 @@ Usted puede describir en lenguaje natural cualquier hecho económico, gasto, com
               </span>
             </div>
             <h3 className="text-base font-bold text-white mt-0.5">
-              Asesor Contable Autónomo · Entrevista & Asientos
+              Asesor contable con herramientas · Entrevista & Asientos
             </h3>
             <p className="text-xs text-slate-400">
               Describa en lenguaje natural cualquier compra o evento para auditarla, solicitar datos faltantes y generar el asiento formal.

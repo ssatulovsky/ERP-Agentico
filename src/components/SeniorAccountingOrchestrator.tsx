@@ -1366,7 +1366,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               rut_auxiliar: l.rutAuxiliar || '',
             })),
           },
-          alertas_auditoria: resJson.steps ? resJson.steps.map((s: any) => s.thought).filter(Boolean) : ['Asiento generado por Agente Autónomo Especialista en Contabilidad.'],
+          alertas_auditoria: resJson.steps ? resJson.steps.map((s: any) => s.thought).filter(Boolean) : ['Asiento generado por Asistente con herramientas especialista en Contabilidad.'],
         };
       } else {
         // Extract JSON if present in text
@@ -1381,7 +1381,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       }
 
       if (!extractedJSON) {
-        showToast('El agente autónomo no generó una propuesta contable válida o estructurada para esta operación.', 'info');
+        showToast('El asistente con herramientas no generó una propuesta contable válida o estructurada para esta operación.', 'info');
         setAiProposalResponse({
           humanLayer: aiText.replace(/```json[\s\S]*?```/, '').trim() ||
             `El agente contable procesó la consulta para "${rawGlosaInput}", pero no formuló una propuesta contable estructurada. Por favor proporcione más detalles de la operación.`,
@@ -3313,7 +3313,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs px-2.5 py-0.5 rounded-full font-mono font-semibold flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                NÚCLEO CONTABLE AUTÓNOMO ERP
+                NÚCLEO CONTABLE ERP
               </span>
               <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs px-2.5 py-0.5 rounded-full font-mono flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />

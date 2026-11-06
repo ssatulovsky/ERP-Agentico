@@ -558,7 +558,7 @@ export default function App() {
     loadClientState<CostCenterMaster[]>(activeClientId, 'costCenters', isDefaultRetail ? SEED_COST_CENTERS : [])
   );
 
-  // Recetas / Escandallos (BOM) & Abastecimiento Autónomo (RFQ)
+  // Recetas / Escandallos (BOM) & Abastecimiento automático (RFQ)
   const [recipes, setRecipes] = useState<ProductRecipe[]>(() =>
     loadClientState<ProductRecipe[]>(activeClientId, 'recipes', isDefaultRetail ? SEED_RECIPES : [])
   );

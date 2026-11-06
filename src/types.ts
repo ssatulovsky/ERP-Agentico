@@ -304,7 +304,7 @@ export interface BankStatementMovement {
   codigoConciliacion?: string; // Documento de Referencia de Conciliación formal: ej. CONC-SAN-202609-0012
   fechaConciliacion?: string; // Timestamp ISO de la conciliación
   matchCriterio?: string; // Detalle de la desambiguación o scoring aplicado (ej: "Monto + N° TEF + RUT")
-  usuarioConciliador?: string; // Operador o 'Agente Autónomo de Conciliación'
+  usuarioConciliador?: string; // Operador o 'Asistente con herramientas de Conciliación'
   partidaContableDetalle?: {
     entryId: string;
     fecha: string;

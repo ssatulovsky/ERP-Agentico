@@ -716,7 +716,7 @@ export const DteManager: React.FC<DteManagerProps> = ({
           >
             <Bot className="w-4 h-4 text-amber-300 animate-bounce" />
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Agente SII Autónomo (Meses, Imputación & Centralización)</span>
+            <span>Asistente SII con herramientas (Meses, Imputación & Centralización)</span>
           </button>
 
           <button
