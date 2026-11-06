@@ -359,7 +359,12 @@ export const ProductionCostingAgentModule: React.FC<ProductionCostingAgentModule
   const handleApplyCifToOp = (op: ProductionOrder) => {
     // Calculamos una tasa y monto de CIF proporcional
     const horasModOp = op.manoDeObraRegistros.reduce((s, m) => s + m.horasTrabajadas, 0);
-    const cuotaCifSugerida = horasModOp > 0 ? horasModOp * 9000 : Math.round((op.costoPrimo || 1000000) * 0.15);
+    const cuotaCifSugerida = horasModOp > 0 ? horasModOp * 9000 : Math.round((Number(op.costoPrimo) || 0) * 0.15);
+    // Sin horas MOD ni costo primo no hay base de prorrateo (antes se suponía un costo primo de $1.000.000)
+    if (cuotaCifSugerida <= 0) {
+      alert('La orden no tiene horas de mano de obra ni costo primo registrados para prorratear CIF.');
+      return;
+    }
 
     const cifEntry = createProductionCifAllocationEntry(op, cuotaCifSugerida);
     onAddAccountingEntry(cifEntry);

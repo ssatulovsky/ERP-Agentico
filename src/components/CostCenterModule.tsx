@@ -37,6 +37,7 @@ import {
   Target,
   FileCode,
 } from 'lucide-react';
+import { folioInterno } from '../utils/folioInterno';
 
 interface CostCenterModuleProps {
   activeClient: ClientCompany;
@@ -186,7 +187,7 @@ export const CostCenterModule: React.FC<CostCenterModuleProps> = ({
   const handleOpenCreate = () => {
     setEditingCcId(null);
     setCcForm({
-      codigo: `CC-${Math.floor(10 + Math.random() * 90)}`,
+      codigo: folioInterno('CC'),
       nombre: '',
       categoria: 'OPERACIONES',
       responsableNombre: 'Jefatura Departamental',
@@ -243,8 +244,8 @@ export const CostCenterModule: React.FC<CostCenterModuleProps> = ({
         nombre: ccForm.nombre || 'Nuevo Centro de Costo',
         categoria: (ccForm.categoria as CostCenterCategory) || 'OPERACIONES',
         responsableNombre: ccForm.responsableNombre || 'Encargado',
-        responsableEmail: ccForm.responsableEmail || 'encargado@empresa.cl',
-        presupuestoMensualClp: Number(ccForm.presupuestoMensualClp) || 10000000,
+        responsableEmail: ccForm.responsableEmail || '',
+        presupuestoMensualClp: Number(ccForm.presupuestoMensualClp) || 0,
         ventasAcumuladasMes: 0,
         costosDirectosMes: 0,
         gastosOperacionalesMes: 0,

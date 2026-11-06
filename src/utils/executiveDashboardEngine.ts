@@ -452,7 +452,7 @@ export function calculateExecutiveDashboardMetrics(params: {
     const gastosOperacionales = cc.gastosOperacionalesMes || 0;
     const remuneraciones = cc.remuneracionesMes || 0;
     const resultadoOperacional = margenContribucion - gastosOperacionales - remuneraciones;
-    const presupuestoMensual = cc.presupuestoMensualClp || 10000000;
+    const presupuestoMensual = cc.presupuestoMensualClp || 0; // sin presupuesto registrado no hay % de ejecución
     const gastosTotales = costosDirectos + gastosOperacionales + remuneraciones;
     const ejecucionPresupuestoPct = presupuestoMensual > 0
       ? Number(((gastosTotales / presupuestoMensual) * 100).toFixed(1))

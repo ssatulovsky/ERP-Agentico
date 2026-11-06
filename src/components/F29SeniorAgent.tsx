@@ -89,7 +89,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
   const [showEntrySuccessModal, setShowEntrySuccessModal] = useState<AccountingEntry | null>(null);
 
   // Parámetros tributarios editables en vivo
-  const [tasaPpmManual, setTasaPpmManual] = useState<number>(company?.tasaPpm || 0.01);
+  const [tasaPpmManual, setTasaPpmManual] = useState<number>(company?.tasaPpm || 0);
   const [tasaPpmVoluntariaManual, setTasaPpmVoluntariaManual] = useState<number>(company?.tasaPpmVoluntaria || 0);
 
   // Chat con el Agente Senior
@@ -464,7 +464,7 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
           <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">CPT Base Patente</span>
             <span className="font-mono font-bold text-slate-800 mt-0.5 block">
-              {formatCLP(company.capitalPropioTributarioSimplificado || 85400000)}
+              {(company.capitalPropioTributarioSimplificado ? formatCLP(company.capitalPropioTributarioSimplificado) : 'No informado')}
             </span>
             <span className="text-[10px] text-slate-400">DL 3.063 Art. 24</span>
           </div>
@@ -1054,15 +1054,15 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-600 font-sans">CPT Simplificado Declarado:</span>
-                    <strong className="text-slate-900">{formatCLP(seniorResult.patente_municipal_y_renta?.cptSimplificadoBase || 85400000)}</strong>
+                    <strong className="text-slate-900">{(seniorResult.patente_municipal_y_renta?.cptSimplificadoBase ? formatCLP(seniorResult.patente_municipal_y_renta.cptSimplificadoBase) : 'No informado')}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-600 font-sans">Tasa por Mil Municipal:</span>
-                    <strong className="text-slate-900">{seniorResult.patente_municipal_y_renta?.patenteTasaPorMil || 5.0} ‰ anual</strong>
+                    <strong className="text-slate-900">{seniorResult.patente_municipal_y_renta?.patenteTasaPorMil ?? '—'} ‰ anual</strong>
                   </div>
                   <div className="flex justify-between pt-2 border-t border-purple-200 text-purple-900 font-bold text-sm font-sans">
                     <span>Cuota Semestral Estimada:</span>
-                    <span className="font-mono">{formatCLP(seniorResult.patente_municipal_y_renta?.patenteSemestralEstimada || 213500)}</span>
+                    <span className="font-mono">{(seniorResult.patente_municipal_y_renta?.patenteSemestralEstimada ? formatCLP(seniorResult.patente_municipal_y_renta.patenteSemestralEstimada) : 'No informado')}</span>
                   </div>
                 </div>
 
@@ -1096,11 +1096,11 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-600 font-sans">Base RLI Proyectada:</span>
-                    <strong className="text-slate-900">{formatCLP(seniorResult.patente_municipal_y_renta?.rliProyectada || 42000000)}</strong>
+                    <strong className="text-slate-900">{(seniorResult.patente_municipal_y_renta?.rliProyectada ? formatCLP(seniorResult.patente_municipal_y_renta.rliProyectada) : 'No informado')}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-600 font-sans">IDPC Proyectado Bruto:</span>
-                    <strong className="text-slate-900">{formatCLP(seniorResult.patente_municipal_y_renta?.idpcEstimado || 5250000)}</strong>
+                    <strong className="text-slate-900">{(seniorResult.patente_municipal_y_renta?.idpcEstimado ? formatCLP(seniorResult.patente_municipal_y_renta.idpcEstimado) : 'No informado')}</strong>
                   </div>
                   <div className="flex justify-between text-emerald-700">
                     <span className="font-sans">Crédito PPM Mensual Acumulado:</span>

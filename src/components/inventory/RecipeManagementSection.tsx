@@ -28,6 +28,7 @@ import {
   ArrowRight,
   Info,
 } from 'lucide-react';
+import { folioInterno } from '../../utils/folioInterno';
 
 interface RecipeManagementSectionProps {
   recipes?: ProductRecipe[];
@@ -103,9 +104,9 @@ export const RecipeManagementSection: React.FC<RecipeManagementSectionProps> = (
   const handleOpenCreate = () => {
     setEditingRecipeId(null);
     setRecipeForm({
-      codigo: `REC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+      codigo: folioInterno('REC'),
       nombre: '',
-      productoTerminadoSku: `PROD-${Math.floor(100 + Math.random() * 900)}`,
+      productoTerminadoSku: folioInterno('PROD'),
       categoria: 'REDES_Y_FONDEOS',
       unidadMedida: 'UNID',
       centroCostoFabricacion: costCenters[2]?.codigo || 'CC-PRD-QUELLON',

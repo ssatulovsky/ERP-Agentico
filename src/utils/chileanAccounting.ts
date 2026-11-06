@@ -14,6 +14,7 @@ import {
   ReplenishmentRequisition,
   StockStatus,
 } from '../types';
+import { folioInterno } from './folioInterno';
 
 // Default reference values for Chile
 export const DEFAULT_INDICATORS: ChileIndicators = {
@@ -333,7 +334,7 @@ export function calculatePayroll(
   employee: Partial<EmployeePayroll>,
   indicators: ChileIndicators = DEFAULT_INDICATORS
 ): EmployeePayroll {
-  const sueldoBase = employee.sueldoBase || 500000;
+  const sueldoBase = Number(employee.sueldoBase) || 0; // 4.4: sin sueldo informado no se supone uno (antes $500.000)
   const tipoContrato = employee.tipoContrato || 'INDEFINIDO';
   const horasExtrasCant = employee.horasExtrasCantidad || 0;
   const comisiones = employee.comisionesBonosImponibles || 0;
@@ -2432,7 +2433,7 @@ export function generateAutoReplenishmentRequisition(
   return {
     id: `req-${item.id}-${Date.now()}`,
     empresaId: item.empresaId,
-    folioRequisicion: `REQ-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+    folioRequisicion: folioInterno('REQ'),
     fechaGeneracion: new Date().toISOString().split('T')[0],
     generadoPorAgente: true,
     motivoAgente,

@@ -2114,12 +2114,15 @@ export function generatePeriodClosingAdjustments(
   expenseReports: ExpenseReport[] = [],
   entries: AccountingEntry[] = []
 ): PeriodClosingAdjustment[] {
-  const ufActual = indicators?.uf || 39150.50;
-  const dolarActual = indicators?.dolar || 955.20;
-  const dolarApertura = dolarActual - 12.50;
+  // Cierre de la tarea 4.4: los ajustes de cierre solo se proponen con datos reales del ERP.
+  // Antes se proponían montos fijos (devengos $1.250.000, US$8.500, 45 UF, activo fijo $45.000.000,
+  // rendición $50.000) que podían aplicarse al Libro Diario.
+  const ufActual = Number(indicators?.uf) || 0;
+  const dolarActual = Number(indicators?.dolar) || 0;
+  const dolarApertura = dolarActual;
 
-  // 1. Devengos de Servicios y Arriendos No Facturados (NIC 1)
-  const devengosMonto = 1250000;
+  // 1. Devengos de Servicios y Arriendos No Facturados (NIC 1): sin contratos ni estimaciones registradas no se propone
+  const devengosMonto = 0;
   const adjDevengos: PeriodClosingAdjustment = {
     id: 'adj-devengos-01',
     tipo: 'DEVENGOS',
@@ -2128,7 +2131,7 @@ export function generatePeriodClosingAdjustments(
     baseCalculo: devengosMonto,
     montoAjuste: devengosMonto,
     fuenteDatos: 'Contratos de servicios recurrentes y estimaciones de consumo mensual aún no facturados por proveedores al corte de mes.',
-    memoriaCalculo: 'Provisión mensual devengada: Servicios básicos (Luz/Agua/Enlaces) $450.000 + Infraestructura Cloud & Software $800.000 = Total pasivo devengado $1.250.000.',
+    memoriaCalculo: 'Requiere contratos o estimaciones de consumo registradas; no se propone sin datos.',
     normaReferencia: 'NIC 1 (Presentación de EEFF) y Marco Conceptual IFRS: Principio de Devengo (Accrual Basis).',
     asientoPropuesto: {
       glosa: 'Ajuste Cierre Mensual: Devengo de servicios operacionales del período',
@@ -2136,14 +2139,14 @@ export function generatePeriodClosingAdjustments(
         {
           codigo_cuenta: '6.1.04.001',
           nombre_cuenta: 'Servicios Básicos (Luz, Agua, Gas, Enlaces)',
-          debe: 450000,
+          debe: 0,
           haber: 0,
           centro_costo: 'ADMINISTRACION',
         },
         {
           codigo_cuenta: '6.1.04.002',
           nombre_cuenta: 'Software, Servidores Cloud y Licencias',
-          debe: 800000,
+          debe: 0,
           haber: 0,
           centro_costo: 'TECNOLOGIA',
         },
@@ -2151,8 +2154,7 @@ export function generatePeriodClosingAdjustments(
           codigo_cuenta: '2.1.01.001',
           nombre_cuenta: 'Proveedores Nacionales (Cuentas por Pagar)',
           debe: 0,
-          haber: 1250000,
-          rut_auxiliar: '76.123.456-7',
+          haber: 0,
         },
       ],
     },
@@ -2186,11 +2188,12 @@ export function generatePeriodClosingAdjustments(
     });
   });
 
-  const saldoUsdCaja = hasRealForeignLines && Math.abs(realSaldoUsd) > 0 ? Number(realSaldoUsd.toFixed(2)) : 8500;
+  const saldoUsdCaja = hasRealForeignLines && Math.abs(realSaldoUsd) > 0 ? Number(realSaldoUsd.toFixed(2)) : 0;
   const valorCierreClp = Math.round(saldoUsdCaja * dolarActual);
-  const diffCambio = hasRealForeignLines && realSaldoLibroClp !== 0
+  // Solo con saldo real en moneda extranjera, saldo contable en CLP y dólar observado informado
+  const diffCambio = hasRealForeignLines && realSaldoLibroClp !== 0 && dolarActual > 0 && saldoUsdCaja !== 0
     ? (valorCierreClp - realSaldoLibroClp)
-    : Math.round(saldoUsdCaja * (dolarActual - dolarApertura));
+    : 0;
 
   const isGanancia = diffCambio >= 0;
   const absDiff = Math.abs(diffCambio);
@@ -2242,8 +2245,10 @@ export function generatePeriodClosingAdjustments(
 
   // 3. Reajuste UF en Contratos (IFRS 16 / LIR)
   const safeLeases = Array.isArray(leases) ? leases : [];
-  const canonUfTotal = safeLeases.reduce((s, l) => s + (l.montoMensualMoneda === 'UF' ? (l.montoCanonMensual || 45) : 45), 0);
-  const variacionUfMes = 180; // Incremento aproximado mensual de la UF por IPC
+  // Solo contratos pactados en UF y solo si se conoce la UF de inicio del período (no se aproxima la variación)
+  const canonUfTotal = safeLeases.reduce((s, l) => s + (l.montoMensualMoneda === 'UF' ? Number(l.montoCanonMensual) || 0 : 0), 0);
+  const ufInicio = Number((indicators as any)?.ufInicioPeriodo) || 0;
+  const variacionUfMes = ufInicio > 0 && ufActual > 0 ? ufActual - ufInicio : 0;
   const reajusteUfMonto = Math.round(canonUfTotal * variacionUfMes);
 
   const adjReajusteUf: PeriodClosingAdjustment = {
@@ -2277,7 +2282,11 @@ export function generatePeriodClosingAdjustments(
   };
 
   // 4. Depreciación de Activo Fijo (NIC 16)
-  const activoFijoBruto = 45000000;
+  // Activo fijo bruto real desde el Libro Mayor (grupo 1.2.01); la depreciación detallada la calcula el módulo de Activo Fijo
+  const activoFijoBruto = (entries || []).reduce(
+    (acc, e) => acc + (e.lineas || []).reduce((a, l) => a + (String(l.cuentaCodigo || '').startsWith('1.2.01') ? (Number(l.debe) || 0) - (Number(l.haber) || 0) : 0), 0),
+    0
+  );
   const mesesVidaUtil = 60; // 5 años (60 meses) de vida útil estándar según tabla SII / IFRS
   const depreciacionMensual = Math.round(activoFijoBruto / mesesVidaUtil);
 
@@ -2329,23 +2338,23 @@ export function generatePeriodClosingAdjustments(
     return !isBooked && (r.montoTotalRendidoClp > 0 || r.fondoAsignadoClp > 0);
   });
 
-  const totalRendidoPendiente = unbookedExpenseReports.reduce((s, r) => s + (r.montoTotalRendidoClp || 0), 0) || (safeReports.some(r => r.montoTotalRendidoClp === 50000) ? 50000 : (safeReports.length > 0 ? 50000 : 0));
-  const netoPendiente = Math.round((totalRendidoPendiente || 50000) / 1.19);
-  const ivaPendiente = (totalRendidoPendiente || 50000) - netoPendiente;
+  const totalRendidoPendiente = unbookedExpenseReports.reduce((s, r) => s + (r.montoTotalRendidoClp || 0), 0);
+  const netoPendiente = Math.round(totalRendidoPendiente / 1.19);
+  const ivaPendiente = totalRendidoPendiente - netoPendiente;
   const totalAnticipos = unbookedExpenseReports.reduce((s, r) => s + (r.fondoAsignadoClp || 0), 0);
-  const foliosList = unbookedExpenseReports.map(r => r.folio).join(', ') || 'RDG-2026-TEST';
+  const foliosList = unbookedExpenseReports.map(r => r.folio).join(', ');
 
   const isRdgAlreadyApplied = safeReports.length > 0 && unbookedExpenseReports.length === 0;
 
   const adjRdg: PeriodClosingAdjustment = {
     id: 'adj-rdg-05',
     tipo: 'DEVENGOS',
-    titulo: `Centralización Rendición de Gastos y Fondos por Rendir (${unbookedExpenseReports.length || 1} informes: ${foliosList})`,
+    titulo: `Centralización Rendición de Gastos y Fondos por Rendir (${unbookedExpenseReports.length} informes: ${foliosList})`,
     descripcion: `Reconocimiento y devengo de gastos operacionales rendidos en terreno (${foliosList}) e imputación de IVA crédito fiscal.`,
-    baseCalculo: totalRendidoPendiente || 50000,
-    montoAjuste: totalRendidoPendiente || 50000,
-    fuenteDatos: `Módulo RindeGastos AI: ${unbookedExpenseReports.length || 1} informe(s) (${foliosList}) con comprobantes pendientes de asentar.`,
-    memoriaCalculo: `Gasto Operacional Terreno Neto $${netoPendiente.toLocaleString('es-CL')} + IVA Crédito Fiscal $${ivaPendiente.toLocaleString('es-CL')} = Total Rendición $${(totalRendidoPendiente || 50000).toLocaleString('es-CL')}.`,
+    baseCalculo: totalRendidoPendiente,
+    montoAjuste: totalRendidoPendiente,
+    fuenteDatos: `Módulo RindeGastos AI: ${unbookedExpenseReports.length} informe(s) (${foliosList}) con comprobantes pendientes de asentar.`,
+    memoriaCalculo: `Gasto Operacional Terreno Neto $${netoPendiente.toLocaleString('es-CL')} + IVA Crédito Fiscal $${ivaPendiente.toLocaleString('es-CL')} = Total Rendición $${(totalRendidoPendiente).toLocaleString('es-CL')}.`,
     normaReferencia: 'NIC 1 (Devengo) y Art. 31 LIR (Gastos necesarios para producir la renta).',
     asientoPropuesto: {
       glosa: `Centralización Rendición de Gastos Terreno (${foliosList})`,
@@ -2364,19 +2373,27 @@ export function generatePeriodClosingAdjustments(
           haber: 0,
         },
         {
-          codigo_cuenta: totalAnticipos >= (totalRendidoPendiente || 50000) ? '1.1.01.004' : '2.1.05.002',
-          nombre_cuenta: totalAnticipos >= (totalRendidoPendiente || 50000)
+          codigo_cuenta: totalAnticipos >= (totalRendidoPendiente) ? '1.1.01.004' : '2.1.05.002',
+          nombre_cuenta: totalAnticipos >= (totalRendidoPendiente)
             ? 'Fondos y Anticipos por Rendir (Contracuenta Efectivo)'
             : 'Cuentas por Pagar Reembolso Gastos Empleados',
           debe: 0,
-          haber: totalRendidoPendiente || 50000,
+          haber: totalRendidoPendiente,
         },
       ],
     },
     aplicado: isRdgAlreadyApplied,
   };
 
-  return [adjDevengos, adjDiferenciaCambio, adjReajusteUf, adjDepreciacion, adjRdg];
+  // Solo se devuelven los ajustes con base real y monto distinto de cero
+  const candidatos: Array<[PeriodClosingAdjustment, boolean]> = [
+    [adjDevengos, devengosMonto > 0],
+    [adjDiferenciaCambio, diffCambio !== 0],
+    [adjReajusteUf, reajusteUfMonto !== 0],
+    [adjDepreciacion, activoFijoBruto > 0],
+    [adjRdg, totalRendidoPendiente > 0],
+  ];
+  return candidatos.filter(([, aplica]) => aplica).map(([adj]) => adj);
 }
 
 /**
@@ -2502,7 +2519,7 @@ export function getFiscalYearDates(company: Partial<CompanyProfile>): {
   fechaFin: string;
   esCierreEspecial: boolean;
 } {
-  const ejercicioActivo = company.ejercicioActivo || 2026;
+  const ejercicioActivo = company.ejercicioActivo || new Date().getFullYear();
   const mesCierre = company.mesCierreEjercicio || 12;
   const esCierreEspecial = mesCierre !== 12;
   

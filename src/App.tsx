@@ -271,7 +271,7 @@ export default function App() {
     );
     return {
       ...activeClient,
-      ejercicioActivo: activeClient.ejercicioActivo || 2026,
+      ejercicioActivo: activeClient.ejercicioActivo || new Date().getFullYear(),
       mesCierreEjercicio: activeClient.mesCierreEjercicio || 12,
       diaCierreEjercicio: activeClient.diaCierreEjercicio || 31,
       fechaInicioEjercicio: activeClient.fechaInicioEjercicio || '2026-01-01',
@@ -306,7 +306,7 @@ export default function App() {
         ...seedF29,
         rutContribuyente: activeClient.rut,
         razonSocial: activeClient.razonSocial,
-        tasaPpm: activeClient.tasaPpm || 0.01,
+        tasaPpm: activeClient.tasaPpm || 0,
         ventasAfectasNeto: 0,
         debitoFiscalIva: 0,
         ventasExentasTotal: 0,
@@ -323,7 +323,7 @@ export default function App() {
       ...seedF29,
       rutContribuyente: activeClient.rut,
       razonSocial: activeClient.razonSocial,
-      tasaPpm: activeClient.tasaPpm || 0.01,
+      tasaPpm: activeClient.tasaPpm || 0,
     };
   });
   const [payrolls, setPayrolls] = useState<EmployeePayroll[]>(() => {
@@ -1233,7 +1233,7 @@ export default function App() {
         ...seedF29,
         rutContribuyente: selected.rut,
         razonSocial: selected.razonSocial,
-        tasaPpm: selected.tasaPpm || 0.01,
+        tasaPpm: selected.tasaPpm || 0,
         ventasAfectasNeto: 0,
         debitoFiscalIva: 0,
         ventasExentasTotal: 0,
@@ -1250,7 +1250,7 @@ export default function App() {
         ...prev,
         rutContribuyente: selected.rut,
         razonSocial: selected.razonSocial,
-        tasaPpm: selected.tasaPpm || 0.01,
+        tasaPpm: selected.tasaPpm || 0,
       }));
     }
   };

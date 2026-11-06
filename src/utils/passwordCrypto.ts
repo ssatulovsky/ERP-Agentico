@@ -99,12 +99,14 @@ export function computeSha256(ascii: string): string {
  * Genera un salt aleatorio en formato hexadecimal (16 bytes = 32 caracteres)
  */
 export function generateSalt(length = 16): string {
-  let salt = '';
-  const chars = '0123456789abcdef';
-  for (let i = 0; i < length * 2; i++) {
-    salt += chars.charAt(Math.floor(Math.random() * chars.length));
+  // 4.4: salt con aleatoriedad criptográfica (antes Math.random)
+  const nodeCrypto = getNodeCrypto();
+  if (nodeCrypto && typeof nodeCrypto.randomBytes === 'function') {
+    return nodeCrypto.randomBytes(length).toString('hex');
   }
-  return salt;
+  const bytes = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function getNodeCrypto(): any {

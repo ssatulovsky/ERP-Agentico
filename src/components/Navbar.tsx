@@ -195,7 +195,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div className="bg-white/10 backdrop-blur-sm border border-white/10 px-2.5 py-1 rounded text-slate-200">
             <span className="text-indigo-400 font-bold mr-1">PPM:</span>
-            <span>{((company.tasaPpm || 0.01) * 100).toFixed(2)}%</span>
+            <span>{company.tasaPpm ? `${(company.tasaPpm * 100).toFixed(2)}%` : 'No informada'}</span>
           </div>
           <div className="bg-white/10 backdrop-blur-sm border border-white/10 px-2.5 py-1 rounded text-slate-200">
             <span className="text-rose-400 font-bold mr-1">BHE:</span>

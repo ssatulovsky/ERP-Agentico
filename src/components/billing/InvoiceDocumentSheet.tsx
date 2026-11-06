@@ -26,7 +26,7 @@ export const InvoiceDocumentSheet: React.FC<InvoiceDocumentSheetProps> = ({
   showWatermark = true,
 }) => {
   const currentTipoDte = tipoDteOverride || draft.tipoDte;
-  const currentFolio = folioOverride || draft.folioSugerido || 1420;
+  const currentFolio = folioOverride || draft.folioSugerido || 0; // sin folio asignado: 0 (antes 1420 de ejemplo)
 
   // Determinar Nombre del Documento según tipo DTE oficial del SII
   const getDocumentTitle = (tipo: DteType) => {

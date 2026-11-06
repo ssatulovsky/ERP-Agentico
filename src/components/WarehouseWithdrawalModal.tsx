@@ -28,6 +28,7 @@ import {
   PieChart,
   BookOpen,
 } from 'lucide-react';
+import { folioInterno } from '../utils/folioInterno';
 
 interface WarehouseWithdrawalModalProps {
   productionOrders: ProductionOrder[];
@@ -65,7 +66,7 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
   // MODE 1: NOTA DE PEDIDO / CENTRO DE COSTO (EMPRESAS NO PRODUCTIVAS)
   // ----------------------------------------------------------------------
   const [notaPedidoFolio, setNotaPedidoFolio] = useState<string>(
-    `NP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`
+    folioInterno('NP')
   );
   const [notaPedidoAutorizadaPor, setNotaPedidoAutorizadaPor] = useState<string>(
     'Gonzalo Silva - Gerencia Comercial y Operaciones'
@@ -91,7 +92,7 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
 
   const [isCreatingNewOp, setIsCreatingNewOp] = useState<boolean>(activeOrders.length === 0);
   const [quickOpFolio, setQuickOpFolio] = useState<string>(
-    `OP-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`
+    folioInterno('OP')
   );
   const [quickOpDesc, setQuickOpDesc] = useState<string>('');
   const [quickOpClient, setQuickOpClient] = useState<string>('Pesquera Chiloé Ltda.');
@@ -126,22 +127,22 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
   const hasOverconsumption = budgetedQty > 0 && totalResultingQty > budgetedQty;
   const deviationQty = hasOverconsumption ? totalResultingQty - budgetedQty : 0;
 
-  const unitCostOp = inventoryItemOp?.costoUnitarioPMP || budgetDetail?.costoUnitarioEstimado || 350000;
+  const unitCostOp = inventoryItemOp?.costoUnitarioPMP || budgetDetail?.costoUnitarioEstimado || 0; // sin costo registrado: $0 (antes $350.000)
   const totalWithdrawalCostOp = cantidadSolicitadaOp * unitCostOp;
   const extraCostFromOverrun = deviationQty * unitCostOp;
 
-  const clientNetPrice = selectedOp?.precioVentaPactado || selectedOp?.precioVentaEstimado || 15000000;
+  const clientNetPrice = selectedOp?.precioVentaPactado || selectedOp?.precioVentaEstimado || 0;
   const currentTotalOpCost = (selectedOp?.costoTotalProduccion || 0) + totalWithdrawalCostOp;
   const projectedMarginClp = clientNetPrice - currentTotalOpCost;
   const projectedMarginPct = clientNetPrice > 0 ? Number(((projectedMarginClp / clientNetPrice) * 100).toFixed(1)) : 0;
-  const budgetedMarginPct = selectedOp?.margenPresupuestadoPct || 35;
+  const budgetedMarginPct = selectedOp?.margenPresupuestadoPct || 0;
   const marginErosionPct = Number((budgetedMarginPct - projectedMarginPct).toFixed(1));
 
   // Calculations for Nota de Pedido Mode
   const inventoryItemNp = inventoryItems.find((it) => it.id === selectedNpItemId) || inventoryItems[0];
   const warehouseStockInfoNp = inventoryItemNp?.stockPorBodega?.find((b) => b.bodegaId === selectedWarehouseId);
   const physicalStockAvailableNp = warehouseStockInfoNp ? warehouseStockInfoNp.stockFisico : inventoryItemNp?.stockDisponible || 0;
-  const unitCostNp = inventoryItemNp?.costoUnitarioPMP || 45000;
+  const unitCostNp = inventoryItemNp?.costoUnitarioPMP || 0;
   const totalWithdrawalCostNp = cantidadSolicitadaNp * unitCostNp;
 
   const selectedCostCenterObj = costCenters.find((c) => c.id === selectedCostCenterId);
@@ -200,7 +201,7 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
       const withdrawal: WarehouseWithdrawal = {
         id: `vale-${Date.now()}`,
         empresaId: 'client-mar-austral',
-        folioVale: `VALE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        folioVale: folioInterno('VALE'),
         fecha: new Date().toISOString().split('T')[0],
         tipoRetiro: 'NOTA_PEDIDO_CC',
         notaPedidoFolio,
@@ -250,7 +251,7 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
       const withdrawal: WarehouseWithdrawal = {
         id: `vale-${Date.now()}`,
         empresaId: selectedOp.empresaId,
-        folioVale: `VALE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        folioVale: folioInterno('VALE'),
         fecha: new Date().toISOString().split('T')[0],
         tipoRetiro: 'ORDEN_PRODUCCION',
         ordenProduccionId: selectedOp.id,

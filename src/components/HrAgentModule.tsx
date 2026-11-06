@@ -1670,11 +1670,11 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
               <ul className="text-xs space-y-1.5 text-slate-600">
                 <li className="flex justify-between">
                   <span>Sueldo Base (30 días):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.sueldoBase || 1200000)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.sueldoBase || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Gratificación Legal Art. 50:</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.gratificacionMonto || 205833)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.gratificacionMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Horas Extras (50% recargo):</span>
@@ -1682,7 +1682,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                 </li>
                 <li className="flex justify-between pt-1 border-t font-bold text-blue-700">
                   <span>Total Imponible:</span>
-                  <span>{formatCLP(payrolls[0]?.totalHaberesImponibles || 1405833)}</span>
+                  <span>{formatCLP(payrolls[0]?.totalHaberesImponibles || 0)}</span>
                 </li>
               </ul>
             </div>
@@ -1696,11 +1696,11 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
               <ul className="text-xs space-y-1.5 text-slate-600">
                 <li className="flex justify-between">
                   <span>Asignación Colación:</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.asignacionColacion || 80000)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.asignacionColacion || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Asignación Movilización:</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.asignacionMovilizacion || 70000)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.asignacionMovilizacion || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Viáticos / Cargas IPS:</span>
@@ -1708,7 +1708,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                 </li>
                 <li className="flex justify-between pt-1 border-t font-bold text-slate-800">
                   <span>Total No Imponible:</span>
-                  <span>{formatCLP(payrolls[0]?.totalHaberesNoImponibles || 150000)}</span>
+                  <span>{formatCLP(payrolls[0]?.totalHaberesNoImponibles || 0)}</span>
                 </li>
               </ul>
             </div>
@@ -1722,15 +1722,15 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
               <ul className="text-xs space-y-1.5 text-slate-600">
                 <li className="flex justify-between">
                   <span>AFP ({payrolls[0]?.afpNombre}):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afpMonto || 158000)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afpMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Salud ({payrolls[0]?.saludTipo}):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.saludMonto || 98400)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.saludMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>AFC Trabajador (0.6%):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afcTrabajadorMonto || 8435)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afcTrabajadorMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Impuesto Único (SII):</span>
@@ -1738,7 +1738,7 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
                 </li>
                 <li className="flex justify-between pt-1 border-t font-bold text-rose-700">
                   <span>Total Descuentos:</span>
-                  <span>{formatCLP(payrolls[0]?.totalDescuentos || 264835)}</span>
+                  <span>{formatCLP(payrolls[0]?.totalDescuentos || 0)}</span>
                 </li>
               </ul>
             </div>
@@ -1752,19 +1752,19 @@ export const HrAgentModule: React.FC<HrAgentModuleProps> = ({
               <ul className="text-xs space-y-1.5 text-slate-600">
                 <li className="flex justify-between">
                   <span>SIS Empleador (1.49%):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.sisEmpleadorMonto || 20947)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.sisEmpleadorMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Mutual Ley 16.744:</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.mutualEmpleadorMonto || 13074)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.mutualEmpleadorMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between">
                   <span>AFC Empleador (2.4%):</span>
-                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afcEmpleadorMonto || 33740)}</span>
+                  <span className="font-bold text-slate-800">{formatCLP(payrolls[0]?.afcEmpleadorMonto || 0)}</span>
                 </li>
                 <li className="flex justify-between pt-1 border-t font-bold text-amber-800">
                   <span>Costo Total Empresa:</span>
-                  <span>{formatCLP(payrolls[0]?.costoTotalEmpresa || 1623594)}</span>
+                  <span>{formatCLP(payrolls[0]?.costoTotalEmpresa || 0)}</span>
                 </li>
               </ul>
             </div>

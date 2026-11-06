@@ -91,7 +91,8 @@ export function calculatePreF29(
   let montoIvaRiesgoAcuse = 0;
 
   // Detección del plazo de 8 días de la Ley 19.983 para acuse de recibo
-  const now = new Date('2026-09-04T00:00:00Z');
+  // 4.4: fecha de referencia real (antes fija en 2026-09-04)
+  const now = (options as any).fechaReferencia ? new Date((options as any).fechaReferencia) : new Date();
 
   purchaseDtes.forEach(d => {
     // Clasificación de activo fijo vs gasto corriente
@@ -183,23 +184,23 @@ export function calculatePreF29(
   const baseImponibleVentasNetas = Math.max(0, facturasVentaAfectasNeto + ventasExentasInformadas);
   
   // Tasa de PPM según régimen tributario y configuración
-  let tasaPpmObligatoria = options.tasaPpmManual ?? company.tasaPpm ?? 0.01;
+  // 4.4: tasa manual > tasa de la ficha > tasa legal del régimen Pro Pyme. Sin ninguna, PPM $0 con alerta
+  // (antes se suponía 1 % y luego 1,5 % para cualquier régimen desconocido, ignorando la tasa manual).
   const tasaPpmVoluntaria = options.tasaPpmVoluntariaManual ?? company.tasaPpmVoluntaria ?? 0;
-  
-  // Regla según régimen tributario chileno:
-  // 14 D3 Pro Pyme General: 0.25% si ingresos anuales < 50.000 UF, 0.50% regular
-  // 14 D8 Pro Pyme Transparente: 0.20% o 0.50%
-  // 14 A Régimen General Semi-Integrado: según tasa calculada en F22 anterior (típicamente 1.5% a 3.5%)
-  if (!company.tasaPpm) {
-    if (company.regimenTributario === '14D3_PROPYME_GENERAL') {
-      tasaPpmObligatoria = 0.005; // 0.50%
-    } else if (company.regimenTributario === '14D8_PROPYME_TRANSPARENTE') {
-      tasaPpmObligatoria = 0.002; // 0.20%
-    } else {
-      tasaPpmObligatoria = 0.015; // 1.50%
-    }
+  let tasaPpmObligatoria: number;
+  let tasaPpmNoInformada = false;
+  if (options.tasaPpmManual !== undefined && options.tasaPpmManual !== null && Number(options.tasaPpmManual) > 0) {
+    tasaPpmObligatoria = Number(options.tasaPpmManual);
+  } else if (Number(company.tasaPpm) > 0) {
+    tasaPpmObligatoria = Number(company.tasaPpm);
+  } else if (company.regimenTributario === '14D3_PROPYME_GENERAL') {
+    tasaPpmObligatoria = 0.005; // Pro Pyme General: 0,50 % (0,25 % si ingresos < 50.000 UF: configurar en la ficha)
+  } else if (company.regimenTributario === '14D8_PROPYME_TRANSPARENTE') {
+    tasaPpmObligatoria = 0.002; // Pro Pyme Transparente: 0,20 %
+  } else {
+    tasaPpmObligatoria = 0;
+    tasaPpmNoInformada = true;
   }
-
   const tasaTotalAplicada = tasaPpmObligatoria + tasaPpmVoluntaria;
   const ppmDeterminado = Math.round(baseImponibleVentasNetas * tasaTotalAplicada); // Código 062
 
@@ -218,31 +219,45 @@ export function calculatePreF29(
   const montoIvaPostergable = (esPymeElegible && impuestoDeterminadoIva > 0) ? impuestoDeterminadoIva : 0;
   const totalConPostergacion = totalAPagarF29 - montoIvaPostergable;
   
-  // Plazo diferido: 60 días (vencimiento día 28 o fin de mes subsiguiente)
+  // Plazo diferido Art. 64: dos meses después del vencimiento normal (día 20 del mes siguiente al período)
+  const [anioPer, mesPer] = periodo.split('-').map(Number);
+  const totalMeses = anioPer * 12 + (mesPer - 1) + 3;
+  const fechaPostergada = `${Math.floor(totalMeses / 12)}-${String((totalMeses % 12) + 1).padStart(2, '0')}-20`;
+  const MESES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const fechaPostergadaTexto = `20 de ${MESES_ES[totalMeses % 12]} de ${Math.floor(totalMeses / 12)}`;
   const postergacionResult = {
     aplicaArticulo64: esPymeElegible && impuestoDeterminadoIva > 0,
     montoIvaPostergable,
     totalConPostergacion,
     plazoDias: 60,
-    fechaVencimientoPostergada: '2026-11-20',
+    fechaVencimientoPostergada: fechaPostergada,
     evaluacionImpactoFlujo: esPymeElegible && impuestoDeterminadoIva > 0
-      ? `Permite liberar ${formatCLP(montoIvaPostergable)} de caja inmediata durante 60 días sin interés punitorio (solo IPC), difiriendo el pago al 20 de Noviembre de 2026.`
+      ? `Permite liberar ${formatCLP(montoIvaPostergable)} de caja inmediata durante 60 días sin interés punitorio (solo IPC), difiriendo el pago al ${fechaPostergadaTexto}.`
       : 'No genera beneficio de caja para el período actual debido a que no existe IVA Débito neto determinado a enterar o el régimen no califica.',
     recomendacion: (esPymeElegible && montoIvaPostergable > 2000000) ? ('POSTERGAR' as const) : ('PAGAR_CONTADO' as const)
   };
 
   // 8. PATENTE MUNICIPAL Y PROYECCIÓN ANUAL (F22 Y CPT)
-  const cptBase = company.capitalPropioTributarioSimplificado || 85400000;
-  const tasaPorMil = company.patenteMunicipalTasaPorMil || 5.0; // 5 por mil anual
+  // 4.4: CPT y tasa de patente solo si están en la ficha de la empresa (antes CPT $85.400.000 y 5 ‰ supuestos)
+  const cptBase = Number(company.capitalPropioTributarioSimplificado) || 0;
+  const tasaPorMil = Number(company.patenteMunicipalTasaPorMil) || 0;
   const patenteAnualEstimada = Math.round(cptBase * (tasaPorMil / 1000));
   const patenteSemestralEstimada = Math.round(patenteAnualEstimada / 2);
 
-  const rliBase = company.baseRliProyectada || Math.round(baseImponibleVentasNetas * 0.35);
+  const rliBase = Number(company.baseRliProyectada) || 0; // sin RLI proyectada informada no se estima (antes 35 % de las ventas)
   const tasaIdpc = company.regimenTributario === '14D3_PROPYME_GENERAL' ? 0.125 : 0.27; // Tasa IDPC 12.5% ProPyme o 27% 14 A
   const idpcEstimado = Math.round(rliBase * tasaIdpc);
 
   // 9. ALERTAS Y AUDITORÍA PREVENTIVA
   const alertas: F29AlertaFiscal[] = [];
+  if (tasaPpmNoInformada) {
+    alertas.push({
+      tipo: 'ERROR',
+      descripcion: 'La empresa no tiene tasa PPM informada ni un régimen Pro Pyme con tasa legal; el PPM se calculó en $0.',
+      codigoRelacionado: 'C062',
+      accionSugerida: 'Registre la tasa PPM en la ficha de la empresa (Art. 84 LIR).',
+    });
+  }
 
   // Alerta 1: Acuse de recibo 8 días (Ley 19.983)
   if (facturasPendientesAcuse8Dias > 0) {

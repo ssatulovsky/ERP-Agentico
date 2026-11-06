@@ -24,6 +24,7 @@ import {
 import { EXPENSE_CATEGORIES_CONFIG, validateChileanRut, formatCLP } from '../../utils/expenseManagementAgent';
 
 import { loadCompanyProjects } from '../../utils/companyProjectsService';
+import { isDemoModeEnabled } from '../../config/demoMode';
 
 interface AddExpenseItemModalProps {
   isOpen: boolean;
@@ -132,6 +133,7 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
 
   // Simulación inteligente de OCR con escáner de boleta móvil tipo RindeGastos
   const handleSimulateOcr = () => {
+    if (!isDemoModeEnabled()) return;
     setIsOcrScanning(true);
     setTimeout(() => {
       const ocrSamples = [
@@ -267,6 +269,8 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
             <Sparkles className="w-4 h-4 text-emerald-600 animate-pulse" />
             Asistente RindeGastos OCR: captura boleta desde foto o ticket
           </span>
+          {/* 4.4: OCR simulado solo en DEMO_MODE; la lectura real está en la app móvil (/api/expenses/scan-receipt-ai) */}
+          {isDemoModeEnabled() && (
           <button
             type="button"
             onClick={handleSimulateOcr}
@@ -274,8 +278,9 @@ export const AddExpenseItemModal: React.FC<AddExpenseItemModalProps> = ({
             className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            {isOcrScanning ? 'Escaneando ticket...' : 'Simular Captura OCR'}
+            Comprobante de ejemplo (demostración)
           </button>
+          )}
         </div>
 
         {/* Formulario */}

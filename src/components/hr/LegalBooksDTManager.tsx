@@ -26,8 +26,10 @@ export const LegalBooksDTManager: React.FC<LegalBooksDTManagerProps> = ({
   company,
 }) => {
   const [periodo, setPeriodo] = useState(periodoActual());
-  const [estadoEnvio, setEstadoEnvio] = useState<'PENDIENTE_ENVIO' | 'ENVIADO_ACEPTADO_DT'>('ENVIADO_ACEPTADO_DT');
-  const [folioCertificado, setFolioCertificado] = useState('CERT-DT-202608-99410');
+  // 4.4: no hay integración con Mi DT. El estado parte PENDIENTE y el folio del certificado lo ingresa
+  // el usuario tras cargar el archivo en el portal (antes: "Aceptado sin reparos" con folio inventado).
+  const [estadoEnvio, setEstadoEnvio] = useState<'PENDIENTE_ENVIO' | 'ENVIADO_ACEPTADO_DT'>('PENDIENTE_ENVIO');
+  const [folioCertificado, setFolioCertificado] = useState('');
 
   // Cálculos totales para el reporte oficial
   const totalImponible = employees.reduce((acc, e) => acc + e.totalImponible, 0);
@@ -104,9 +106,11 @@ export const LegalBooksDTManager: React.FC<LegalBooksDTManagerProps> = ({
     document.body.removeChild(link);
   };
 
-  const handleSimulateSend = () => {
+  const handleRegisterCertificate = (folio: string) => {
+    const clean = folio.trim();
+    if (!clean) return;
+    setFolioCertificado(clean);
     setEstadoEnvio('ENVIADO_ACEPTADO_DT');
-    setFolioCertificado(`CERT-DT-${periodo.replace('-', '')}-${Math.floor(10000 + Math.random() * 90000)}`);
   };
 
   return (
@@ -142,13 +146,28 @@ export const LegalBooksDTManager: React.FC<LegalBooksDTManagerProps> = ({
             <span>Estado Transmisión Mi DT</span>
             <ShieldCheck className="w-4 h-4 text-indigo-600" />
           </div>
-          <div className="text-sm font-black text-indigo-700 mt-2 flex items-center gap-1">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Aceptado sin reparos</span>
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1 font-mono">
-            {folioCertificado}
-          </div>
+          {estadoEnvio === 'ENVIADO_ACEPTADO_DT' ? (
+            <>
+              <div className="text-sm font-black text-indigo-700 mt-2 flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Certificado DT registrado</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 font-mono">{folioCertificado}</div>
+            </>
+          ) : (
+            <>
+              <div className="text-sm font-black text-amber-700 mt-2">Pendiente de carga en Mi DT</div>
+              <input
+                type="text"
+                placeholder="Folio del certificado DT"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRegisterCertificate((e.target as HTMLInputElement).value);
+                }}
+                className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-[11px] font-mono"
+                title="Descargue el LRE, cárguelo en el portal de la DT e ingrese aquí el folio del certificado (Enter)"
+              />
+            </>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">

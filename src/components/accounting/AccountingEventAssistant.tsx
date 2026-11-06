@@ -25,6 +25,7 @@ import {
   StandardJournalEntryData,
 } from './StandardJournalEntryTable';
 import { StandardJournalEntryModal } from './StandardJournalEntryModal';
+import { folioInterno } from '../../utils/folioInterno';
 
 interface AssistantChatMessage {
   id: string;
@@ -127,7 +128,7 @@ Usted puede describir en lenguaje natural cualquier hecho económico, gasto, com
       if (aiData.asientoPropuesto) {
         proposedEntryData = {
           id: `entry-prop-${Date.now()}`,
-          folio: `PROP-${Math.floor(1000 + Math.random() * 9000)}`,
+          folio: folioInterno('PROP'),
           empresaId: company.rut,
           periodo: new Date().toISOString().substring(0, 7),
           fecha: aiData.asientoPropuesto.fecha || new Date().toISOString().split('T')[0],

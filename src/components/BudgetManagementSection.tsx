@@ -29,6 +29,7 @@ import {
   Download,
   Search,
 } from 'lucide-react';
+import { folioInterno } from '../utils/folioInterno';
 
 interface BudgetManagementSectionProps {
   budgets: ProductionBudget[];
@@ -55,7 +56,7 @@ export const BudgetManagementSection: React.FC<BudgetManagementSectionProps> = (
 
   // Form State para Nuevo Presupuesto
   const [newBudgetForm, setNewBudgetForm] = useState<Partial<ProductionBudget>>({
-    folio: `PRE-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+    folio: folioInterno('PRE'),
     clienteNombre: currentClient?.razonSocial || 'Pesquera Chiloé Ltda.',
     clienteRut: currentClient?.rut || '77.654.321-K',
     contactoCliente: '',

@@ -1855,7 +1855,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
                               sku: pb.folio,
                               nombre: `Fabricación: ${pb.clienteNombre || 'OP Personalizada'}`,
                               cantidad: 1,
-                              precioUnitario: Math.round((pb.totalCostoEstimado || pb.precioVentaNeto || 100000) * 1.35)
+                              precioUnitario: Math.round(Number(pb.precioVentaNeto) || (Number(pb.totalCostoEstimado) || 0) * 1.35) // sin costo ni precio: $0 para completar
                             }
                           ]);
                           setIsNewQuoteOpen(true);

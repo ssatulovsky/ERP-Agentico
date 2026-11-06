@@ -659,7 +659,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                       <div className="bg-slate-50 border border-slate-100 rounded-lg p-2">
                         <span className="text-slate-400 text-[10px] uppercase font-bold block">Tasa PPM</span>
                         <span className="font-mono font-bold text-blue-600">
-                          {((client.tasaPpm || 0.01) * 100).toFixed(2)}%
+                          {client.tasaPpm ? `${(client.tasaPpm * 100).toFixed(2)}%` : 'No informada'}
                         </span>
                       </div>
                     </div>
@@ -1269,8 +1269,8 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                         step="0.05"
                         min="0"
                         max="15"
-                        value={((clientForm.tasaPpm || 0.01) * 100).toFixed(2)}
-                        onChange={(e) => setClientForm({ ...clientForm, tasaPpm: parseFloat(e.target.value) / 100 || 0.01 })}
+                        value={clientForm.tasaPpm ? (clientForm.tasaPpm * 100).toFixed(2) : ''}
+                        onChange={(e) => setClientForm({ ...clientForm, tasaPpm: parseFloat(e.target.value) / 100 || 0 })}
                         className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-blue-600 focus:outline-none focus:border-blue-500"
                       />
                     </div>

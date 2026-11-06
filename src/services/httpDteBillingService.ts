@@ -886,8 +886,12 @@ export class HttpDteBillingService {
 
           // Buscar rangoDesde en archivos CAF del contribuyente
           const cafInfo = this.getTenantVaultStatus(cleanRut).cafs.find((c) => c.tipoDte === tipoDte);
+          // 4.4: sin CAF no hay rango de folios autorizado (antes se suponía 1 a 5000)
+          if (!cafInfo && !isOfflineDteSimulationAllowed()) {
+            throw new Error(`No hay CAF registrado para DTE tipo ${tipoDte}; no se puede asignar folio.`);
+          }
           const rangoDesde = cafInfo?.rangoDesde || 1;
-          const rangoHasta = cafInfo?.rangoHasta || 5000;
+          const rangoHasta = cafInfo?.rangoHasta || rangoDesde;
           nextFolio = Math.max(maxInDte + 1, rangoDesde);
 
           const seqId = `seq-${Date.now()}-${cleanRut.slice(-4)}`;

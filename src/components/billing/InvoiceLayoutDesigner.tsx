@@ -1209,7 +1209,7 @@ export const InvoiceLayoutDesigner: React.FC<InvoiceLayoutDesignerProps> = ({
               draft={currentDraft}
               company={company}
               tipoDteOverride={previewTipoDte}
-              folioOverride={currentDraft.folioSugerido || 1420}
+              folioOverride={currentDraft.folioSugerido || 0}
               zoom={zoom}
               showWatermark={true}
             />

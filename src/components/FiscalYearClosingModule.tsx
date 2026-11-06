@@ -416,7 +416,7 @@ export const FiscalYearClosingModule: React.FC<FiscalYearClosingModuleProps> = (
                 <input
                   type="number"
                   value={ejercicioActivo}
-                  onChange={e => setEjercicioActivo(parseInt(e.target.value, 10) || 2026)}
+                  onChange={e => setEjercicioActivo(parseInt(e.target.value, 10) || new Date().getFullYear())}
                   className="w-full text-xs font-mono font-bold bg-slate-50 border border-slate-300 rounded-lg p-2 text-slate-900"
                 />
                 <span className="text-[10px] text-slate-500">Ejercicio contable y tributario</span>

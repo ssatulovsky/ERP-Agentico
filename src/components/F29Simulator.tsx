@@ -106,10 +106,16 @@ export const F29Simulator: React.FC<F29SimulatorProps> = ({
 
   // Sync with RCV & Payroll
   const handleSyncWithRcv = () => {
+    // 4.4: sin espera artificial y sin tasa PPM supuesta (antes 1 % por defecto)
+    const tasaPpmEmpresa = f29.tasaPpm || company.tasaPpm;
+    if (!tasaPpmEmpresa) {
+      alert('Configure la tasa PPM de la empresa antes de sincronizar el F29.');
+      return;
+    }
     setIsSyncing(true);
-    setTimeout(() => {
+    {
       const baseVentasPpm = rcvVentasNeto;
-      const montoPpm = Math.round(baseVentasPpm * (f29.tasaPpm || company.tasaPpm || 0.01));
+      const montoPpm = Math.round(baseVentasPpm * tasaPpmEmpresa);
       const totalCred = rcvCreditoFiscal + f29.remanenteMesAnterior;
 
       let impDet = 0;
@@ -141,7 +147,7 @@ export const F29Simulator: React.FC<F29SimulatorProps> = ({
 
       onUpdateF29(synced);
       setIsSyncing(false);
-    }, 300);
+    }
   };
 
   const handleGeneratePaymentEntry = () => {

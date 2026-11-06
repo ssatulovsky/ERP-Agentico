@@ -32,6 +32,7 @@ import {
   CHILEAN_REGIONS_WITH_COMMUNES 
 } from '../../config/erpMasterConfig';
 import { STANDARD_ACCOUNT_PLAN, formatCLP, validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
+import { isDemoModeEnabled } from '../../config/demoMode';
 
 interface NewErpClientOnboardingModalProps {
   isOpen: boolean;
@@ -121,9 +122,8 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
 
   // AI Prompt simulation (e.g. "Crear cliente RUT 76.543.210-K SpA...")
   const handleAiAutoFill = () => {
-    setIsAiProcessing(true);
-    setTimeout(() => {
-      setIsAiProcessing(false);
+    if (!isDemoModeEnabled()) return;
+    {
       setRutEmpresa('76.942.315-8');
       setRazonSocial('INGENIERÍA Y SERVICIOS SUBMARINOS CHILE SPA');
       setNombreFantasia('Subsea Services');
@@ -135,9 +135,9 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
       setCiudad('Puerto Montt');
       setComuna('Puerto Montt');
       setDireccionComercial('Ruta 5 Sur Km 1024, Módulo 8');
-      setAiMessage('Datos extraídos del Registro Tributario SII y pre-llenados automáticamente.');
+      setAiMessage('Datos de ejemplo cargados (modo demostración).');
       setTimeout(() => setAiMessage(null), 4000);
-    }, 600);
+    }
   };
 
   const handleResetForm = () => {
@@ -310,6 +310,8 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                 {aiMessage}
               </span>
             )}
+            {/* 4.4: no hay consulta real al SII; el autollenado con datos de ejemplo solo existe en DEMO_MODE */}
+            {isDemoModeEnabled() && (
             <button
               type="button"
               onClick={handleAiAutoFill}
@@ -317,8 +319,9 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs font-semibold shadow-2xs transition-all cursor-pointer"
             >
               <Sparkles className="w-3 h-3" />
-              <span>{isAiProcessing ? 'Consultando SII...' : 'Auto-completar desde SII'}</span>
+              <span>Datos de ejemplo (demostración)</span>
             </button>
+            )}
           </div>
         </div>
 

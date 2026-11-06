@@ -72,14 +72,6 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
     });
   }, [empresaRut, empresaNombre, periodo, chartOfAccounts, entries, balance8Col, manualInitialBalance]);
 
-  // Manejador de re-auditoría manual
-  const handleReAudit = () => {
-    setIsAuditing(true);
-    setTimeout(() => {
-      setIsAuditing(false);
-    }, 700);
-  };
-
   // Descarga CSV / Excel
   const handleDownloadCSV = () => {
     const csvContent = exportCashFlowIndirectToCSV(report);
@@ -138,18 +130,10 @@ export const CashFlowIndirectView: React.FC<CashFlowIndirectViewProps> = ({
               {ultimosPeriodos(18).map((p) => (
                 <option key={p} value={p}>{etiquetaPeriodo(p)}</option>
               ))}
-              <option value="2026-12">Acumulado Anual 2026</option>
+              <option value={`${new Date().getFullYear()}-12`}>Acumulado Anual {new Date().getFullYear()}</option>
             </select>
 
-            <button
-              onClick={handleReAudit}
-              disabled={isAuditing}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-              title="Volver a escanear asientos y recalcular flujo de efectivo"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isAuditing ? 'animate-spin text-blue-600' : ''}`} />
-              <span>{isAuditing ? 'Auditando...' : 'Re-Auditar'}</span>
-            </button>
+            {/* 4.4: se quitó "Re-Auditar" (simulaba 700 ms de auditoría; el flujo se recalcula en vivo) */}
 
             <button
               onClick={handleDownloadCSV}

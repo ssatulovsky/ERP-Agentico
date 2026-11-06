@@ -35,7 +35,7 @@ export const ExtraordinaryFiscalYearReopenModal: React.FC<ExtraordinaryFiscalYea
 }) => {
   if (!isOpen) return null;
 
-  const currentYear = company.ejercicioActivo || 2026;
+  const currentYear = company.ejercicioActivo || new Date().getFullYear();
   const closedYears = company.ejerciciosCerrados && company.ejerciciosCerrados.length > 0
     ? company.ejerciciosCerrados
     : [currentYear - 2, currentYear - 1]; // ej: [2024, 2025]

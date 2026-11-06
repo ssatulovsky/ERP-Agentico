@@ -76,6 +76,11 @@ export const ContractsManager: React.FC<ContractsManagerProps> = ({
   const handleCreateContract = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.nombreCompleto || !formData.rut || !formData.cargo) return;
+    // 4.4: el sueldo base es obligatorio (antes se suponía $1.000.000)
+    if (!(Number(formData.sueldoBase) > 0)) {
+      alert('Ingrese el sueldo base pactado en el contrato.');
+      return;
+    }
 
     const newContract: LaborContract = {
       id: `ctr-${Date.now()}`,
@@ -84,24 +89,24 @@ export const ContractsManager: React.FC<ContractsManagerProps> = ({
       nombreCompleto: formData.nombreCompleto,
       nacionalidad: formData.nacionalidad || 'Chilena',
       estadoCivil: formData.estadoCivil || 'Soltero(a)',
-      fechaNacimiento: formData.fechaNacimiento || '1995-01-01',
-      domicilio: formData.domicilio || 'Av. Providencia 1200',
-      comuna: formData.comuna || 'Providencia',
+      fechaNacimiento: formData.fechaNacimiento || '',
+      domicilio: formData.domicilio || '',
+      comuna: formData.comuna || '',
       cargo: formData.cargo,
       departamento: formData.departamento || 'Operaciones',
       tipoContrato: formData.tipoContrato as LaborContractType || 'INDEFINIDO',
       fechaInicio: formData.fechaInicio || new Date().toISOString().split('T')[0],
       fechaTermino: formData.tipoContrato === 'PLAZO_FIJO' ? formData.fechaTermino : undefined,
-      sueldoBase: Number(formData.sueldoBase) || 1000000,
+      sueldoBase: Number(formData.sueldoBase) || 0,
       jornadaHorasSemanales: Number(formData.jornadaHorasSemanales) || 44,
       distribucionJornada: formData.distribucionJornada || 'Lunes a Viernes de 08:30 a 18:00 hrs',
       lugarTrabajo: formData.lugarTrabajo || company.direccion,
       gratificacionModalidad: 'ART_50',
-      asignacionColacion: Number(formData.asignacionColacion) || 80000,
-      asignacionMovilizacion: Number(formData.asignacionMovilizacion) || 70000,
+      asignacionColacion: Number(formData.asignacionColacion) || 0,
+      asignacionMovilizacion: Number(formData.asignacionMovilizacion) || 0,
       estado: formData.tipoContrato === 'PLAZO_FIJO' ? 'POR_VENCER' : 'VIGENTE',
       registradoDtRel: !!formData.registradoDtRel,
-      folioRegistroDt: formData.registradoDtRel ? `REL-${Date.now().toString().slice(-6)}-DT` : undefined,
+      folioRegistroDt: formData.registradoDtRel ? (formData as any).folioRegistroDt || undefined : undefined,
       anexos: [],
       clausulaConfidencialidad: !!formData.clausulaConfidencialidad,
       clausulaTeletrabajo: !!formData.clausulaTeletrabajo,
@@ -112,11 +117,15 @@ export const ContractsManager: React.FC<ContractsManagerProps> = ({
     setShowNewModal(false);
   };
 
+  // 4.4: el registro REL se hace en el portal de la DT; aquí solo se anota el folio que entrega la DT
+  // (antes se marcaba "Registrado DT" con un folio aleatorio).
   const handleRegisterRel = (contract: LaborContract) => {
+    const folio = typeof window !== 'undefined' ? window.prompt('Folio de registro REL entregado por la Dirección del Trabajo:') : null;
+    if (!folio || !folio.trim()) return;
     const updated: LaborContract = {
       ...contract,
       registradoDtRel: true,
-      folioRegistroDt: `REL-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-DT`,
+      folioRegistroDt: folio.trim(),
     };
     onUpdateContract(updated);
   };

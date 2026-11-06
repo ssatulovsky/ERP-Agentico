@@ -41,7 +41,7 @@ Total Haberes: ${formatCLP(payroll.totalHaberesBrutos)}
 Total Descuentos: ${formatCLP(payroll.totalDescuentos)}
 LÍQUIDO A PAGAR: ${formatCLP(payroll.sueldoLiquido)}
 Aporte Ley 21.735 (1%): ${formatCLP(payroll.reformaPrevisionalLey21735Monto || Math.round(payroll.totalHaberesImponibles * 0.01))}
-Certificado DT: CERT-DT-${periodo.replace('-', '')}-${payroll.rut.replace(/[^0-9Kk]/g, '')}`;
+Certificado DT: ${(payroll as any).folioCertificadoDt || 'sin certificado DT registrado'}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -53,7 +53,8 @@ Certificado DT: CERT-DT-${periodo.replace('-', '')}-${payroll.rut.replace(/[^0-9
 
   const ley21735Monto = payroll.reformaPrevisionalLey21735Monto || Math.round(payroll.totalHaberesImponibles * 0.01);
   const wordsAmount = formatNumberToWordsCLP(payroll.sueldoLiquido);
-  const folioDt = `CERT-DT-${periodo.replace('-', '')}-${payroll.rut.replace(/[^0-9Kk]/g, '')}`;
+  // 4.4: el folio DT solo se muestra si existe uno registrado (antes se armaba con período + RUT)
+  const folioDt = (payroll as any).folioCertificadoDt || 'Sin certificado DT registrado';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto">

@@ -832,7 +832,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
       empresaId,
       periodo,
       regimenTributario: companyProfile.regimenTributario,
-      tasaPpm: companyProfile.tasaPpm || 0.01,
+      tasaPpm: companyProfile.tasaPpm || 0,
       postergacionIva: {
         solicitada: aplicarPostergacionIva,
         aplica: postergacionAplica,
@@ -866,7 +866,7 @@ export async function processF29Settlement(job: F29ProcessableJob): Promise<F29J
         ivaDeterminado: casillas.c089 || 0,
         postergado: postergacionAplica,
         montoPpm: casillas.c062 || 0,
-        tasaPpm: companyProfile.tasaPpm || 0.01,
+        tasaPpm: companyProfile.tasaPpm || 0,
         retencionHonorarios: casillas.c151 || 0,
         totalImpuestoPagar: casillas.c091 || 0,
         asientoContableId: verifiedEntryResult.entry.id,

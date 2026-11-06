@@ -872,7 +872,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
     context?: { agenteNombre?: string; accion?: string; modelName?: string; payloadInput?: any; overridePeriodos?: string[] }
   ) => {
     // Validación estricta de ejercicio fiscal y períodos bloqueados (Art. 16 Código Tributario)
-    const basePeriodos = context?.overridePeriodos || company.periodosCerrados || ['2026-01', '2026-02'];
+    const basePeriodos = context?.overridePeriodos || company.periodosCerrados || [];
     let currentPeriodos = [...basePeriodos];
     const companyToCheck: CompanyProfile = {
       ...company,
@@ -1119,7 +1119,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       };
       dispatchEntry(entry, { agenteNombre: 'AGENTE_F29', accion: 'LIQUIDACION_F29_TRIBUTARIO' });
     } else if (modulo === 'ACTIVO_FIJO') {
-      const totalDepreciacion = safeFixedAssets.reduce((s, a) => s + (a.depreciacionAcumulada || 185000), 0);
+      const totalDepreciacion = safeFixedAssets.reduce((s, a) => s + (Number(a.depreciacionAcumulada) || 0), 0);
+      // 4.4: sin depreciación registrada no se centraliza nada (antes $185.000 por bien supuestos)
+      if (totalDepreciacion <= 0) {
+        alert('No hay depreciación calculada en el módulo de Activo Fijo para centralizar.');
+        return;
+      }
       const entry: AccountingEntry = {
         id: `centraliza-activo-fijo-${Date.now()}`,
         fecha: today,
@@ -1148,7 +1153,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       };
       dispatchEntry(entry, { agenteNombre: 'AGENTE_ACTIVO_FIJO', accion: 'CENTRALIZACION_DEPRECIACION_NIC16' });
     } else if (modulo === 'PRODUCCION') {
-      const totalCostoOP = safeProductionOrders.reduce((s, op) => s + (op.costoTotalReal || 850000), 0);
+      const totalCostoOP = safeProductionOrders.reduce((s, op) => s + (Number(op.costoTotalReal) || 0), 0);
+      // 4.4: sin costo real de las órdenes no se activa nada (antes $850.000 por OP supuestos)
+      if (totalCostoOP <= 0) {
+        alert('Las órdenes de producción no tienen costo real registrado para activar.');
+        return;
+      }
       const entry: AccountingEntry = {
         id: `centraliza-produccion-${Date.now()}`,
         fecha: today,

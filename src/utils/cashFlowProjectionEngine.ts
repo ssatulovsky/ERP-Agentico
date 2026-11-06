@@ -751,8 +751,9 @@ export function scanErpCommitments({
   safeLeases.forEach(l => {
     const refLease = `lease-${l.id}-${currentYear}-${currentMonth + 1}`;
     const fechaCanon = new Date(currentYear, currentMonth + 1, 5).toISOString().split('T')[0];
-    const mensual = l.montoMensualClp || l.montoCanonMensual || 1200000;
-    if (!existsMovementWithRef(refLease)) {
+    const mensual = Number(l.montoMensualClp || l.montoCanonMensual) || 0;
+    // Sin canon registrado no se proyecta pago (antes $1.200.000 supuesto)
+    if (mensual > 0 && !existsMovementWithRef(refLease)) {
       const canonTotal = Math.round(mensual * 1.19);
       newMovements.push({
         id: `mov-${refLease}`,
@@ -1413,14 +1414,15 @@ export function buildAnnualCashFlowProjection({
     'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
   ];
 
-  const totalLiquidoMensual = (payrolls || []).reduce((s, p) => s + (p.sueldoLiquido || 0), 0) || 14850000;
+  // 4.4: sin datos, cero (antes $14.850.000, $4.920.000, $1.850.000 y ventas $48.500.000 supuestos)
+  const totalLiquidoMensual = (payrolls || []).reduce((s, p) => s + (p.sueldoLiquido || 0), 0);
   const totalPreviredMensual = (payrolls || []).reduce(
     (s, p) => s + (p.afpMonto || 0) + (p.saludMonto || 0) + (p.sisEmpleadorMonto || 0) + (p.mutualEmpleadorMonto || 0),
     0
-  ) || 4920000;
-  const totalArriendosMensual = (leases || []).reduce((s, l) => s + (l.montoMensualClp || l.montoCanonMensual || 0), 0) || 1850000;
+  );
+  const totalArriendosMensual = (leases || []).reduce((s, l) => s + (l.montoMensualClp || l.montoCanonMensual || 0), 0);
 
-  const baseVentasBruto = historicalSales.promedioMensualVentasBruto || 48500000;
+  const baseVentasBruto = historicalSales.promedioMensualVentasBruto || 0;
   const monthlyPoints: MonthlyCashFlowPoint[] = [];
 
   let runningBalance = initialBalance;

@@ -36,14 +36,14 @@ export const MedicalLeavesManager: React.FC<MedicalLeavesManagerProps> = ({
   // Form state
   const [formData, setFormData] = useState({
     employeeId: employees[0]?.id || '',
-    folioLicencia: `LME-${Math.floor(100000 + Math.random() * 900000)}-${Math.floor(Math.random() * 9)}`,
+    folioLicencia: '', // folio oficial de la licencia: lo ingresa el usuario
     tipoLicencia: 'ENFERMEDAD_COMUN' as MedicalLeaveType,
     entidadTramitadora: 'FONASA_COMPIN' as MedicalLeaveEntity,
     fechaInicio: new Date().toISOString().split('T')[0],
     diasReposo: 7,
-    medicoNombre: 'Dr. Alejandro Soto Valdivia',
-    medicoRut: '12.450.982-1',
-    diagnosticoCie10: 'J06.9 - Infección respiratoria aguda no especificada',
+    medicoNombre: '',
+    medicoRut: '',
+    diagnosticoCie10: '',
     observaciones: '',
   });
 
@@ -55,6 +55,11 @@ export const MedicalLeavesManager: React.FC<MedicalLeavesManagerProps> = ({
     e.preventDefault();
     const emp = employees.find(e => e.id === formData.employeeId);
     if (!emp) return;
+    // El folio oficial de la licencia es obligatorio (no se genera uno)
+    if (!formData.folioLicencia.trim()) {
+      alert('Ingrese el folio de la licencia médica.');
+      return;
+    }
 
     // Calcular días fecha término
     const start = new Date(formData.fechaInicio);

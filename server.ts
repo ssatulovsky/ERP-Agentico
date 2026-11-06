@@ -1790,7 +1790,7 @@ DATOS DE LA EMPRESA ACTIVA:
 - Tasa PPM Vigente: ${(tasaPpmTotal * 100).toFixed(2)}% (Obligatorio: ${(tasaPpmOblig * 100).toFixed(2)}%, Voluntario: ${(tasaPpmVol * 100).toFixed(2)}%)
 - Saldo Remanente Mes Anterior: ${remanenteUtm.toFixed(2)} UTM ($${remanenteReajustadoClp.toLocaleString('es-CL')} CLP reajustado)
 - Giros / Exenciones: ${empresa?.giro} (Código Actividad: ${empresa?.actividadEconomicaCodigo || '620100'}, Ventas Exentas: $${ventasExentasInformadas.toLocaleString('es-CL')})
-- CPT Simplificado Base Patente: $${(empresa?.capitalPropioTributarioSimplificado || 85400000).toLocaleString('es-CL')} CLP
+- CPT Simplificado Base Patente: ${empresa?.capitalPropioTributarioSimplificado ? '$' + Number(empresa.capitalPropioTributarioSimplificado).toLocaleString('es-CL') + ' CLP' : 'No informado'}
 - Indicadores: UTM Actual $${utmActual.toLocaleString('es-CL')} CLP, Tasa Retención Honorarios: ${(honorariosTasa * 100).toFixed(2)}%
 
 CÁLCULOS TRIBUTARIOS DEL PERÍODO (${periodo}):

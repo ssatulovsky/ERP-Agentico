@@ -155,7 +155,10 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
   const selectedPlan = ERP_SUBSCRIPTION_PLANS.find(p => p.id === planContratadoId) || ERP_SUBSCRIPTION_PLANS[1];
 
   const handleGenerateInitialAccess = () => {
-    const pass = `Daibuda#${Math.floor(1000 + Math.random() * 9000)}`;
+    // Contraseña temporal con aleatoriedad criptográfica (antes: "Daibuda#" + 4 dígitos con Math.random)
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    const pass = `Tmp_${Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 16)}!`;
     setTempPassword(pass);
     setAccessConfigModalOpen(true);
   };

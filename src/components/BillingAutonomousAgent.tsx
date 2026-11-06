@@ -392,10 +392,10 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
       ? 'Hito 2: Saldo 60% contra Entrega Técnica y Certificado RG 1821'
       : 'Liquidación Total 100% Orden de Producción';
 
-    const opTotal = op.costoTotalProduccion || op.costoPrimo || (op as any).totalCostoEstimado || 12500000;
+    const opTotal = Number(op.costoTotalProduccion || op.costoPrimo || (op as any).totalCostoEstimado) || 0; // sin costo registrado: $0 (antes $12.500.000)
     const precioHito = Math.round((opTotal * 1.35) * pct); // 35% margen comercial sobre costo
     const isExenta = draft.tipoDte === '34';
-    const opCodigo = op.folioOP || (op as any).codigo || 'OP-2026-101';
+    const opCodigo = op.folioOP || (op as any).codigo || op.id;
     const prodDesc = op.productoNombre || op.descripcion || 'Red Pecera HDPE';
     const clientName = op.clienteNombre || (op as any).clienteDestino || company.razonSocial || 'AQUACHILE S.A.';
 
@@ -510,10 +510,10 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
       }
 
       setLastEmissionReport(data);
-      const assignedFolio = data.folio || draft.folioSugerido || 1421;
+      const assignedFolio = data.folio || draft.folioSugerido;
 
       addLog(`✅ [HTTP-DTE] ¡DTE Timbrado exitosamente por el motor LibreDTE! Folio oficial: ${assignedFolio}`);
-      addLog(`🎫 [SII] TrackID de recepción devuelto: ${data.trackId || 'TRK-OK'}`);
+      addLog(data.trackId ? `🎫 [SII] TrackID de recepción devuelto: ${data.trackId}` : '⚠️ [SII] El servicio no devolvió TrackID.');
       addLog(`🔏 [TED] Timbre Electrónico DTE generado y firmado con clave RSA del CAF.`);
       addLog(`💾 [Persistencia] Sincronizado en MySQL 8.0 (tabla dtes_rcv + dte_items) y almacenamiento dual de disco.`);
 
@@ -622,17 +622,17 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
   const getHttpDteSamplePayload = () => {
     return {
       tipoDte: Number(draft.tipoDte) || 33,
-      folio: draft.folioSugerido || 1420,
+      folio: draft.folioSugerido || null,
       fechaEmision: draft.fechaEmision,
       fechaVencimiento: draft.fechaVencimiento,
       formaPago: draft.condicionVenta === 'CONTADO' ? 1 : 2,
       emisor: {
         rut: company.rut.replace(/\./g, ''),
         razonSocial: company.razonSocial,
-        giro: (company as any).giro || 'SERVICIOS COMERCIALES',
-        acteco: (company as any).acteco || 139400,
-        direccion: (company as any).direccion || 'Av. Principal 1000',
-        comuna: (company as any).comuna || 'PUERTO MONTT',
+        giro: (company as any).giro || '',
+        acteco: (company as any).acteco || null,
+        direccion: (company as any).direccion || '',
+        comuna: (company as any).comuna || '',
       },
       receptor: {
         rut: draft.rutReceptor.replace(/\./g, ''),
@@ -675,7 +675,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `http_dte_payload_${draft.tipoDte}_folio_${draft.folioSugerido || 1420}.json`;
+    link.download = `http_dte_payload_${draft.tipoDte}_folio_${draft.folioSugerido || 'sin-folio'}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -690,7 +690,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(getHttpDteSamplePayload())}'`;
     } else {
-      text = `npm run dte:emit -- --tipo=${draft.tipoDte} --folio=${draft.folioSugerido || 1420}`;
+      text = `npm run dte:emit -- --tipo=${draft.tipoDte} --folio=${draft.folioSugerido || '<folio>'}`;
     }
 
     navigator.clipboard.writeText(text);
@@ -986,7 +986,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                       <label className="block font-semibold text-amber-800 mb-1">Folio Referenciado</label>
                       <input
                         type="number"
-                        value={draft.referencia?.folioRef || 1419}
+                        value={draft.referencia?.folioRef || ''}
                         onChange={(e) => setDraft(prev => ({
                           ...prev,
                           referencia: { ...prev.referencia!, folioRef: Number(e.target.value) }
@@ -2283,7 +2283,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                 </div>
               ) : (
                 productionOrders.map((op) => {
-                  const opTotal = op.costoTotalProduccion || op.costoPrimo || (op as any).totalCostoEstimado || 12500000;
+                  const opTotal = Number(op.costoTotalProduccion || op.costoPrimo || (op as any).totalCostoEstimado) || 0; // sin costo registrado: $0 (antes $12.500.000)
                   const opFolio = op.folioOP || (op as any).codigo || 'OP-2026-101';
                   const prodName = op.productoNombre || op.descripcion || 'Red Pecera HDPE';
                   const clientName = op.clienteNombre || (op as any).clienteDestino || 'Aquachile S.A.';

@@ -171,12 +171,6 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
     chequesEmitidos,
   ]);
 
-  const handleManualRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 450);
-  };
 
   // Custom tooltips for Recharts
   const formatClpCompact = (val: number) => {
@@ -249,15 +243,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               </button>
             </div>
 
-            <button
-              onClick={handleManualRefresh}
-              className={`p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-all cursor-pointer ${
-                isRefreshing ? 'animate-spin text-indigo-600' : ''
-              }`}
-              title="Recalcular métricas ejecutivas en vivo"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+            {/* 4.4: se quitó el botón "recalcular" que solo mostraba un giro de 450 ms (las métricas ya se calculan en vivo) */}
           </div>
         </div>
 

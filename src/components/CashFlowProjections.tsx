@@ -357,7 +357,7 @@ export const CashFlowProjections: React.FC<CashFlowProjectionsProps> = ({
   }, [horizon]);
 
   const projectedNewSalesHorizon = useMemo(() => {
-    const monthlyAvg = historicalSales.promedioMensualVentasHistoricas || 25000000;
+    const monthlyAvg = historicalSales.promedioMensualVentasHistoricas || 0; // sin historial no se proyectan ventas
     const factorCrecimiento = 1 + (parameters.tasaCrecimientoVentasPct || 0) / 100;
     return Math.round(monthlyAvg * factorCrecimiento * horizonMonthsCount);
   }, [historicalSales, parameters.tasaCrecimientoVentasPct, horizonMonthsCount]);
