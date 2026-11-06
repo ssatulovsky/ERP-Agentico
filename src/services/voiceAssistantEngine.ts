@@ -1217,7 +1217,7 @@ Estado de ejecución en maestranza para **${context.clientName}**:
         : 'Como responsable comercial, he consolidado el estado de las cotizaciones enviadas.';
 
       const cotizClienteA = context.clientName ? `${context.clientName} - Operaciones` : 'Cliente Industrial A';
-      const tenantKey = context.clientId || context.rut || 'client-retail-01';
+      const tenantKey = context.clientId || context.rut || '';
       const comState = commercialProcurementService.getState(tenantKey);
       const quotesFromService = comState.cotizaciones || [];
 
@@ -1350,7 +1350,7 @@ ${secondQuote ? `2. **${secondQuote.cliente}:** Validación de orden de compra (
         : 0;
       const saldoBancos = accountsInitial + netMovements;
 
-      const tenantCompanyKey = context.clientId || context.rut || 'client-retail-01';
+      const tenantCompanyKey = context.clientId || context.rut || '';
       const comState = commercialProcurementService.getState(tenantCompanyKey);
       const quotes = comState.cotizaciones || [];
       const pipelineVentas = quotes.reduce((sum, q) => sum + (Number(q.totalNetoCLP) || 0), 0);

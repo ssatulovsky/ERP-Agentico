@@ -741,7 +741,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   };
 
   const handleTriggerRealTimeAgentReconcile = async () => {
-    const activeCompanyId = company?.rut || activeClient?.rut || 'client-default';
+    const activeCompanyId = company?.rut || activeClient?.rut || activeClient?.id || '';
 
     if (pendingNovedades.length === 0 && accountMovements.every(m => m.estado === 'CONCILIADO')) {
       setAutoReconciledSuccess(buildReconciliationMessage(accountMovements));

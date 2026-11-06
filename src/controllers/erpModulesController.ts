@@ -669,9 +669,11 @@ erpModulesRouter.get('/fixed-assets', async (req: Request, res: Response) => {
 erpModulesRouter.post('/fixed-assets', async (req: Request, res: Response) => {
   try {
     const body = req.body;
+    const empresaIdAF = resolveEmpresaId(req);
+    if (!empresaIdAF) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const newAsset = {
       id: body.id || crypto.randomUUID(),
-      empresaId: body.empresaId || 'client-retail-01',
+      empresaId: empresaIdAF,
       codigoPlaca: body.codigoPlaca || `AF-${Date.now().toString().slice(-4)}`,
       nombre: body.nombre,
       categoria: body.categoria || 'MAQUINARIA_INDUSTRIAL',
@@ -764,7 +766,11 @@ erpModulesRouter.post('/fixed-assets/bulk', async (req: Request, res: Response) 
 erpModulesRouter.post('/fixed-assets/depreciate', async (req: Request, res: Response) => {
   try {
     const { empresaId, periodo, firmId } = req.body;
-    const targetEmpresa = empresaId || 'client-retail-01';
+    const targetEmpresa = String(empresaId || req.effectiveEmpresaId || '').trim();
+    if (!targetEmpresa) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(periodo || ''))) {
+      return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['periodo'] });
+    }
     const assets = diskPersistence.getFixedAssets(targetEmpresa);
 
     let totalCuotaMes = 0;

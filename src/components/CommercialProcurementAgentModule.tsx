@@ -69,7 +69,7 @@ interface CommercialProcurementAgentModuleProps {
 
 export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAgentModuleProps> = ({
   company,
-  activeClientId = 'client-retail-01',
+  activeClientId = '',
   clients = [],
   productionBudgets = [],
   productionOrders = [],

@@ -226,7 +226,10 @@ export function normalizeAndValidateJournalEntry(
   const glosaGeneral = (rawEntry.glosaGeneral || 'Asiento contable de operaciones').trim();
   const fecha = (rawEntry.fecha || new Date().toISOString().split('T')[0]).trim();
   const periodo = rawEntry.periodo || fecha.slice(0, 7);
-  const empresaId = (rawEntry.empresaId || '76.892.410-K').trim().toUpperCase();
+  if (!rawEntry.empresaId || !String(rawEntry.empresaId).trim()) {
+    throw new Error('El asiento debe indicar la empresa (empresaId); no se usa una empresa por defecto.');
+  }
+  const empresaId = String(rawEntry.empresaId).trim().toUpperCase();
   const origenModulo = (rawEntry.origenModulo || 'MANUAL') as JournalEntryOrigin;
   const documentoRef = rawEntry.documentoRef ? String(rawEntry.documentoRef).trim() : null;
   const creadoPorAgente = (rawEntry.creadoPorAgente || 'Agente Contable Senior').trim();

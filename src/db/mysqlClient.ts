@@ -3,6 +3,7 @@ import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from './mysqlSchema';
 import { diskPersistence } from '../services/diskPersistenceService';
 import dotenv from 'dotenv';
+import { isDemoModeEnabled } from '../config/demoMode';
 
 dotenv.config({ override: true });
 
@@ -873,8 +874,9 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
       // Comprobar e insertar semillas si la tabla expense_reports está vacía
       try {
         const [repCount]: [any[], any] = await connection.query("SELECT COUNT(*) as cnt FROM `expense_reports`;");
-        if (!repCount || repCount[0]?.cnt === 0) {
-          console.log('[MySQL 8.0] Insertando datos reales de Rendición de Gastos (proyectos, rendiciones y comprobantes)...');
+        // Datos de ejemplo de rendiciones: solo con DEMO_MODE=true (antes se insertaban en cualquier base vacía como "datos reales")
+        if ((!repCount || repCount[0]?.cnt === 0) && isDemoModeEnabled()) {
+          console.log('[MySQL 8.0] DEMO_MODE: insertando rendiciones de ejemplo de la empresa de demostración...');
           await connection.query(`
             INSERT IGNORE INTO \`expense_projects\` (\`id\`, \`empresa_id\`, \`codigo\`, \`nombre\`, \`cliente_nombre\`, \`presupuesto_total_clp\`, \`activo\`, \`descripcion\`, \`created_at\`)
             VALUES

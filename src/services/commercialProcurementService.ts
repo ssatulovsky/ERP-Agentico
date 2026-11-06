@@ -16,6 +16,7 @@ import type {
   RfqRequest,
   CommercialProcurementState
 } from '../types/commercialProcurement';
+import { isDemoModeEnabled } from '../config/demoMode';
 
 export type {
   ProductMarginAnalysis,
@@ -38,17 +39,21 @@ class CommercialProcurementService {
   private statesByCompany: Record<string, CommercialProcurementState> = {};
 
   constructor() {
-    this.initDefaultState('client-retail-01');
+    // Estado comercial de ejemplo solo en modo demostración
+    if (isDemoModeEnabled()) this.initDefaultState('client-retail-01');
   }
 
   private initDefaultState(empresaId: string) {
-    if (empresaId !== 'client-retail-01') {
+    if (!(empresaId === 'client-retail-01' && isDemoModeEnabled())) {
       const dp = getDiskPersistence();
       const tenantItems = dp ? dp.getInventoryItems(empresaId) : [];
       const tenantRfqs = dp ? dp.getAutoRfqs(empresaId) : [];
-      const margenes: ProductMarginAnalysis[] = tenantItems.map((it: any) => {
-        const costoPMP = Number(it.costoPromedioPonderado || it.costoUnitarioPMP || it.costoUnitario || 1000);
-        const pVenta = Number(it.precioVentaLista || it.precioVenta || Math.round(costoPMP * 1.35));
+      // Margen solo para ítems con costo y precio de venta registrados (antes: costo 1.000 y precio = costo × 1,35 supuestos)
+      const margenes: ProductMarginAnalysis[] = tenantItems
+        .filter((it: any) => Number(it.costoPromedioPonderado || it.costoUnitarioPMP || it.costoUnitario) > 0 && Number(it.precioVentaLista || it.precioVenta) > 0)
+        .map((it: any) => {
+        const costoPMP = Number(it.costoPromedioPonderado || it.costoUnitarioPMP || it.costoUnitario);
+        const pVenta = Number(it.precioVentaLista || it.precioVenta);
         const margenCLP = pVenta - costoPMP;
         const margenPct = pVenta > 0 ? Number(((margenCLP / pVenta) * 100).toFixed(2)) : 0;
         return {
@@ -71,8 +76,8 @@ class CommercialProcurementService {
 
       const sinergiaStock: StockSinergyItem[] = tenantItems.map((it: any) => {
         const stockFisico = Number(it.stockActual ?? it.stockTotal ?? 0);
-        const stockMin = Number(it.stockMinimo || 5);
-        const riesgo = stockFisico <= stockMin;
+        const stockMin = Number(it.stockMinimo || 0);
+        const riesgo = stockMin > 0 && stockFisico <= stockMin;
         return {
           itemId: it.id || `item-${it.sku}`,
           sku: it.sku,
@@ -82,10 +87,10 @@ class CommercialProcurementService {
           stockComprometido: 0,
           stockDisponible: stockFisico,
           cotizacionesAbiertas: 0,
-          ventasProyectadas30Dias: stockMin * 2,
+          ventasProyectadas30Dias: 0, // sin historial de ventas no se proyecta demanda
           balanceDisponibilidad: stockFisico,
           riesgoQuiebre: riesgo,
-          diasCobertura: stockFisico > 0 ? Math.round(stockFisico / 2) : 0,
+          diasCobertura: 0, // requiere consumo diario real; no se estima
           sobreStockDias: false,
           valorCapitalInmovilizado: stockFisico * Number(it.costoPromedioPonderado || it.costoUnitarioPMP || 0),
           accionRecomendada: riesgo ? 'COMPRA_URGENTE' : 'BALANCEADO',
@@ -797,10 +802,10 @@ class CommercialProcurementService {
     };
   }
 
-  public getState(empresaId: string = 'client-retail-01'): CommercialProcurementState {
+  public getState(empresaId: string): CommercialProcurementState {
     if (!this.statesByCompany[empresaId]) {
       this.initDefaultState(empresaId);
-    } else if (empresaId !== 'client-retail-01') {
+    } else if (!(empresaId === 'client-retail-01' && isDemoModeEnabled())) {
       const dp = getDiskPersistence();
       const tenantRfqs = dp ? dp.getAutoRfqs(empresaId) : [];
       if (tenantRfqs.length > 0) {

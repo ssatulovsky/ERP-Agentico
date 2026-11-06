@@ -22,6 +22,7 @@ import {
   purchaseOrders as dbPurchaseOrders,
   commercialQuotes as dbCommercialQuotes,
 } from '../db/mysqlSchema';
+import { isDemoModeEnabled } from '../config/demoMode';
 
 export interface DiskDataStore {
   version: string;
@@ -175,7 +176,7 @@ class DiskPersistenceService {
           stockMovements: parsed.stockMovements || [],
           ...parsed,
         };
-        if (!this.store.expenseReports || this.store.expenseReports.length === 0) {
+        if ((!this.store.expenseReports || this.store.expenseReports.length === 0) && isDemoModeEnabled()) {
           this.initExpenseSeeds();
         }
         // Purgar asientos ficticios de ventas con IVA para InnovAgile (empresa no afecta a IVA)
@@ -404,7 +405,7 @@ class DiskPersistenceService {
               .insert(costCenters)
               .values({
                 id: cc.id || crypto.randomUUID(),
-                empresaId: cc.empresaId || 'client-retail-01',
+                empresaId: cc.empresaId,
                 codigo: cc.codigo,
                 nombre: cc.nombre,
                 categoria: cc.categoria || 'ADMINISTRACION',
@@ -441,7 +442,7 @@ class DiskPersistenceService {
               .insert(fixedAssets)
               .values({
                 id: fa.id || crypto.randomUUID(),
-                empresaId: fa.empresaId || 'client-retail-01',
+                empresaId: fa.empresaId,
                 codigoPlaca: fa.codigoPlaca || fa.id,
                 nombre: fa.nombre,
                 categoria: fa.categoria || 'MAQUINARIA_INDUSTRIAL',
@@ -1852,11 +1853,9 @@ class DiskPersistenceService {
       result = result.filter((i) => {
         const iNorm = (i.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
         return (
-          !i.empresaId ||
+          // Solo comprobantes de la propia empresa (antes cualquier empresa veía los de la empresa de ejemplo)
           i.empresaId === empresaId ||
-          iNorm === norm ||
-          i.empresaId === 'client-retail-01' ||
-          norm === 'CLIENTRETAIL01'
+          iNorm === norm
         );
       });
     }
@@ -1925,11 +1924,8 @@ class DiskPersistenceService {
       result = result.filter((p) => {
         const pNorm = (p.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
         return (
-          !p.empresaId ||
           p.empresaId === empresaId ||
-          pNorm === norm ||
-          p.empresaId === 'client-retail-01' ||
-          norm === 'CLIENTRETAIL01'
+          pNorm === norm
         );
       });
     }
@@ -2771,14 +2767,14 @@ class DiskPersistenceService {
 
     // Indicadores económicos iniciales
     this.store.indicators = [
-      { codigo: 'UF', valor: '40885.6300', fecha: '2026-09-09', fuente: 'sii.cl-oficial' },
-      { codigo: 'USD', valor: '928.1000', fecha: '2026-09-09', fuente: 'dolarapi.cl-oficial' },
-      { codigo: 'UTM', valor: '71721.0000', fecha: '2026-09-09', fuente: 'sii.cl-oficial' },
-      { codigo: 'IPC', valor: '0.6000', fecha: '2026-09-09', fuente: 'ine.cl-oficial' },
+      { codigo: 'UF', valor: '40885.6300', fecha: '2026-09-09', fuente: 'valor_referencial_inicial' },
+      { codigo: 'USD', valor: '928.1000', fecha: '2026-09-09', fuente: 'valor_referencial_inicial' },
+      { codigo: 'UTM', valor: '71721.0000', fecha: '2026-09-09', fuente: 'valor_referencial_inicial' },
+      { codigo: 'IPC', valor: '0.6000', fecha: '2026-09-09', fuente: 'valor_referencial_inicial' },
     ];
 
-    // Centros de Costo iniciales (Mini-Empresas)
-    if (!this.store.costCenters || this.store.costCenters.length === 0) {
+    // Centros de costo y activos fijos de la empresa de ejemplo: solo con DEMO_MODE=true
+    if (isDemoModeEnabled() && (!this.store.costCenters || this.store.costCenters.length === 0)) {
       this.store.costCenters = [
         {
           id: 'cc-01',
@@ -2851,8 +2847,8 @@ class DiskPersistenceService {
       ];
     }
 
-    // Activos Fijos iniciales con Centro de Costo imputado
-    if (!this.store.fixedAssets || this.store.fixedAssets.length === 0) {
+    // Activos Fijos de ejemplo con Centro de Costo imputado (solo DEMO_MODE)
+    if (isDemoModeEnabled() && (!this.store.fixedAssets || this.store.fixedAssets.length === 0)) {
       this.store.fixedAssets = [
         {
           id: 'af-001',

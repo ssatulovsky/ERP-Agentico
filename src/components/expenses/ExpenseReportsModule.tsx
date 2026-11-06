@@ -79,7 +79,7 @@ export const ExpenseReportsModule: React.FC<ExpenseReportsModuleProps> = ({
   chartOfAccounts = [],
   onReportsChange,
 }) => {
-  const empresaId = company?.rut || (company as any)?.id || 'client-retail-01';
+  const empresaId = company?.rut || (company as any)?.id || '';
 
   // ESTADO REAL DESDE MYSQL 8.0 (Sin datos falsos dibujados en memoria)
   const [reports, setReports] = useState<ExpenseReport[]>([]);

@@ -53,8 +53,8 @@ export const JournalEntryView: React.FC<JournalEntryViewProps> = ({
       normalizedEntry = {
         id: entry.id || 'error-entry',
         folio: entry.folio,
-        empresaId: entry.empresaId || '76.892.410-K',
-        periodo: entry.periodo || '2026-09',
+        empresaId: entry.empresaId || '',
+        periodo: entry.periodo || String(entry.fecha || '').slice(0, 7),
         fecha: entry.fecha || new Date().toISOString().split('T')[0],
         glosaGeneral: entry.glosaGeneral || 'Asiento con descuadre contable',
         documentoRef: entry.documentoRef,

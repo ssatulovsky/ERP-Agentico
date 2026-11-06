@@ -121,7 +121,8 @@ accountingJournalRouter.post('/centralize', async (req: Request, res: Response) 
 accountingJournalRouter.get('/entries', async (req: Request, res: Response) => {
   try {
     const firmId = (req.query.firmId as string) || 'firm-001-audicon';
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const periodo = req.query.periodo as string | undefined;
 
     const entries = await listAccountingEntries(firmId, empresaId, periodo);
@@ -165,7 +166,8 @@ accountingJournalRouter.get('/entries/:id', async (req: Request, res: Response) 
  */
 accountingJournalRouter.get('/chart-of-accounts', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const db = getMysqlDb();
 
     // 1. Revisar persistencia física en disco
@@ -350,7 +352,8 @@ accountingJournalRouter.put('/chart-of-accounts/account', async (req: Request, r
  */
 accountingJournalRouter.get('/auxiliaries', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const db = getMysqlDb();
 
     // 1. Revisar persistencia física en disco
@@ -511,7 +514,8 @@ accountingJournalRouter.post('/client-state', async (req: Request, res: Response
  */
 accountingJournalRouter.get('/chart-groups', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const groups = diskPersistence.getCompanyGroups(empresaId);
     return res.json({ success: true, data: groups || [] });
   } catch (error: any) {
@@ -540,7 +544,8 @@ accountingJournalRouter.post('/chart-groups', async (req: Request, res: Response
  */
 accountingJournalRouter.get('/financial-notes', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || '76.892.410-K';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const notes = diskPersistence.getCompanyFinancialNotes(empresaId);
     return res.json({ success: true, data: notes || [] });
   } catch (error: any) {

@@ -304,7 +304,7 @@ export const AgentGovernancePanel: React.FC<AgentGovernancePanelProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          empresaId: selectedClient?.rut || selectedClient?.id || '76.892.410-K',
+          empresaId: selectedClient?.rut || selectedClient?.id || '',
           modulo: selectedModule,
           proposedResult,
           contextUsed: {

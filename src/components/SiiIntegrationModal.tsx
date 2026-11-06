@@ -45,14 +45,15 @@ export const SiiIntegrationModal: React.FC<SiiIntegrationModalProps> = ({
   const [activeTab, setActiveTab] = useState<'DIRECT_API' | 'CSV_GUIDE' | 'RPA_SCRIPT' | 'PASTE_INGEST'>('DIRECT_API');
   
   // Extraer configuración real de la empresa activa desde el ERP multi-empresa de forma ultrarrobusta
+  // Sin empresa activa no se usa una empresa de respaldo (antes: InnovAgile con RUT 76.892.410-K)
   const defaultFallbackCompany = {
-    rut: '76.892.410-K',
-    razonSocial: 'INNOVAGILE GROUP SERVICIOS TECNOLÓGICOS SPA',
-    giro: 'Consultoría y Desarrollo TI',
-    direccion: 'Av. Andrés Bello 2457, Of. 1402',
-    comuna: 'Providencia',
-    regimenTributario: '14D3_PROPYME_GENERAL' as const,
-    tasaPpm: 0.01,
+    rut: '',
+    razonSocial: '',
+    giro: '',
+    direccion: '',
+    comuna: '',
+    regimenTributario: undefined as any,
+    tasaPpm: 0,
     remanenteIvaAnterior: 0
   };
 
@@ -71,7 +72,7 @@ export const SiiIntegrationModal: React.FC<SiiIntegrationModalProps> = ({
   const clientCompany = ('claveSii' in effectiveCompany) ? (effectiveCompany as ClientCompany) : null;
   const companyRut = effectiveCompany.rut;
   const rutAutenticacion = clientCompany?.rutAutenticacion || companyRut;
-  const claveSii = clientCompany?.claveSii || 'InnovaSii*2026#';
+  const claveSii = clientCompany?.claveSii || '';
   const tipoAutenticacion = clientCompany?.tipoAutenticacionSii || 'CLAVE_TRIBUTARIA';
   const companyShortName = ('nombreCorto' in effectiveCompany && effectiveCompany.nombreCorto) 
     ? effectiveCompany.nombreCorto 

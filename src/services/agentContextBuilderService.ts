@@ -1,3 +1,5 @@
+import { getDemoClients } from '../data/seedData';
+import { diskPersistence } from './diskPersistenceService';
 import { eq, or, and, isNull, desc } from 'drizzle-orm';
 import { getMysqlDb, isRealMysqlConnected, inMemoryAgentConfigs, inMemoryAgentLearnings } from '../db/mysqlClient';
 import {
@@ -15,7 +17,7 @@ export interface CompanyOperationalProfile {
   rut: string;
   razonSocial: string;
   giro: string;
-  regimenTributario: '14_A' | '14_D3' | '14_D8';
+  regimenTributario: '14_A' | '14_D3' | '14_D8' | 'NO_INFORMADO';
   esClienteAncla: boolean;
   tasaPpmSugerida: string;
   beneficioPostergacionIva: boolean;
@@ -186,20 +188,20 @@ async function fetchCompanyOperationalProfile(empresaId: string): Promise<Compan
     }
   }
 
-  // Si no se encuentra en DB, cargar perfil canónico de Distribuidora del Pacífico
+  // Si no está en la base de datos: empresa registrada en disco o de ejemplo (solo DEMO_MODE).
+  // Antes se inyectaba el perfil inventado "Distribuidora y Comercializadora del Pacífico SpA" a cualquier empresa.
   if (!companyData) {
-    companyData = {
-      id: empresaId,
-      rut: '76.892.410-K',
-      razonSocial: 'Distribuidora y Comercializadora del Pacífico SpA',
-      giro: 'Comercio al por mayor y menor de abarrotes, harinas e insumos alimentarios',
-      regimenTributario: '14_D3',
-      esClienteAncla: true,
-    };
+    const stored: any = diskPersistence.getClient(empresaId) ||
+      getDemoClients().find((c) => c.id === empresaId || c.rut.replace(/[^0-9kK]/g, '') === String(empresaId).replace(/[^0-9kK]/g, ''));
+    companyData = stored
+      ? { id: stored.id || empresaId, rut: stored.rut, razonSocial: stored.razonSocial, giro: stored.giro, regimenTributario: stored.regimenTributario }
+      : { id: empresaId, rut: empresaId, razonSocial: null, giro: null, regimenTributario: null, noRegistrada: true };
   }
 
-  const regimen = (companyData.regimenTributario || '14_D3') as '14_A' | '14_D3' | '14_D8';
-  const tasaPpm = regimen === '14_D3' ? '0.25%' : regimen === '14_D8' ? '0.20% (Transparente)' : '1.50%';
+  // Régimen y tasa PPM solo si la empresa los tiene registrados (antes se suponía 14 D3 y PPM 0,25 %)
+  const regimen = (companyData.regimenTributario || 'NO_INFORMADO') as '14_A' | '14_D3' | '14_D8' | 'NO_INFORMADO';
+  const tasaPpm =
+    regimen === '14_D3' ? '0.25%' : regimen === '14_D8' ? '0.20% (Transparente)' : regimen === '14_A' ? '1.50%' : 'NO_INFORMADA (pedir al usuario)';
   const beneficioPostergacion = regimen === '14_D3' || regimen === '14_D8';
 
   return {
@@ -217,11 +219,7 @@ async function fetchCompanyOperationalProfile(empresaId: string): Promise<Compan
           numeroCuenta: bankAccountData.numeroCuenta,
           tipo: bankAccountData.tipoCuenta,
         }
-      : {
-          banco: 'BANCO_DE_CHILE',
-          numeroCuenta: '00-123-45678-90',
-          tipo: 'CORRIENTE',
-        },
+      : null, // sin cuenta bancaria registrada (antes: cuenta inventada 00-123-45678-90)
     cuentasContablesRelevantes:
       relevantAccounts.length > 0
         ? relevantAccounts
@@ -277,7 +275,7 @@ async function fetchCompanyAgentConfig(
 
   // Buscar en contingencia en memoria
   const memoryConfig = inMemoryAgentConfigs.find(
-    (c) => (c.empresaId === empresaId || c.empresaId === '76.892.410-K') && c.moduloCodigo === moduloCodigo && c.activo
+    (c) => c.empresaId === empresaId && c.moduloCodigo === moduloCodigo && c.activo
   );
 
   if (memoryConfig) {
@@ -338,7 +336,8 @@ async function fetchAgentLearnings(
   // Filtrar en memoria
   const filtered = inMemoryAgentLearnings.filter(
     (l) =>
-      (l.empresaId === empresaId || l.empresaId === null || l.empresaId === '76.892.410-K') &&
+      // Solo aprendizajes de la propia empresa o globales (empresaId null); no los de otra empresa
+      (l.empresaId === empresaId || l.empresaId === null) &&
       (l.moduloCodigo === moduloCodigo || l.moduloCodigo === 'ACCOUNTING_LEDGER') &&
       l.activo
   );

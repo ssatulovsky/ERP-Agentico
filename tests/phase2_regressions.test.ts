@@ -12,6 +12,8 @@ import { contarResultadoConciliacion, mensajeResultadoConciliacion, saldoLibroMa
 import { executionModeLabel } from '../src/utils/executionModeLabel';
 import { voiceAssistantEngine } from '../src/services/voiceAssistantEngine';
 import { DEFAULT_AGENT_PERSONAS } from '../src/config/defaultAgentPersonas';
+import { buildAgentPromptContext } from '../src/services/agentContextBuilderService';
+import { whatsappBridgeService } from '../src/services/whatsappBridgeService';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -218,6 +220,43 @@ async function run() {
       clientId: '761045509', clientName: 'Retail', rut: '76.104.550-9', inventoryItems: [],
     } as any);
     assert.match(r.displayMarkdown, /Modo: Demostración · Reglas/);
+  });
+
+  // ---------------------------------------------------------------- Cierre: empresa por defecto (#6)
+  await test('#6 Ninguna ruta, servicio ni pantalla usa una empresa por defecto', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(e.name) && !/src[\\/]data[\\/]seed/.test(full)) {
+          fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+            if (/(\|\||\?\?|=)\s*['"](76\.892\.410-K|client-retail-01|client-default)['"]/.test(line) && !/===|!==/.test(line)) {
+              offenders.push(`${path.relative(ROOT, full)}:${i + 1}`);
+            }
+          });
+        }
+      }
+    };
+    walk(path.join(ROOT, 'src'));
+    assert.deepStrictEqual(offenders, []);
+  });
+
+  await test('#6 El contexto del agente no inventa el perfil "Distribuidora del Pacífico" ni regimen/PPM', async () => {
+    const ctx = await buildAgentPromptContext({ empresaId: '11.111.111-1', moduloCodigo: 'F29_TAX' as any, tareaEspecifica: 'prueba' });
+    assert.ok(!/Distribuidora y Comercializadora del Pacífico/.test(JSON.stringify(ctx.companyProfile)));
+    assert.strictEqual(ctx.companyProfile.regimenTributario, 'NO_INFORMADO');
+    assert.ok(!/00-123-45678-90/.test(JSON.stringify(ctx)), 'Cuenta bancaria inventada');
+  });
+
+  await test('#6 WhatsApp conserva la empresa del número y no consulta otra empresa si falta', () => {
+    const rec = whatsappBridgeService.upsertWhitelistEntry({ id: 'wl-test-empresa', telefono: '56900001111', nombre: 'Prueba', empresaId: '761045509' } as any);
+    assert.strictEqual(rec.empresaId, '761045509');
+    const sinEmpresa = whatsappBridgeService.upsertWhitelistEntry({ id: 'wl-test-sin', telefono: '56900002222', nombre: 'Sin empresa' } as any);
+    const r = (whatsappBridgeService as any).buildAgentResponseForScopes(['FLUJO_CAJA'], 'saldo', sinEmpresa);
+    assert.match(r.responseText, /no tiene una empresa asignada/);
+    whatsappBridgeService.deleteWhitelistEntry('wl-test-empresa');
+    whatsappBridgeService.deleteWhitelistEntry('wl-test-sin');
   });
 
   process.env.GEMINI_API_KEY = prevKey;

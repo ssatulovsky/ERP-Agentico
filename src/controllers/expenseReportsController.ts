@@ -276,7 +276,8 @@ expenseReportsRouter.post('/reports', async (req: Request, res: Response) => {
 
     const empresaId = (data.empresaId && typeof data.empresaId === 'string' && data.empresaId.trim())
       ? data.empresaId.trim()
-      : 'client-retail-01';
+      : String(req.effectiveEmpresaId || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
 
     // 2. Normalización y resolución de colisiones del folio
     let folio = (data.folio && typeof data.folio === 'string' && data.folio.trim())
@@ -581,7 +582,7 @@ expenseReportsRouter.post('/reports/:id/items', async (req: Request, res: Respon
     const newItemRecord = {
       id: itemId,
       expenseReportId: reportId,
-      empresaId: (data.empresaId && typeof data.empresaId === 'string' && data.empresaId.trim()) ? data.empresaId.trim() : 'client-retail-01',
+      empresaId: (data.empresaId && typeof data.empresaId === 'string' && data.empresaId.trim()) ? data.empresaId.trim() : String(req.effectiveEmpresaId || ''),
       fecha: sanitizeDate(data.fecha),
       tipoDocumento: data.tipoDocumento || 'BOLETA_ELECTRONICA',
       folioDocumento: data.folioDocumento ? String(data.folioDocumento).trim() : 'S/F',
@@ -790,7 +791,8 @@ expenseReportsRouter.delete('/items/:id', async (req: Request, res: Response) =>
 // ============================================================================
 expenseReportsRouter.get('/projects', async (req: Request, res: Response) => {
   try {
-    const empresaId = req.effectiveEmpresaId || (req.query.empresaId as string) || 'client-retail-01';
+    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
     const db = getMysqlDb();
 
     const normEmpresa = empresaId.replace(/[\.\-\s]/g, '').toUpperCase();
@@ -877,10 +879,8 @@ expenseReportsRouter.get('/projects', async (req: Request, res: Response) => {
       return res.json({ success: true, source: 'MYSQL_8_0', count: formatted.length, data: formatted });
     }
 
-    let diskProjects = diskPersistence.getExpenseProjects(empresaId);
-    if (!diskProjects || diskProjects.length === 0) {
-      diskProjects = diskPersistence.getExpenseProjects('client-retail-01');
-    }
+    // Sin proyectos propios la lista es vacía (antes se mostraban los proyectos de la empresa de ejemplo)
+    const diskProjects = diskPersistence.getExpenseProjects(empresaId) || [];
     res.json({ success: true, source: 'LOCAL_DISK', count: diskProjects.length, data: diskProjects });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -901,7 +901,7 @@ expenseReportsRouter.post('/projects', async (req: Request, res: Response) => {
 
     const newProject = {
       id: projectId,
-      empresaId: (data.empresaId && typeof data.empresaId === 'string' && data.empresaId.trim()) ? data.empresaId.trim() : 'client-retail-01',
+      empresaId: (data.empresaId && typeof data.empresaId === 'string' && data.empresaId.trim()) ? data.empresaId.trim() : String(req.effectiveEmpresaId || ''),
       codigo: data.codigo ? String(data.codigo).trim() : `PRY-${Date.now().toString(36).toUpperCase()}`,
       nombre: data.nombre ? String(data.nombre).trim() : 'Proyecto General',
       clienteNombre: data.clienteNombre ? String(data.clienteNombre).trim() : null,
@@ -1171,7 +1171,7 @@ expenseReportsRouter.post('/reports/:id/contabilizar', async (req: Request, res:
         // Sincronizar en tabla dtes_rcv si MySQL está activo
         if (isRealMysqlConnected && fac.proveedorRut) {
           try {
-            const cleanRut = (report.empresaId || 'client-retail-01').replace(/[\.\-\s]/g, '').toUpperCase();
+            const cleanRut = String(report.empresaId || '').replace(/[\.\-\s]/g, '').toUpperCase();
             const dteUuid = `dte-exp-${report.id}-${fac.id || Date.now()}`;
             await db.insert(dtesRcv).values({
               id: dteUuid,

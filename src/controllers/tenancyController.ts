@@ -1,3 +1,5 @@
+import { diskPersistence } from '../services/diskPersistenceService';
+import { getDemoClients } from '../data/seedData';
 import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
@@ -106,27 +108,14 @@ tenancyRouter.get('/firms/:firmId/companies', async (req: Request, res: Response
         .from(companies)
         .where(eq(companies.firmId, firmId));
     } else {
+      // Sin MySQL: empresas registradas en disco y, solo con DEMO_MODE, las de ejemplo (antes: dos empresas inventadas)
+      const stored: any[] = ((diskPersistence as any).store?.clients || []).filter((c: any) => !c.firmId || c.firmId === firmId);
+      const ruts = new Set(stored.map((c: any) => String(c.rut || '').replace(/[^0-9kK]/g, '').toUpperCase()));
       companyList = [
-        {
-          id: 'comp-76892410-k',
-          firmId: firmId,
-          rut: '76.892.410-K',
-          razonSocial: 'Distribuidora y Comercializadora del Pacífico SpA',
-          giro: 'Comercio al por mayor de alimentos y abarrotes',
-          regimenTributario: '14_D3',
-          esClienteAncla: true,
-          createdAt: new Date('2026-02-15'),
-        },
-        {
-          id: 'comp-76543210-9',
-          firmId: firmId,
-          rut: '76.543.210-9',
-          razonSocial: 'Transportes y Logística Cordillera Ltda.',
-          giro: 'Transporte terrestre de carga interurbana',
-          regimenTributario: '14_D3',
-          esClienteAncla: false,
-          createdAt: new Date('2026-03-01'),
-        },
+        ...stored,
+        ...getDemoClients()
+          .filter((c) => !ruts.has(c.rut.replace(/[^0-9kK]/g, '').toUpperCase()))
+          .map((c) => ({ ...c, firmId })),
       ];
     }
 

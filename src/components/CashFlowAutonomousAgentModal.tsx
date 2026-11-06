@@ -109,7 +109,7 @@ export const CashFlowAutonomousAgentModal: React.FC<CashFlowAutonomousAgentModal
         body: JSON.stringify({
           module: 'FLUJO_CAJA',
           modulo: 'FLUJO_CAJA',
-          empresaId: (accountingEntries && accountingEntries[0] as any)?.empresaId || 'client-retail-01',
+          empresaId: (accountingEntries && accountingEntries[0] as any)?.empresaId || '',
           query: 'Proyectar compromisos y saldo de flujo de caja a 30, 60 y 90 días con análisis de solvencia y liquidez.',
           context: {
             payrolls,

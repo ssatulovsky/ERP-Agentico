@@ -22,7 +22,7 @@ export const EditExpenseReportModal: React.FC<EditExpenseReportModalProps> = ({
   onUpdate,
   costCenters,
   projects,
-  empresaId = 'client-retail-01',
+  empresaId = '',
 }) => {
   const [titulo, setTitulo] = useState('');
   const [rendidorNombre, setRendidorNombre] = useState('');

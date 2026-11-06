@@ -1120,7 +1120,10 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
 
     try {
       const { AutonomousAgentEngine } = await import('./autonomousAgentEngine');
-      const empresaId = evalResult.whitelistEntry?.empresaId || 'client-retail-01';
+      const empresaId = evalResult.whitelistEntry?.empresaId || '';
+      if (!empresaId) {
+        return { ...evalResult, responseText: 'Este número no tiene una empresa asignada en la lista blanca; no se consultaron datos.' };
+      }
 
       // Mapear scope a módulo agéntico
       let targetModule = 'CONTABILIDAD';
@@ -1187,7 +1190,11 @@ _Por políticas de seguridad y segregación de funciones del ERP, no puedo entre
     const sections: string[] = [];
     const verbalParts: string[] = [];
 
-    const empresaId = entry.empresaId || 'client-retail-01';
+    const empresaId = entry.empresaId || '';
+    if (!empresaId) {
+      const msg = 'Este número no tiene una empresa asignada en la lista blanca; no se consultaron datos.';
+      return { responseText: msg, verbalSummary: msg };
+    }
 
     for (const scope of scopes) {
       switch (scope) {
@@ -1674,6 +1681,8 @@ ${quotesLines}
       recibirReportesDirectos: entry.recibirReportesDirectos ?? false,
       responderConAudio: entry.responderConAudio ?? false,
       ultimaInteraccion: existingIndex >= 0 ? this.store.whitelist[existingIndex].ultimaInteraccion : undefined,
+      // La empresa del número se conserva (antes se descartaba y el puente consultaba siempre la empresa de ejemplo)
+      empresaId: entry.empresaId ?? (existingIndex >= 0 ? this.store.whitelist[existingIndex].empresaId : undefined),
     };
 
     if (existingIndex >= 0) {

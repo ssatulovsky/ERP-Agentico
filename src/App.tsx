@@ -2771,7 +2771,7 @@ export default function App() {
 
           {activeTab === 'expense_mobile' && (
             <CollaboratorExpenseMobileApp
-              empresaRut={company?.rut || 'client-retail-01'}
+              empresaRut={company?.rut || activeClientId}
               empresaNombre={company?.razonSocial || 'Mar Austral Alimentos SpA'}
               costCenters={costCenters}
               onExitMobileView={() => setActiveTab('expense_reports')}

@@ -64,7 +64,7 @@ interface CollaboratorExpenseMobileAppProps {
 }
 
 export const CollaboratorExpenseMobileApp: React.FC<CollaboratorExpenseMobileAppProps> = ({
-  empresaRut = 'client-retail-01',
+  empresaRut = '',
   empresaNombre = 'Mar Austral Alimentos SpA',
   costCenters = [],
   onExitMobileView,

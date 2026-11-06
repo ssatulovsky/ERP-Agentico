@@ -22,7 +22,7 @@ export const CreateExpenseReportModal: React.FC<CreateExpenseReportModalProps> =
   costCenters,
   projects,
   nextFolioNumber,
-  empresaId = 'client-retail-01',
+  empresaId = '',
 }) => {
   const [titulo, setTitulo] = useState('');
   const [rendidorNombre, setRendidorNombre] = useState('Gonzalo Silva Valenzuela');
