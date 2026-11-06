@@ -71,7 +71,9 @@ interface AgentClientConfigProps {
   onAddClient: (client: ClientCompany) => void;
   onUpdateClient: (client: ClientCompany) => void;
   onDeleteClient: (clientId: string) => void;
-  onDownloadClientDtes: (client: ClientCompany) => void;
+  onDownloadClientDtes: (
+    client: ClientCompany
+  ) => Promise<{ success: boolean; logs: string[]; documentos: number; error?: string }>;
   systemParams?: SystemGeneralParameters;
   onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
   onOpenVoiceDialogue?: (personaId?: string) => void;
@@ -242,98 +244,90 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
     setIsClientModalOpen(false);
   };
 
-  // Test Connection to SII with Client Credentials
+  // 1.2 (hallazgo #3): prueba de conexión REAL. El servidor autentica en el SII con Playwright y cierra la sesión.
+  // El estado CONECTADO solo se asigna si el SII aceptó las credenciales.
   const handleTestSiiConnection = async (targetClient: ClientCompany) => {
     setIsTestingSii(true);
     setTestingClientId(targetClient.id);
     setTestResult(null);
-
-    const logs = [...terminalLogs];
-    const time = new Date().toLocaleTimeString();
-    logs.unshift(`[${time}] Iniciando autenticación automática en zeusr.sii.cl para RUT: ${targetClient.rut}...`);
-    logs.unshift(`[${time}] Usando credencial: Clave Tributaria registrada (Longitud: ${targetClient.claveSii.length} caracteres)...`);
-    setTerminalLogs(logs);
+    const timestamp = () => new Date().toLocaleString('es-CL');
+    const pushLogs = (lines: string[]) => setTerminalLogs((prev) => [...[...lines].reverse(), ...prev]);
+    pushLogs([`[${new Date().toLocaleTimeString()}] Probando autenticación en el SII para RUT ${targetClient.rut}...`]);
 
     try {
-      // Realistic simulation delay for SII authentication handshake
-      await new Promise(r => setTimeout(r, 1200));
+      const res = await fetch('/api/sii/test-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresaId: targetClient.id, rut: targetClient.rutAutenticacion || targetClient.rut }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (Array.isArray(data.logs)) pushLogs(data.logs);
 
-      const isRutValid = validateRutChileno(targetClient.rut);
-      const isClavePresent = Boolean(targetClient.claveSii && targetClient.claveSii.length >= 4);
-
-      if (isRutValid && isClavePresent) {
-        const timestamp = new Date().toLocaleString();
-        const updatedClient: ClientCompany = {
+      if (data.success && data.estado === 'CONECTADO') {
+        onUpdateClient({
           ...targetClient,
           estadoConexionSii: 'CONECTADO',
-          ultimaSincronizacionSii: timestamp,
-          ultimoMensajeSii: 'Autenticación exitosa en portal SII. Permisos de RCV y BHE verificados.',
-        };
-        onUpdateClient(updatedClient);
-
+          ultimaSincronizacionSii: timestamp(),
+          ultimoMensajeSii: data.mensajeSii || 'Autenticación aceptada por el SII.',
+        });
         setTestResult({
           success: true,
-          message: `¡Conexión verificada exitosamente! El Agente Contable autenticó en el SII con el RUT ${targetClient.rut} y tiene acceso habilitado para descargar Ventas, Compras y Boletas de Honorarios.`,
-          timestamp,
+          message: `El SII aceptó las credenciales del RUT ${targetClient.rut}. La sesión de prueba se cerró.`,
+          timestamp: timestamp(),
         });
-
-        const successLogs = [...terminalLogs];
-        successLogs.unshift(`[${new Date().toLocaleTimeString()}] ✅ Autenticación en SII APROBADA para ${targetClient.razonSocial}. Token de sesión asignado.`);
-        setTerminalLogs(successLogs);
-      } else {
-        throw new Error('Credenciales rechazadas por el SII o formato de RUT incorrecto.');
+        return;
       }
+
+      const estado = String(data.estado || 'ERROR_PORTAL');
+      const motivo = data.mensajeSii || data.error || `Respuesta HTTP ${res.status}`;
+      // Solo una respuesta de rechazo del SII marca ERROR_CREDENCIALES; las fallas técnicas no cambian el estado guardado.
+      if (estado === 'ERROR_CREDENCIALES' || estado === 'SIN_CREDENCIALES') {
+        onUpdateClient({
+          ...targetClient,
+          estadoConexionSii: 'ERROR_CREDENCIALES',
+          ultimoMensajeSii: motivo,
+        });
+      }
+      setTestResult({
+        success: false,
+        message:
+          estado === 'SIN_CREDENCIALES'
+            ? 'No hay clave tributaria registrada para esta empresa en la bóveda del servidor.'
+            : estado === 'SESIONES_EXCEDIDAS'
+            ? `El SII informa máximo de sesiones simultáneas: ${motivo}`
+            : estado === 'ERROR_CREDENCIALES'
+            ? `El SII rechazó las credenciales: ${motivo}`
+            : `No se pudo completar la prueba con el SII: ${motivo}`,
+        timestamp: timestamp(),
+      });
     } catch (err: any) {
       setTestResult({
         success: false,
-        message: `Fallo de autenticación en el SII: ${err.message || 'Error al conectar con zeusr.sii.cl'}. Verifique la clave tributaria e intente nuevamente.`,
-        timestamp: new Date().toLocaleString(),
+        message: `No se pudo contactar al servidor para probar la conexión: ${err?.message || err}`,
+        timestamp: timestamp(),
       });
-
-      const updatedClient: ClientCompany = {
-        ...targetClient,
-        estadoConexionSii: 'ERROR_CREDENCIALES',
-        ultimoMensajeSii: 'Clave Tributaria rechazada por el SII o sesión caducada.',
-      };
-      onUpdateClient(updatedClient);
-
-      const failLogs = [...terminalLogs];
-      failLogs.unshift(`[${new Date().toLocaleTimeString()}] ❌ ERROR de acceso al SII para RUT ${targetClient.rut}.`);
-      setTerminalLogs(failLogs);
     } finally {
       setIsTestingSii(false);
       setTestingClientId(null);
     }
   };
 
-  // Trigger Instant Agent Download & Sync
+  // 1.3 (hallazgos #3 y #10): la bitácora muestra solo los pasos que ejecutó el robot Playwright en el servidor.
   const handleTriggerAgentDownload = async (client: ClientCompany) => {
     setIsSimulatingAgentRun(true);
-    const logs = [...terminalLogs];
-    const time = new Date().toLocaleTimeString();
-    
-    logs.unshift(`[${time}] 🤖 AGENTE DISPARADO: Iniciando descarga completa de RCV para ${client.nombreCorto} (RUT: ${client.rut})...`);
-    logs.unshift(`[${time}] Conectando a https://www4.sii.cl/registrocompraventaui/...`);
-    setTerminalLogs(logs);
-
-    await new Promise(r => setTimeout(r, 1000));
-    logs.unshift(`[${new Date().toLocaleTimeString()}] Descargando Registro de Ventas (Facturas 33, Exentas 34, Notas de Crédito 61)...`);
-    setTerminalLogs([...logs]);
-
-    await new Promise(r => setTimeout(r, 900));
-    logs.unshift(`[${new Date().toLocaleTimeString()}] Descargando Registro de Compras & verificando plazo legal de 8 días de acuse de recibo...`);
-    setTerminalLogs([...logs]);
-
-    await new Promise(r => setTimeout(r, 800));
-    logs.unshift(`[${new Date().toLocaleTimeString()}] Descargando Boletas de Honorarios Electrónicas (BHE) emitidas y recibidas con retención 14.5%...`);
-    setTerminalLogs([...logs]);
-
-    // Perform the actual ingestion in parent
-    onDownloadClientDtes(client);
-    setIsSimulatingAgentRun(false);
-
-    logs.unshift(`[${new Date().toLocaleTimeString()}] ✅ Descarga finalizada: Libros contables y Flujo de Caja actualizados para ${client.nombreCorto}.`);
-    setTerminalLogs([...logs]);
+    setTerminalLogs((prev) => [
+      `[${new Date().toLocaleTimeString()}] Solicitando descarga RCV al servidor para ${client.nombreCorto} (RUT ${client.rut})...`,
+      ...prev,
+    ]);
+    try {
+      const result = await onDownloadClientDtes(client);
+      const summary = result.success
+        ? `[${new Date().toLocaleTimeString()}] ✅ Descarga terminada: ${result.documentos} documentos recibidos del SII.`
+        : `[${new Date().toLocaleTimeString()}] ❌ Descarga no completada: ${result.error || 'sin detalle del servidor'}.`;
+      setTerminalLogs((prev) => [summary, ...[...result.logs].reverse(), ...prev]);
+    } finally {
+      setIsSimulatingAgentRun(false);
+    }
   };
 
   const activeClient = clients.find(c => c.id === activeClientId) || clients[0];

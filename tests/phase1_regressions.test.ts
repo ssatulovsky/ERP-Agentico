@@ -15,6 +15,8 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { expenseReportsRouter } from '../src/controllers/expenseReportsController';
 import { parseReceiptOcrResponse } from '../src/services/receiptOcrService';
+import http from 'node:http';
+import { SiiPlaywrightRunner } from '../src/services/siiPlaywrightRunner';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -222,6 +224,80 @@ async function run() {
   await test('#2 OCR: el controlador ya no contiene la heurística de respaldo', () => {
     const src = fs.readFileSync(path.join(ROOT, 'src/controllers/expenseReportsController.ts'), 'utf8');
     assert.ok(!/Heurística de respaldo|totalSim|Math\.random\(\) \* 900000/.test(src));
+  });
+
+  // ---------------------------------------------------------------- Hallazgo #3 (tareas 1.2 y 1.3)
+  await test('#3 Prueba SII: sin clave registrada no hay CONECTADO', async () => {
+    const r = await SiiPlaywrightRunner.testLogin({ rut: '76.104.550-9', password: '' });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.estado, 'SIN_CREDENCIALES');
+  });
+
+  await test('#3 Prueba SII: el estado lo decide la respuesta del portal, no la longitud de la clave', async () => {
+    // Portal SII de prueba: acepta solo la clave "abc" (3 caracteres) y rechaza el resto con su propio mensaje.
+    let logoutCalls = 0;
+    const portal = http.createServer((req, res) => {
+      if (req.url?.startsWith('/login') && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end('<form method="POST" action="/login"><input id="rutcntr" name="rut"><input id="clave" name="clave" type="password"><button id="bt_ingresar" type="submit">Ingresar</button></form>');
+      }
+      if (req.url?.startsWith('/login') && req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          const clave = new URLSearchParams(body).get('clave');
+          if (clave === 'abc') {
+            res.writeHead(302, { Location: '/home' });
+            return res.end();
+          }
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end('<div class="alert-danger">Clave Tributaria incorrecta (mensaje del portal)</div>');
+        });
+        return;
+      }
+      if (req.url?.startsWith('/logout')) logoutCalls++;
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<h1>Mi SII</h1>');
+    });
+    await new Promise<void>((r) => portal.listen(0, '127.0.0.1', () => r()));
+    const port = (portal.address() as AddressInfo).port;
+    const prev = { login: process.env.SII_LOGIN_URL, logout: process.env.SII_LOGOUT_URL };
+    process.env.SII_LOGIN_URL = `http://127.0.0.1:${port}/login`;
+    process.env.SII_LOGOUT_URL = `http://127.0.0.1:${port}/logout`;
+    try {
+      const wrong = await SiiPlaywrightRunner.testLogin({ rut: '76104550-9', password: 'ClaveSii*2026-larga' });
+      if (wrong.estado === 'ERROR_PORTAL' && /Executable doesn't exist|browserType\.launch/.test(wrong.mensajeSii || '')) {
+        if (process.env.CI) throw new Error('Chromium de Playwright no instalado en CI');
+        console.warn('     (omitida: Chromium de Playwright no instalado en este equipo)');
+        return;
+      }
+      assert.strictEqual(wrong.success, false);
+      assert.strictEqual(wrong.estado, 'ERROR_CREDENCIALES');
+      assert.match(String(wrong.mensajeSii), /mensaje del portal/);
+
+      const right = await SiiPlaywrightRunner.testLogin({ rut: '76104550-9', password: 'abc' });
+      assert.strictEqual(right.success, true, right.mensajeSii || '');
+      assert.strictEqual(right.estado, 'CONECTADO');
+      assert.ok(logoutCalls >= 1, 'La prueba debe cerrar la sesión (forceLogout)');
+    } finally {
+      process.env.SII_LOGIN_URL = prev.login;
+      process.env.SII_LOGOUT_URL = prev.logout;
+      if (prev.login === undefined) delete process.env.SII_LOGIN_URL;
+      if (prev.logout === undefined) delete process.env.SII_LOGOUT_URL;
+      portal.close();
+    }
+  });
+
+  await test('#3/#10 La UI no simula autenticación ni bitácoras con esperas artificiales', () => {
+    const ui = fs.readFileSync(path.join(ROOT, 'src/components/AgentClientConfig.tsx'), 'utf8');
+    assert.ok(!/setTimeout\(r, \d+\)/.test(ui), 'AgentClientConfig usa setTimeout como espera de "procesamiento"');
+    assert.ok(!/claveSii\.length >= 4/.test(ui), 'La validez de la clave no puede depender de su longitud');
+    assert.ok(ui.includes("/api/sii/test-login"));
+    for (const f of ['src/components/tenancy/NewErpClientOnboardingModal.tsx', 'src/components/tenancy/AnchorClientMasterModal.tsx']) {
+      const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+      assert.ok(!src.includes('ClaveSii*2026'), `${f} asigna una clave SII de ejemplo`);
+      assert.ok(!src.includes("estadoConexionSii: 'CONECTADO'"), `${f} marca CONECTADO sin probar la conexión`);
+    }
   });
 
   console.log(`\nRESULTADO FASE 1: ${passed} de ${total} pruebas pasaron.`);

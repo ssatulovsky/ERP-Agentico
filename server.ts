@@ -33,6 +33,7 @@ import { checkMySqlConnection, ensureMysqlSchemaInitialized, isRealMysqlConnecte
 import { diskPersistence } from "./src/services/diskPersistenceService";
 import { getDemoClients } from "./src/data/seedData";
 import { assertDteSimulationPolicy } from "./src/config/dteSimulationPolicy";
+import { resolveClaveSii, isMaskedSecret } from "./src/services/siiCredentialResolver";
 import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
   normalizeAndValidateJournalEntry,
@@ -1133,8 +1134,8 @@ app.get("/api/companies", async (_req, res) => {
             nombreCorto: c.razonSocial,
             rutAutenticacion: c.rut,
             tipoAutenticacionSii: 'CLAVE_TRIBUTARIA',
-            hasClaveSii: true,
-            estadoConexionSii: 'CONECTADO',
+            hasClaveSii: Boolean(c.claveSiiEncrypted || resolveClaveSii(c, c.id || c.rut)),
+            estadoConexionSii: c.estadoConexionSii || 'PENDIENTE_VERIFICACION',
             descargaAutomaticaRcv: true,
             activa: true,
             exentoIvaGiro: Boolean(c.exentoIvaGiro)
@@ -1393,12 +1394,12 @@ app.post("/api/sii/run-playwright", async (req, res) => {
     const { rut, password, periodo = "2026-09", tipo = "ALL", headless = true } = req.body;
     const cleanRut = (rut || "").replace(/\./g, "").trim().toUpperCase();
 
-    let claveTributaria = password;
+    // La clave se toma de la bóveda del servidor; una clave enmascarada (****) enviada por la UI se ignora.
+    let claveTributaria = typeof password === "string" && !isMaskedSecret(password) ? password : null;
     if (!claveTributaria) {
-      const matched = await findCompanyByIdOrRut(cleanRut || rut);
-      if (matched && matched.claveSii) {
-        claveTributaria = matched.claveSii;
-      }
+      const lookupId = String(req.effectiveEmpresaId || req.body.empresaId || cleanRut || rut || "");
+      const matched = await findCompanyByIdOrRut(lookupId);
+      claveTributaria = resolveClaveSii(matched, lookupId);
     }
 
     const result = await SiiPlaywrightRunner.execute({
@@ -1497,6 +1498,31 @@ app.post("/api/sii/run-playwright", async (req, res) => {
       documentos: [],
       logs: [`[Error Servidor] ${error.message}`],
     });
+  }
+});
+
+// 1.2 (hallazgo #3): prueba de conexión REAL con el SII. Solo autentica con Playwright y cierra la sesión.
+// El estado lo determina la respuesta del SII, no la longitud de la clave ni una espera artificial.
+app.post("/api/sii/test-login", async (req, res) => {
+  try {
+    const empresaId = String(req.effectiveEmpresaId || req.body?.empresaId || "").trim();
+    if (!empresaId) {
+      return res.status(400).json({ success: false, estado: "SIN_CREDENCIALES", code: "EMPRESA_REQUERIDA", error: "Debe indicar la empresa." });
+    }
+    const company = await findCompanyByIdOrRut(empresaId);
+    const rut = String(company?.rutAutenticacion || company?.rut || req.body?.rut || "").trim();
+    const typedPassword = typeof req.body?.password === "string" && !isMaskedSecret(req.body.password) ? req.body.password : null;
+    const password = typedPassword || resolveClaveSii(company, empresaId);
+
+    const result = await SiiPlaywrightRunner.testLogin({ rut, password: password || undefined });
+    res.status(result.success ? 200 : result.estado === "ERROR_PORTAL" ? 502 : 200).json({
+      ...result,
+      empresaId,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error("[SII test-login]:", error);
+    res.status(500).json({ success: false, estado: "ERROR_PORTAL", mensajeSii: null, error: error.message, logs: [] });
   }
 });
 

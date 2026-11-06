@@ -193,12 +193,11 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
       contactoEmail: emailContacto.trim(),
       contactoTelefono: telefono.trim(),
       emailDte: emailDte.trim(),
-      claveSii: 'ClaveSii*2026',
+      claveSii: '', // 1.2: sin clave de ejemplo; se registra en la bóveda y se verifica con /api/sii/test-login
       rutAutenticacion: formattedRut,
       tipoAutenticacionSii: 'CLAVE_TRIBUTARIA',
-      estadoConexionSii: 'CONECTADO',
-      ultimaSincronizacionSii: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      ultimoMensajeSii: 'Onboarding completado exitosamente en Plataforma Multitenant IFRS.',
+      estadoConexionSii: 'PENDIENTE_VERIFICACION',
+      ultimoMensajeSii: 'Pendiente de verificar la conexión con el SII.',
       automatizacionesAgente: {
         descargaAutomaticaRcv: true,
         descargaAutomaticaBhe: true,

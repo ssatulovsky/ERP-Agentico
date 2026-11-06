@@ -1500,44 +1500,44 @@ export default function App() {
     }
   };
 
-  // Automated agent download routine for client via real Playwright
-  const handleDownloadClientDtes = async (client: ClientCompany) => {
+  // Descarga RCV real vía Playwright (1.3): devuelve la bitácora real del robot para mostrarla tal cual.
+  const handleDownloadClientDtes = async (
+    client: ClientCompany
+  ): Promise<{ success: boolean; logs: string[]; documentos: number; error?: string }> => {
     const timestamp = new Date().toLocaleString('es-CL');
     try {
       const res = await fetch('/api/sii/run-playwright', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          empresaId: client.id,
           rut: client.rutAutenticacion || client.rut,
-          password: client.claveSii,
           periodo: '2026-08',
           tipo: 'ALL',
         }),
       });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.documentos) && data.documentos.length > 0) {
-        handleAddMultipleDtes(data.documentos, true);
+      const data = await res.json().catch(() => ({}));
+      const logs: string[] = Array.isArray(data.logs) ? data.logs : [];
+      const documentos = Array.isArray(data.documentos) ? data.documentos.length : 0;
+      if (data.success) {
+        if (documentos > 0) handleAddMultipleDtes(data.documentos, true);
         handleUpdateClient({
           ...client,
           estadoConexionSii: 'CONECTADO',
           ultimaSincronizacionSii: timestamp,
-          ultimoMensajeSii: `Playwright descargó ${data.documentos.length} DTEs oficiales reales.`,
+          ultimoMensajeSii:
+            documentos > 0
+              ? `Playwright descargó ${documentos} documentos del RCV.`
+              : 'RCV consultado: sin documentos para el período.',
         });
       } else {
-        handleUpdateClient({
-          ...client,
-          estadoConexionSii: data.success ? 'CONECTADO' : 'ERROR_CREDENCIALES',
-          ultimaSincronizacionSii: timestamp,
-          ultimoMensajeSii: data.error || 'RCV consultado vía Chromium: sin nuevos documentos para el período.',
-        });
+        // Una falla de descarga no prueba que la clave sea incorrecta: se informa el motivo sin cambiar el estado.
+        handleUpdateClient({ ...client, ultimoMensajeSii: data.error || `Descarga RCV fallida (HTTP ${res.status}).` });
       }
+      return { success: Boolean(data.success), logs, documentos, error: data.error };
     } catch (err: any) {
-      handleUpdateClient({
-        ...client,
-        estadoConexionSii: 'ERROR_CREDENCIALES',
-        ultimaSincronizacionSii: timestamp,
-        ultimoMensajeSii: `Error en RPA Playwright: ${err.message}`,
-      });
+      handleUpdateClient({ ...client, ultimoMensajeSii: `No se pudo ejecutar la descarga RCV: ${err.message}` });
+      return { success: false, logs: [], documentos: 0, error: err.message };
     }
   };
 

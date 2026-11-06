@@ -17,7 +17,6 @@ jobs:
     env:
       NODE_ENV: test
       GEMINI_API_KEY: ""
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,6 +25,8 @@ jobs:
           cache: npm
       - name: Instalar dependencias
         run: npm ci
+      - name: Instalar Chromium de Playwright (prueba de login SII contra portal local)
+        run: npx playwright install --with-deps chromium
       - name: Retirar dependencias del puente WhatsApp
         if: matrix.deps == 'sin-opcionales'
         # No se usa --omit=optional porque también eliminaría binarios nativos (rollup, esbuild).

@@ -189,10 +189,10 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
         regimenTributario: '14D3_PROPYME_GENERAL',
         bancoPrincipal: 'Banco Santander Chile',
         numeroCuenta: '00-000000-0',
-        claveSii: 'ClaveSii*2026',
+        claveSii: '', // 1.2: sin clave de ejemplo; se registra en la bóveda y se verifica con /api/sii/test-login
         rutAutenticacion: rutClaveTributaria,
         tipoAutenticacionSii: 'CLAVE_TRIBUTARIA',
-        estadoConexionSii: 'CONECTADO',
+        estadoConexionSii: 'PENDIENTE_VERIFICACION',
         automatizacionesAgente: {
           descargaAutomaticaRcv: true,
           descargaAutomaticaBhe: true,

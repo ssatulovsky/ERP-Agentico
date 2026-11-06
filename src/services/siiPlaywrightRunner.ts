@@ -26,6 +26,20 @@ export interface PlaywrightRunResult {
   error?: string;
 }
 
+export type SiiLoginTestEstado = 'CONECTADO' | 'ERROR_CREDENCIALES' | 'SESIONES_EXCEDIDAS' | 'SIN_CREDENCIALES' | 'ERROR_PORTAL';
+
+export interface SiiLoginTestResult {
+  success: boolean;
+  estado: SiiLoginTestEstado;
+  /** Texto informado por el SII (o motivo técnico); nunca un mensaje inventado. */
+  mensajeSii: string | null;
+  logs: string[];
+}
+
+const siiLoginTestUrl = () =>
+  process.env.SII_LOGIN_URL || 'https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html?https://misiir.sii.cl/cgi_misii/siihome.cgi';
+const siiLogoutUrl = () => process.env.SII_LOGOUT_URL || 'https://zeusr.sii.cl/cgi_AUT2000/CAutFin.cgi';
+
 export class SiiPlaywrightRunner {
   /**
    * Ejecuta el bot Playwright con Chromium headless contra el portal oficial del SII (zeusr.sii.cl).
@@ -1905,6 +1919,106 @@ export class SiiPlaywrightRunner {
           await browser.close();
         } catch (e) {}
       }
+    }
+  }
+
+  /**
+   * Prueba de conexión real (tarea 1.2, hallazgo #3): autentica en zeusr.sii.cl con Playwright,
+   * informa lo que responde el SII y cierra la sesión. No descarga nada ni simula esperas.
+   */
+  public static async testLogin(options: { rut: string; password?: string; headless?: boolean }): Promise<SiiLoginTestResult> {
+    const logs: string[] = [];
+    const addLog = (msg: string) => {
+      const line = `[${new Date().toLocaleTimeString('es-CL')}] ${msg}`;
+      logs.push(line);
+      console.log(`[SII test-login] ${msg}`);
+    };
+    const cleanRut = (options.rut || '').replace(/\./g, '').trim().toUpperCase();
+    const password = (options.password || '').trim();
+    if (!cleanRut || !password) {
+      addLog('No hay RUT o clave tributaria registrada para esta empresa.');
+      return { success: false, estado: 'SIN_CREDENCIALES', mensajeSii: null, logs };
+    }
+    const rutCompleto = cleanRut.includes('-') ? cleanRut : `${cleanRut.slice(0, -1)}-${cleanRut.slice(-1)}`;
+
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+    let authenticated = false;
+    try {
+      addLog('Abriendo navegador (Chromium headless)...');
+      browser = await chromium.launch({
+        headless: options.headless !== false,
+        executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      });
+      const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ChileERP/2.0',
+      });
+      page = await context.newPage();
+      page.setDefaultTimeout(30000);
+
+      addLog('Cargando formulario de autenticación de zeusr.sii.cl...');
+      await page.goto(siiLoginTestUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      const rutInput = (await page.$('#rutcntr')) || (await page.$('input[name="rut"]')) || (await page.$('#rut'));
+      const claveInput = (await page.$('#clave')) || (await page.$('input[name="clave"]')) || (await page.$('input[type="password"]'));
+      if (!rutInput || !claveInput) {
+        addLog('El formulario de ingreso del SII no presentó los campos de RUT y clave.');
+        return { success: false, estado: 'ERROR_PORTAL', mensajeSii: 'Formulario de autenticación no disponible.', logs };
+      }
+
+      addLog(`Enviando credenciales del RUT ${rutCompleto}...`);
+      await rutInput.fill(rutCompleto);
+      await claveInput.fill(password);
+      const submitBtn = (await page.$('#bt_ingresar')) || (await page.$('button[type="submit"]')) || (await page.$('input[type="submit"]'));
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => null),
+        submitBtn ? submitBtn.click() : claveInput.press('Enter'),
+      ]);
+
+      const url = page.url();
+      addLog(`Respuesta del SII recibida (${new URL(url).hostname}).`);
+
+      const errorEl = await page.$('.alert-danger, #mensajeError, font[color="red"], .error, #titulo_error');
+      const errorText = errorEl ? ((await errorEl.innerText().catch(() => '')) || '').trim() : '';
+      const bodyText = await page.evaluate(() => (document.body ? document.body.innerText : '')).catch(() => '');
+
+      if (bodyText.includes('superado el máximo de sesiones autenticadas') || bodyText.includes('01.01.112.500.720.27')) {
+        authenticated = true; // la clave es válida; el SII rechaza por sesiones concurrentes
+        addLog('El SII informa máximo de sesiones simultáneas (01.01.112.500.720.27).');
+        return {
+          success: false,
+          estado: 'SESIONES_EXCEDIDAS',
+          mensajeSii: 'El SII informa que se superó el máximo de sesiones autenticadas simultáneas para este RUT.',
+          logs,
+        };
+      }
+      if (errorText) {
+        addLog(`El SII rechazó la autenticación: "${errorText}"`);
+        return { success: false, estado: 'ERROR_CREDENCIALES', mensajeSii: errorText, logs };
+      }
+      if (url.includes('IngresoRutClave')) {
+        addLog('El SII devolvió nuevamente el formulario de ingreso: credenciales no aceptadas (o captcha exigido).');
+        return {
+          success: false,
+          estado: 'ERROR_CREDENCIALES',
+          mensajeSii: 'El SII no aceptó las credenciales (permaneció en el formulario de ingreso).',
+          logs,
+        };
+      }
+
+      authenticated = true;
+      addLog('Autenticación aceptada por el SII.');
+      return { success: true, estado: 'CONECTADO', mensajeSii: 'Autenticación aceptada por el SII.', logs };
+    } catch (err: any) {
+      addLog(`No fue posible completar la prueba: ${err?.message || err}`);
+      return { success: false, estado: 'ERROR_PORTAL', mensajeSii: err?.message || String(err), logs };
+    } finally {
+      if (page && authenticated) {
+        addLog('Cerrando sesión en el SII (CAutFin.cgi)...');
+        await page.goto(siiLogoutUrl(), { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+      }
+      if (browser) await browser.close().catch(() => {});
     }
   }
 }
