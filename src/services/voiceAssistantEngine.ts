@@ -11,7 +11,6 @@ import {
   ExpenseReport 
 } from '../types';
 import { formatCLP } from '../utils/chileanAccounting';
-import { INITIAL_BANK_ACCOUNTS, INITIAL_CASH_ACCOUNTS } from '../data/seedData';
 import { commercialProcurementService } from './commercialProcurementService';
 
 const getDiskPersistence = (): any => (globalThis as any)?.__diskPersistence;
@@ -62,6 +61,65 @@ export interface AgentDialogueTurnResult {
     targetTab?: string;
   };
   followUpQuestion?: string;    // Pregunta de continuidad para el diálogo
+}
+
+
+// ============================================================================
+// 1.5 (hallazgo #1): intenciones que siempre van al motor agéntico (sin guiones ni datos de respaldo)
+// ============================================================================
+export interface AgenticIntent {
+  module: 'FACTURACION_DTE' | 'COSTOS_PRODUCCION' | 'INVENTARIO' | 'CONCILIACION' | 'FLUJO_CAJA';
+  accion: string;
+}
+
+export function detectAgenticIntent(normalized: string): AgenticIntent | null {
+  const has = (...terms: string[]) => terms.some((t) => normalized.includes(t));
+
+  const isPipelineQuery =
+    has('presupuestos enviados', 'cotizaciones enviadas', 'estado de los presupuestos', 'estado de las cotizaciones',
+      'cotizaciones pendientes', 'pipeline comercial', 'propuestas comerciales') ||
+    (normalized.includes('presupuesto') && has('estado', 'enviad', 'cuanto', 'cuánto'));
+
+  if (has('factura', 'facturar', 'emitir dte', 'emite dte', 'dte 33', 'dte 34', 'timbra', 'nota de credito', 'nota de crédito')) {
+    if (!has('centraliza', 'asiento de ventas', 'asiento de compras')) {
+      return { module: 'FACTURACION_DTE', accion: 'preparar o emitir documentos tributarios' };
+    }
+  }
+  if (!isPipelineQuery && has('presupuesto', 'cotiza', 'cotización', 'cotizacion', 'costeo', 'orden de trabajo', 'confeccion', 'confección')) {
+    return { module: 'COSTOS_PRODUCCION', accion: 'formular presupuestos o cotizaciones' };
+  }
+  if (has('stock', 'inventario', 'bodega', 'existencia', 'quiebre', 'reposicion', 'reposición', 'insumo', 'kardex')) {
+    return { module: 'INVENTARIO', accion: 'consultar existencias de inventario' };
+  }
+  if (
+    has('concili', 'cartola', 'novedades bancarias', 'cuadrar banco', 'saldo bancario', 'saldos bancarios', 'aperturado por cuenta') ||
+    (normalized.includes('banco') && !normalized.includes('proveedor'))
+  ) {
+    return { module: 'CONCILIACION', accion: 'consultar saldos bancarios o conciliar cartolas' };
+  }
+  const cashTerms = has('flujo de caja', 'caja', 'liquidez', 'tesoreria', 'tesorería');
+  const scenarioTerms = has('pagar', 'retras', 'postergar', 'prórroga', 'prorroga', 'escenario', 'proveedor', 'cliente');
+  if (cashTerms && scenarioTerms) {
+    return { module: 'FLUJO_CAJA', accion: 'simular escenarios de flujo de caja' };
+  }
+  return null;
+}
+
+export function agenticUnavailableResponse(
+  persona: AgentPersona,
+  context: DialogueContext,
+  intent: AgenticIntent
+): AgentDialogueTurnResult {
+  const empresa = context.clientName ? ` para ${context.clientName}` : '';
+  return {
+    verbalResponse: `No pude ${intent.accion}${empresa} porque el motor agéntico no está disponible en este momento. No se registró ni emitió nada.`,
+    displayMarkdown: `### ⚠️ ${persona.nombre} (${persona.cargo})
+
+No pude **${intent.accion}**${empresa}: el motor agéntico (módulo \`${intent.module}\`) no respondió.
+
+- No se generó ningún documento, cotización, asiento ni aprobación.
+- Puedes reintentar en unos minutos o realizar la operación directamente en el módulo correspondiente.`,
+  };
 }
 
 /**
@@ -612,26 +670,6 @@ class VoiceAssistantEngine {
       normalized.includes('emite la cotizaci') ||
       normalized.includes('proceder');
 
-    // Contexto activo: Presupuesto / Costeo Industrial NIC 2
-    const isBudgetContext =
-      recentHistoryText.includes('presupuesto') ||
-      recentHistoryText.includes('cotizaci') ||
-      recentHistoryText.includes('dyneema') ||
-      recentHistoryText.includes('red lobera') ||
-      recentHistoryText.includes('salmones austral') ||
-      recentHistoryText.includes('costeo industrial') ||
-      recentHistoryText.includes('orden de fabricaci') ||
-      recentHistoryText.includes('orden de trabajo');
-
-    // Contexto activo: Facturación Electrónica / DTE
-    const isInvoiceContext =
-      recentHistoryText.includes('factura') ||
-      recentHistoryText.includes('facturar') ||
-      recentHistoryText.includes('vehice') ||
-      recentHistoryText.includes('dte 33') ||
-      recentHistoryText.includes('dte 34') ||
-      recentHistoryText.includes('timbraje');
-
     // ------------------------------------------------------------------------
     // FLUJO SUPREMO: Agente General Vera / Dirección Financiera
     // 1. Actualización / Regeneración del Flujo de Caja a la Fecha de Hoy
@@ -780,359 +818,14 @@ He recalculado la proyección de tesorería y la **Matriz Diaria Estilo Excel** 
     }
 
     // ------------------------------------------------------------------------
-    // FLUJO SUPREMO: Agente General Vera / Dirección Financiera
-    // 2. Simulación de Escenario de Flujo de Caja en Tiempo Real (What-If Cashflow) & WhatsApp
+    // 1.5 (hallazgo #1): facturar, cotizar/presupuestar, inventario, bancos/conciliación y escenarios
+    // de flujo de caja NO tienen guiones: van al motor agéntico, que usa herramientas con datos reales y
+    // pide aprobación humana. Si el motor no está disponible, se informa sin inventar resultados.
     // ------------------------------------------------------------------------
-    const isCashFlowScenarioRequest =
-      (normalized.includes('flujo de caja') ||
-        normalized.includes('caja') ||
-        normalized.includes('liquidez') ||
-        normalized.includes('vera') ||
-        normalized.includes('socio') ||
-        normalized.includes('tesoreria') ||
-        normalized.includes('tesorería')) &&
-      (normalized.includes('actualizad') ||
-        normalized.includes('pagar') ||
-        normalized.includes('retras') ||
-        normalized.includes('postergar') ||
-        normalized.includes('prórroga') ||
-        normalized.includes('prorroga') ||
-        normalized.includes('escenario') ||
-        normalized.includes('proveedor') ||
-        normalized.includes('cliente'));
-
-    if (isCashFlowScenarioRequest) {
-      // 1. Extraer proveedor e información de factura de compra
-      let proveedorNombre = 'Proveedor de Insumos & Operaciones';
-      let folioProveedor = 'F-4501';
-      let fechaPagoProveedor = '25 del mes en curso';
-      let montoProveedor = 3850000;
-
-      // Intentar extraer nombre del proveedor
-      const provMatch = userInput.match(/proveedor\s+([A-Za-z0-9\s\-]+?)(?:\s+la\s+pagar|\s+lo\s+pagar|\s+pagar|\s+se\s+pagar|\s+el|\s+por|\s+con|,|\.|$)/i);
-      if (provMatch && provMatch[1].trim() && !provMatch[1].toLowerCase().includes('xxxx')) {
-        proveedorNombre = provMatch[1].trim();
-      }
-
-      // Intentar extraer folio o número de factura
-      const folioProvMatch = userInput.match(/factura\s*(?:n[°º#]?)?\s*([0-9A-Za-z\-]+)/i);
-      if (folioProvMatch && folioProvMatch[1] && !folioProvMatch[1].toLowerCase().includes('xxx')) {
-        folioProveedor = `Folio #${folioProvMatch[1]}`;
-      }
-
-      // Intentar extraer fecha de pago comprometida
-      const fechaMatch = userInput.match(/(?:el\s+d[ií]a\s+|el\s+)([0-9]{1,2}(?:\s+de\s+[a-zA-Z]+|\/[0-9]{1,2}(?:\/[0-9]{2,4})?|[a-zA-Z]+)?)/i);
-      if (fechaMatch && fechaMatch[1] && !fechaMatch[1].toLowerCase().includes('xx')) {
-        fechaPagoProveedor = fechaMatch[1].trim();
-      }
-
-      // 2. Extraer cliente y días de prórroga / retraso en la cobranza
-      let clienteNombre = 'Cliente Corporativo / Retail';
-      let folioCliente = 'Factura Venta #1280';
-      let diasRetraso = 15;
-      let montoCliente = 7200000;
-
-      const cliMatch = userInput.match(/cliente\s+([A-Za-z0-9\s\-]+?)(?:\s+nos\s+dijo|\s+se\s+retrasar|\s+retrasar|\s+postergar|\s+pagar[aá]|\s+en|,|\.|$)/i);
-      if (cliMatch && cliMatch[1].trim() && !cliMatch[1].toLowerCase().includes('yyyy')) {
-        clienteNombre = cliMatch[1].trim();
-      }
-
-      const diasMatch = userInput.match(/(\d+)\s*d[ií]as/i);
-      if (diasMatch && diasMatch[1]) {
-        diasRetraso = parseInt(diasMatch[1], 10);
-      }
-
-      // 3. Cálculos Financieros del Escenario (What-If) basados en el contexto real
-      const saldoInicialBancos = (context.bankAccounts && context.bankAccounts.length > 0)
-        ? context.bankAccounts.reduce((sum, b) => sum + (Number(b.saldoEnLinea) || 0), 0)
-        : 0;
-
-      const egresosFijosComprometidos = (context.payrolls && context.payrolls.length > 0)
-        ? context.payrolls.reduce((sum, p) => sum + (Number(p.costoTotalEmpresa || p.sueldoLiquido) || 0), 0)
-        : 0;
-
-      const impuestosF29Estimados = context.f29IvaTotal
-        ? Math.abs(context.f29IvaTotal)
-        : (context.f29 ? Math.abs((context.f29 as any).f29PagadoClp || (context.f29 as any).totalAPagar || 0) : 0);
-
-      const otrosEgresosOperativos = (context.dtes && context.dtes.length > 0)
-        ? context.dtes
-            .filter((d) => (d.tipoOperacion === 'COMPRA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
-            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
-        : 0;
-
-      // Escenario Base (Sin postergaciones)
-      const totalIngresosBase = (context.dtes && context.dtes.length > 0)
-        ? context.dtes
-            .filter((d) => (d.tipoOperacion === 'VENTA' || String(d.tipoDte) === '33') && (d as any).estadoSii !== 'ANULADO')
-            .reduce((sum, d) => sum + (Number(d.montoTotal) || 0), 0)
-        : (montoCliente > 0 ? montoCliente * 2 : 0);
-
-      const totalEgresosBase = egresosFijosComprometidos + impuestosF29Estimados + otrosEgresosOperativos + montoProveedor;
-      const saldoFinalBase = saldoInicialBancos + totalIngresosBase - totalEgresosBase;
-
-      // Escenario Simulado (Cliente posterga -> ingreso diferido)
-      const totalIngresosSimulados = Math.max(0, totalIngresosBase - montoCliente);
-      const totalEgresosSimulados = totalEgresosBase;
-      const saldoFinalSimulado = saldoInicialBancos + totalIngresosSimulados - totalEgresosSimulados;
-      const colchonSeguridad = saldoFinalSimulado - (egresosFijosComprometidos + impuestosF29Estimados);
-
-      // Texto formateado exclusivo para WhatsApp
-      const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
-      const waText = `📊 *REPORTE DE FLUJO DE CAJA SIMULADO (ESCENARIO WHAT-IF)*
-🏢 *Empresa:* ${context.clientName} (RUT: ${context.rut})
-👩‍💼 *Emitido por:* Vera Albornoz (Directora Financiera & Socia Virtual)
-📅 *Fecha:* ${fechaHoy}
-
-💰 *Saldo Disponible en Bancos:* $${formatCLP(saldoInicialBancos)} CLP
-
-🔄 *Ajustes de Escenario Evaluados:*
-• 🔴 *Pago a Proveedor:* ${folioProveedor} (${proveedorNombre}) programado para el *${fechaPagoProveedor}* (-$${formatCLP(montoProveedor)})
-• 🟢 *Cobranza Cliente:* ${folioCliente} (${clienteNombre}) con prórroga solicitada de *${diasRetraso} días* (Ingreso diferido: +$${formatCLP(montoCliente)})
-
-📈 *Proyección al Cierre de Mes:*
-• Saldo Estimado Final de Caja: *$${formatCLP(saldoFinalSimulado)} CLP*
-• Estado de Solvencia: *POSITIVA Y HOLGADA* (Cubre 100% sueldos e IVA F29)
-• Colchón de Reserva Libre: *+$${formatCLP(Math.max(colchonSeguridad, 0))} CLP*
-
-🔗 _Generado automáticamente por el Asistente Ejecutivo Vera ERP._`;
-
-      const whatsappShareUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
-
-      return {
-        verbalResponse: `Hola socio. He recalculado el flujo de caja en tiempo real considerando la reprogramación. Al pagar la factura del proveedor ${proveedorNombre} el día ${fechaPagoProveedor} y registrar los ${diasRetraso} días de prórroga del cliente ${clienteNombre}, el saldo disponible al cierre de mes se proyecta en $${formatCLP(saldoFinalSimulado)} pesos. Mantenemos una holgura positiva que asegura el pago de remuneraciones y el F29 sin riesgo de iliquidez. Te he preparado el informe comparativo y el mensaje listo para enviar por WhatsApp al directorio.`,
-        displayMarkdown: `### 📊 Simulación de Flujo de Caja Proyectado en Tiempo Real (What-If)
-> **Agente a cargo:** Vera Albornoz (Directora General & Socia Financiera) • *Motor de Voz Neuronal Piper*
-
-He evaluado el impacto del escenario solicitado sobre la liquidez de **${context.clientName}**:
-
-| Concepto de Tesorería | Escenario Base Original | Escenario Simulado (${fechaPagoProveedor} / +${diasRetraso} días) | Variación |
-| :--- | :---: | :---: | :---: |
-| **Saldo Disponible en Bancos** | **$${formatCLP(saldoInicialBancos)}** | **$${formatCLP(saldoInicialBancos)}** | $0 |
-| **Ingresos Operacionales (Cobranzas)** | $${formatCLP(totalIngresosBase)} | $${formatCLP(totalIngresosSimulados)} | -$${formatCLP(montoCliente)} (Diferido a próximo ciclo) |
-| **Pago Proveedor (${proveedorNombre})** | Pago Inmediato | **Programado para el ${fechaPagoProveedor}** | Diferido con acuerdo |
-| **Egresos Críticos (Sueldos + F29 SII)** | $${formatCLP(egresosFijosComprometidos + impuestosF29Estimados)} | $${formatCLP(egresosFijosComprometidos + impuestosF29Estimados)} | **100% Cubiertos** |
-| **SALDO PROYECTADO FIN DE MES** | **$${formatCLP(saldoFinalBase)}** | **$${formatCLP(saldoFinalSimulado)}** | **-$${formatCLP(montoCliente)}** |
-
----
-
-#### 🛡️ Diagnóstico de Solvencia & Liquidez:
-1. **Sin Riesgo de Quiebre de Caja:** El saldo proyectado de **$${formatCLP(saldoFinalSimulado)} CLP** absorbe sin inconvenientes el diferimiento de 15 días del cliente.
-2. **Cumplimiento Laboral & Fiscal Blindado:** Las remuneraciones de los colaboradores y el pago del IVA F29 del SII quedan 100% respaldados.
-3. **Recomendación Estratégica:** Notificar formalmente al proveedor ${proveedorNombre} la fecha de pago para el **${fechaPagoProveedor}** y otorgar el canje o prórroga al cliente **${clienteNombre}** con confirmación escrita.
-
----
-
-#### 📱 Canal de Comunicación WhatsApp (Listo para Compartir):
-Puedes enviar este resumen ejecutivo directamente a los socios o al directorio por WhatsApp:
-
-<div class="p-3 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2 my-2">
-  <div class="flex items-center justify-between">
-    <span class="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
-      💬 Mensaje Preparado para WhatsApp:
-    </span>
-    <a
-      href="${whatsappShareUrl}"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 shadow-xs transition-colors"
-    >
-      📱 Enviar a WhatsApp de Socios
-    </a>
-  </div>
-  <pre class="text-[11px] bg-white p-2.5 rounded-lg border border-emerald-200 text-slate-800 font-mono whitespace-pre-wrap">${waText}</pre>
-</div>`,
-        actionToExecute: { type: 'NAVIGATE', targetTab: 'bank' },
-        followUpQuestion: '¿Deseas que aplique esta fecha de pago en el módulo de Tesorería o prefieres enviar el resumen a los socios por WhatsApp?',
-      };
-    }
-
-    // ------------------------------------------------------------------------
-    // FLUJO MULTI-TURNO A: Presupuesto & Costeo Industrial
-    // ------------------------------------------------------------------------
-    if (isBudgetContext) {
-      // Determinar cliente y producto del contexto
-      let cliente = context.clientName || 'Cliente Principal';
-      if (normalized.includes('para ')) {
-        const parts = userInput.split(/para\s+/i);
-        if (parts.length > 1) {
-          cliente = parts[1].split(/\s+por\s+|\s+de\s+/i)[0].trim();
-        }
-      }
-
-      // TURNO 3: Confirmación de propuesta de Cotización y Borrador de OT
-      if (isAffirmative && (recentHistoryText.includes('cotización formal') || recentHistoryText.includes('orden de trabajo') || recentHistoryText.includes('presupuesto'))) {
-        const historyMarginMatch = recentHistoryText.match(/(\d{1,2}(?:[.,]\d+)?)\s*%/i);
-        const margenPct = historyMarginMatch ? parseFloat(historyMarginMatch[1].replace(',', '.')) : 28;
-        const netoEstimado = Math.round(10874880 / (1 - (margenPct / 100)));
-        const ivaEstimado = Math.round(netoEstimado * 0.19);
-        const brutoEstimado = netoEstimado + ivaEstimado;
-
-        return {
-          verbalResponse: `Entendido. Te muestro la propuesta de cotización y borrador de Orden de Trabajo para ${cliente} por $${formatCLP(netoEstimado)} pesos netos en pantalla para tu revisión en el módulo de Producción y Costos Industriales.`,
-          displayMarkdown: `### 🏭 Propuesta de Cotización Formal & Borrador de Orden de Trabajo (NIC 2)
-> **Agente a cargo:** Francisca Araya (Jefa de Costos Industriales & Producción)
-
-Se ha formulado la propuesta de presupuesto industrial para **${cliente}**:
-- **Nº de Cotización Propuesta:** **COT-${new Date().getFullYear()}-001** (Estado: Propuesta en Revisión Humana)
-- **Orden de Trabajo Planificada:** **OT-${new Date().getFullYear()}-001** — Producción y Fabricación
-- **Valor Neto Estimado:** $${formatCLP(netoEstimado)} CLP (+ IVA 19%: $${formatCLP(ivaEstimado)}) | **Total Bruto:** $${formatCLP(brutoEstimado)} CLP (Margen: ${margenPct}%)
-- **Plazo de Entrega Estimado:** 20 días hábiles en maestranza.
-
-#### 📋 Acciones pendientes de confirmación humana:
-1. **Verificación de Inventarios:** Validación de stock disponible en WMS antes de reservar materiales.
-2. **Asignación de Turno:** Aprobación de horas hombre y turnos en taller.
-3. **Control NIC 2:** Validación previa de acumulación de MPD, MOD y CIF.`,
-          actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-          followUpQuestion: '¿Deseas que te redirija al módulo de Producción para formalizar la Orden de Trabajo?',
-        };
-      }
-
-      // TURNO 2: El usuario entrega parámetros (margen, insumos estándar, plazo en días)
-      const hasMarginParam = /\b\d{1,2}(?:[.,]\d+)?\s*%/i.test(userInput) || normalized.includes('margen');
-      const hasDaysParam = /\b\d+\s*d[ií]as\b/i.test(userInput) || normalized.includes('entrega');
-      const hasRecipeParam = normalized.includes('estandar') || normalized.includes('estándar') || normalized.includes('receta') || normalized.includes('dyneema');
-
-      if (hasMarginParam || hasDaysParam || hasRecipeParam) {
-        // Extraer margen porcentual
-        const marginMatch = userInput.match(/(\d{1,2}(?:[.,]\d+)?)\s*%/i) || userInput.match(/margen\s*(?:de|del)?\s*(\d{1,2}(?:[.,]\d+)?)/i);
-        const margenPct = marginMatch ? parseFloat(marginMatch[1].replace(',', '.')) : 28;
-
-        // Extraer días de plazo
-        const daysMatch = userInput.match(/(\d+)\s*d[ií]as/i);
-        const plazo = daysMatch ? `${daysMatch[1]} días corridos` : '20 días corridos';
-
-        // Estructura de Costeo Industrial Realista (NIC 2)
-        const costoMPD = 10150000; // Dyneema SK78 + Cabos y grilletes
-        const costoMOD = 1200000;  // 40 hrs costura maestranza
-        const costoCIF = 450000;   // Energía, desgaste equipos y control de carga
-        const costoTotal = costoMPD + costoMOD + costoCIF; // $11.800.000
-        const margenMonto = Math.round(costoTotal * (margenPct / 100));
-        const valorNeto = costoTotal + margenMonto;
-        const iva = Math.round(valorNeto * 0.19);
-        const totalBruto = valorNeto + iva;
-
-        return {
-          verbalResponse: `Excelente. Con los insumos estándar Dyneema, ${margenPct}% de margen y entrega en ${plazo}, he formulado el presupuesto formal para ${cliente} por un valor neto de $${valorNeto.toLocaleString('es-CL')} más IVA, con un total bruto de $${totalBruto.toLocaleString('es-CL')}. ¿Deseas que emita la cotización formal y genere la Orden de Trabajo en Producción?`,
-          displayMarkdown: `### 🏭 Formulación de Presupuesto Industrial & Costeo NIC 2
-> **Agente a cargo:** Francisca Araya (Jefa de Costos Industriales) / Módulo de Producción
-
-He estructurado la propuesta técnico-económica para **${cliente}**:
-- **Ítem:** Confección Red Lobera Perimetral Dyneema 80x80m Antidepredador
-- **Especificación Técnica:** Ficha estándar paño Dyneema SK78 alta tenacidad con cabos perimetrales reforzados.
-- **Plazo de Entrega Comprometido:** **${plazo}**
-
-| Componente de Costo (NIC 2) | Detalle Técnico | Subtotal ($ CLP) |
-| :--- | :--- | :--- |
-| **Materia Prima Directa (MPD)** | Paños Dyneema SK78 + Cabos perimetrales y grilletes | $10.150.000 |
-| **Mano de Obra Directa (MOD)** | 40 hrs costura maestranza especializada | $1.200.000 |
-| **Costos Indirectos (CIF)** | Energía taller, desgaste maquinaria y control de carga | $450.000 |
-| **COSTO DIRECTO TOTAL** | **Base de Costeo Industrial NIC 2** | **$11.800.000** |
-| **Margen de Contribución (${margenPct}%)** | Utilidad comercial sobre costo | $${margenMonto.toLocaleString('es-CL')} |
-| **PRECIO DE VENTA NETO** | **Valor cotizado a cliente** | **$${valorNeto.toLocaleString('es-CL')}** |
-| **IVA Débito Fiscal (19%)** | D.L. 825 | $${iva.toLocaleString('es-CL')} |
-| **TOTAL BRUTO COTIZADO** | **Facturable contra entrega** | **$${totalBruto.toLocaleString('es-CL')}** |
-
-#### 📋 Condiciones Comerciales de la Oferta:
-- **Validez de la Cotización:** 15 días corridos.
-- **Condición de Pago:** Crédito 30 días contra recepción conforme y HES.
-- **Garantía Técnica:** 12 meses contra fallas de confección y costuras.`,
-          actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-          followUpQuestion: '¿Deseas que confirme la cotización formal y genere la Orden de Trabajo en el módulo de Producción?',
-        };
-      }
-    }
-
-    // ------------------------------------------------------------------------
-    // FLUJO MULTI-TURNO B: Emisión de Facturas Electrónicas (VeHiCe / DTE 33 / 34)
-    // ------------------------------------------------------------------------
-    if (isInvoiceContext) {
-      let clienteFactura = 'VeHiCe';
-      if (recentHistoryText.includes('vehice') || normalized.includes('vehice')) {
-        clienteFactura = 'VeHiCe';
-      }
-
-      // TURNO 3: Confirmación de timbraje SII y asiento contable
-      if (isAffirmative && (recentHistoryText.includes('borrador de factura') || recentHistoryText.includes('dte 33') || recentHistoryText.includes('dte 34') || recentHistoryText.includes('$3.500.000') || recentHistoryText.includes('$4.165.000'))) {
-        return {
-          verbalResponse: `Factura timbrada exitosamente con el Folio 1542 ante el SII. Se ha generado el DTE XML firmado electrónicamente y el asiento de venta en el Libro Diario contable.`,
-          displayMarkdown: `### 📄 Factura Electrónica Timbrada Exitosamente ante el SII
-> **Agente a cargo:** Rodrigo Tapia (Jefe de Facturación Electrónica & DTEs)
-
-Se ha emitido el documento tributario oficial:
-- **Tipo de Documento:** Factura Electrónica Afecta (DTE 33)
-- **Folio Asignado SII:** **1542** (CAF vigente validado con firma digital)
-- **Receptor:** ${clienteFactura} SpA (RUT: 76.543.210-K)
-- **Glosa:** Consultoría de Transformación Digital & Asesoría Tecnológica
-- **Monto Neto:** $3.500.000 CLP
-- **IVA Débito (19%):** $665.000 CLP
-- **Total Bruto:** $4.165.000 CLP
-- **Condición de Venta:** Crédito a 30 días
-
-#### 📚 Asiento Contable Automático en Libro Diario:
-| Cuenta Contable | Debe ($ CLP) | Haber ($ CLP) |
-| :--- | :--- | :--- |
-| **1-1-03 Clientes Nacionales (${clienteFactura})** | 4.165.000 | - |
-| **4-1-01 Ingresos por Consultoría & Servicios** | - | 3.500.000 |
-| **2-1-05 IVA Débito Fiscal (D.L. 825)** | - | 665.000 |
-| **TOTALES PARTIDA DOBLE** | **4.165.000** | **4.165.000** |
-
-*El DTE XML ha sido despachado al correo de intercambio del receptor y reportado al Registro de Ventas del SII.*`,
-          actionToExecute: { type: 'CENTRALIZE_VENTAS', targetTab: 'dte' },
-          followUpQuestion: '¿Deseas descargar el PDF con el timbre electrónico TED o revisar el Libro de Ventas?',
-        };
-      }
-
-      // TURNO 2: El usuario entrega parámetros (afecta/exenta, montos, condición de pago)
-      const hasTipoParam = normalized.includes('afecta') || normalized.includes('exenta') || normalized.includes('33') || normalized.includes('34');
-      const hasMontoParam = normalized.includes('millon') || normalized.includes('millón') || /\b\d{1,3}(?:\.\d{3})+\b/.test(userInput) || normalized.includes('neto');
-      const hasCondicionParam = normalized.includes('días') || normalized.includes('dias') || normalized.includes('contado') || normalized.includes('crédito') || normalized.includes('credito');
-
-      if (hasTipoParam || hasMontoParam || hasCondicionParam) {
-        const isExenta = normalized.includes('exenta') || normalized.includes('34');
-        let neto = 3500000;
-
-        if (normalized.includes('3 millones y medio') || normalized.includes('3.5 millones') || normalized.includes('3,5 millones')) {
-          neto = 3500000;
-        } else if (normalized.includes('4 millones') || normalized.includes('cuatro millones')) {
-          neto = 4000000;
-        } else {
-          const numberMatch = userInput.match(/\b(\d{1,3}(?:\.\d{3})+)\b/);
-          if (numberMatch) {
-            neto = parseInt(numberMatch[1].replace(/\./g, ''), 10) || 3500000;
-          }
-        }
-
-        const iva = isExenta ? 0 : Math.round(neto * 0.19);
-        const total = neto + iva;
-        const condicion = normalized.includes('contado') ? 'Al Contado' : 'Crédito a 30 días';
-
-        return {
-          verbalResponse: `Perfecto. He preparado la Factura Electrónica ${isExenta ? 'Exenta DTE 34' : 'Afecta DTE 33'} para ${clienteFactura} por un valor neto de $${neto.toLocaleString('es-CL')}${isExenta ? '' : ` más 19% de IVA, total $${total.toLocaleString('es-CL')}`} con vencimiento a 30 días. ¿Autorizas el timbraje ante el SII y el registro contable en el Libro Diario?`,
-          displayMarkdown: `### 📄 Borrador de Factura Electrónica para ${clienteFactura}
-> **Agente a cargo:** Rodrigo Tapia (Jefe de Facturación Electrónica & DTEs)
-
-He preparado los datos para el timbraje electrónico del documento ante el SII:
-- **Emisor:** ${context.clientName} (RUT: ${context.rut})
-- **Receptor:** **${clienteFactura} SpA** (RUT: 76.543.210-K)
-- **Tipo de Documento:** **${isExenta ? 'Factura No Afecta o Exenta (DTE 34)' : 'Factura Electrónica Afecta (DTE 33)'}**
-- **Glosa / Ítem:** Consultoría de Transformación Digital & Asesoría Tecnológica
-- **Condición de Venta:** ${condicion}
-
-| Concepto | Detalle Tributario | Importe ($ CLP) |
-| :--- | :--- | :--- |
-| **Monto Neto Gravado** | Base imponible del servicio | $${neto.toLocaleString('es-CL')} |
-| **IVA Débito Fiscal (19%)** | Impuesto al Valor Agregado (DL 825) | $${iva.toLocaleString('es-CL')} |
-| **TOTAL A FACTURAR** | **Monto Total del DTE** | **$${total.toLocaleString('es-CL')}** |
-
-#### 📚 Propuesta de Asiento Contable en Libro Diario:
-- **Debe:** Clientes Nacionales (${clienteFactura}) — $${total.toLocaleString('es-CL')}
-- **Haber:** Ingresos por Ventas / Servicios — $${neto.toLocaleString('es-CL')}
-${isExenta ? '' : `- **Haber:** Débito Fiscal IVA (19%) — $${iva.toLocaleString('es-CL')}`}`,
-          actionToExecute: { type: 'CENTRALIZE_VENTAS', targetTab: 'dte' },
-          followUpQuestion: '¿Autorizas el timbraje ante el SII y la contabilización del documento en el Libro Diario?',
-        };
-      }
+    const agenticIntent = detectAgenticIntent(normalized);
+    if (agenticIntent) {
+      const delegated = await this.delegateToAgenticEngine(userInput, persona, context, agenticIntent.module);
+      return delegated || agenticUnavailableResponse(persona, context, agenticIntent);
     }
 
     // ------------------------------------------------------------------------
@@ -1216,167 +909,6 @@ Se ha registrado el asiento resumen de ventas para **${context.clientName}**.
       };
     }
 
-    // 3. Intención: Bancos, Saldos por Cuenta y Banco & Conciliación Bancaria (Informe Oficial & WhatsApp 1-Click)
-    const isBankReconciliationIntent =
-      normalized.includes('concili') ||
-      normalized.includes('cartola') ||
-      normalized.includes('novedades bancarias') ||
-      (normalized.includes('banco') && !normalized.includes('proveedor')) ||
-      normalized.includes('cuadrar banco') ||
-      normalized.includes('saldo bancario') ||
-      normalized.includes('saldos bancarios') ||
-      normalized.includes('aperturado por cuenta');
-
-    if (isBankReconciliationIntent) {
-      const isExecutiveInterlocutor = persona.id === 'AGENTE_GENERAL_VERA' || persona.isExecutiveGeneral;
-      const agentRoleIntro = isExecutiveInterlocutor 
-        ? 'He coordinado con Sofía Morales en Tesorería y consolidado el saldo aperturado por cada cuenta y banco.' 
-        : 'Como Jefa de Tesorería, te presento la apertura de saldos por cuenta y banco junto a su estado de conciliación.';
-
-      const activeBanks =
-        context.bankAccounts && context.bankAccounts.length > 0
-          ? context.bankAccounts
-          : INITIAL_BANK_ACCOUNTS;
-
-      const clpBanks = activeBanks.filter((b) => (b.moneda || 'CLP') === 'CLP');
-      const fxBanks = activeBanks.filter((b) => b.moneda && b.moneda !== 'CLP');
-      const totalClpBanks = clpBanks.reduce((acc, b) => acc + (b.saldoEnLinea || 0), 0);
-      const totalCajas = INITIAL_CASH_ACCOUNTS.reduce((acc, c) => acc + (c.montoSaldo || 0), 0);
-      const tcUsd = 945;
-      const tcEur = 1035;
-      const totalFxInClp = fxBanks.reduce(
-        (acc, b) => acc + Math.round((b.saldoEnLinea || 0) * (b.moneda === 'USD' ? tcUsd : tcEur)),
-        0
-      );
-      const granTotalLiquidez = totalClpBanks + totalFxInClp + totalCajas;
-
-      const mainBank = clpBanks[0] || activeBanks[0] || {
-        banco: 'Banco Santander Chile',
-        numeroCuenta: '00-0839210-4',
-        saldoEnLinea: 44382013,
-      };
-
-      const saldoCartola = totalClpBanks;
-      const depositosEnTransito = 2150000;
-      const cargosEnTransito = 2150000;
-      const comisionesAjustadas = 0;
-      const saldoLibroBanco = saldoCartola;
-      const totalMovimientos = context.bankMovements?.length || 24;
-      const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
-
-      const clpRowsMd = clpBanks
-        .map(
-          (b, idx) =>
-            `| **${b.banco}** ${b.esPrincipal ? '*(Principal)*' : ''} | Cta. ${b.tipoCuenta} N° \`${b.numeroCuenta}\` | \`${b.cuentaContableIfrs || (idx === 0 ? '1.1.02.001' : idx === 1 ? '1.1.02.002' : '1.1.02.005')}\` | **$${formatCLP(b.saldoEnLinea)} CLP** | 🟢 100% Conciliada |`
-        )
-        .join('\n');
-
-      const fxRowsMd = fxBanks
-        .map((b) => {
-          const isUsd = b.moneda === 'USD';
-          const sym = isUsd ? 'US$' : '€';
-          const tc = isUsd ? tcUsd : tcEur;
-          const equiv = Math.round((b.saldoEnLinea || 0) * tc);
-          return `| **${b.banco}** | Cta. ${b.moneda} N° \`${b.numeroCuenta}\` | \`${b.cuentaContableIfrs || '1.1.02.003'}\` | **${sym} ${(b.saldoEnLinea || 0).toLocaleString('es-CL', { minimumFractionDigits: 2 })}** *(~$${formatCLP(equiv)} CLP)* | 🟢 100% Conciliada |`;
-        })
-        .join('\n');
-
-      const waClpLines = clpBanks
-        .map((b) => `• *${b.banco}* (Cta ${b.tipoCuenta} N° ${b.numeroCuenta}): *$${formatCLP(b.saldoEnLinea)} CLP*`)
-        .join('\n');
-      const waFxLines = fxBanks
-        .map((b) => {
-          const sym = b.moneda === 'USD' ? 'US$' : '€';
-          return `• *${b.banco}* (N° ${b.numeroCuenta}): *${sym} ${(b.saldoEnLinea || 0).toLocaleString('es-CL', { minimumFractionDigits: 2 })}*`;
-        })
-        .join('\n');
-
-      // Mensaje estructurado para WhatsApp 1-Click
-      const waBankText = `🏦 *SALDOS BANCARIOS APERTURADOS POR CUENTA Y BANCO*
-🏢 *Empresa:* ${context.clientName} (RUT: ${context.rut})
-👩‍💼 *Emitido por:* Vera Albornoz (Directora General & Socia Virtual)
-📅 *Fecha:* ${fechaHoy}
-
-🇨🇱 *A) CUENTAS MONEDA NACIONAL (CLP):*
-${waClpLines}
-👉 *Subtotal Bancos CLP:* *$${formatCLP(totalClpBanks)} CLP*
-
-🌎 *B) CUENTAS MONEDA EXTRANJERA (USD / EUR):*
-${waFxLines}
-👉 *Subtotal Divisas Valorizado:* *$${formatCLP(totalFxInClp)} CLP*
-
-💼 *C) CAJAS Y FONDOS FIJOS (1.1.01):* *$${formatCLP(totalCajas)} CLP*
-
-💰 *LIQUIDEZ TOTAL CONSOLIDADA:* *$${formatCLP(granTotalLiquidez)} CLP*
-✅ *Estado de Cuadratura:* *100% CONCILIADO en las ${activeBanks.length} cuentas bancarias (Diferencia: $0 CLP)*`;
-
-      const waBankUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waBankText)}`;
-
-      // Si el usuario pidió explícitamente conciliar ("concilia", "conciliar", "cuadra", "ejecutar")
-      const shouldExecuteReconcile = 
-        normalized.includes('concilia') || 
-        normalized.includes('cuadra') || 
-        normalized.includes('ejecut') || 
-        normalized.includes('regulariz');
-
-      return {
-        verbalResponse: `Hola socio. ${agentRoleIntro} En moneda nacional tenemos cuarenta y cuatro millones trescientos ochenta y dos mil trece pesos en la cuenta corriente de Banco Santander, seis millones ochocientos cincuenta mil pesos en la cuenta vista de Banco de Chile, y doce millones cuatrocientos mil pesos en la cuenta corriente de Banco B C I, sumando sesenta y tres millones seiscientos treinta y dos mil trece pesos. Adicionalmente, en moneda extranjera disponemos de treinta y ocho mil cuatrocientos cincuenta dólares en Banco Santander y catorce mil doscientos euros en Banco de Chile, más siete millones quinientos cincuenta mil pesos en cajas, todas cien por ciento conciliadas.`,
-        displayMarkdown: `### 🏦 Saldos Bancarios Aperturados por Cuenta y Banco & Conciliación (NIC 7)
-> **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Sofía Morales (Tesorería)
-
-Detalle oficial de saldos en línea aperturados por institución financiera, tipo de cuenta y moneda para **${context.clientName}** al **${fechaHoy}**:
-
-#### 🇨🇱 1. Cuentas Bancarias en Moneda Nacional (CLP)
-| Institución Bancaria | Tipo y Número de Cuenta | Cuenta Contable IFRS | Saldo Disponible / Cartola | Estado Conciliación |
-| :--- | :--- | :---: | :---: | :---: |
-${clpRowsMd}
-| **SUBTOTAL BANCOS CLP (${clpBanks.length} Cuentas)** | — | \`1.1.02\` | **$${formatCLP(totalClpBanks)} CLP** | **100% CUADRADO** |
-
-#### 🌎 2. Cuentas Bancarias en Moneda Extranjera (USD / EUR)
-| Institución Bancaria | Tipo y Número de Cuenta | Cuenta Contable IFRS | Saldo en Divisa (y Equiv. CLP) | Estado Conciliación |
-| :--- | :--- | :---: | :---: | :---: |
-${fxRowsMd}
-| **SUBTOTAL DIVISAS VALORIZADO** | — | \`1.1.02.003/004\` | **$${formatCLP(totalFxInClp)} CLP** | **100% CUADRADO** |
-
-#### 💼 3. Cajas y Fondos Fijos Operativos (\`1.1.01\`)
-- **Caja Central Oficina Principal (\`1.1.01.001\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[0]?.montoSaldo || 3850000)} CLP** *(Camila Fuentes)*
-- **Fondo Fijo Operaciones Planta Quellón (\`1.1.01.002\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[1]?.montoSaldo || 2500000)} CLP** *(Roberto Oyarzún)*
-- **Caja Chica Sucursal Santiago (\`1.1.01.003\`):** **$${formatCLP(INITIAL_CASH_ACCOUNTS[2]?.montoSaldo || 1200000)} CLP** *(Marcelo Lagos)*
-- **Total Liquidez Consolidada (Bancos CLP + Divisas + Cajas):** **$${formatCLP(granTotalLiquidez)} CLP**
-
----
-
-#### 🛡️ Certificación de Auditoría & Control Interno:
-1. **Diferencia de Conciliación:** **$0 CLP**. Las ${activeBanks.length} cuentas bancarias se encuentran 100% conciliadas entre Cartola Bancaria y Libro Mayor.
-2. **Novedades de Cartola:** ${context.pendingBankNoveltiesCount > 0 ? `${context.pendingBankNoveltiesCount} movimientos regularizados` : 'Todas las comisiones e intereses regularizados'} con asiento automático en el Libro Diario.
-3. **Flujo de Fondos:** Sin partidas huérfanas ni cargos no identificados.
-
----
-
-#### 📱 Canal de Comunicación WhatsApp (Directorio & Socios):
-Puedes compartir este informe oficial de saldos aperturados por cuenta y banco con un solo clic:
-
-<div class="p-3 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2 my-2">
-  <div class="flex items-center justify-between">
-    <span class="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
-      💬 Informe de Conciliación Bancaria para WhatsApp:
-    </span>
-    <a
-      href="${waBankUrl}"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 shadow-xs transition-colors"
-    >
-      📱 Enviar a Socios por WhatsApp
-    </a>
-  </div>
-  <pre class="text-[11px] bg-white p-2.5 rounded-lg border border-emerald-200 text-slate-800 font-mono whitespace-pre-wrap">${waBankText}</pre>
-</div>`,
-        actionToExecute: shouldExecuteReconcile ? { type: 'RECONCILE_BANK', targetTab: 'bank' } : { type: 'NAVIGATE', targetTab: 'bank' },
-        followUpQuestion: '¿Deseas que revisemos el flujo de caja proyectado o emitamos un certificado de saldo bancario?',
-      };
-    }
-
     // 4. Intención: F29 y cálculo de impuestos
     if (
       normalized.includes('f29') || 
@@ -1443,28 +975,25 @@ Puedes compartir este informe oficial de saldos aperturados por cuenta y banco c
         : 'Como Jefa de RRHH, he preparado la auditoría de remuneraciones e imposiciones.';
 
       const payrollList = context.payrolls && context.payrolls.length > 0 ? context.payrolls : [];
-      const totalColaboradores = payrollList.length || context.employeesCount || 6;
-
-      // Calcular montos reales si existen o valores estructurados
-      let totalLiquido = 4850000;
-      let totalImponible = 6200000;
-      let totalAfp = 713000;
-      let totalSalud = 434000;
-      let totalAfc = 186000;
-      let totalMutual = 57660;
-      let totalSis = 92380;
-      let totalImpuestoUnico = 65400;
-
-      if (payrollList.length > 0) {
-        totalLiquido = payrollList.reduce((acc, p) => acc + (p.sueldoLiquido || 0), 0) || totalLiquido;
-        totalImponible = payrollList.reduce((acc, p) => acc + (p.totalHaberesImponibles || 0), 0) || totalImponible;
-        totalAfp = payrollList.reduce((acc, p) => acc + (p.afpMonto || 0), 0) || totalAfp;
-        totalSalud = payrollList.reduce((acc, p) => acc + (p.saludMonto || 0), 0) || totalSalud;
-        totalAfc = payrollList.reduce((acc, p) => acc + ((p.afcTrabajadorMonto || 0) + (p.afcEmpleadorMonto || 0)), 0) || totalAfc;
-        totalMutual = payrollList.reduce((acc, p) => acc + (p.mutualEmpleadorMonto || 0), 0) || totalMutual;
-        totalSis = payrollList.reduce((acc, p) => acc + (p.sisEmpleadorMonto || 0), 0) || totalSis;
-        totalImpuestoUnico = payrollList.reduce((acc, p) => acc + (p.impuestoUnicoMonto || 0), 0) || totalImpuestoUnico;
+      if (payrollList.length === 0) {
+        return {
+          verbalResponse: `No hay liquidaciones de sueldo registradas para ${context.clientName} en el período; no puedo informar montos de remuneraciones ni de Previred.`,
+          displayMarkdown: `### 👥 Remuneraciones e imposiciones\n\nNo hay liquidaciones registradas para **${context.clientName}** en el período seleccionado. Cargue o calcule la nómina en el módulo de Remuneraciones para obtener el informe.`,
+          actionToExecute: { type: 'NAVIGATE', targetTab: 'payroll' },
+        };
       }
+      const totalColaboradores = payrollList.length;
+
+      // Totales calculados solo desde las liquidaciones registradas (sin valores de respaldo)
+      const sumBy = (fn: (p: any) => number) => payrollList.reduce((acc, p) => acc + (fn(p) || 0), 0);
+      const totalLiquido = sumBy((p) => p.sueldoLiquido);
+      const totalImponible = sumBy((p) => p.totalHaberesImponibles);
+      const totalAfp = sumBy((p) => p.afpMonto);
+      const totalSalud = sumBy((p) => p.saludMonto);
+      const totalAfc = sumBy((p) => (p.afcTrabajadorMonto || 0) + (p.afcEmpleadorMonto || 0));
+      const totalMutual = sumBy((p) => p.mutualEmpleadorMonto);
+      const totalSis = sumBy((p) => p.sisEmpleadorMonto);
+      const totalImpuestoUnico = sumBy((p) => p.impuestoUnicoMonto);
 
       const totalPrevired = totalAfp + totalSalud + totalAfc + totalMutual + totalSis;
       const totalCostoEmpresa = totalLiquido + totalPrevired + totalImpuestoUnico;
@@ -1544,175 +1073,6 @@ He preparado el resumen laboral y previsional para **${context.clientName}**:
 </div>`,
         actionToExecute: { type: 'NAVIGATE', targetTab: 'payroll' },
         followUpQuestion: '¿Deseas que emitamos las liquidaciones de sueldo en PDF o revisemos el detalle por colaborador?',
-      };
-    }
-
-    // 7. Intención: Inventario & Stock de Productos Específicos (NIC 2 / PMP)
-    const isInventoryIntent =
-      normalized.includes('stock') ||
-      normalized.includes('inventario') ||
-      normalized.includes('bodega') ||
-      normalized.includes('dyneema') ||
-      normalized.includes('cabo') ||
-      normalized.includes('cabos') ||
-      normalized.includes('filtro') ||
-      normalized.includes('insumo') ||
-      normalized.includes('insumos') ||
-      normalized.includes('existencia') ||
-      normalized.includes('quiebre') ||
-      normalized.includes('reposicion') ||
-      normalized.includes('reposición');
-
-    if (isInventoryIntent) {
-      const isExecutiveInterlocutor = persona.id === 'AGENTE_GENERAL_VERA' || persona.isExecutiveGeneral;
-      const agentRoleIntro = isExecutiveInterlocutor
-        ? 'Consulté con Ignacio Herrera en Bodega y Logística WMS.'
-        : 'Como Jefe de Bodegas, he auditado las existencias físicas y valorización PMP.';
-
-      const allItems = context.inventoryItems && context.inventoryItems.length > 0 
-        ? context.inventoryItems 
-        : [
-            {
-              id: 'inv-01',
-              sku: 'RED-DYN-80',
-              nombre: 'Paño de Red Dyneema SK78 Alta Tenacidad 80x80mm',
-              categoria: 'PRODUCTO_TERMINADO' as any,
-              unidadMedida: 'METROS' as any,
-              stockGeneral: 450,
-              stockComprometido: 120,
-              stockDisponible: 330,
-              costoUnitarioPMP: 48500,
-              stockMinimo: 100,
-              stockCritico: 50,
-              estadoStock: 'OPTIMO' as any,
-              stockPorBodega: [{ bodegaNombre: 'Bodega Central Quilicura', stock: 450 } as any],
-            },
-            {
-              id: 'inv-02',
-              sku: 'CABO-POL-32',
-              nombre: 'Cabo Poliéster Alta Resistencia Trenzado 32mm',
-              categoria: 'MATERIA_PRIMA' as any,
-              unidadMedida: 'METROS' as any,
-              stockGeneral: 1200,
-              stockComprometido: 300,
-              stockDisponible: 900,
-              costoUnitarioPMP: 8200,
-              stockMinimo: 400,
-              stockCritico: 150,
-              estadoStock: 'OPTIMO' as any,
-              stockPorBodega: [{ bodegaNombre: 'Maestranza Puerto Montt', stock: 1200 } as any],
-            },
-            {
-              id: 'inv-03',
-              sku: 'FILT-HID-04',
-              nombre: 'Filtro Hidráulico Industrial Maquinaria Pesada',
-              categoria: 'INSUMO_OPERATIVO' as any,
-              unidadMedida: 'UNID' as any,
-              stockGeneral: 28,
-              stockComprometido: 4,
-              stockDisponible: 24,
-              costoUnitarioPMP: 32500,
-              stockMinimo: 10,
-              stockCritico: 5,
-              estadoStock: 'OPTIMO' as any,
-              stockPorBodega: [{ bodegaNombre: 'Bodega Central Quilicura', stock: 28 } as any],
-            },
-          ];
-
-      // Filtrar ítems si el usuario especificó algún término de búsqueda
-      let filteredItems = allItems;
-      let busquedaLabel = 'Existencias Principales y Materiales Críticos';
-
-      const keywords = ['dyneema', 'cabo', 'cabos', 'filtro', 'red', 'redes', 'insumo', 'insumos', 'aceite'];
-      const matchedKw = keywords.find(kw => normalized.includes(kw));
-
-      if (matchedKw) {
-        filteredItems = allItems.filter(item => 
-          item.nombre.toLowerCase().includes(matchedKw) || 
-          item.sku.toLowerCase().includes(matchedKw)
-        );
-        if (filteredItems.length === 0) filteredItems = allItems;
-        busquedaLabel = `Ítems con filtro "${matchedKw.toUpperCase()}"`;
-      }
-
-      const totalValorizado: number = (filteredItems as any[]).reduce((acc: number, i: any) => acc + ((i.stockGeneral || 0) * (i.costoUnitarioPMP || 0)), 0);
-      const fechaHoy = new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
-
-      // Líneas para WhatsApp
-      const itemsWaLines = filteredItems.map(item => {
-        const totalItemVal = (item.stockGeneral || 0) * (item.costoUnitarioPMP || 0);
-        return `• 📦 *${item.nombre}* (SKU: ${item.sku})
-   - Stock Físico: *${item.stockGeneral}* | Comprometido: ${item.stockComprometido} | *Disponible: ${item.stockDisponible}*
-   - Costo PMP: $${formatCLP(item.costoUnitarioPMP)} CLP | Total Valorizado: *$${formatCLP(totalItemVal)} CLP*`;
-      }).join('\n\n');
-
-      const waInventoryText = `📦 *REPORTE DE INVENTARIO & STOCK VALORIZADO (NIC 2 / PMP)*
-🏢 *Empresa:* ${context.clientName} (RUT: ${context.rut})
-👩‍💼 *Emitido por:* Vera Albornoz (Directora General) & Ignacio Herrera (Logística)
-📅 *Fecha:* ${fechaHoy}
-
-🔍 *Criterio:* ${busquedaLabel}
-💰 *Valor Total de Stock Seleccionado:* *$${formatCLP(totalValorizado)} CLP*
-
-${itemsWaLines}
-
-📊 *Diagnóstico Operativo:*
-• Nivel de Cobertura: Óptimo (Sin quiebres inminentes)
-• Valorización Contable: 100% PMP conforme a la NIC 2 de Inventarios.
-
-🔗 _Informe generado automáticamente por Vera ERP para el Directorio._`;
-
-      const waInventoryUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waInventoryText)}`;
-
-      const primerItem = filteredItems[0];
-      const verbalDetail = primerItem 
-        ? `Para ${primerItem.nombre}, contamos con ${primerItem.stockGeneral} unidades en stock físico, de las cuales ${primerItem.stockDisponible} están disponibles de inmediato para despacho o producción, valorizadas a un costo promedio PMP de $${formatCLP(primerItem.costoUnitarioPMP)} pesos.`
-        : `Tenemos ${context.inventoryItemsCount} SKUs controlados en bodega con un valor total de $${formatCLP(totalValorizado)} pesos.`;
-
-      return {
-        verbalResponse: `Hola socio. ${agentRoleIntro} ${verbalDetail} Los niveles de existencia garantizan continuidad operacional sin riesgo de quiebre. Tienes la cartola de existencias y el mensaje para WhatsApp en pantalla.`,
-        displayMarkdown: `### 📦 Reporte de Inventario & Existencias Valorizadas (PMP / NIC 2)
-> **Interlocutora:** Vera Albornoz (Directora General & Socia Virtual) • **A cargo técnico:** Ignacio Herrera (Logística & WMS)
-
-Auditoría de existencias físicas para **${context.clientName}**:
-- **Criterio de Búsqueda:** **${busquedaLabel}**
-- **Norma de Valorización:** **Precio Medio Ponderado (PMP)** conforme a NIC 2 y Art. 30 LIR
-- **Valorización Total de los Ítems:** **$${formatCLP(totalValorizado)} CLP**
-
-| SKU | Producto / Insumo | Stock Físico | Comprometido | **Stock Disponible** | Costo PMP ($) | **Valor Total ($ CLP)** |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-${filteredItems.map(item => {
-  const totalItemVal = (item.stockGeneral || 0) * (item.costoUnitarioPMP || 0);
-  return `| **${item.sku}** | ${item.nombre} | ${item.stockGeneral} | ${item.stockComprometido} | **${item.stockDisponible}** | $${formatCLP(item.costoUnitarioPMP)} | **$${formatCLP(totalItemVal)}** |`;
-}).join('\n')}
-
----
-
-#### 🏭 Diagnóstico de Cobertura & Puntos de Reorden:
-1. **Stock Disponible Garantizado:** Las unidades comprometidas en Órdenes de Trabajo se encuentran debidamente reservadas en bodega.
-2. **Trazabilidad WMS:** Movimientos integrados con Guías de Despacho DTE 52 del SII para traslados entre sucursales.
-
----
-
-#### 📱 Canal de Comunicación WhatsApp (Listo para Enviar a Operaciones):
-<div class="p-3 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2 my-2">
-  <div class="flex items-center justify-between">
-    <span class="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
-      💬 Reporte de Stock para WhatsApp:
-    </span>
-    <a
-      href="${waInventoryUrl}"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 shadow-xs transition-colors"
-    >
-      📱 Enviar a Operaciones por WhatsApp
-    </a>
-  </div>
-  <pre class="text-[11px] bg-white p-2.5 rounded-lg border border-emerald-200 text-slate-800 font-mono whitespace-pre-wrap">${waInventoryText}</pre>
-</div>`,
-        actionToExecute: { type: 'NAVIGATE', targetTab: 'inventory' },
-        followUpQuestion: '¿Deseas programar una orden de compra de reposición o transferir material a la maestranza?',
       };
     }
 
@@ -1884,10 +1244,10 @@ Consolidado de propuestas comerciales de **${context.clientName || 'la empresa'}
         cliente: q.clienteRazonSocial || 'Cliente Industrial',
         producto: q.items && q.items[0] ? q.items[0].nombre : 'Propuesta Comercial y Suministro',
         neto: Number(q.totalNetoCLP) || 0,
-        margenPct: Number(q.margenBrutoTotalPorcentaje) || 28,
+        margenPct: Number(q.margenBrutoTotalPorcentaje) || 0,
         estado: q.estado,
         estadoLabel: q.estado === 'ENVIADA_CLIENTE' ? 'Enviada al Cliente' : q.estado === 'ACEPTADA_POR_FACTURAR' ? 'Aceptada por Facturar' : 'Vigente',
-        validez: `${q.validezDias || 15} días corridos`,
+        validez: q.validezDias ? `${q.validezDias} días corridos` : 'sin validez registrada',
       }));
 
       const totalPipelineNeto = cotizaciones.reduce((acc, c) => acc + c.neto, 0);
@@ -2092,200 +1452,9 @@ Diagnóstico integral de la operación de **${context.clientName}**:
       };
     }
 
-    // 8. Delegación Prioritaria al Motor Agéntico Autónomo Multi-Módulo (ReAct Loop & Function Calling)
-    try {
-      let mappedModule = 'CONTABILIDAD';
-      const normInput = userInput.toLowerCase();
-      if (normInput.includes('activo') || normInput.includes('depreciac') || persona.area === 'ACTIVO_FIJO') {
-        mappedModule = 'ACTIVO_FIJO';
-      } else if (normInput.includes('producci') || normInput.includes('planta') || normInput.includes('fabricaci') || normInput.includes('costeo') || persona.area === 'PRODUCCION') {
-        mappedModule = 'COSTOS_PRODUCCION';
-      } else if (normInput.includes('flujo') || normInput.includes('liquidez') || normInput.includes('caja') || persona.area === 'TESORERIA') {
-        mappedModule = 'FLUJO_CAJA';
-      } else if (normInput.includes('compra') || normInput.includes('cotiza') || normInput.includes('proveedor') || normInput.includes('licitaci') || persona.area === 'COMPRAS') {
-        mappedModule = 'COMERCIAL_COMPRAS';
-      } else if (normInput.includes('rendici') || normInput.includes('gasto') || normInput.includes('viatico') || persona.area === 'RENDICIONES') {
-        mappedModule = 'RENDICIONES';
-      } else if (normInput.includes('f29') || normInput.includes('iva') || normInput.includes('impuesto') || normInput.includes('sii') || normInput.includes('rcv') || persona.area === 'TRIBUTARIO') {
-        mappedModule = 'TRIBUTARIO_SII';
-      } else if (normInput.includes('sueldo') || normInput.includes('remunerac') || normInput.includes('previred') || normInput.includes('nomina') || persona.area === 'RRHH') {
-        mappedModule = 'RRHH';
-      } else if (normInput.includes('inventario') || normInput.includes('stock') || normInput.includes('kardex') || normInput.includes('bodega') || persona.area === 'INVENTARIO') {
-        mappedModule = 'INVENTARIO';
-      }
-
-      let agentResult: { finalText?: string; decision?: string; steps?: any[]; approvalRequired?: boolean; governanceApproval?: any } | null = null;
-
-      if (typeof window !== 'undefined') {
-        const authToken = localStorage.getItem('erpremia_auth_token') || localStorage.getItem('erp_auth_token');
-        const res = await fetch('/api/agents/autonomous/execute', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-          },
-          body: JSON.stringify({
-            module: mappedModule,
-            modulo: mappedModule,
-            empresaId: context.clientId || context.rut || 'client-retail-01',
-            query: userInput,
-            agentRole: `${persona.nombre} - ${persona.cargo}`,
-            context: {
-              ...context,
-              empresa: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
-              company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
-            },
-          }),
-        });
-        if (res.ok) {
-          agentResult = await res.json();
-        }
-      } else {
-        // En entorno Node.js / servidor / pruebas automatizadas
-        try {
-          const { AutonomousAgentEngine } = await safeDynamicImport('./autonomousAgentEngine');
-          const res = await AutonomousAgentEngine.executeAutonomousAgentLoop({
-            module: mappedModule as any,
-            empresaId: context.clientId || context.rut || 'client-retail-01',
-            query: userInput,
-            agentRole: `${persona.nombre} - ${persona.cargo}`,
-            context: {
-              ...context,
-              empresa: { id: context.clientId, rut: context.rut, razonSocial: context.clientName } as any,
-              company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName } as any,
-            },
-          });
-          agentResult = res;
-        } catch (engineErr) {
-          // Fallback silencioso
-        }
-      }
-
-      if (agentResult && (agentResult.finalText || agentResult.decision)) {
-        const fullResp = agentResult.decision || agentResult.finalText || '';
-        const verbal = fullResp
-          .replace(/[#*`_>]/g, '')
-          .replace(/\n+/g, '. ')
-          .substring(0, 240);
-
-        let displayMd = `### 🤖 ${persona.nombre} (${persona.cargo})\n> *Ejecutado con motor agéntico de ${mappedModule}*\n\n${fullResp}`;
-        if (agentResult.steps && agentResult.steps.length > 0) {
-          displayMd += `\n\n#### 🔍 Pasos de Razonamiento del Agente:\n`;
-          agentResult.steps.forEach((s: any, idx: number) => {
-            displayMd += `\n- **Paso ${idx + 1}:** ${s.thought || s.toolCall || 'Análisis operacional'}`;
-            if (s.toolCall) {
-              displayMd += ` \`[Herramienta: ${s.toolCall}]\``;
-            }
-          });
-        }
-        if (agentResult.governanceApproval || agentResult.approvalRequired) {
-          const appr = agentResult.governanceApproval;
-          displayMd += `\n\n---\n\n> 🛡️ **Gobernanza Humana Requerida:** Se ha generado una solicitud de aprobación ${appr?.id ? `(#${appr.id})` : ''} por monto $${appr?.impactoFinanciero ? Number(appr.impactoFinanciero).toLocaleString('es-CL') : '0'} CLP.`;
-        }
-
-        return {
-          verbalResponse: verbal,
-          displayMarkdown: displayMd,
-          followUpQuestion: (agentResult.approvalRequired || agentResult.governanceApproval)
-            ? '¿Deseas que un Administrador resuelva la aprobación humana requerida?'
-            : '¿Deseas profundizar en algún detalle adicional?',
-        };
-      }
-    } catch (agentErr) {
-      console.warn('[VoiceAssistantEngine] Error al consultar motor agéntico autónomo:', agentErr);
-    }
-
-    // 9. Intención Contextual Contingente: Presupuesto / Cotización de Producción y Costeo Industrial (NIC 2) - Turno 1
-    if (
-      normalized.includes('presupuesto') ||
-      normalized.includes('cotiza') ||
-      normalized.includes('cotización') ||
-      normalized.includes('cotizacion') ||
-      normalized.includes('orden de trabajo') ||
-      normalized.includes('confeccion') ||
-      normalized.includes('confección') ||
-      normalized.includes('red lobera') ||
-      normalized.includes('fabricacion') ||
-      normalized.includes('fabricación') ||
-      normalized.includes('dyneema') ||
-      normalized.includes('costeo')
-    ) {
-      let clienteDetectado = context.clientName ? `el cliente de ${context.clientName}` : 'el cliente';
-      if (normalized.includes('para ')) {
-        const parts = userInput.split(/para\s+/i);
-        if (parts.length > 1) {
-          clienteDetectado = parts[1].split(/\s+por\s+|\s+de\s+/i)[0].trim();
-        }
-      }
-
-      return {
-        verbalResponse: `Entendido. Para formular el presupuesto industrial para ${clienteDetectado} conforme a la NIC 2, requiero que definamos los siguientes parámetros de costeo: ¿Aplicamos la receta técnica estándar de insumos Dyneema y paños de red? ¿Qué porcentaje de margen de utilidad o precio neto final en UF o pesos establecemos? ¿Y cuál es la fecha de entrega comprometida?`,
-        displayMarkdown: `### 🏭 Formulación de Presupuesto & Costeo Industrial (NIC 2)
-> **Agente a cargo:** Francisca Araya (Jefa de Costos Industriales) / Módulo de Producción
-
-He registrado la solicitud de presupuesto para **${clienteDetectado}**:
-- **Ítem/Servicio solicitado:** *"${userInput}"*
-- **Tratamiento Técnico-Contable:** Costeo por Órdenes de Fabricación (NIC 2 Inventarios: Materia Prima MPD + Mano de Obra MOD + Costos Indirectos CIF).
-
-#### 📋 Información Requerida para Generar la Cotización Formal:
-1. **Especificación de Insumos & Receta:**
-   - ¿Utilizamos la ficha técnica estándar de paño Dyneema y cabos perimetrales de bodega, o requiere gramaje y calibre especial?
-2. **Mano de Obra & Horas Taller:**
-   - Horas estimadas de confección de maestranza/redes para cálculo de MOD.
-3. **Margen de Comercialización o Valor Neto Objetivo:**
-   - ¿Qué margen de contribución aplicamos sobre el costo directo (ej: 28%, 35%) o tienes un valor pactado en **\$ CLP** o **UF**?
-4. **Condiciones Comerciales:**
-   - Plazo de entrega (días corridos) y validez de la oferta (ej: 15 o 30 días).
-
-*Apenas me indiques estos parámetros por voz o texto, generaré la cotización formal con el desglose de costeo y la Orden de Trabajo.*`,
-        actionToExecute: { type: 'NAVIGATE', targetTab: 'production' },
-        followUpQuestion: '¿Deseas que aplique la receta estándar de bodega con un 28% de margen para formular la propuesta?',
-      };
-    }
-
-    // 10. Intención Contextual Contingente: Emisión de Facturas Electrónicas (DTE 33 / 34) & Ventas - Turno 1
-    if (
-      normalized.includes('emite factura') ||
-      normalized.includes('emitir factura') ||
-      normalized.includes('factura por') ||
-      normalized.includes('facturar') ||
-      normalized.includes('haz una factura') ||
-      normalized.includes('hacer factura') ||
-      normalized.includes('factura electrónica') ||
-      normalized.includes('factura electronica')
-    ) {
-      let clienteDetectado = 'el cliente';
-      if (normalized.includes('vehice')) clienteDetectado = 'VeHiCe';
-      else if (normalized.includes(' a ')) {
-        const parts = userInput.split(/\s+a\s+/i);
-        if (parts.length > 1) {
-          clienteDetectado = parts[1].split(/\s+por\s+|\s+de\s+/i)[0].trim();
-        }
-      }
-
-      return {
-        verbalResponse: `Entendido. Para emitir y timbrar la factura para ${clienteDetectado} ante el SII, necesito que me indiques: ¿Corresponde a Factura Electrónica Afecta a IVA, código 33, o Exenta, código 34? ¿Cuál es el monto neto convenido en pesos o UF? ¿Y cuál es la condición de pago pactada?`,
-        displayMarkdown: `### 📄 Emisión de Factura Electrónica SII
-> **Agente a cargo:** Rodrigo Tapia (Jefe de Facturación Electrónica & DTEs)
-
-He capturado la instrucción de facturación para **${clienteDetectado}**:
-- **Glosa / Concepto del Servicio:** *"${userInput}"*
-- **Emisor:** ${context.clientName} (RUT ${context.rut})
-
-#### 🏛️ Datos Requeridos para el Timbraje Electrónico (SII - Res. Ex. 80):
-1. **Tipo de Documento Tributario (DTE):**
-   - **Factura Electrónica Afecta (DTE 33):** Aplica 19% de IVA Débito Fiscal.
-   - **Factura No Afecta / Exenta (DTE 34):** Sin IVA (ej. servicios de asesoría exenta o exportación).
-2. **Monto de la Operación:**
-   - Valor neto en **\$ CLP** o **UF** (se aplicará la paridad oficial del día).
-3. **Condición de Venta & Vencimiento:**
-   - ¿Al Contado o Crédito a 30 días?
-
-*Apenas me confirmes estos valores, formularé el DTE XML timbrado con firma digital y el asiento contable en el Libro Diario.*`,
-        actionToExecute: { type: 'NAVIGATE', targetTab: 'dte' },
-        followUpQuestion: '¿La emitimos como Factura Afecta (DTE 33) o Exenta (DTE 34)?',
-      };
-    }
+    // Delegación general al motor agéntico (ReAct + Function Calling) para el resto de las consultas
+    const delegatedGeneral = await this.delegateToAgenticEngine(userInput, persona, context);
+    if (delegatedGeneral) return delegatedGeneral;
 
     // 11. Fallback Conversacional Avanzado: Motor Generativo Gemini con Historial Multi-Turno
     try {
@@ -2353,6 +1522,121 @@ ${persona.accionesSugeridas.map(a => `- **${a.label}:** ${a.prompt}`).join('\n')
 Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutarlo con estricta rigurosidad contable.`,
       followUpQuestion: '¿Deseas ejecutar alguna de estas acciones ahora?',
     };
+  }
+
+  /**
+   * Delegación al motor agéntico autónomo (ReAct + Function Calling). Devuelve null si el motor no
+   * respondió; quien llama decide cómo informarlo. Nunca usa una empresa por defecto.
+   */
+  private async delegateToAgenticEngine(
+    userInput: string,
+    persona: AgentPersona,
+    context: DialogueContext,
+    forcedModule?: string
+  ): Promise<AgentDialogueTurnResult | null> {
+    const empresaId = context.clientId || context.rut;
+    if (!empresaId) return null;
+    try {
+      let mappedModule = forcedModule || 'CONTABILIDAD';
+      const normInput = userInput.toLowerCase();
+      if (!forcedModule) {
+        if (normInput.includes('activo') || normInput.includes('depreciac') || persona.area === 'ACTIVO_FIJO') {
+          mappedModule = 'ACTIVO_FIJO';
+        } else if (normInput.includes('producci') || normInput.includes('planta') || normInput.includes('fabricaci') || normInput.includes('costeo') || persona.area === 'PRODUCCION') {
+          mappedModule = 'COSTOS_PRODUCCION';
+        } else if (normInput.includes('flujo') || normInput.includes('liquidez') || normInput.includes('caja') || persona.area === 'TESORERIA') {
+          mappedModule = 'FLUJO_CAJA';
+        } else if (normInput.includes('compra') || normInput.includes('cotiza') || normInput.includes('proveedor') || normInput.includes('licitaci') || persona.area === 'COMPRAS') {
+          mappedModule = 'COMERCIAL_COMPRAS';
+        } else if (normInput.includes('rendici') || normInput.includes('gasto') || normInput.includes('viatico') || persona.area === 'RENDICIONES') {
+          mappedModule = 'RENDICIONES';
+        } else if (normInput.includes('f29') || normInput.includes('iva') || normInput.includes('impuesto') || normInput.includes('sii') || normInput.includes('rcv') || persona.area === 'TRIBUTARIO') {
+          mappedModule = 'TRIBUTARIO_SII';
+        } else if (normInput.includes('sueldo') || normInput.includes('remunerac') || normInput.includes('previred') || normInput.includes('nomina') || persona.area === 'RRHH') {
+          mappedModule = 'RRHH';
+        } else if (normInput.includes('inventario') || normInput.includes('stock') || normInput.includes('kardex') || normInput.includes('bodega') || persona.area === 'INVENTARIO') {
+          mappedModule = 'INVENTARIO';
+        }
+      }
+
+      const engineContext = {
+        ...context,
+        empresa: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
+        company: { id: context.clientId, rut: context.rut, razonSocial: context.clientName },
+      };
+
+      let agentResult: { success?: boolean; finalText?: string; decision?: string; steps?: any[]; approvalRequired?: boolean; governanceApproval?: any } | null = null;
+
+      if (typeof window !== 'undefined') {
+        const authToken = localStorage.getItem('erpremia_auth_token') || localStorage.getItem('erp_auth_token');
+        const res = await fetch('/api/agents/autonomous/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            module: mappedModule,
+            modulo: mappedModule,
+            empresaId,
+            query: userInput,
+            agentRole: `${persona.nombre} - ${persona.cargo}`,
+            context: engineContext,
+          }),
+        });
+        if (res.ok) {
+          agentResult = await res.json();
+        }
+      } else {
+        // En entorno Node.js / servidor / pruebas automatizadas
+        try {
+          const { AutonomousAgentEngine } = await safeDynamicImport('./autonomousAgentEngine');
+          agentResult = await AutonomousAgentEngine.executeAutonomousAgentLoop({
+            module: mappedModule as any,
+            empresaId,
+            query: userInput,
+            agentRole: `${persona.nombre} - ${persona.cargo}`,
+            context: engineContext as any,
+          });
+        } catch (engineErr) {
+          console.warn('[VoiceAssistantEngine] Motor agéntico no disponible:', (engineErr as any)?.message || engineErr);
+        }
+      }
+
+      if (!agentResult || agentResult.success === false || !(agentResult.finalText || agentResult.decision)) {
+        return null;
+      }
+
+      const fullResp = agentResult.decision || agentResult.finalText || '';
+      const verbal = fullResp.replace(/[#*`_>]/g, '').replace(/\n+/g, '. ').substring(0, 240);
+
+      let displayMd = `### 🤖 ${persona.nombre} (${persona.cargo})\n> *Ejecutado con motor agéntico de ${mappedModule}*\n\n${fullResp}`;
+      if (agentResult.steps && agentResult.steps.length > 0) {
+        displayMd += `\n\n#### 🔍 Pasos de Razonamiento del Agente:\n`;
+        agentResult.steps.forEach((step: any, idx: number) => {
+          displayMd += `\n- **Paso ${idx + 1}:** ${step.thought || step.toolCall || 'Análisis operacional'}`;
+          if (step.toolCall) displayMd += ` \`[Herramienta: ${step.toolCall}]\``;
+        });
+      }
+      if (agentResult.governanceApproval || agentResult.approvalRequired) {
+        const appr = agentResult.governanceApproval;
+        displayMd += `\n\n---\n\n> 🛡️ **Aprobación humana requerida:** se generó la solicitud ${appr?.id ? `#${appr.id}` : ''}${
+          appr?.impactoFinanciero ? ` por $${Number(appr.impactoFinanciero).toLocaleString('es-CL')} CLP` : ''
+        }. Nada se ejecuta hasta que un responsable la apruebe.`;
+      }
+
+      return {
+        verbalResponse: verbal,
+        displayMarkdown: displayMd,
+        followUpQuestion:
+          agentResult.approvalRequired || agentResult.governanceApproval
+            ? '¿Deseas revisar la solicitud en la bandeja de aprobaciones?'
+            : '¿Deseas profundizar en algún detalle adicional?',
+      };
+    } catch (agentErr) {
+      console.warn('[VoiceAssistantEngine] Error al consultar motor agéntico autónomo:', agentErr);
+      return null;
+    }
   }
 }
 

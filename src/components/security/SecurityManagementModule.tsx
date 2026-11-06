@@ -423,7 +423,7 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
     if (/(rrhh|remuneraci|sueldo|nomina|previred|afp|vacaciones|personal)/.test(norm)) {
       reqScopes.push('RRHH_REMUNERACIONES');
     }
-    if (/(inventario|bodega|stock|existencia|pano|dyneema)/.test(norm)) {
+    if (/(inventario|bodega|stock|existencia|pano)/.test(norm)) {
       reqScopes.push('BODEGA_INVENTARIO');
     }
     if (/(banco|bancario|conciliacion|cartola|cuenta corriente)/.test(norm)) {

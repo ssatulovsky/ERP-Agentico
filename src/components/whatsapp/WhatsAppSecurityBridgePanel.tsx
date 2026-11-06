@@ -129,7 +129,7 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
   // Estado del Simulador de Firewall RBAC & Privacidad
   const [simPhone, setSimPhone] = useState<string>('56987654321');
   const [simIsGroup, setSimIsGroup] = useState<boolean>(false);
-  const [simMessage, setSimMessage] = useState<string>('¿Cuánto stock de paño Dyneema queda en bodega?');
+  const [simMessage, setSimMessage] = useState<string>('¿Cuánto stock queda en bodega del producto principal?');
   const [simResult, setSimResult] = useState<any | null>(null);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
@@ -1012,7 +1012,7 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
                 onClick={() =>
                   runSimulation(
                     '56987654321',
-                    '¿Cuánto stock de paño Dyneema queda en bodega?',
+                    '¿Cuánto stock queda en bodega del producto principal?',
                     false
                   )
                 }
@@ -1042,7 +1042,7 @@ export const WhatsAppSecurityBridgePanel: React.FC<WhatsAppSecurityBridgePanelPr
                 onClick={() =>
                   runSimulation(
                     '56976543210',
-                    'Dame el stock de Dyneema en bodega y el resumen de sueldos de RRHH',
+                    'Dame el stock de bodega y el resumen de sueldos de RRHH',
                     false
                   )
                 }

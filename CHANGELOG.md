@@ -1,5 +1,19 @@
 # CHANGELOG — ERPremIA
 
+## Plan de corrección · Fase 1: éxitos falsos de gravedad alta (6 nov 2026)
+
+| Tarea | Hallazgo | Cambio | Verificación |
+| :--- | :---: | :--- | :--- |
+| **1.4** DTE simulado bajo control | #4 | `src/config/dteSimulationPolicy.ts`. `ALLOW_OFFLINE_DTE_SIMULATION=false` en `.env.example`; con `NODE_ENV=production` o `DTE_AMBIENTE=2` y el valor en `true`, el servidor no arranca. El certificado de demostración solo existe en desarrollo con simulación activa (si no, `loadDigitalCertificate` devuelve `null` y la emisión se bloquea). Un DTE emitido queda `ENVIADO` (no `ACEPTADO`) hasta consultar el Track ID; uno simulado queda `SIMULADO`, se marca en rojo en la UI y el F29 lo excluye. | `tests/phase1_regressions.test.ts` (#4, 7 pruebas, incluye arranque real del servidor) |
+| **1.1** OCR sin inventar | #2 | Nuevo `src/services/receiptOcrService.ts` con esquema zod. Se elimina la heurística de respaldo; sin IA o con JSON inválido, `POST /api/expenses/scan-receipt-ai` responde 503 `OCR_UNAVAILABLE`. El prompt ya no pide inventar RUT, año ni confianza. La app móvil abre el formulario manual vacío, exige monto, RUT, folio y fecha, y oculta los comprobantes de prueba fuera de `DEMO_MODE`. | #2 (3 pruebas) |
+| **1.2** Prueba de conexión SII real | #3 | `SiiPlaywrightRunner.testLogin` + `POST /api/sii/test-login`: autentica con Playwright, informa el texto del SII y cierra la sesión. Sin espera de 1,2 s ni validación por longitud de clave. Las altas de clientes ya no asignan la clave `ClaveSii*2026` ni el estado `CONECTADO`. La clave se resuelve desde la bóveda del servidor (`siiCredentialResolver.ts`). | #3 (prueba con portal local y Chromium real) |
+| **1.3** Bitácora de descarga real | #3, #10 | La bitácora muestra los logs que devuelve Playwright; se eliminan los mensajes con espera artificial. Una falla de descarga ya no marca `ERROR_CREDENCIALES`. | #3/#10 |
+| **1.5** Vera sin guiones | #1 | Se eliminan los flujos de presupuesto Dyneema, factura VeHiCe (folio 1542), inventario de respaldo y el informe bancario con cifras fijas. Facturar, cotizar, inventario, bancos y escenarios de flujo de caja van al motor agéntico (`detectAgenticIntent`); si no responde, Vera lo dice sin inventar. Remuneraciones sin liquidaciones ya no muestra montos de respaldo. | #1 (4 pruebas) |
+
+Pendiente: 1.6 (franja "DEMOSTRACIÓN") es opcional y no se implementó. El CI instala Chromium de Playwright para la prueba de login.
+
+---
+
 ## Plan de corrección · Fase 0: repositorio ejecutable (6 nov 2026)
 
 | Tarea | Cambio | Verificación |

@@ -17,6 +17,8 @@ import { expenseReportsRouter } from '../src/controllers/expenseReportsControlle
 import { parseReceiptOcrResponse } from '../src/services/receiptOcrService';
 import http from 'node:http';
 import { SiiPlaywrightRunner } from '../src/services/siiPlaywrightRunner';
+import { voiceAssistantEngine, detectAgenticIntent } from '../src/services/voiceAssistantEngine';
+import { DEFAULT_AGENT_PERSONAS } from '../src/config/defaultAgentPersonas';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -298,6 +300,62 @@ async function run() {
       assert.ok(!src.includes('ClaveSii*2026'), `${f} asigna una clave SII de ejemplo`);
       assert.ok(!src.includes("estadoConexionSii: 'CONECTADO'"), `${f} marca CONECTADO sin probar la conexión`);
     }
+  });
+
+  // ---------------------------------------------------------------- Hallazgo #1 (tarea 1.5)
+  await test('#1 Vera: sin guiones (1542, VeHiCe, Dyneema, 10150000) fuera de src/data/seed*', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(e.name) && !/src[\\/]data[\\/]seed/.test(full)) {
+          const src = fs.readFileSync(full, 'utf8');
+          if (/1542|VeHiCe|Dyneema|10150000/i.test(src)) offenders.push(path.relative(ROOT, full));
+        }
+      }
+    };
+    walk(path.join(ROOT, 'src'));
+    assert.deepStrictEqual(offenders, []);
+  });
+
+  await test('#1 Vera: facturar, cotizar, inventario, bancos y escenarios van al motor agéntico', () => {
+    assert.strictEqual(detectAgenticIntent('emite una factura a vehice por 3.500.000')?.module, 'FACTURACION_DTE');
+    assert.strictEqual(detectAgenticIntent('necesito un presupuesto para salmones austral')?.module, 'COSTOS_PRODUCCION');
+    assert.strictEqual(detectAgenticIntent('cuánto stock queda en bodega')?.module, 'INVENTARIO');
+    assert.strictEqual(detectAgenticIntent('concilia la cartola del banco')?.module, 'CONCILIACION');
+    assert.strictEqual(detectAgenticIntent('qué pasa con la caja si el cliente paga 15 días después')?.module, 'FLUJO_CAJA');
+    assert.strictEqual(detectAgenticIntent('estado de las cotizaciones enviadas'), null);
+  });
+
+  const ctx: any = {
+    clientId: 'client-test-vera',
+    clientName: 'Empresa Prueba SpA',
+    rut: '76.999.888-1',
+    dtesCount: 0, pendingPurchasesCount: 0, pendingSalesCount: 0, bankAccountsCount: 0,
+    pendingBankNoveltiesCount: 0, f29IvaTotal: 0, employeesCount: 0, inventoryItemsCount: 0,
+    inventoryItems: [], payrolls: [], bankAccounts: [],
+  };
+  const persona = DEFAULT_AGENT_PERSONAS[0];
+  const textOf = (r: any) => `${r.verbalResponse || ''} ${r.displayMarkdown || ''}`;
+
+  await test('#1 Vera: una orden de facturar nunca responde "timbrada" ni un folio inventado', async () => {
+    const r = await voiceAssistantEngine.processDialogue('Emite una factura a VeHiCe por 3.500.000 neto', persona, ctx);
+    const t = textOf(r);
+    assert.ok(!/timbrada exitosamente|Folio 1542|76\.543\.210-K/i.test(t), t.slice(0, 300));
+    const confirm = await voiceAssistantEngine.processDialogue('sí, autorizo el timbraje', persona, ctx, [
+      { sender: 'AGENT', text: 'Borrador de factura DTE 33 por $4.165.000' },
+    ]);
+    assert.ok(!/timbrada exitosamente|Folio 1542/i.test(textOf(confirm)));
+  });
+
+  await test('#1 Vera: inventario y remuneraciones sin datos no muestran existencias ni montos de respaldo', async () => {
+    const inv = textOf(await voiceAssistantEngine.processDialogue('¿cuánto stock queda en bodega?', persona, ctx));
+    assert.ok(!/RED-DYN-80|CABO-POL-32|48\.500|Bodega Central Quilicura/.test(inv), inv.slice(0, 300));
+    const pay = textOf(await voiceAssistantEngine.processDialogue('dame el resumen de sueldos y previred', persona, ctx));
+    assert.ok(!/4\.850\.000|6\.200\.000|713\.000/.test(pay), pay.slice(0, 300));
+    const bank = textOf(await voiceAssistantEngine.processDialogue('dame los saldos bancarios', persona, ctx));
+    assert.ok(!/44\.382\.013|2\.150\.000|Caja Central Oficina Principal|100% CUADRADO/.test(bank), bank.slice(0, 300));
   });
 
   console.log(`\nRESULTADO FASE 1: ${passed} de ${total} pruebas pasaron.`);

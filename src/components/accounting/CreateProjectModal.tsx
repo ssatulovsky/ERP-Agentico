@@ -138,7 +138,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Ej: Confección Red Lobera Perimetral Dyneema 80x80m"
+              placeholder="Ej: Proyecto de confección para cliente"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
               className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-cyan-500 focus:outline-hidden"

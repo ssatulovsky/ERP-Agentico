@@ -71,9 +71,9 @@ export const WHATSAPP_AGENT_SCOPES_CATALOG: WhatsAppAgentScopeMeta[] = [
     id: 'BODEGA_INVENTARIO',
     nombre: 'Bodega, Stock & Inventarios',
     agenteResponsable: 'Diego Morales (Jefe de Bodega & Logística)',
-    descripcion: 'Existencias físicas, stock de paño Dyneema, cabos, grilletes, valorización PMP y alertas de reposición.',
+    descripcion: 'Existencias físicas, stock de materias primas e insumos, valorización PMP y alertas de reposición.',
     icono: 'Package',
-    ejemplosConsulta: ['¿Cuánto stock de paño Dyneema queda en bodega?', 'Reporte de inventario actual'],
+    ejemplosConsulta: ['¿Cuánto stock queda en bodega del producto principal?', 'Reporte de inventario actual'],
   },
   {
     id: 'PRODUCCION_COSTEO',
@@ -629,7 +629,7 @@ export class WhatsAppBridgeService {
 
     // 2. Bodega / Inventario / Stock
     if (
-      /\b(inventario|bodega|stock|existencia|insumo|pano|dyneema|cabo|grillete|kardex|material|mercaderia|reposicion|lote|almacen)\b/.test(
+      /\b(inventario|bodega|stock|existencia|insumo|pano|cabo|grillete|kardex|material|mercaderia|reposicion|lote|almacen)\b/.test(
         norm
       )
     ) {
