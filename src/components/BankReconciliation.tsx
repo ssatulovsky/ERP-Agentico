@@ -59,6 +59,9 @@ import {
 import { CurrencyManagerModal } from './accounting/CurrencyManagerModal';
 import { loadCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
 import { getStoredAuthToken } from '../services/apiClient';
+import { contarResultadoConciliacion, mensajeResultadoConciliacion, saldoLibroMayorCuenta } from '../utils/bankReconciliationReport';
+import { describirPeriodos } from '../utils/periodo';
+import { isDemoModeEnabled } from '../config/demoMode';
 
 export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
   if (moneda === 'USD') {
@@ -282,16 +285,17 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   );
   
   const currentAccount = useMemo(() => {
+    // Sin cuentas registradas no se inventa una cuenta "conectada" con saldo: se muestra una cuenta vacía.
     return bankAccounts.find(a => a.id === selectedAccountId) || bankAccounts[0] || {
-      id: 'bank-acc-1',
-      banco: activeClient.bancoPrincipal || 'Banco Santander Chile',
-      bancoCodigo: 'BANCO_SANTANDER',
+      id: 'sin-cuenta',
+      banco: activeClient.bancoPrincipal || 'Sin cuenta bancaria registrada',
+      bancoCodigo: 'SIN_CUENTA',
       tipoCuenta: 'CORRIENTE',
-      numeroCuenta: activeClient.numeroCuenta || '00-0839210-4',
+      numeroCuenta: activeClient.numeroCuenta || '—',
       moneda: 'CLP',
-      saldoEnLinea: 44382013,
-      estadoConexion: 'CONECTADO',
-      tipoConexion: 'OPEN_BANKING_API',
+      saldoEnLinea: 0,
+      estadoConexion: 'SIN_CONFIGURAR',
+      tipoConexion: 'IMPORTACION_MANUAL',
       esPrincipal: true,
     };
   }, [bankAccounts, selectedAccountId, activeClient]);
@@ -604,7 +608,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   const summary: BankReconciliationSummary = useMemo(() => {
     // Saldo final de la cartola informada por el banco
     const lastMovement = accountMovements[accountMovements.length - 1];
-    const saldoSegunCartola = currentAccount.saldoEnLinea || (lastMovement ? lastMovement.saldo : 44382013);
+    const saldoSegunCartola = lastMovement && typeof lastMovement.saldo === 'number' ? lastMovement.saldo : (currentAccount.saldoEnLinea || 0);
 
     // LADO BANCO: Saldo Real Disponible según Cartola Ajustada por Partidas en Tránsito
     // Fórmula oficial CMF: Saldo Cartola + Depósitos en Tránsito - Cheques y Transferencias Giradas en Tránsito
@@ -633,7 +637,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
     const diferenciaAuditoria = saldoBancoAjustado - saldoLibroMayorAjustado; // 0
 
     return {
-      periodo: '2026-09',
+      periodo: describirPeriodos(accountMovements.map((m) => ({ fechaEmision: m.fecha }))),
       bancoNombre: currentAccount.banco,
       numeroCuenta: currentAccount.numeroCuenta,
       saldoSegunCartola,
@@ -729,12 +733,19 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
   };
 
   // Automated Smart Reconciliation Engine in Real Time (Multi-Criteria & Ambiguity Safe)
+  const buildReconciliationMessage = (movs: BankStatementMovement[]) => {
+    const last = movs[movs.length - 1];
+    const saldoCartola = last && typeof last.saldo === 'number' ? last.saldo : (currentAccount.estadoConexion === 'SIN_CONFIGURAR' ? null : currentAccount.saldoEnLinea ?? null);
+    const saldoLibro = saldoLibroMayorCuenta(safeAccountingEntries, currentAccount.cuentaContableIfrs);
+    return mensajeResultadoConciliacion(currentAccount.banco, contarResultadoConciliacion(movs, saldoCartola, saldoLibro)).texto;
+  };
+
   const handleTriggerRealTimeAgentReconcile = async () => {
     const activeCompanyId = company?.rut || activeClient?.rut || 'client-default';
 
     if (pendingNovedades.length === 0 && accountMovements.every(m => m.estado === 'CONCILIADO')) {
-      setAutoReconciledSuccess(`El banco ${currentAccount.banco} ya se encuentra 100% cuadrado y conciliado ($0 diferencia).`);
-      setTimeout(() => setAutoReconciledSuccess(null), 4000);
+      setAutoReconciledSuccess(buildReconciliationMessage(accountMovements));
+      setTimeout(() => setAutoReconciledSuccess(null), 6000);
       return;
     }
 
@@ -808,10 +819,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
           onUpdateBankMovements(updated);
           setIsAutoReconciling(false);
           setReconcileProgressStep('');
-          setAutoReconciledSuccess(
-            payload.resumenAuditoria ||
-            `Agente Autónomo de Conciliación ejecutó la auditoría: ${payload.movimientosConciliadosAutomaticamente} movimientos calzados sin doble imputación.`
-          );
+          setAutoReconciledSuccess(buildReconciliationMessage(updated));
           setTimeout(() => setAutoReconciledSuccess(null), 6000);
           return;
         }
@@ -946,40 +954,15 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
       setIsAutoReconciling(false);
       setReconcileProgressStep('');
 
-      if (ambiguousCount > 0) {
-        setAutoReconciledSuccess(`Se conciliaron ${reconciledCount} partidas con referencia CONC. Se detectaron ${ambiguousCount} movimientos con montos idénticos que requieren individualización del contador para evitar calces erróneos.`);
-      } else {
-        setAutoReconciledSuccess(`¡Conciliación completada con éxito! Se emitieron las Referencias CONC-... y el banco ${currentAccount.banco} se encuentra 100% Cuadrado.`);
-      }
+      // 2.6: el mensaje informa conciliados, ambiguos y pendientes reales; "100% cuadrado" solo con 0 pendientes y diferencia $0
+      setAutoReconciledSuccess(buildReconciliationMessage(updated));
       setTimeout(() => setAutoReconciledSuccess(null), 6000);
   };
 
-  // Synchronize Bank Account and apply real-time reconciliation
+  // 2.5 (hallazgo #7): no existe integración bancaria; "sincronizar" abre la importación de cartola
+  // y nunca cambia el estado de la cuenta a CONECTADO.
   const handleSyncBankApi = () => {
-    setIsSyncingApi(true);
-    setSyncStep('');
-
-    // If real-time agent is active, auto-reconcile immediately
-    if (isRealTimeAgentActive && pendingNovedades.length > 0) {
-      onRegisterAllNovedades(pendingNovedades);
-    }
-
-    // Update account sync timestamp
-    const updatedAccounts = safeBankAccounts.map(acc => {
-      if (acc.id === currentAccount.id) {
-        return {
-          ...acc,
-          estadoConexion: 'CONECTADO' as const,
-          ultimaSincronizacion: new Date().toLocaleDateString('es-CL') + ' ' + new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-        };
-      }
-      return acc;
-    });
-    onUpdateBankAccounts(updatedAccounts);
-
-    setIsSyncingApi(false);
-    setShowSyncSuccess(true);
-    setTimeout(() => setShowSyncSuccess(false), 5000);
+    setIsImportModalOpen(true);
   };
 
   // Automated Smart Reconciliation Engine
@@ -989,6 +972,8 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
 
   // Load Sample Statement File with instant real-time reconciliation
   const handleLoadSampleCartola = (bankName: string) => {
+    // 2.8: las cartolas de ejemplo solo existen en modo demostración
+    if (!isDemoModeEnabled()) return;
     let sampleMovements: BankStatementMovement[] = [];
 
     if (bankName.includes('USD') || currentAccount.moneda === 'USD') {
@@ -1494,16 +1479,6 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
               <span>{isAutoReconciling ? 'Conciliando...' : 'Conciliar en Tiempo Real'}</span>
             </button>
 
-            {/* Sync API Button */}
-            <button
-              onClick={handleSyncBankApi}
-              disabled={isSyncingApi}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingApi ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
-              <span>{isSyncingApi ? 'Consultando API...' : 'Sincronizar API'}</span>
-            </button>
-
             {/* Import Cartola Button */}
             <button
               onClick={() => setIsImportModalOpen(true)}
@@ -1542,7 +1517,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
             </button>
 
             {/* Reset Demo State Button */}
-            {onResetBankMovements && (
+            {onResetBankMovements && isDemoModeEnabled() && (
               <button
                 onClick={onResetBankMovements}
                 className="flex items-center gap-1.5 px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
@@ -1578,18 +1553,6 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span className="font-semibold">{autoReconciledSuccess}</span>
             </div>
-          </div>
-        )}
-
-        {showSyncSuccess && (
-          <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-800">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>
-                <strong>Sincronización Exitosa con {currentAccount.banco}:</strong> Se consultó el extracto digital al corte de hoy. Todos los saldos y transacciones han sido contrastados.
-              </span>
-            </div>
-            <span className="text-[11px] font-mono text-emerald-600">Última sinc: {currentAccount.ultimaSincronizacion || 'Ahora'}</span>
           </div>
         )}
 
@@ -2727,7 +2690,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   </div>
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="text-[10px] text-slate-400 font-mono">Sinc: {account.ultimaSincronizacion || 'Hoy'}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">Última importación: {account.ultimaSincronizacion || 'Nunca'}</span>
                     <button
                       onClick={() => {
                         setSelectedAccountId(account.id);
@@ -2735,7 +2698,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                       }}
                       className="text-blue-600 hover:text-blue-800 font-bold text-xs cursor-pointer"
                     >
-                      Sincronizar
+                      Importar cartola
                     </button>
                   </div>
                 </div>
@@ -2954,6 +2917,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     <span>Ingreso Manual de Partida</span>
                   </button>
 
+                  {isDemoModeEnabled() && (
                   <button
                     onClick={() => setImportMethod('PRESET')}
                     className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
@@ -2965,6 +2929,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     <Zap className="w-3.5 h-3.5 text-amber-500" />
                     <span>Cartolas Tipo de Ejemplo</span>
                   </button>
+                  )}
                 </div>
 
                 {/* TAB 1: ARCHIVO EXCEL / CSV / OFX */}
@@ -3181,7 +3146,7 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                 )}
 
                 {/* TAB 4: CARTOLAS TIPO DE EJEMPLO */}
-                {importMethod === 'PRESET' && (
+                {importMethod === 'PRESET' && isDemoModeEnabled() && (
                   <div className="space-y-3">
                     <div className="text-xs text-slate-500">
                       Seleccione una cartola típica chilena para probar el ciclo de conciliación automática, detección de novedades (PAC, comisiones) y cuadratura contable:
