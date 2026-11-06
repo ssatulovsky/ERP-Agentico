@@ -588,9 +588,13 @@ erpModulesRouter.get('/cost-centers', async (req: Request, res: Response) => {
 erpModulesRouter.post('/cost-centers', async (req: Request, res: Response) => {
   try {
     const body = req.body;
+    const empresaIdCC = resolveEmpresaId(req);
+    if (!empresaIdCC || !body.codigo || !body.nombre) {
+      return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId', 'codigo', 'nombre'].filter((k) => !(k === 'empresaId' ? empresaIdCC : body[k])) });
+    }
     const newCC = {
       id: body.id || crypto.randomUUID(),
-      empresaId: body.empresaId || 'client-retail-01',
+      empresaId: empresaIdCC,
       codigo: body.codigo,
       nombre: body.nombre,
       categoria: body.categoria || 'ADMINISTRACION',

@@ -240,7 +240,8 @@ app.post("/api/admin/ai-company-override", (req, res) => {
 // =======================================================
 app.get("/api/commercial-procurement/state", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const state = commercialProcurementService.getState(empresaId);
     res.json({ success: true, state });
   } catch (error: any) {
@@ -250,7 +251,8 @@ app.get("/api/commercial-procurement/state", (req, res) => {
 
 app.post("/api/commercial-procurement/adjust-price", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { sku, nuevoPrecioVenta, motivo } = req.body;
     if (!sku || nuevoPrecioVenta === undefined) {
       return res.status(400).json({ success: false, error: "sku y nuevoPrecioVenta son requeridos" });
@@ -269,7 +271,8 @@ app.post("/api/commercial-procurement/adjust-price", (req, res) => {
 
 app.post("/api/commercial-procurement/purchase-order", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const orderData = req.body;
     if (!orderData.proveedorRut || !orderData.items || !orderData.items.length) {
       return res.status(400).json({ success: false, error: "Datos de orden de compra incompletos" });
@@ -283,7 +286,8 @@ app.post("/api/commercial-procurement/purchase-order", (req, res) => {
 
 app.post("/api/commercial-procurement/quote", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const quoteData = req.body;
     if (!quoteData.clienteRut || !quoteData.items || !quoteData.items.length) {
       return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
@@ -297,7 +301,8 @@ app.post("/api/commercial-procurement/quote", (req, res) => {
 
 app.post("/api/commercial-procurement/ai-advisor", async (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { prompt, companyProfile } = req.body;
     if (!prompt) {
       return res.status(400).json({ success: false, error: "prompt es requerido" });
@@ -317,7 +322,8 @@ app.post("/api/commercial-procurement/ai-advisor", async (req, res) => {
 // Emisión de Solicitudes de Cotización de Compra (RFQ)
 app.post("/api/commercial-procurement/rfq", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { titulo, diasPlazoRespuesta, items, proveedorRuts } = req.body;
     if (!titulo || !items || !items.length || !proveedorRuts || !proveedorRuts.length) {
       return res.status(400).json({ success: false, error: "Título, items y lista de proveedores son requeridos" });
@@ -337,7 +343,8 @@ app.post("/api/commercial-procurement/rfq", (req, res) => {
 // Reiteración de Recordatorio a Proveedor (Seguimiento Activo)
 app.post("/api/commercial-procurement/rfq/reminder", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { rfqId, supplierRut } = req.body;
     if (!rfqId || !supplierRut) {
       return res.status(400).json({ success: false, error: "rfqId y supplierRut son requeridos" });
@@ -352,7 +359,8 @@ app.post("/api/commercial-procurement/rfq/reminder", (req, res) => {
 // Registro / Simulación de Oferta de Proveedor
 app.post("/api/commercial-procurement/rfq/quote", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { rfqId, supplierRut, quoteData } = req.body;
     if (!rfqId || !supplierRut || !quoteData || quoteData.montoNetoOfertado === undefined) {
       return res.status(400).json({ success: false, error: "Datos de cotización incompletos" });
@@ -367,7 +375,8 @@ app.post("/api/commercial-procurement/rfq/quote", (req, res) => {
 // Adjudicación de RFQ al Mejor Proveedor y Emisión Automática de Orden de Compra (OC)
 app.post("/api/commercial-procurement/rfq/award", (req, res) => {
   try {
-    const empresaId = req.effectiveEmpresaId || "client-retail-01";
+    const empresaId = req.effectiveEmpresaId;
+    if (!empresaId) return res.status(400).json({ success: false, code: "MISSING_PARAMS", missingParams: ["empresaId"] });
     const { rfqId, winningSupplierRut, motivoAdjudicacion } = req.body;
     if (!rfqId || !winningSupplierRut) {
       return res.status(400).json({ success: false, error: "rfqId y winningSupplierRut son requeridos" });
@@ -392,7 +401,7 @@ Tu objetivo es gestionar de manera integral la contabilidad, el flujo de caja, l
 
 ${personaContext ? `ESTÁS ACTUANDO ESPECÍFICAMENTE COMO: ${personaContext.nombre}, ${personaContext.cargo} (${personaContext.area}) de la empresa ${companyContext?.nombre || companyContext?.razonSocial || 'la empresa'}.
 DIRECTRICES CLAVE DE DIÁLOGO:
-1. Mantén estricta continuidad del diálogo multi-turno. Si el usuario te responde a una pregunta previa (por ejemplo entregando márgenes, recetas de insumos, plazos de entrega, montos netos, condición de pago o confirmaciones), UNE los datos previos con los nuevos, formula la cotización, factura o cálculo concreto con cifras numéricas realistas en pesos chilenos ($ CLP), y solicita confirmación para emitir o registrar.
+1. Mantén estricta continuidad del diálogo multi-turno. Si el usuario te responde a una pregunta previa (por ejemplo entregando márgenes, recetas de insumos, plazos de entrega, montos netos, condición de pago o confirmaciones), UNE los datos previos con los nuevos y formula la cotización, factura o cálculo usando SOLO cifras que estén en el contexto entregado o que el usuario haya dado; si falta un monto, fecha, RUT o período, pídelo. Nunca inventes cifras, folios ni nombres. Tú no emites ni registras: para ejecutar una operación indica que debe hacerse en el módulo correspondiente o con el motor agéntico, que pide aprobación humana.
 2. NUNCA respondas con frases vacías o genéricas como 'los registros se encuentran al día'. Sé un profesional proactivo, resolutivo, empático y experto.` : ''}
 
 REGLAS ESTRICTAS DE RESPUESTA:
@@ -412,7 +421,7 @@ CUENTA CONTABLE                       DEBE ($)     HABER ($)
 TOTALES                              XXX.XXX      XXX.XXX
 --------------------------------------------------
 
-3. Si falta información crucial para el cálculo de impuestos o leyes sociales (ej: tipo de contrato, días trabajados, tramo de impuesto, si es exento o afecto), solicita los datos faltantes antes de dar una cifra definitiva o plantea los supuestos explícitamente.
+3. Usa solo cifras del contexto o entregadas por el usuario; si faltan (montos, fechas, tipo de contrato, días trabajados, período, si es exento o afecto), pídelas. No des cifras estimadas ni ejemplos numéricos presentados como datos de la empresa.
 4. Alerta inmediatamente si detectas inconsistencias entre el Registro de Compras y Ventas (RCV), el Formulario 29 (F29) o las proyecciones de caja.
 5. Brinda respuestas técnicas, precisas, con citas a leyes chilenas (Art. 47/50 Código del Trabajo, Art. 84 LIR para PPM, Art. 23 DL 825 para Crédito Fiscal IVA, Oficios del SII pertinentes).
 
