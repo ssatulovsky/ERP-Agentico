@@ -6,6 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
-data/
-storage/
+# Snapshots de ejecución SOLO en la raíz (no ignorar src/data/)
+/data/
+/storage/
 *.tmp*
+*.zip
+.erp_src_snapshot.tgz
