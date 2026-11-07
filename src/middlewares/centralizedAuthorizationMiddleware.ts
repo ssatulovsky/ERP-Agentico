@@ -676,6 +676,12 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     return next();
   }
 
+  // 3.3: tareas programadas de agentes. La empresa ya se validó arriba (A1); el controlador
+  // exige el módulo del agente dueño de cada tarea (una ruta, varios módulos).
+  if (urlPath === '/api/agents/schedules' || urlPath.startsWith('/api/agents/schedules/')) {
+    return next();
+  }
+
   // Rutas de gobernanza
   if (urlPath.startsWith('/api/governance') || urlPath.startsWith('/api/agents/governance')) {
     return next();

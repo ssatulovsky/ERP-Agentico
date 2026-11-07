@@ -17,6 +17,8 @@ import { expenseReportsRouter } from "./src/controllers/expenseReportsController
 import { billingDteRouter } from "./src/controllers/billingDteController";
 import { authRouter } from "./src/controllers/authController";
 import { autonomousAgentsRouter } from "./src/controllers/autonomousAgentsController";
+import { agentSchedulesRouter } from "./src/controllers/agentSchedulesController";
+import { agentSchedulerService, isSchedulerEnabled } from "./src/services/agentSchedulerService";
 import { authenticateApiToken } from "./src/middlewares/authMiddleware";
 import { centralizedAuthorizationMiddleware, validateCompanyIdentifiers } from "./src/middlewares/centralizedAuthorizationMiddleware";
 import { sanitizeSecurityUser } from "./src/services/securityRbacService";
@@ -2325,6 +2327,9 @@ app.use("/api/auth", authRouter);
 // RUTAS DEL MOTOR DE AGENTES AUTÓNOMOS (RE-ACT MULTI-TURNO, FUNCTION CALLING Y HUMAN-IN-THE-LOOP)
 app.use("/api/agents/autonomous", autonomousAgentsRouter);
 
+// 3.3 EJECUCIONES PROGRAMADAS DE AGENTES (terminan en aprobación humana)
+app.use("/api/agents/schedules", agentSchedulesRouter);
+
 // RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
 app.use("/api/tenancy", tenancyRouter);
 
@@ -2466,6 +2471,12 @@ async function startServer() {
 
   return app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Contable Chile] Servidor ejecutándose en http://0.0.0.0:${PORT}`);
+    // 3.3: despachador de tareas programadas (activar en una sola instancia).
+    if (isSchedulerEnabled()) {
+      agentSchedulerService.start(Number(process.env.AGENT_SCHEDULER_TICK_MS) || 60_000);
+    } else {
+      console.info("[AgentScheduler] Despachador apagado (AGENT_SCHEDULER_ENABLED != true). Las tareas solo se ejecutan a pedido.");
+    }
   });
 }
 

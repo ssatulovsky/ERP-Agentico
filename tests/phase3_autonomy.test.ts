@@ -16,6 +16,10 @@ import {
 import { MODULE_AGENTS_REGISTRY } from '../src/services/moduleAgentGovernanceService';
 import { AGENT_TOOL_POLICY } from '../src/config/agentToolPolicy';
 import { recordAgentCorrection } from '../src/services/agentLearningFeedbackService';
+import { agentSchedulerService, computeNextRun, AGENT_SCHEDULED_TASKS } from '../src/services/agentSchedulerService';
+import { diskPersistence } from '../src/services/diskPersistenceService';
+import { HrManagementService } from '../src/services/hrManagementService';
+import { getAllowedTools } from '../src/config/agentToolPolicy';
 
 type Call = { model: string; contents: any[]; config: any };
 
@@ -198,6 +202,139 @@ async function run() {
     });
     await AutonomousAgentEngine.executeAutonomousAgentLoop(req({ query: 'kardex' }));
     assert.ok(!calls[0].config.systemInstruction.includes('REGLA-PRIVADA-OTRA-EMPRESA'));
+  });
+
+  // ---------------------------------------------------------------- 3.3
+  console.log('\n--- 3.3 Ejecuciones programadas ---');
+  process.env.GEMINI_API_KEY = '';
+  AutonomousAgentEngine.modelClientFactory = prevFactory;
+
+  await test('Próxima ejecución en hora de Chile (verano y horario de invierno)', () => {
+    const iso = (d: Date) => d.toISOString().slice(0, 16);
+    // 6 nov 2026, 09:00 en Santiago (UTC-3): la de las 07:00 pasa al día siguiente.
+    assert.strictEqual(iso(computeNextRun({ tipo: 'DIARIA', hora: '07:00' }, new Date('2026-11-06T12:00:00Z'))), '2026-11-07T10:00');
+    assert.strictEqual(iso(computeNextRun({ tipo: 'MENSUAL', dia: 5, hora: '08:00' }, new Date('2026-11-06T12:00:00Z'))), '2026-12-05T11:00');
+    // Julio (UTC-4)
+    assert.strictEqual(iso(computeNextRun({ tipo: 'DIARIA', hora: '07:00' }, new Date('2026-07-10T00:00:00Z'))), '2026-07-10T11:00');
+  });
+
+  // Empresa propia de la prueba (identificador único para no chocar con datos de otras corridas)
+  const EMP = `77${String(Date.now()).slice(-6)}-5`;
+  const T0 = new Date('2026-11-30T12:00:00Z');
+  const T1 = new Date('2026-12-05T12:00:00Z'); // 09:00 del día 5 en Santiago
+  const snapshot: any = diskPersistence.getSnapshot();
+  diskPersistence.updateCollection('clients', [
+    ...(snapshot.clients || []),
+    { id: EMP, rut: EMP, razonSocial: 'Prueba Programada SpA', tasaPpm: 0.01, regimenTributario: '14_A' },
+  ]);
+  diskPersistence.saveBankMovements([
+    { id: `${EMP}-mov1`, fecha: '2026-12-03', monto: 119000, abono: 119000, descripcion: 'TEF cliente', estado: 'PENDIENTE' },
+    { id: `${EMP}-mov2`, fecha: '2026-12-03', monto: 5555, cargo: 5555, descripcion: 'Comisión', estado: 'PENDIENTE' },
+  ], EMP);
+  diskPersistence.addAccountingEntry({
+    id: `${EMP}-ent1`, empresaId: EMP, fecha: '2026-12-03', periodo: '2026-12', concepto: 'Cobro cliente',
+    totalDebe: 119000, totalHaber: 119000,
+    lineas: [
+      { cuentaCodigo: '1.1.01', debe: 119000, haber: 0 },
+      { cuentaCodigo: '1.1.03', debe: 0, haber: 119000 },
+    ],
+  });
+  diskPersistence.saveDtes(EMP, [
+    { id: `${EMP}-v1`, tipoOperacion: 'VENTA', tipoDte: '33', folio: 10, periodo: '2026-11', fechaEmision: '2026-11-10', montoNeto: 1000000, montoIva: 190000, montoTotal: 1190000, rutEmisor: EMP },
+    { id: `${EMP}-c1`, tipoOperacion: 'COMPRA', tipoDte: '33', folio: 77, periodo: '2026-11', fechaEmision: '2026-11-12', montoNeto: 400000, montoIva: 76000, montoTotal: 476000, rutReceptor: EMP },
+    { id: `${EMP}-v2`, tipoOperacion: 'VENTA', tipoDte: '33', folio: 11, periodo: '2026-12', fechaEmision: '2026-12-02', montoNeto: 100000, montoIva: 19000, montoTotal: 119000, rutEmisor: EMP },
+  ]);
+  diskPersistence.setFixedAssets(EMP, [
+    { id: `${EMP}-af1`, empresaId: EMP, codigoPlaca: 'AF-1', nombre: 'Camioneta de reparto', categoria: 'VEHICULOS', estado: 'OPERATIVO',
+      valorAdquisicionOriginal: 12000000, vidaUtilMesesFinanciera: 60, vidaUtilMesesTributaria: 36, vidaUtilRestanteMeses: 50 },
+  ]);
+
+  for (const t of AGENT_SCHEDULED_TASKS) {
+    agentSchedulerService.upsertSchedule({ empresaId: EMP, tareaId: t.id, usuarioId: 'test', now: T0 });
+  }
+  const runs = await agentSchedulerService.tick(T1);
+  const byTask = Object.fromEntries(runs.map((r) => [r.tareaId, r]));
+
+  await test('Cada programación vencida se ejecuta una vez en el despachador', () => {
+    assert.deepStrictEqual(runs.map((r) => r.tareaId).sort(), AGENT_SCHEDULED_TASKS.map((t) => t.id).sort());
+    assert.ok(runs.every((r) => r.disparo === 'PROGRAMADO' && r.slot));
+  });
+
+  await test('Criterio 3.3: al menos 3 agentes terminan en una solicitud de aprobación humana', () => {
+    const conPropuesta = runs.filter((r) => r.estado === 'PROPUESTA_CREADA' && r.approvalIds.length > 0);
+    const agentes = new Set(conPropuesta.map((r) => r.modulo));
+    assert.ok(agentes.size >= 3, `Agentes con propuesta: ${[...agentes].join(', ')} · ${runs.map((r) => `${r.tareaId}=${r.estado}: ${r.resumen}`).join(' | ')}`);
+    for (const r of conPropuesta) {
+      for (const id of r.approvalIds) {
+        const ap = HrManagementService.getApprovals(EMP).find((a) => a.id === id);
+        assert.ok(ap, `Aprobación ${id} no registrada`);
+        assert.strictEqual(ap!.estado, 'PENDIENTE');
+        assert.strictEqual(ap!.modulo, r.modulo, 'La aprobación pertenece al módulo del agente');
+      }
+    }
+  });
+
+  await test('Cada ejecución queda en la bitácora de auditoría', () => {
+    const logs = diskPersistence.getAuditLogs(EMP).filter((l: any) => l.entidadTipo === 'AGENT_SCHEDULED_RUN');
+    for (const r of runs) assert.ok(logs.some((l: any) => l.entidadId === r.id), `Sin auditoría para ${r.tareaId}`);
+  });
+
+  await test('Las tareas solo usan herramientas de su agente', () => {
+    for (const r of runs) {
+      const allowed = getAllowedTools(r.modulo);
+      for (const p of r.pasos) assert.ok(allowed.includes(p.herramienta), `${r.tareaId} usó ${p.herramienta}`);
+    }
+  });
+
+  await test('Conciliación: propone solo el calce real y deja el resto pendiente', () => {
+    const r = byTask.CONCILIACION_DIARIA;
+    assert.strictEqual(r.estado, 'PROPUESTA_CREADA');
+    const ap: any = HrManagementService.getApprovals(EMP).find((a) => a.id === r.approvalIds[0]);
+    assert.deepStrictEqual(ap.datosOperacion.calces.map((c: any) => c.movimientoId), [`${EMP}-mov1`]);
+    assert.match(r.resumen, /1 movimiento\(s\) sin calce/);
+  });
+
+  await test('RCV: las diferencias contra el Libro Mayor quedan como alerta, sin propuesta inventada', () => {
+    const r = byTask.RCV_DIARIO;
+    assert.strictEqual(r.estado, 'REQUIERE_ATENCION', r.resumen);
+    assert.strictEqual(r.approvalIds.length, 0);
+    assert.ok(r.requiereAccion);
+  });
+
+  await test('Un horario ya atendido no se vuelve a ejecutar', async () => {
+    const again = await agentSchedulerService.tick(T1);
+    assert.strictEqual(again.length, 0);
+  });
+
+  await test('Una nueva ejecución no duplica propuestas pendientes', async () => {
+    const sched = agentSchedulerService.listSchedules(EMP).find((s) => s.tareaId === 'CONCILIACION_DIARIA')!;
+    const antes = HrManagementService.getApprovals(EMP, 'CONCILIACION').length;
+    const r = await agentSchedulerService.runScheduleNow(sched.id, 'test', T1);
+    assert.strictEqual(r.disparo, 'MANUAL');
+    assert.strictEqual(r.estado, 'SIN_CAMBIOS', r.resumen);
+    assert.strictEqual(HrManagementService.getApprovals(EMP, 'CONCILIACION').length, antes);
+    const f29 = agentSchedulerService.listSchedules(EMP).find((s) => s.tareaId === 'BORRADOR_F29')!;
+    assert.strictEqual((await agentSchedulerService.runScheduleNow(f29.id, 'test', T1)).estado, 'SIN_CAMBIOS');
+  });
+
+  await test('Al aprobar los calces, el movimiento queda conciliado con su asiento', async () => {
+    const id = byTask.CONCILIACION_DIARIA.approvalIds[0];
+    const res = await HrManagementService.resolveApproval(id, 'contador-prueba', true);
+    assert.strictEqual(res.estado, 'EJECUTADO', res.resultadoEjecucion);
+    const mov = diskPersistence.getBankMovements(EMP).find((m: any) => m.id === `${EMP}-mov1`);
+    assert.strictEqual(mov.estado, 'CONCILIADO');
+    assert.strictEqual(mov.asientoGeneradoId, `${EMP}-ent1`);
+    assert.strictEqual(mov.usuarioConciliador, 'contador-prueba');
+    const otro = diskPersistence.getBankMovements(EMP).find((m: any) => m.id === `${EMP}-mov2`);
+    assert.notStrictEqual(otro.estado, 'CONCILIADO');
+  });
+
+  await test('Sin datos, la tarea informa SIN_DATOS y no crea aprobaciones', async () => {
+    const vacia = `78${String(Date.now()).slice(-6)}-1`;
+    const r = await agentSchedulerService.runTask({ empresaId: vacia, tareaId: 'CONCILIACION_DIARIA', usuarioId: 'test' });
+    assert.strictEqual(r.estado, 'SIN_DATOS');
+    assert.strictEqual(r.approvalIds.length, 0);
+    assert.strictEqual(HrManagementService.getApprovals(vacia).length, 0);
   });
 
   AutonomousAgentEngine.modelClientFactory = prevFactory;

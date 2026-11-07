@@ -217,6 +217,7 @@ async function runPerimeterTestSuite() {
         r.path.startsWith('/api/governance') ||
         r.path.startsWith('/api/agents/governance') ||
         r.path.startsWith('/api/agents/autonomous') ||
+        r.path.startsWith('/api/agents/schedules') ||
         r.path === '/api/voice/status' ||
         r.path === '/api/voice/tts' ||
         r.path === '/api/voice/piper-voices' ||
@@ -674,6 +675,38 @@ async function runPerimeterTestSuite() {
       }
     );
     assert.strictEqual(resOverwriteDirect.status, 403, 'Debe denegar acceso a empresa ajena con 403');
+  });
+
+  // ------------------------------------------------------------------------
+  // A6.15 (3.3): tareas programadas — cada usuario solo ve y opera las de sus módulos
+  // ------------------------------------------------------------------------
+  await test('A6.15 Tareas programadas: compras no ve ni programa la conciliación; otra empresa queda denegada', async () => {
+    const list = await makeRequest('GET', '/api/agents/schedules?empresaId=client-retail-logistics', { Authorization: `Bearer ${tokenCompras}` });
+    assert.strictEqual(list.status, 200);
+    assert.ok(!list.body.tareas.some((t: any) => t.modulo === 'CONCILIACION'), 'Compras no debe ver tareas de conciliación');
+
+    const put = await makeRequest('PUT', '/api/agents/schedules', { Authorization: `Bearer ${tokenCompras}` }, {
+      empresaId: 'client-retail-logistics',
+      tareaId: 'CONCILIACION_DIARIA',
+      activo: true,
+    });
+    assert.strictEqual(put.status, 403, `Esperaba 403, obtuvo ${put.status}`);
+    assert.strictEqual(put.body.error, 'MODULO_NO_PERMITIDO');
+
+    const ajena = await makeRequest('PUT', '/api/agents/schedules', { Authorization: `Bearer ${tokenTenantAdmin}` }, {
+      empresaId: 'client-innovagile',
+      tareaId: 'CONCILIACION_DIARIA',
+      activo: true,
+    });
+    assert.strictEqual(ajena.status, 403, `Esperaba 403 para empresa ajena, obtuvo ${ajena.status}`);
+
+    const propia = await makeRequest('PUT', '/api/agents/schedules', { Authorization: `Bearer ${tokenAdmin}` }, {
+      empresaId: 'client-retail-logistics',
+      tareaId: 'CONCILIACION_DIARIA',
+      activo: false,
+      frecuencia: { tipo: 'DIARIA', hora: '25:00' },
+    });
+    assert.strictEqual(propia.status, 400, 'Frecuencia inválida debe rechazarse');
   });
 
   console.log('\n========================================================================');

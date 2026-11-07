@@ -1997,9 +1997,13 @@ export class AutonomousAgentEngine {
         if (faltantesGob.length > 0) return missingParamsResult('tool_submit_governance_approval', faltantesGob);
         const approval = HrManagementService.requestModuleApproval({
           empresaId: request.empresaId,
-          modulo: args.modulo || request.module,
+          // 3.1: el agente solo solicita aprobaciones de su propio módulo.
+          modulo: request.module,
           agenteNombre: request.agentRole,
-          operacionTipo: args.titulo.toUpperCase().replace(/\s+/g, '_').slice(0, 50),
+          // Tipo explícito (p. ej. de una tarea programada) o derivado del título.
+          operacionTipo: (typeof args.operacionTipo === 'string' && /^[A-Z0-9_]{3,50}$/.test(args.operacionTipo))
+            ? args.operacionTipo
+            : args.titulo.toUpperCase().replace(/\s+/g, '_').slice(0, 50),
           titulo: args.titulo,
           descripcion: args.descripcion,
           datosOperacion: args.datosOperacion || {},

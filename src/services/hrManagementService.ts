@@ -922,6 +922,53 @@ export class HrManagementService {
           item.estado = 'ERROR_EJECUCION';
           item.resultadoEjecucion = `Fallo crítico centralizando rendición de gastos: ${err.message}.`;
         }
+      } else if (operacion === 'CONFIRMAR_CALCES_CONCILIACION') {
+        // 3.3: calces propuestos por la conciliación programada; se marcan solo al aprobar.
+        try {
+          const calces: any[] = Array.isArray(item.datosOperacion?.calces) ? item.datosOperacion.calces : [];
+          if (calces.length === 0) throw new Error('La solicitud no trae calces para confirmar.');
+          if (!dp || typeof dp.getBankMovements !== 'function' || typeof dp.saveBankMovements !== 'function') {
+            throw new Error('Persistencia de movimientos bancarios no disponible.');
+          }
+          const movimientos: any[] = dp.getBankMovements(item.empresaId) || [];
+          const byId = new Map(calces.map((c) => [String(c.movimientoId), c]));
+          const ahora = new Date().toISOString();
+          let confirmados = 0;
+          let omitidos = 0;
+          const actualizados = movimientos.map((m: any) => {
+            const calce = byId.get(String(m.id));
+            if (!calce) return m;
+            if (m.estado === 'CONCILIADO' || m.conciliado === true) {
+              omitidos++;
+              return m;
+            }
+            confirmados++;
+            return {
+              ...m,
+              estado: 'CONCILIADO',
+              conciliado: true,
+              asientoGeneradoId: calce.asientoId,
+              matchCriterio: 'AGENTE_CONCILIACION_PROGRAMADA',
+              matchCerteza: calce.calidadCalce,
+              fechaConciliacion: ahora,
+              usuarioConciliador: userId,
+            };
+          });
+          const noEncontrados = calces.length - confirmados - omitidos;
+          if (confirmados === 0) throw new Error(`Ningún calce aplicable (ya conciliados: ${omitidos}, no encontrados: ${noEncontrados}).`);
+          dp.saveBankMovements(actualizados, item.empresaId);
+          item.estado = 'EJECUTADO';
+          item.resultadoEjecucion = `Aprobado por ${userId}: ${confirmados} movimiento(s) conciliado(s)` +
+            `${omitidos ? `, ${omitidos} ya estaban conciliados` : ''}${noEncontrados ? `, ${noEncontrados} no encontrados` : ''}.`;
+        } catch (err: any) {
+          item.estado = 'ERROR_EJECUCION';
+          item.resultadoEjecucion = `No se confirmaron los calces: ${err.message}`;
+        }
+      } else if (operacion === 'BORRADOR_F29') {
+        // 3.3: el borrador se revisa y aprueba aquí; la declaración se presenta en el SII.
+        item.estado = 'APROBADO';
+        item.resultadoEjecucion = `Borrador F29 ${item.datosOperacion?.periodo || ''} aprobado por ${userId}. ` +
+          'La declaración y el pago se presentan en el portal del SII; el ERP no los envía.';
       } else if (operacion === 'EMITIR_DTE') {
         try {
           const tipoDte = Number(item.datosOperacion?.tipoDte || 33);
