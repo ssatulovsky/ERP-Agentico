@@ -15,6 +15,7 @@ import { diskPersistence } from './diskPersistenceService';
 import { AutonomousAgentEngine, type AutonomousAgentRequest } from './autonomousAgentEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
 import { periodoActual, ultimosPeriodos, etiquetaPeriodo } from '../utils/periodo';
+import { aiRouterService, chileDayKey } from './aiRouterService';
 
 export const SCHEDULER_TIMEZONE = 'America/Santiago';
 export const SCHEDULER_USER_ID = 'SISTEMA_PROGRAMADOR';
@@ -393,6 +394,25 @@ class AgentSchedulerService {
     };
   }
 
+  /**
+   * 3.5: límites por empresa y por día (hora de Chile). Las ejecuciones automáticas tienen un
+   * máximo diario, y ninguna ejecución corre con el presupuesto de IA del día agotado.
+   */
+  private budgetGuard(empresaId: string, disparo: 'PROGRAMADO' | 'MANUAL', now: Date): string | null {
+    const limites = aiRouterService.getAgentBudgetLimits(empresaId);
+    if (disparo === 'PROGRAMADO' && limites.maxEjecucionesProgramadasDiarias > 0) {
+      const dia = chileDayKey(now);
+      const hoy = loadRuns().filter(
+        (r) => norm(r.empresaId) === norm(empresaId) && r.disparo === 'PROGRAMADO' && r.estado !== 'BLOQUEADO_LIMITE' && chileDayKey(new Date(r.inicio)) === dia
+      ).length;
+      if (hoy >= limites.maxEjecucionesProgramadasDiarias) {
+        return `Límite diario de ejecuciones programadas alcanzado (${hoy} de ${limites.maxEjecucionesProgramadasDiarias}). La tarea no se ejecutó.`;
+      }
+    }
+    const budget = aiRouterService.checkAgentBudget(empresaId, now);
+    return budget.allowed ? null : `${budget.reason} La tarea no se ejecutó.`;
+  }
+
   listTasks() {
     return AGENT_SCHEDULED_TASKS.map(({ execute, periodo, ...t }) => t);
   }
@@ -507,7 +527,9 @@ class AgentSchedulerService {
     };
 
     let outcome: TaskOutcome;
-    const bloqueo = this.guards.map((g) => g({ empresaId: input.empresaId, tareaId: task.id, modulo: task.modulo })).find(Boolean);
+    const bloqueo =
+      this.budgetGuard(input.empresaId, input.disparo || 'MANUAL', now) ||
+      this.guards.map((g) => g({ empresaId: input.empresaId, tareaId: task.id, modulo: task.modulo })).find(Boolean);
     if (bloqueo) {
       outcome = { estado: 'BLOQUEADO_LIMITE', resumen: bloqueo };
     } else {

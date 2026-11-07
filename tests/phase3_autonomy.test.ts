@@ -21,6 +21,7 @@ import { diskPersistence } from '../src/services/diskPersistenceService';
 import { HrManagementService } from '../src/services/hrManagementService';
 import { getAllowedTools } from '../src/config/agentToolPolicy';
 import { agentAlertService } from '../src/services/agentAlertService';
+import { aiRouterService } from '../src/services/aiRouterService';
 
 type Call = { model: string; contents: any[]; config: any };
 
@@ -39,7 +40,8 @@ export function scriptedModel(script: any[], calls: Call[]) {
 export const fnCall = (name: string, args: any = {}) => ({ candidates: [{ content: { parts: [{ functionCall: { name, args } }] } }] });
 export const textAnswer = (text: string) => ({ candidates: [{ content: { parts: [{ text }] } }], text });
 
-const EMPRESA = '76.555.444-3';
+// Identificador único por corrida: el consumo de IA y los aprendizajes se persisten entre corridas.
+const EMPRESA = `76${String(Date.now()).slice(-6)}-3`;
 const req = (over: any = {}): any => ({
   empresaId: EMPRESA,
   module: 'INVENTARIO',
@@ -406,6 +408,101 @@ async function run() {
     assert.ok(!agentAlertService.list({ empresaId: EMP, soloNoLeidas: true, limit: 1000 }).some((x) => x.id === a.id));
   });
 
+  // ---------------------------------------------------------------- 3.5
+  console.log('\n--- 3.5 Límites y costos ---');
+  const uniq = (p: string) => `${p}${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 10)}`;
+
+  await test('Máximo de llamadas al modelo por ejecución (configurable por empresa)', async () => {
+    process.env.GEMINI_API_KEY = 'clave-de-prueba';
+    const emp = uniq('75');
+    aiRouterService.setCompanyOverride(emp, { agentBudget: { maxIteracionesPorEjecucion: 2 } });
+    const calls: Call[] = [];
+    AutonomousAgentEngine.modelClientFactory = scriptedModel([fnCall('tool_inventory_kardex', {})], calls);
+    const r = await AutonomousAgentEngine.executeAutonomousAgentLoop(req({ empresaId: emp, query: 'kardex' }));
+    assert.strictEqual(calls.length, 2, `Llamadas: ${calls.length}`);
+    assert.strictEqual(r.success, false);
+    assert.match(r.finalText, /máximo de 2 llamadas/);
+  });
+
+  await test('Cada llamada del agente queda registrada con sus tokens y su costo', async () => {
+    const emp = uniq('74');
+    const calls: Call[] = [];
+    const conUso = (resp: any) => ({ ...resp, usageMetadata: { promptTokenCount: 1200, candidatesTokenCount: 300 } });
+    AutonomousAgentEngine.modelClientFactory = scriptedModel([conUso(fnCall('tool_inventory_kardex', {})), conUso(textAnswer('Listo.'))], calls);
+    await AutonomousAgentEngine.executeAutonomousAgentLoop(req({ empresaId: emp, query: 'kardex' }));
+    const uso = aiRouterService.getDailyUsage(emp);
+    assert.strictEqual(uso.llamadas, 2);
+    assert.strictEqual(uso.tokens, 3000);
+    assert.ok(uso.gastoClp > 0);
+  });
+
+  await test('Al agotar los tokens del día, el agente se detiene sin otra llamada al modelo', async () => {
+    const emp = uniq('73');
+    aiRouterService.setCompanyOverride(emp, { agentBudget: { maxTokensDiariosPorEmpresa: 1000 } });
+    const calls: Call[] = [];
+    AutonomousAgentEngine.modelClientFactory = scriptedModel(
+      [{ ...fnCall('tool_inventory_kardex', {}), usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 300 } }, textAnswer('no debería llegar')],
+      calls
+    );
+    const r = await AutonomousAgentEngine.executeAutonomousAgentLoop(req({ empresaId: emp, query: 'kardex' }));
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(r.code, 'BUDGET_EXCEEDED');
+    assert.strictEqual(r.steps.length, 1, 'Conserva el paso ya ejecutado');
+
+    const otra: Call[] = [];
+    AutonomousAgentEngine.modelClientFactory = scriptedModel([textAnswer('x')], otra);
+    const r2 = await AutonomousAgentEngine.executeAutonomousAgentLoop(req({ empresaId: emp, query: 'kardex' }));
+    assert.strictEqual(r2.code, 'BUDGET_EXCEEDED');
+    assert.strictEqual(otra.length, 0, 'Con el presupuesto agotado no se llama al modelo');
+
+    await assert.rejects(
+      () => aiRouterService.executeAiTask({ capability: 'GENERAL_CHAT', prompt: 'hola', empresaId: emp, modulo: 'CHAT' }),
+      (e: any) => e.code === 'BUDGET_EXCEEDED'
+    );
+  });
+
+  await test('El gasto diario en CLP también detiene al agente', async () => {
+    const emp = uniq('72');
+    aiRouterService.setCompanyOverride(emp, { agentBudget: { maxGastoDiarioClpPorEmpresa: 1 } });
+    aiRouterService.recordAgentModelCall({ empresaId: emp, modulo: 'INVENTARIO', model: 'm', tokensIn: 2_000_000, tokensOut: 0, latencyMs: 1 });
+    const check = aiRouterService.checkAgentBudget(emp);
+    assert.strictEqual(check.allowed, false);
+    assert.match(check.reason!, /gasto del día/);
+  });
+
+  await test('Criterio 3.5: un agente programado no supera el presupuesto configurado', async () => {
+    process.env.GEMINI_API_KEY = '';
+    const emp = uniq('71');
+    aiRouterService.setCompanyOverride(emp, { agentBudget: { maxEjecucionesProgramadasDiarias: 2 } });
+    for (const t of AGENT_SCHEDULED_TASKS) agentSchedulerService.upsertSchedule({ empresaId: emp, tareaId: t.id, usuarioId: 'test', now: T0 });
+    const r = await agentSchedulerService.tick(T1);
+    const ejecutadas = r.filter((x) => x.estado !== 'BLOQUEADO_LIMITE');
+    const bloqueadas = r.filter((x) => x.estado === 'BLOQUEADO_LIMITE');
+    assert.strictEqual(ejecutadas.length, 2, r.map((x) => `${x.tareaId}=${x.estado}`).join(', '));
+    assert.strictEqual(bloqueadas.length, AGENT_SCHEDULED_TASKS.length - 2);
+    assert.ok(bloqueadas.every((b) => b.pasos.length === 0), 'Una tarea bloqueada no ejecuta herramientas');
+    const alerta = agentAlertService.list({ empresaId: emp }).find((a) => a.runId === bloqueadas[0].id);
+    assert.ok(alerta && alerta.tipo === 'ERROR', 'El bloqueo se avisa al responsable');
+
+    // Presupuesto de IA agotado: tampoco corre.
+    const emp2 = uniq('70');
+    aiRouterService.setCompanyOverride(emp2, { agentBudget: { maxTokensDiariosPorEmpresa: 10 } });
+    aiRouterService.recordAgentModelCall({ empresaId: emp2, modulo: 'CONCILIACION', model: 'm', tokensIn: 50, tokensOut: 0, latencyMs: 1 });
+    const b = await agentSchedulerService.runTask({ empresaId: emp2, tareaId: 'CONCILIACION_DIARIA', disparo: 'PROGRAMADO', usuarioId: 'test' });
+    assert.strictEqual(b.estado, 'BLOQUEADO_LIMITE');
+  });
+
+  // Limpieza: las programaciones de prueba no deben quedar activas en data/ para un servidor local.
+  {
+    const snap: any = diskPersistence.getSnapshot();
+    const testEmps = new Set((snap.agentSchedules || []).filter((x: any) => x.creadoPor === 'test').map((x: any) => x.empresaId));
+    diskPersistence.updateCollection('agentSchedules', (snap.agentSchedules || []).filter((x: any) => x.creadoPor !== 'test'));
+    const testRun = (x: any) => testEmps.has(x.empresaId) || x.usuarioId === 'test';
+    const testRunIds = new Set((snap.agentScheduleRuns || []).filter(testRun).map((x: any) => x.id));
+    diskPersistence.updateCollection('agentScheduleRuns', (snap.agentScheduleRuns || []).filter((x: any) => !testRun(x)));
+    diskPersistence.updateCollection('agentAlerts', (snap.agentAlerts || []).filter((x: any) => !testEmps.has(x.empresaId) && !testRunIds.has(x.runId)));
+    diskPersistence.flushToDiskSync();
+  }
   AutonomousAgentEngine.modelClientFactory = prevFactory;
   process.env.GEMINI_API_KEY = prevKey;
   agentAlertService.setWhatsappPort(null);

@@ -87,7 +87,8 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
     // 2.9: cada respuesta lleva su modo de ejecución visible ("IA + herramientas", "Reglas" o "Demostración")
     const modeLabel = executionModeLabel(result.executionMode, { success: result.success, code: result.code });
     const taggedText = withExecutionModeTag(result.finalText, modeLabel);
-    const failureStatus = result.code === 'LLM_UNAVAILABLE' || result.code === 'LLM_EMPTY_RESPONSE' ? 503 : 422;
+    const failureStatus =
+      result.code === 'BUDGET_EXCEEDED' ? 429 : result.code === 'LLM_UNAVAILABLE' || result.code === 'LLM_EMPTY_RESPONSE' ? 503 : 422;
     res.status(isSuccess ? 200 : failureStatus).json({
       success: isSuccess,
       data: result,

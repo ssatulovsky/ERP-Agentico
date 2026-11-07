@@ -47,7 +47,21 @@ interface AiConfig {
     localModelCode?: string;
     localModelVision?: string;
   }>;
+  /** 3.5: límites de los agentes por empresa y por día (0 = sin límite). */
+  agentBudget?: {
+    maxIteracionesPorEjecucion: number;
+    maxTokensDiariosPorEmpresa: number;
+    maxGastoDiarioClpPorEmpresa: number;
+    maxEjecucionesProgramadasDiarias: number;
+  };
 }
+
+const BUDGET_FIELDS: Array<{ key: keyof NonNullable<AiConfig['agentBudget']>; label: string; ayuda: string }> = [
+  { key: 'maxIteracionesPorEjecucion', label: 'Llamadas al modelo por ejecución', ayuda: 'Máximo de iteraciones del bucle agéntico.' },
+  { key: 'maxTokensDiariosPorEmpresa', label: 'Tokens diarios por empresa', ayuda: 'Entrada + salida, hora de Chile.' },
+  { key: 'maxGastoDiarioClpPorEmpresa', label: 'Gasto diario por empresa (CLP)', ayuda: 'Costo estimado de IA en la nube.' },
+  { key: 'maxEjecucionesProgramadasDiarias', label: 'Tareas programadas diarias por empresa', ayuda: 'Ejecuciones automáticas del despachador.' },
+];
 
 interface LocalStatus {
   reachable: boolean;
@@ -588,6 +602,44 @@ export const AiModelManagerModal: React.FC<AiModelManagerModalProps> = ({
                   <span className="text-[11px] text-slate-500">
                     Garantiza cero caídas en la experiencia del usuario.
                   </span>
+                </div>
+              </div>
+
+              {/* 3.5: Límites y costos de los agentes */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800">Límites de los agentes (por empresa y por día)</h4>
+                  <p className="text-[11px] text-slate-500">
+                    Al alcanzar un límite, el agente se detiene y lo informa; un valor 0 desactiva ese límite.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {BUDGET_FIELDS.map((f) => (
+                    <label key={f.key} className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
+                      {f.label}
+                      <input
+                        type="number"
+                        min={0}
+                        value={config.agentBudget?.[f.key] ?? ''}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            agentBudget: {
+                              ...(config.agentBudget || {
+                                maxIteracionesPorEjecucion: 6,
+                                maxTokensDiariosPorEmpresa: 200000,
+                                maxGastoDiarioClpPorEmpresa: 5000,
+                                maxEjecucionesProgramadasDiarias: 24,
+                              }),
+                              [f.key]: Math.max(0, Number(e.target.value) || 0),
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      />
+                      <span className="text-[10px] font-normal text-slate-500">{f.ayuda}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
 

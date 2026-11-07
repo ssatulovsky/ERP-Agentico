@@ -20,7 +20,56 @@ export interface AiRouterConfig {
     localBaseUrl?: string;
     localModelCode?: string;
     localModelVision?: string;
+    /** 3.5: límites propios de la empresa (reemplazan los generales). */
+    agentBudget?: Partial<AgentBudgetLimits>;
   }>;
+  /** 3.5: límites generales de los agentes por empresa y por día (hora de Chile). */
+  agentBudget?: Partial<AgentBudgetLimits>;
+}
+
+/** 3.5 Límites y costos de los agentes. Un valor 0 desactiva ese límite. */
+export interface AgentBudgetLimits {
+  /** Llamadas al modelo por ejecución del bucle agéntico. */
+  maxIteracionesPorEjecucion: number;
+  /** Tokens (entrada + salida) por empresa y por día. */
+  maxTokensDiariosPorEmpresa: number;
+  /** Gasto estimado en CLP por empresa y por día. */
+  maxGastoDiarioClpPorEmpresa: number;
+  /** Ejecuciones programadas por empresa y por día. */
+  maxEjecucionesProgramadasDiarias: number;
+}
+
+export interface AgentBudgetCheck {
+  allowed: boolean;
+  code?: 'BUDGET_EXCEEDED';
+  reason?: string;
+  dia: string;
+  uso: { tokens: number; gastoClp: number; llamadas: number };
+  limites: AgentBudgetLimits;
+}
+
+const envNumber = (name: string, fallback: number) => {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v >= 0 && process.env[name] !== undefined && process.env[name] !== '' ? v : fallback;
+};
+
+export function defaultAgentBudget(): AgentBudgetLimits {
+  return {
+    maxIteracionesPorEjecucion: envNumber('AGENT_MAX_ITERATIONS', 6),
+    maxTokensDiariosPorEmpresa: envNumber('AGENT_MAX_DAILY_TOKENS_PER_COMPANY', 200_000),
+    maxGastoDiarioClpPorEmpresa: envNumber('AGENT_MAX_DAILY_SPEND_CLP_PER_COMPANY', 5_000),
+    maxEjecucionesProgramadasDiarias: envNumber('AGENT_MAX_SCHEDULED_RUNS_PER_DAY', 24),
+  };
+}
+
+/** Día calendario en Chile (AAAA-MM-DD) de un instante. */
+export function chileDayKey(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+/** Costo estimado en USD por tokens (tarifa de referencia de modelos flash). */
+export function estimateCostUsd(tokensIn: number, tokensOut: number): number {
+  return (tokensIn * 0.000075 + tokensOut * 0.0003) / 1000;
 }
 
 export interface AiUsageLogEntry {
@@ -139,6 +188,8 @@ class AiRouterService {
       ...this.config,
       geminiApiKey: rawKey ? `${rawKey.slice(0, 8)}...****` : '',
       hasGeminiApiKey: Boolean(rawKey),
+      // 3.5: límites generales vigentes (variables de entorno + configuración guardada).
+      agentBudget: this.getAgentBudgetLimits(),
     };
   }
 
@@ -205,6 +256,13 @@ class AiRouterService {
    * realizando fallback resiliente a Gemini en caso de fallo.
    */
   public async executeAiTask(params: ExecuteAiTaskParams): Promise<ExecuteAiTaskResult> {
+    // 3.5: sin presupuesto diario de la empresa no se llama al modelo.
+    if (params.empresaId) {
+      const budget = this.checkAgentBudget(params.empresaId);
+      if (!budget.allowed) {
+        throw Object.assign(new Error(budget.reason), { code: 'BUDGET_EXCEEDED' });
+      }
+    }
     const startTime = Date.now();
     const effective = this.getEffectiveConfig(params.empresaId);
     const empresaKey = params.empresaId || 'DEFAULT_COMPANY';
@@ -496,6 +554,99 @@ class AiRouterService {
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  // ==========================================================================
+  // 3.5 LÍMITES Y COSTOS POR EMPRESA Y POR DÍA
+  // ==========================================================================
+
+  /** Límites efectivos de una empresa: generales (env + configuración) y los propios de la empresa. */
+  public getAgentBudgetLimits(empresaId?: string): AgentBudgetLimits {
+    const cfg = this.getConfig();
+    const override = empresaId ? cfg.perCompanyOverrides?.[empresaId]?.agentBudget : undefined;
+    const merged = { ...defaultAgentBudget(), ...(cfg.agentBudget || {}), ...(override || {}) };
+    const clean = (v: any, d: number) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+    const base = defaultAgentBudget();
+    return {
+      maxIteracionesPorEjecucion: Math.max(1, clean(merged.maxIteracionesPorEjecucion, base.maxIteracionesPorEjecucion)),
+      maxTokensDiariosPorEmpresa: clean(merged.maxTokensDiariosPorEmpresa, base.maxTokensDiariosPorEmpresa),
+      maxGastoDiarioClpPorEmpresa: clean(merged.maxGastoDiarioClpPorEmpresa, base.maxGastoDiarioClpPorEmpresa),
+      maxEjecucionesProgramadasDiarias: clean(merged.maxEjecucionesProgramadasDiarias, base.maxEjecucionesProgramadasDiarias),
+    };
+  }
+
+  /** Consumo de IA de la empresa en el día (hora de Chile). */
+  public getDailyUsage(empresaId: string, now: Date = new Date()): AgentBudgetCheck['uso'] & { dia: string } {
+    if (!this.isLoaded) this.loadPersistedState();
+    const dia = chileDayKey(now);
+    const norm = (v: string) => String(v || '').replace(/[^0-9kK]/g, '').toUpperCase() || String(v || '');
+    const target = norm(empresaId);
+    let tokens = 0;
+    let gastoClp = 0;
+    let llamadas = 0;
+    for (const l of this.logs) {
+      if (norm(l.empresaId) !== target) continue;
+      if (chileDayKey(new Date(l.timestamp)) !== dia) continue;
+      tokens += (Number(l.promptTokensEstimados) || 0) + (Number(l.completionTokensEstimados) || 0);
+      // Sin redondear por llamada: el costo de cada llamada suele ser menor a $1.
+      gastoClp += (Number(l.costoEstimadoUsd) || 0) * this.usdToClpRate;
+      llamadas++;
+    }
+    return { dia, tokens, gastoClp: Math.round(gastoClp * 100) / 100, llamadas };
+  }
+
+  /** ¿Puede la empresa seguir usando IA hoy? Un límite en 0 no se aplica. */
+  public checkAgentBudget(empresaId: string, now: Date = new Date()): AgentBudgetCheck {
+    const limites = this.getAgentBudgetLimits(empresaId);
+    const { dia, ...uso } = this.getDailyUsage(empresaId, now);
+    const motivos: string[] = [];
+    if (limites.maxTokensDiariosPorEmpresa > 0 && uso.tokens >= limites.maxTokensDiariosPorEmpresa) {
+      motivos.push(`tokens del día ${uso.tokens.toLocaleString('es-CL')} de ${limites.maxTokensDiariosPorEmpresa.toLocaleString('es-CL')}`);
+    }
+    if (limites.maxGastoDiarioClpPorEmpresa > 0 && uso.gastoClp >= limites.maxGastoDiarioClpPorEmpresa) {
+      motivos.push(`gasto del día $${uso.gastoClp.toLocaleString('es-CL')} de $${limites.maxGastoDiarioClpPorEmpresa.toLocaleString('es-CL')}`);
+    }
+    if (motivos.length === 0) return { allowed: true, dia, uso, limites };
+    return {
+      allowed: false,
+      code: 'BUDGET_EXCEEDED',
+      reason: `Presupuesto diario de IA agotado para la empresa ${empresaId} (${motivos.join('; ')}). Se reanuda mañana o al ampliar el límite.`,
+      dia,
+      uso,
+      limites,
+    };
+  }
+
+  /** Registra el consumo de una llamada del motor agéntico (tokens reales si el modelo los informa). */
+  public recordAgentModelCall(params: {
+    empresaId: string;
+    modulo: string;
+    userId?: string;
+    model: string;
+    tokensIn: number;
+    tokensOut: number;
+    latencyMs: number;
+  }): AiUsageLogEntry {
+    const costUsd = estimateCostUsd(params.tokensIn, params.tokensOut);
+    const entry: AiUsageLogEntry = {
+      id: `ai-log-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      empresaId: params.empresaId,
+      userId: params.userId,
+      modulo: `AGENTE_${params.modulo}`,
+      capability: 'REASONING_AUDIT',
+      modeloIntentado: params.model,
+      modeloUtilizado: params.model,
+      proveedorUtilizado: 'GEMINI',
+      fueFallback: false,
+      promptTokensEstimados: Math.max(0, Math.round(params.tokensIn)),
+      completionTokensEstimados: Math.max(0, Math.round(params.tokensOut)),
+      tiempoRespuestaMs: params.latencyMs,
+      costoEstimadoUsd: costUsd,
+      costoEstimadoClp: Math.round(costUsd * this.usdToClpRate),
+      timestamp: new Date().toISOString(),
+    };
+    this.recordLog(entry);
+    return entry;
   }
 
   public recordLog(logEntry: AiUsageLogEntry) {

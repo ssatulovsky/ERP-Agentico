@@ -2087,6 +2087,28 @@ ${memoryText}`;
     return this.executeTool(toolName, args, request);
   }
 
+  /** 3.5: respuesta honesta cuando el presupuesto diario de IA de la empresa está agotado. */
+  private static budgetExceededResponse(
+    request: AutonomousAgentRequest,
+    agentDef: { agenteNombre: string },
+    reason: string,
+    steps: AgentExecutionStep[],
+    modelUsed: string
+  ): AutonomousAgentResponse {
+    return {
+      success: false,
+      code: 'BUDGET_EXCEEDED',
+      module: request.module,
+      agentName: agentDef.agenteNombre,
+      agentRole: request.agentRole,
+      finalText: `${reason} ${steps.length ? `Se detuvo tras ${steps.length} paso(s); ` : ''}no se hicieron más llamadas al modelo.`,
+      steps,
+      executionMode: 'AUTONOMOUS_REACT_LOOP',
+      modelUsed,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   private static moduleUnknownResponse(request: AutonomousAgentRequest): AutonomousAgentResponse {
     return {
       success: false,
@@ -2131,6 +2153,14 @@ ${memoryText}`;
       return this.executeDeterministicComplianceCore(request, agentDef);
     }
 
+    // 3.5: presupuesto diario de IA de la empresa. Agotado, no se llama al modelo.
+    const budgetBefore = aiRouterService.checkAgentBudget(request.empresaId);
+    if (!budgetBefore.allowed) {
+      return this.budgetExceededResponse(request, agentDef, budgetBefore.reason || 'Presupuesto diario agotado.', [], modelUsed);
+    }
+    const budgetLimits = budgetBefore.limites;
+    let budgetStopReason: string | null = null;
+
     try {
       const ai = this.modelClientFactory(apiKey);
 
@@ -2141,12 +2171,14 @@ ${memoryText}`;
       appliedLearnings = learningsApplied;
       const contents: any[] = buildConversationContents(request);
 
-      let maxIterations = 6;
+      // 3.5: máximo de llamadas al modelo por ejecución (configurable por empresa).
+      const maxIterations = budgetLimits.maxIteracionesPorEjecucion;
       let iteration = 0;
 
       while (iteration < maxIterations) {
         iteration++;
 
+        const callStart = Date.now();
         const response = await ai.models.generateContent({
           model: modelUsed,
           contents,
@@ -2159,6 +2191,20 @@ ${memoryText}`;
               },
             ],
           },
+        });
+
+        // 3.5: consumo real (usageMetadata) o estimado por largo de texto, y control del presupuesto.
+        const usage = (response as any)?.usageMetadata || {};
+        const tokensIn = Number(usage.promptTokenCount) || Math.round((systemInstruction.length + JSON.stringify(contents).length) / 4);
+        const tokensOut = Number(usage.candidatesTokenCount) || Math.round(JSON.stringify((response as any)?.candidates?.[0]?.content || '').length / 4);
+        aiRouterService.recordAgentModelCall({
+          empresaId: request.empresaId,
+          modulo: request.module,
+          userId: request.userId,
+          model: modelUsed,
+          tokensIn,
+          tokensOut,
+          latencyMs: Date.now() - callStart,
         });
 
         // 1. Extraer llamadas a herramientas (Function Calls)
@@ -2245,6 +2291,13 @@ ${memoryText}`;
           role: 'user',
           parts: toolResponseParts,
         });
+
+        // 3.5: si se agotó el presupuesto del día, no se hace otra llamada al modelo.
+        const budgetNow = aiRouterService.checkAgentBudget(request.empresaId);
+        if (!budgetNow.allowed) {
+          budgetStopReason = budgetNow.reason || 'Presupuesto diario agotado.';
+          break;
+        }
       }
 
       // Si el agente no llamó explícitamente a gobernanza pero generó una transacción sensible, auto-someterla
@@ -2262,6 +2315,15 @@ ${memoryText}`;
         });
       }
 
+      if (budgetStopReason && !finalAnswerText.trim()) {
+        return {
+          ...this.budgetExceededResponse(request, agentDef, budgetStopReason, steps, modelUsed),
+          technicalPayload: generatedTechnicalPayload,
+          governanceApproval: governanceApprovalResult,
+          learningsApplied: appliedLearnings,
+        };
+      }
+
       // Sin dictamen del modelo (respuesta vacía o límite de iteraciones) no se informa éxito.
       if (!finalAnswerText.trim()) {
         return {
@@ -2270,7 +2332,9 @@ ${memoryText}`;
           module: request.module,
           agentName: agentDef.agenteNombre,
           agentRole: request.agentRole,
-          finalText: `El modelo de IA no entregó un dictamen tras ${iteration} iteraciones. No se ejecutó ninguna operación adicional.`,
+          finalText: iteration >= maxIterations
+            ? `El agente alcanzó el máximo de ${maxIterations} llamadas al modelo por ejecución sin un dictamen final. No se ejecutó ninguna operación adicional.`
+            : `El modelo de IA no entregó un dictamen tras ${iteration} iteraciones. No se ejecutó ninguna operación adicional.`,
           steps,
           technicalPayload: generatedTechnicalPayload,
           governanceApproval: governanceApprovalResult,
