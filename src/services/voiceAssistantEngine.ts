@@ -825,7 +825,7 @@ He recalculado la proyección de tesorería y la **Matriz Diaria Estilo Excel** 
     // ------------------------------------------------------------------------
     const agenticIntent = detectAgenticIntent(normalized);
     if (agenticIntent) {
-      const delegated = await this.delegateToAgenticEngine(userInput, persona, context, agenticIntent.module);
+      const delegated = await this.delegateToAgenticEngine(userInput, persona, context, agenticIntent.module, conversationHistory);
       return delegated || agenticUnavailableResponse(persona, context, agenticIntent);
     }
 
@@ -1454,7 +1454,7 @@ Diagnóstico integral de la operación de **${context.clientName}**:
     }
 
     // Delegación general al motor agéntico (ReAct + Function Calling) para el resto de las consultas
-    const delegatedGeneral = await this.delegateToAgenticEngine(userInput, persona, context);
+    const delegatedGeneral = await this.delegateToAgenticEngine(userInput, persona, context, undefined, conversationHistory);
     if (delegatedGeneral) return delegatedGeneral;
 
     // 11. Fallback Conversacional Avanzado: Motor Generativo Gemini con Historial Multi-Turno
@@ -1533,10 +1533,16 @@ Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutar
     userInput: string,
     persona: AgentPersona,
     context: DialogueContext,
-    forcedModule?: string
+    forcedModule?: string,
+    conversationHistory: Array<{ sender?: 'AGENT' | 'USER'; text: string }> = []
   ): Promise<AgentDialogueTurnResult | null> {
     const empresaId = context.clientId || context.rut;
     if (!empresaId) return null;
+    // 3.2: el motor recibe los turnos previos de la conversación.
+    const history = conversationHistory
+      .filter((m) => m && m.text)
+      .slice(-12)
+      .map((m) => ({ role: m.sender === 'USER' ? 'user' : 'model', text: m.text }));
     try {
       let mappedModule = forcedModule || 'CONTABILIDAD';
       const normInput = userInput.toLowerCase();
@@ -1583,6 +1589,7 @@ Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutar
             query: userInput,
             agentRole: `${persona.nombre} - ${persona.cargo}`,
             context: engineContext,
+            history,
           }),
         });
         if (res.ok) {
@@ -1598,6 +1605,7 @@ Dime por voz o texto qué parámetros deseas aplicar y me encargaré de ejecutar
             query: userInput,
             agentRole: `${persona.nombre} - ${persona.cargo}`,
             context: engineContext as any,
+            history: history as any,
           });
         } catch (engineErr) {
           console.warn('[VoiceAssistantEngine] Motor agéntico no disponible:', (engineErr as any)?.message || engineErr);

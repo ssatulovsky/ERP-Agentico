@@ -220,22 +220,8 @@ async function fetchCompanyOperationalProfile(empresaId: string): Promise<Compan
           tipo: bankAccountData.tipoCuenta,
         }
       : null, // sin cuenta bancaria registrada (antes: cuenta inventada 00-123-45678-90)
-    cuentasContablesRelevantes:
-      relevantAccounts.length > 0
-        ? relevantAccounts
-        : [
-            { codigo: '1.1.01.002', nombre: 'Banco de Chile Cuenta Corriente', clasificacion: 'ACTIVO' },
-            { codigo: '1.1.03.001', nombre: 'Clientes Nacionales', clasificacion: 'ACTIVO' },
-            { codigo: '1.1.05.001', nombre: 'Existencias y Mercaderías en Bodega', clasificacion: 'ACTIVO' },
-            { codigo: '1.1.07.001', nombre: 'IVA Crédito Fiscal (19%)', clasificacion: 'ACTIVO' },
-            { codigo: '2.1.01.001', nombre: 'Proveedores Nacionales por Pagar', clasificacion: 'PASIVO' },
-            { codigo: '2.1.03.001', nombre: 'IVA Débito Fiscal (19%)', clasificacion: 'PASIVO' },
-            { codigo: '2.1.03.002', nombre: 'Retención Impuesto 2da Categoría (14.5%)', clasificacion: 'PASIVO' },
-            { codigo: '4.1.01.001', nombre: 'Ingresos por Ventas Facturadas Afectas', clasificacion: 'INGRESOS' },
-            { codigo: '5.1.01.001', nombre: 'Costo de Ventas (PMP)', clasificacion: 'COSTOS' },
-            { codigo: '5.1.02.015', nombre: 'Servicios de Infraestructura Cloud y SaaS', clasificacion: 'GASTOS' },
-            { codigo: '6.1.01.001', nombre: 'Gasto en Sueldos y Remuneraciones', clasificacion: 'GASTOS' },
-          ],
+    // Solo el plan de cuentas registrado de la empresa (antes: extracto genérico con bancos fijos).
+    cuentasContablesRelevantes: relevantAccounts,
   };
 }
 
@@ -441,10 +427,10 @@ CAPA 2: CONTEXTO OPERATIVO Y PERFIL TRIBUTARIO DE LA EMPRESA CLIENTE
 - TASA DE PPM ASIGNADA: ${companyProfile.tasaPpmSugerida} sobre los ingresos brutos del período
 - BENEFICIO POSTERGACIÓN DE IVA: ${companyProfile.beneficioPostergacionIva ? 'SÍ (Aplica Art. 64 LIR por Régimen Pro Pyme)' : 'NO (Régimen General)'}
 - CLIENTE ANCLA / ERP AUTÓNOMO: ${companyProfile.esClienteAncla ? 'SÍ (Posee módulos descentralizados con supervisión pericial)' : 'NO (Contabilidad directa)'}
-- BANCO PRINCIPAL DE OPERACIONES: ${companyProfile.cuentaBancariaPrimaria?.banco} - Cta. Cte. N° ${companyProfile.cuentaBancariaPrimaria?.numeroCuenta}
+- BANCO PRINCIPAL DE OPERACIONES: ${companyProfile.cuentaBancariaPrimaria ? `${companyProfile.cuentaBancariaPrimaria.banco} - Cta. N° ${companyProfile.cuentaBancariaPrimaria.numeroCuenta}` : 'No registrado'}
 
 PLAN DE CUENTAS IFRS VINCULADO A LA EMPRESA (EXTRACTO PRIORITARIO):
-${planCuentasFormatted}
+${planCuentasFormatted || '  * Sin plan de cuentas registrado para la empresa.'}
 
 ****************************************************************************************************
 CAPA 3: DIRECTIVAS E INSTRUCCIONES ESPECIALES DEL ESTUDIO CONTABLE / CLIENTE
@@ -484,4 +470,93 @@ PROTOCOLO FINAL DE SALIDA Y VALIDACIÓN POR EL ORQUESTADOR SENIOR
     companyProfile,
     learningsApplied: learnings,
   };
+}
+
+// ============================================================================
+// 3.2 CONTEXTO Y MEMORIA PARA EL MOTOR AGÉNTICO (plan de corrección, fase 3)
+// ============================================================================
+
+/** Módulo del ERP → código de la base de conocimiento de aprendizajes. */
+export const ERP_MODULE_TO_AGENT_CODE: Record<string, AgentModuleCode> = {
+  CONTABILIDAD: 'ACCOUNTING_LEDGER',
+  RENDICIONES: 'ACCOUNTING_LEDGER',
+  TRIBUTARIO_SII: 'F29_TAX',
+  FACTURACION_DTE: 'SII_RCV',
+  TESORERIA: 'BANK_RECON',
+  CONCILIACION: 'BANK_RECON',
+  FLUJO_CAJA: 'BANK_RECON',
+  COMERCIAL_COMPRAS: 'SALES_COMMERCIAL',
+  RRHH: 'RRHH',
+  INVENTARIO: 'INVENTORY_WMS',
+  ACTIVO_FIJO: 'FIXED_ASSETS',
+  COSTOS_PRODUCCION: 'PRODUCTION_COSTS',
+};
+
+/** Códigos adicionales cuyas correcciones también aplican al módulo (p. ej. RCV para el agente tributario). */
+const EXTRA_LEARNING_CODES: Record<string, AgentModuleCode[]> = {
+  TRIBUTARIO_SII: ['SII_RCV'],
+};
+
+export interface AgentMemoryContext {
+  agentCode: AgentModuleCode;
+  text: string;
+  companyProfile: CompanyOperationalProfile;
+  learningsApplied: AgentLearningItem[];
+  directivas: string | null;
+}
+
+/**
+ * Resumen del perfil operativo de la empresa, directivas del estudio y correcciones aprendidas
+ * para el agente de un módulo. Solo incluye datos registrados: lo que falta se declara como faltante.
+ */
+export async function buildAgentMemoryContext(params: {
+  empresaId: string;
+  erpModule: string;
+  maxLearnings?: number;
+}): Promise<AgentMemoryContext> {
+  const erpModule = String(params.erpModule || '').toUpperCase();
+  const agentCode = ERP_MODULE_TO_AGENT_CODE[erpModule] || 'ACCOUNTING_LEDGER';
+  const codes = [agentCode, ...(EXTRA_LEARNING_CODES[erpModule] || [])];
+  const max = params.maxLearnings ?? 8;
+
+  const [companyProfile, agentConfig, ...learningLists] = await Promise.all([
+    fetchCompanyOperationalProfile(params.empresaId),
+    fetchCompanyAgentConfig(params.empresaId, agentCode),
+    ...codes.map((c) => fetchAgentLearnings(params.empresaId, c, max)),
+  ]);
+
+  const seen = new Set<string>();
+  const learnings = (learningLists as AgentLearningItem[][])
+    .flat()
+    .filter((l) => (seen.has(l.id) ? false : (seen.add(l.id), true)))
+    .slice(0, max);
+
+  const noReg = 'no registrado';
+  const perfil = [
+    `- Empresa: ${companyProfile.razonSocial || noReg} (RUT ${companyProfile.rut || noReg})`,
+    `- Giro: ${companyProfile.giro || noReg}`,
+    `- Régimen tributario: ${companyProfile.regimenTributario === 'NO_INFORMADO' ? 'no informado (pídelo si el cálculo lo requiere)' : companyProfile.regimenTributario}`,
+    `- Cuenta bancaria principal: ${companyProfile.cuentaBancariaPrimaria ? `${companyProfile.cuentaBancariaPrimaria.banco} N° ${companyProfile.cuentaBancariaPrimaria.numeroCuenta}` : noReg}`,
+    `- Plan de cuentas: ${(companyProfile.cuentasContablesRelevantes || []).length > 0
+      ? (companyProfile.cuentasContablesRelevantes || []).map((c) => `${c.codigo} ${c.nombre}`).join('; ')
+      : 'sin plan de cuentas registrado'}`,
+  ].join('\n');
+
+  const directivasRaw = (agentConfig.instruccionesEspeciales || '').trim();
+  const directivas = directivasRaw && !/^Sin directivas ad-hoc/i.test(directivasRaw) ? directivasRaw : null;
+
+  const correcciones = learnings.length > 0
+    ? learnings.map((l, i) => `${i + 1}. [${l.categoria}] Error anterior: "${l.descripcionError}". Regla obligatoria: "${l.solucionAplicada}".`).join('\n')
+    : 'Sin correcciones registradas para este agente.';
+
+  const text = `PERFIL OPERATIVO DE LA EMPRESA (solo datos registrados):
+${perfil}
+
+DIRECTIVAS DEL ESTUDIO CONTABLE PARA ESTE AGENTE:
+${directivas || 'Sin directivas especiales.'}
+
+CORRECCIONES APRENDIDAS (aplícalas siempre; tienen prioridad sobre tu criterio):
+${correcciones}`;
+
+  return { agentCode, text, companyProfile, learningsApplied: learnings, directivas };
 }

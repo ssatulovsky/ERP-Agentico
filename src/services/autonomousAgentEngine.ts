@@ -15,6 +15,7 @@ import { SiiRcvService } from './siiRcvService';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
 import { calculatePreF29 } from '../utils/f29SeniorEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
+import { buildAgentMemoryContext } from './agentContextBuilderService';
 import {
   getAllowedTools,
   isKnownAgentModule,
@@ -73,6 +74,13 @@ export interface AutonomousAgentRequest {
     [key: string]: any;
   };
   userId?: string;
+  /** 3.2: turnos previos de la conversación con este agente (más antiguo primero). */
+  history?: AgentConversationTurn[];
+}
+
+export interface AgentConversationTurn {
+  role: 'user' | 'model' | 'assistant';
+  text: string;
 }
 
 /** Cliente mínimo del modelo; se puede sustituir en pruebas (AutonomousAgentEngine.modelClientFactory). */
@@ -96,6 +104,22 @@ export interface AutonomousAgentResponse {
   missingParams?: string[];
   modelUsed: string;
   timestamp: string;
+  /** 3.2: identificadores de las correcciones aprendidas que se inyectaron en el prompt. */
+  learningsApplied?: string[];
+}
+
+/** Máximo de turnos previos que se envían al modelo. */
+export const MAX_HISTORY_TURNS = 12;
+
+/** 3.2: historial saneado (roles válidos, texto acotado) convertido al formato del modelo. */
+export function buildConversationContents(request: Pick<AutonomousAgentRequest, 'history' | 'query'>): any[] {
+  const turns = Array.isArray(request.history) ? request.history : [];
+  const contents = turns
+    .filter((t) => t && typeof t.text === 'string' && t.text.trim() && ['user', 'model', 'assistant'].includes(t.role))
+    .slice(-MAX_HISTORY_TURNS)
+    .map((t) => ({ role: t.role === 'user' ? 'user' : 'model', parts: [{ text: t.text.slice(0, 4000) }] }));
+  contents.push({ role: 'user', parts: [{ text: request.query }] });
+  return contents;
 }
 
 /**
@@ -2007,6 +2031,43 @@ export class AutonomousAgentEngine {
     }) as unknown as AgentModelClient;
 
   /**
+   * 3.2: instrucción de sistema del agente con su lista de herramientas, el perfil operativo
+   * de la empresa, las directivas del estudio y las correcciones aprendidas.
+   */
+  public static async buildSystemInstruction(
+    request: AutonomousAgentRequest,
+    agentDef: { agenteNombre: string; responsabilidad: string; herramientasPermitidas?: readonly string[] },
+    safeContext: any = {}
+  ): Promise<{ systemInstruction: string; learningsApplied: string[] }> {
+    let memoryText = 'PERFIL Y MEMORIA: no disponibles en esta ejecución.';
+    let learningsApplied: string[] = [];
+    try {
+      const memory = await buildAgentMemoryContext({ empresaId: request.empresaId, erpModule: request.module });
+      memoryText = memory.text;
+      learningsApplied = memory.learningsApplied.map((l) => l.id);
+    } catch (err: any) {
+      console.warn(`[AutonomousAgentEngine] Sin memoria del agente: ${err?.message || err}`);
+    }
+    const herramientas = (agentDef.herramientasPermitidas || getAllowedTools(request.module)).join(', ');
+    const periodo = request.context?.selectedPeriod || request.context?.periodo;
+
+    const systemInstruction = `Eres ${agentDef.agenteNombre}, desempeñando el rol de "${request.agentRole}" para la empresa "${safeContext?.company?.razonSocial || request.empresaId}" en el sistema ERPremIA.
+Tu responsabilidad principal: ${agentDef.responsabilidad}.
+Módulo: ${request.module}. Herramientas autorizadas: ${herramientas}.${periodo ? `\nPeríodo seleccionado por el usuario: ${periodo}.` : ''}
+
+INSTRUCCIONES CRÍTICAS:
+1. Resuelves usando herramientas reales y la aprobación humana; no eres un chatbot pasivo.
+2. Usa solo cifras que entreguen las herramientas o el contexto. NO inventes datos, folios, RUT ni montos.
+3. Si una herramienta responde MISSING_PARAMS o NO_DATA, pide al usuario los datos que faltan; no los supongas.
+4. Si necesitas una herramienta que no está en tu lista, dilo e indica qué agente corresponde.
+5. Toda operación que involucre pago de fondos, emisión de DTEs o modificación de libros legales termina solicitando autorización humana con "tool_submit_governance_approval".
+6. Con las observaciones de las herramientas, emite tu dictamen final en lenguaje profesional, citando la normativa chilena aplicable.
+
+${memoryText}`;
+    return { systemInstruction, learningsApplied };
+  }
+
+  /**
    * 3.1: ejecución de una herramienta en nombre del agente de un módulo.
    * Rechaza (TOOL_NOT_ALLOWED) cualquier herramienta fuera de la lista del agente.
    */
@@ -2058,6 +2119,7 @@ export class AutonomousAgentEngine {
     let modelUsed = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     let generatedTechnicalPayload: any = null;
     let governanceApprovalResult: ModuleAgentApprovalRequest | undefined = undefined;
+    let appliedLearnings: string[] = [];
 
     // Si no hay API Key o falla el SDK, ejecutamos el núcleo determinista de cumplimiento
     if (!apiKey) {
@@ -2070,22 +2132,10 @@ export class AutonomousAgentEngine {
 
       const safeContext = request.context ? sanitizeContextForAi(request.context) : {};
 
-      const systemInstruction = `Eres ${agentDef.agenteNombre}, desempeñando el rol de "${request.agentRole}" para la empresa "${safeContext?.company?.razonSocial || request.empresaId}" en el sistema ERPremIA.
-Tu responsabilidad principal: ${agentDef.responsabilidad}.
-
-INSTRUCCIONES CRÍTICAS AGÉNTICAS:
-1. Eres un asistente corporativo con herramientas, NO un chatbot pasivo: resuelves usando herramientas reales y la aprobación humana.
-2. Para resolver la consulta o solicitud del usuario, DEBES invocar una o más herramientas reales (function calling). NO inventes datos, folios ni montos.
-3. Si el usuario solicita un finiquito, liquidación, asiento contable, revisión de impuestos o conciliación, utiliza las herramientas declaradas para obtener el cálculo oficial.
-4. Toda operación que involucre pago de fondos, emisión de DTEs o modificación de libros legales debe culminar solicitando autorización humana con "tool_submit_governance_approval".
-5. Una vez que hayas obtenido las observaciones de las herramientas, emite tu dictamen técnico final con lenguaje profesional, citando la normativa legal chilena aplicable.`;
-
-      const contents: any[] = [
-        {
-          role: 'user',
-          parts: [{ text: request.query }],
-        },
-      ];
+      // 3.2: perfil de la empresa, directivas y correcciones aprendidas en el prompt; historial en contents.
+      const { systemInstruction, learningsApplied } = await this.buildSystemInstruction(request, agentDef, safeContext);
+      appliedLearnings = learningsApplied;
+      const contents: any[] = buildConversationContents(request);
 
       let maxIterations = 6;
       let iteration = 0;
@@ -2223,6 +2273,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
           executionMode,
           modelUsed,
           timestamp: new Date().toISOString(),
+          learningsApplied: appliedLearnings,
         };
       }
 
@@ -2238,6 +2289,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         executionMode,
         modelUsed,
         timestamp: new Date().toISOString(),
+        learningsApplied: appliedLearnings,
       };
     } catch (aiLoopError: any) {
       console.error('[AutonomousAgentEngine] Error en bucle agéntico con Gemini:', aiLoopError);

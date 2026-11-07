@@ -77,6 +77,8 @@ autonomousAgentsRouter.post('/execute', async (req: Request, res: Response) => {
       query: String(rawQuery),
       context: rawContext,
       userId: authUser.userId,
+      // 3.2: historial de la conversación con el agente (el motor lo acota y sanea).
+      history: Array.isArray(req.body.history) ? req.body.history : undefined,
     };
 
     const result = await AutonomousAgentEngine.executeAutonomousAgentLoop(agentRequest);
