@@ -17,7 +17,12 @@ export function generateRandomScryptHash(): string {
   // En el navegador no existe node:crypto (Vite lo externaliza y randomBytes es undefined): antes esto
   // rompía la carga de la app compilada (pantalla en blanco). Las contraseñas solo se generan y verifican
   // en el servidor; en el cliente el usuario por defecto queda con una contraseña inutilizable.
-  if (typeof (crypto as any)?.randomBytes !== 'function') return 'BLOQUEADA_EN_CLIENTE';
+  // Según cómo se compile, el módulo externalizado de Vite incluso lanza un error al leer la propiedad.
+  try {
+    if (typeof (crypto as any)?.randomBytes !== 'function') return 'BLOQUEADA_EN_CLIENTE';
+  } catch {
+    return 'BLOQUEADA_EN_CLIENTE';
+  }
   return hashPassword(generateRandomInitialPassword());
 }
 
