@@ -5,6 +5,8 @@
  *   PUT  /api/agents/schedules            crea o actualiza la programación de una tarea
  *   POST /api/agents/schedules/:id/run    ejecuta ahora la tarea de una programación
  *   GET  /api/agents/schedules/runs       historial de ejecuciones
+ *   GET  /api/agents/schedules/alerts     3.4 alertas para el responsable (panel del dashboard)
+ *   POST /api/agents/schedules/alerts/:id/read  marca una alerta como leída
  *
  * La empresa la valida el middleware central (A1); aquí se exige además el módulo del agente
  * dueño de cada tarea, de modo que un usuario solo ve y opera las tareas de sus módulos.
@@ -17,6 +19,7 @@ import {
   getScheduledTask,
   isSchedulerEnabled,
 } from '../services/agentSchedulerService';
+import { agentAlertService } from '../services/agentAlertService';
 
 export const agentSchedulesRouter = Router();
 
@@ -116,4 +119,29 @@ agentSchedulesRouter.post('/:id/run', async (req: Request, res: Response) => {
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.code || 'RUN_FAILED', errorMessage: e.message });
   }
+});
+
+agentSchedulesRouter.get('/alerts', (req: Request, res: Response) => {
+  const user = authUserOf(req, res);
+  if (!user) return;
+  const empresaId = empresaOf(req);
+  const soloNoLeidas = String(req.query.soloNoLeidas || '') === 'true';
+  const alertas = agentAlertService
+    .list({ empresaId, soloNoLeidas, limit: 500 })
+    .filter((a) => userHasModuleAccess(user, canonicalModuleFor(a.modulo)))
+    .slice(0, 100);
+  res.json({ success: true, empresaId, noLeidas: alertas.filter((a) => !a.leidaEn).length, alertas });
+});
+
+agentSchedulesRouter.post('/alerts/:id/read', (req: Request, res: Response) => {
+  const user = authUserOf(req, res);
+  if (!user) return;
+  const alert = agentAlertService.get(String(req.params.id));
+  if (!alert) return res.status(404).json({ success: false, error: 'NOT_FOUND', errorMessage: 'Alerta no encontrada.' });
+  const comp = requireCompanyAccess(req, alert.empresaId);
+  if (!comp.allowed) return res.status(403).json({ success: false, error: 'ACCESO_EMPRESA_DENEGADO', errorMessage: comp.reason });
+  if (!userHasModuleAccess(user, canonicalModuleFor(alert.modulo))) {
+    return res.status(403).json({ success: false, error: 'MODULO_NO_PERMITIDO', errorMessage: `Sin acceso al módulo ${alert.modulo}.` });
+  }
+  res.json({ success: true, alerta: agentAlertService.markRead(alert.id, user.userId) });
 });

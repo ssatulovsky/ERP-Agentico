@@ -21,7 +21,7 @@ import {
 import { formatCLP } from '../../utils/chileanAccounting';
 
 interface Props {
-  moduloId: 'RRHH' | 'CONTABILIDAD' | 'TRIBUTARIO_SII' | 'TESORERIA' | 'COMERCIAL_COMPRAS' | 'INVENTARIO';
+  moduloId: string;
   empresaId: string;
   onOperationExecuted?: (approval: ModuleAgentApprovalRequest) => void;
 }

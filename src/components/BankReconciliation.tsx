@@ -62,6 +62,7 @@ import { getStoredAuthToken } from '../services/apiClient';
 import { contarResultadoConciliacion, mensajeResultadoConciliacion, saldoLibroMayorCuenta } from '../utils/bankReconciliationReport';
 import { describirPeriodos } from '../utils/periodo';
 import { isDemoModeEnabled } from '../config/demoMode';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 
 export function formatAccountCurrency(amount: number, moneda: 'CLP' | 'USD' | 'EUR' = 'CLP'): string {
   if (moneda === 'USD') {
@@ -1376,6 +1377,8 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* 3.3: calces propuestos por la conciliación programada, pendientes de aprobación */}
+      <ModuleAgentGovernanceHeader moduloId="CONCILIACION" empresaId={company.id || company.rut} />
       {/* Top Banner: Bank Account Context & Live Indicators */}
       <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-5">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">

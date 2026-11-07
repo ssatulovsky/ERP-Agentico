@@ -37,6 +37,7 @@ import {
   ChequeEmitido,
 } from '../types';
 import { formatCLP } from '../utils/chileanAccounting';
+import { AgentAlertsPanel } from './governance/AgentAlertsPanel';
 import {
   calculateExecutiveDashboardMetrics,
   ExecutiveDashboardSummary,
@@ -276,6 +277,9 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           })}
         </div>
       </div>
+
+      {/* 3.4: alertas de los agentes y tareas programadas (el responsable las ve sin abrir cada módulo) */}
+      <AgentAlertsPanel empresaId={company.id || company.rut} />
 
       {/* ========================================================================= */}
       {/* 2. TOP STRATEGIC KPI CARDS */}

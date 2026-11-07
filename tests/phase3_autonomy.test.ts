@@ -20,6 +20,7 @@ import { agentSchedulerService, computeNextRun, AGENT_SCHEDULED_TASKS } from '..
 import { diskPersistence } from '../src/services/diskPersistenceService';
 import { HrManagementService } from '../src/services/hrManagementService';
 import { getAllowedTools } from '../src/config/agentToolPolicy';
+import { agentAlertService } from '../src/services/agentAlertService';
 
 type Call = { model: string; contents: any[]; config: any };
 
@@ -249,6 +250,19 @@ async function run() {
       valorAdquisicionOriginal: 12000000, vidaUtilMesesFinanciera: 60, vidaUtilMesesTributaria: 36, vidaUtilRestanteMeses: 50 },
   ]);
 
+  // 3.4: doble del puente WhatsApp. Solo hay un número autorizado, con alcance de conciliación.
+  const enviados: Array<{ telefono: string; mensaje: string }> = [];
+  let whatsappConectado = true;
+  agentAlertService.setWhatsappPort(async () => ({
+    listRecipients: (_emp: string, scope: string) => (scope === 'BANCOS_CONCILIACION' ? [{ telefono: '56911112222', nombre: 'Tesorera' }] : []),
+    isAuthorized: (tel: string) => tel === '56911112222',
+    send: async (telefono: string, mensaje: string) => {
+      if (!whatsappConectado) return { success: false, mode: 'FALLBACK_REQUIRED', message: 'WhatsApp Web aún no está vinculado.' };
+      enviados.push({ telefono, mensaje });
+      return { success: true, mode: 'LIVE_SOCKET', message: 'enviado' };
+    },
+  }));
+
   for (const t of AGENT_SCHEDULED_TASKS) {
     agentSchedulerService.upsertSchedule({ empresaId: EMP, tareaId: t.id, usuarioId: 'test', now: T0 });
   }
@@ -337,8 +351,64 @@ async function run() {
     assert.strictEqual(HrManagementService.getApprovals(vacia).length, 0);
   });
 
+  // ---------------------------------------------------------------- 3.4
+  console.log('\n--- 3.4 Alertas proactivas ---');
+  const alertas = agentAlertService.list({ empresaId: EMP, limit: 1000 });
+
+  await test('Cada ejecución que requiere acción genera una alerta en el panel', () => {
+    for (const r of runs.filter((x) => x.requiereAccion)) {
+      const a = alertas.find((x) => x.runId === r.id);
+      assert.ok(a, `Sin alerta para ${r.tareaId}`);
+      assert.ok(a!.canales.some((c) => c.canal === 'PANEL' && c.estado === 'ENTREGADA'));
+    }
+    const conciliacion = alertas.find((a) => a.runId === byTask.CONCILIACION_DIARIA.id)!;
+    assert.strictEqual(conciliacion.tipo, 'APROBACION_PENDIENTE');
+    assert.deepStrictEqual(conciliacion.approvalIds, byTask.CONCILIACION_DIARIA.approvalIds);
+  });
+
+  await test('Criterio 3.4: el responsable recibe la alerta por WhatsApp sin abrir el módulo', () => {
+    const msg = enviados.find((e) => e.telefono === '56911112222' && /conciliaci/i.test(e.mensaje));
+    assert.ok(msg, `Mensajes enviados: ${JSON.stringify(enviados)}`);
+    assert.match(msg!.mensaje, /propuesta\(s\) para aprobar/);
+    const a = alertas.find((x) => x.runId === byTask.CONCILIACION_DIARIA.id)!;
+    assert.ok(a.canales.some((c) => c.canal === 'WHATSAPP' && c.estado === 'ENVIADA' && c.destino === '+56911112222'));
+  });
+
+  await test('Sin número autorizado para el módulo, el canal queda como SIN_DESTINATARIO (no se informa envío)', () => {
+    const a = alertas.find((x) => x.runId === byTask.BORRADOR_F29.id)!;
+    const wa = a.canales.find((c) => c.canal === 'WHATSAPP')!;
+    assert.strictEqual(wa.estado, 'SIN_DESTINATARIO');
+  });
+
+  await test('Con WhatsApp desconectado, la alerta queda en el panel y el canal informa NO_CONECTADO', async () => {
+    whatsappConectado = false;
+    const r = await agentSchedulerService.runTask({ empresaId: EMP, tareaId: 'CONCILIACION_DIARIA', usuarioId: 'test', now: T1 });
+    // Tras aprobar mov1, queda mov2 sin calce: requiere revisión.
+    assert.strictEqual(r.estado, 'REQUIERE_ATENCION', r.resumen);
+    const a = agentAlertService.list({ empresaId: EMP }).find((x) => x.runId === r.id)!;
+    assert.ok(a, 'Debe existir la alerta');
+    assert.strictEqual(a.canales.find((c) => c.canal === 'WHATSAPP')!.estado, 'NO_CONECTADO');
+    whatsappConectado = true;
+  });
+
+  await test('Una ejecución sin nada que hacer no genera alerta', async () => {
+    const vacia = `79${String(Date.now()).slice(-6)}-2`;
+    const r = await agentSchedulerService.runTask({ empresaId: vacia, tareaId: 'CONCILIACION_DIARIA', usuarioId: 'test' });
+    assert.strictEqual(r.requiereAccion, false);
+    assert.strictEqual(agentAlertService.list({ empresaId: vacia }).length, 0);
+  });
+
+  await test('El responsable marca la alerta como revisada', () => {
+    const a = alertas[0];
+    const leida = agentAlertService.markRead(a.id, 'contador-prueba')!;
+    assert.ok(leida.leidaEn);
+    assert.strictEqual(leida.leidaPor, 'contador-prueba');
+    assert.ok(!agentAlertService.list({ empresaId: EMP, soloNoLeidas: true, limit: 1000 }).some((x) => x.id === a.id));
+  });
+
   AutonomousAgentEngine.modelClientFactory = prevFactory;
   process.env.GEMINI_API_KEY = prevKey;
+  agentAlertService.setWhatsappPort(null);
   console.log(`\nRESULTADO FASE 3: ${passed} de ${total} pruebas pasaron.`);
   process.exit(passed === total ? 0 : 1);
 }

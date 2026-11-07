@@ -56,6 +56,7 @@ import { StandardJournalEntryModal } from './accounting/StandardJournalEntryModa
 import { getStoredAuthToken } from '../services/apiClient';
 import { F29SettlementTrackerExample } from '../examples/F29SettlementTrackerExample';
 import { periodoActual, ultimosPeriodos, etiquetaPeriodo } from '../utils/periodo';
+import { ModuleAgentGovernanceHeader } from './governance/ModuleAgentGovernanceHeader';
 
 interface F29SeniorAgentProps {
   f29: F29Declaration;
@@ -317,6 +318,8 @@ export const F29SeniorAgent: React.FC<F29SeniorAgentProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* 3.3: borradores F29 preparados por la tarea programada, pendientes de aprobación */}
+      <ModuleAgentGovernanceHeader moduloId="TRIBUTARIO_SII" empresaId={company.id || company.rut} />
       {/* 1. HEADER DEL AGENTE FISCAL Y CONTEXTO EMPRESA ACTIVA */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
