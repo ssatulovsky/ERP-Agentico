@@ -1,5 +1,17 @@
 # CHANGELOG — ERPremIA
 
+## Plan de corrección · Fase 3: autonomía real (6 nov 2026)
+
+| Tarea | Cambio | Verificación |
+| :--- | :--- | :--- |
+| **3.1** Herramientas por agente | `src/config/agentToolPolicy.ts`: cada agente declara su lista cerrada de herramientas (`herramientasPermitidas` en el registro). Al modelo solo se envían esas; cualquier otra se rechaza con `TOOL_NOT_ALLOWED`, también en el núcleo de reglas. Módulo sin agente → `MODULE_UNKNOWN`. Nuevo agente `FACTURACION_DTE` (lo usaban Vera y el agente de facturación). Un agente solo pide aprobaciones de su propio módulo. | `tests/phase3_autonomy.test.ts`: el agente de inventario no puede llamar `tool_hr_calculate_finiquito` |
+| **3.2** Contexto y memoria | La instrucción de sistema lleva el perfil operativo de la empresa (solo datos registrados), las directivas del estudio y las correcciones aprendidas (`buildAgentMemoryContext`); el historial de la conversación (`history`, 12 turnos) llega al modelo. La respuesta informa `learningsApplied`. El perfil ya no trae un plan de cuentas genérico inventado. | Una corrección registrada cambia la respuesta siguiente; las de otra empresa no se inyectan |
+| **3.3** Ejecuciones programadas | `src/services/agentSchedulerService.ts`: conciliación diaria, RCV diario, borrador F29 el día 5 y depreciación mensual, en hora de Chile, con estado persistido (sin repetir ni perder horarios). Las tareas usan el motor con la lista de su agente y terminan en solicitud de aprobación (calces, borrador F29, asiento de depreciación); no duplican propuestas pendientes. Al aprobar los calces, los movimientos quedan conciliados. API `/api/agents/schedules`; `AGENT_SCHEDULER_ENABLED=true` en una sola instancia. | 3 agentes (Conciliación, Tributario, Activo fijo) terminan en aprobación humana; auditoría por ejecución; A6.15 en el perímetro HTTP |
+| **3.4** Alertas proactivas | `src/services/agentAlertService.ts`: cada ejecución que requiere acción genera una alerta en el panel "Alertas de agentes" del dashboard ejecutivo (con las aprobaciones pendientes y las tareas programadas) y un WhatsApp al responsable o a los números autorizados del módulo. El estado de cada canal se guarda tal como ocurrió (`ENVIADA`, `NO_CONECTADO`, `SIN_DESTINATARIO`, `ERROR`). Conciliación y F29 muestran las aprobaciones de su agente. | El responsable recibe la alerta por WhatsApp sin abrir el módulo |
+| **3.5** Límites y costos | `aiRouterService`: máximo de llamadas al modelo por ejecución, tokens y gasto en CLP por empresa y por día, y ejecuciones programadas por día (variables `AGENT_MAX_*`, configuración guardada o por empresa; editable en el administrador de IA). Cada llamada del motor registra sus tokens. Al agotar el presupuesto el agente se detiene (`BUDGET_EXCEEDED`, HTTP 429) y la tarea programada queda `BLOQUEADO_LIMITE` con aviso. | Un agente programado no supera el presupuesto configurado |
+
+---
+
 ## Plan de corrección · Cierre de fases 0–2 y verificación 4.4 (6 nov 2026)
 
 | Tarea | Cambio | Verificación |

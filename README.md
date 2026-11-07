@@ -1,7 +1,7 @@
 # ERPremIA — Sistema ERP Contable y Tributario con asistentes de IA para Chile
 
 
-> **Estado (plan de corrección, nov 2026):** los módulos funcionan como *asistentes con herramientas*: responden cuando el usuario los invoca, usan herramientas con datos reales y piden aprobación humana. La autonomía (herramientas por agente, memoria y ejecuciones programadas) corresponde a la Fase 3 del plan y aún no está implementada. Con `DEMO_MODE=true` se cargan empresas y datos de ejemplo con una franja visible "DEMOSTRACIÓN".
+> **Estado (plan de corrección, nov 2026):** Fase 3 implementada. Cada agente trabaja con su propia lista de herramientas, recibe el perfil de la empresa, el historial y las correcciones aprendidas, y ejecuta tareas programadas (conciliación diaria, RCV diario, borrador F29 el día 5 y depreciación mensual) que terminan en una solicitud de aprobación humana y en una alerta al responsable. Ningún agente modifica libros sin aprobación. Los límites de iteraciones, tokens, gasto y ejecuciones por empresa y por día detienen al agente al superarse. Pendiente la verificación de la Fase 4 (prueba con LLM real y ambiente de certificación SII). Con `DEMO_MODE=true` se cargan empresas y datos de ejemplo con una franja visible "DEMOSTRACIÓN".
 
 **ERPremIA** es una plataforma integral de planificación de recursos empresariales (ERP) diseñada bajo la normativa legal, contable y tributaria de la República de Chile (Servicio de Impuestos Internos - SII, Dirección del Trabajo - DT, Superintendencia de Pensiones). 
 
