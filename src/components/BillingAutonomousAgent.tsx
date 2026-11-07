@@ -462,8 +462,8 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
           ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify({
-          module: 'CONTABILIDAD',
-          modulo: 'CONTABILIDAD',
+          module: 'FACTURACION_DTE',
+          modulo: 'FACTURACION_DTE',
           empresaId: company.id || company.rut,
           query: `Validar y certificar borrador DTE Tipo ${draft.tipoDte} para ${draft.razonSocialReceptor} (RUT ${draft.rutReceptor}) por total $${draft.montoTotal} CLP.`,
           context: {

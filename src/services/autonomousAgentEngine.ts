@@ -15,6 +15,13 @@ import { SiiRcvService } from './siiRcvService';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
 import { calculatePreF29 } from '../utils/f29SeniorEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
+import {
+  getAllowedTools,
+  isKnownAgentModule,
+  isToolAllowedForModule,
+  normalizeModuleId,
+  toolNotAllowedResult,
+} from '../config/agentToolPolicy';
 import { aiRouterService } from './aiRouterService';
 import { diskPersistence } from './diskPersistenceService';
 import { getDemoClients } from '../data/seedData';
@@ -66,6 +73,11 @@ export interface AutonomousAgentRequest {
     [key: string]: any;
   };
   userId?: string;
+}
+
+/** Cliente mínimo del modelo; se puede sustituir en pruebas (AutonomousAgentEngine.modelClientFactory). */
+export interface AgentModelClient {
+  models: { generateContent(args: any): Promise<any> };
 }
 
 export interface AutonomousAgentResponse {
@@ -513,6 +525,19 @@ function resolveCompany(request: AutonomousAgentRequest): CompanyProfile | null 
     (c) => c.id === request.empresaId || c.rut.replace(/[^0-9kK]/g, '') === String(request.empresaId || '').replace(/[^0-9kK]/g, '')
   );
   return (demo as unknown as CompanyProfile) || null;
+}
+
+/** 3.1: declaraciones que se envían al modelo para el agente del módulo (solo las permitidas). */
+export function getAgentFunctionDeclarations(moduleId: string): typeof AGENT_FUNCTION_DECLARATIONS {
+  const allowed = getAllowedTools(moduleId);
+  return AGENT_FUNCTION_DECLARATIONS.filter((d: any) => allowed.includes(d.name)) as typeof AGENT_FUNCTION_DECLARATIONS;
+}
+
+/** Se lanza cuando el núcleo determinista intenta una herramienta que el agente no tiene. */
+class ToolNotAllowedError extends Error {
+  constructor(public readonly result: Record<string, any>) {
+    super(String(result.mensaje));
+  }
 }
 
 export class AutonomousAgentEngine {
@@ -1974,6 +1999,44 @@ export class AutonomousAgentEngine {
     }
   }
 
+  /** Fábrica del cliente del modelo (Gemini). Las pruebas la reemplazan por un doble. */
+  public static modelClientFactory: (apiKey: string) => AgentModelClient = (apiKey: string) =>
+    new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'erpremia-enterprise-agent/2.0' } },
+    }) as unknown as AgentModelClient;
+
+  /**
+   * 3.1: ejecución de una herramienta en nombre del agente de un módulo.
+   * Rechaza (TOOL_NOT_ALLOWED) cualquier herramienta fuera de la lista del agente.
+   */
+  public static async executeToolForAgent(
+    moduleId: string,
+    toolName: string,
+    args: Record<string, any>,
+    request: AutonomousAgentRequest
+  ): Promise<Record<string, any>> {
+    if (!isToolAllowedForModule(moduleId, toolName)) {
+      return toolNotAllowedResult(moduleId, toolName);
+    }
+    return this.executeTool(toolName, args, request);
+  }
+
+  private static moduleUnknownResponse(request: AutonomousAgentRequest): AutonomousAgentResponse {
+    return {
+      success: false,
+      code: 'MODULE_UNKNOWN',
+      module: request.module,
+      agentName: 'Sin agente',
+      agentRole: request.agentRole,
+      finalText: `No existe un agente registrado para el módulo "${request.module}". No se ejecutó ninguna herramienta.`,
+      steps: [],
+      executionMode: 'DETERMINISTIC_COMPLIANCE_CORE',
+      modelUsed: 'NONE',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   /**
    * Bucle ReAct de Asistente con herramientas (Reasoning + Tool Calling + Observation + Decision)
    */
@@ -1982,11 +2045,12 @@ export class AutonomousAgentEngine {
   ): Promise<AutonomousAgentResponse> {
     const startTime = new Date().toISOString();
     const steps: AgentExecutionStep[] = [];
-    const agentDef = MODULE_AGENTS_REGISTRY.find(a => a.moduloId === request.module) || {
-      agenteNombre: request.agentRole || 'Asistente con herramientas ERPremIA',
-      agenteCargo: 'Especialista Operativo',
-      responsabilidad: 'Ejecuta operaciones y valida cumplimiento legal en el ERP.',
-    };
+    // 3.1: solo agentes registrados; cada uno con su lista cerrada de herramientas.
+    if (!isKnownAgentModule(request.module)) {
+      return this.moduleUnknownResponse(request);
+    }
+    request = { ...request, module: normalizeModuleId(request.module) };
+    const agentDef = MODULE_AGENTS_REGISTRY.find(a => a.moduloId === request.module)!;
 
     const apiKey = process.env.GEMINI_API_KEY || aiRouterService.getConfig().geminiApiKey;
     let finalAnswerText = '';
@@ -2002,14 +2066,7 @@ export class AutonomousAgentEngine {
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'erpremia-enterprise-agent/2.0',
-          },
-        },
-      });
+      const ai = this.modelClientFactory(apiKey);
 
       const safeContext = request.context ? sanitizeContextForAi(request.context) : {};
 
@@ -2044,7 +2101,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
             temperature: 0.1,
             tools: [
               {
-                functionDeclarations: AGENT_FUNCTION_DECLARATIONS as any,
+                functionDeclarations: getAgentFunctionDeclarations(request.module) as any,
               },
             ],
           },
@@ -2089,7 +2146,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
           console.info(`[AutonomousAgentEngine] Paso ${iteration}: Invocando ${toolName} con parámetros:`, toolArgs);
           let toolOutput: Record<string, any>;
           try {
-            toolOutput = await this.executeTool(toolName, toolArgs, request);
+            toolOutput = await this.executeToolForAgent(request.module, toolName, toolArgs, request);
           } catch (execErr: any) {
             console.error(`[AutonomousAgentEngine] Error en herramienta ${toolName}: ${execErr.message}`);
             toolOutput = {
@@ -2219,6 +2276,48 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
     agentDef: any,
     fallbackReason?: string
   ): Promise<AutonomousAgentResponse> {
+    try {
+      return await this.runDeterministicComplianceCore(request, agentDef, fallbackReason);
+    } catch (err) {
+      if (!(err instanceof ToolNotAllowedError)) throw err;
+      return {
+        success: false,
+        code: 'TOOL_NOT_ALLOWED',
+        module: request.module,
+        agentName: agentDef.agenteNombre,
+        agentRole: request.agentRole,
+        finalText: `${err.result.mensaje} No se ejecutó ninguna operación.`,
+        steps: [],
+        executionMode: 'DETERMINISTIC_COMPLIANCE_CORE',
+        modelUsed: 'DETERMINISTIC_EXPERT_SYSTEM',
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /** Antes de pedir datos para una herramienta, confirma que el agente la tiene (3.1). */
+  private static assertCoreTool(request: AutonomousAgentRequest, toolName: string): void {
+    if (!isToolAllowedForModule(request.module, toolName)) {
+      throw new ToolNotAllowedError(toolNotAllowedResult(request.module, toolName));
+    }
+  }
+
+  /** Herramienta del núcleo determinista, sujeta a la lista del agente (3.1). */
+  private static async coreTool(
+    request: AutonomousAgentRequest,
+    toolName: string,
+    args: Record<string, any>
+  ): Promise<Record<string, any>> {
+    const out = await this.executeToolForAgent(request.module, toolName, args, request);
+    if (out.status === 'TOOL_NOT_ALLOWED') throw new ToolNotAllowedError(out);
+    return out;
+  }
+
+  private static async runDeterministicComplianceCore(
+    request: AutonomousAgentRequest,
+    agentDef: any,
+    fallbackReason?: string
+  ): Promise<AutonomousAgentResponse> {
     const qLower = request.query.toLowerCase();
     const steps: AgentExecutionStep[] = [];
     let technicalPayload: any = null;
@@ -2228,6 +2327,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
     const emp = request.context?.payroll || request.context?.employee;
 
     if (qLower.includes('finiquito') || qLower.includes('art 161') || qLower.includes('despido')) {
+      this.assertCoreTool(request, 'tool_hr_calculate_finiquito');
       if (!emp || !emp.rut || !emp.sueldoBase) {
         return {
           success: false,
@@ -2244,7 +2344,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       // 2.2: sin fecha de ingreso, fecha de término, causal o feriado pendiente no se calcula (sin valores por defecto).
       const extra = (request.context?.extraData || {}) as Record<string, any>;
-      const toolOutput = await this.executeTool('tool_hr_calculate_finiquito', {
+      const toolOutput = await this.coreTool(request, 'tool_hr_calculate_finiquito', {
         rut: emp.rut,
         sueldoBase: emp.sueldoBase,
         fechaIngreso: emp.fechaIngreso,
@@ -2252,7 +2352,7 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         causal: extra.causal || emp.causalTermino,
         diasVacacionesPendientes: extra.diasVacacionesPendientes ?? emp.diasVacacionesPendientes,
         diasAvisoPrevioOtorgados: extra.diasAvisoPrevioOtorgados ?? emp.diasAvisoPrevioOtorgados,
-      }, request);
+      });
       if (toolOutput.status === 'MISSING_PARAMS') {
         return this.missingParamsResponse(request, agentDef, toolOutput);
       }
@@ -2280,9 +2380,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         riesgoNivel: toolOutput.totalFiniquitoLiquido > 5000000 ? 'ALTO' : 'MEDIO',
       });
     } else if (qLower.includes('f29') || qLower.includes('iva') || qLower.includes('impuesto')) {
-      const toolOutput = await this.executeTool('tool_tax_calculate_f29', {
+      const toolOutput = await this.coreTool(request, 'tool_tax_calculate_f29', {
         empresaRut: request.empresaId,
-      }, request);
+      });
       if (toolOutput.status === 'MISSING_PARAMS') {
         return this.missingParamsResponse(request, agentDef, toolOutput);
       }
@@ -2299,9 +2399,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Auditoría y Liquidación Determinista de Formulario 29 (${currentPeriod})\n\nValores tributarios calculados a partir de los documentos registrados en el ERP:\n\n- **Documentos de Venta Auditados:** ${toolOutput.documentosVentaProcesados}\n- **Documentos de Compra Auditados:** ${toolOutput.documentosCompraProcesados}\n- **Ventas Netas Totales:** ${formatCLP(toolOutput.ventasNetas)}\n- **Compras Netas Totales:** ${formatCLP(toolOutput.comprasNetas)}\n- **Débito Fiscal IVA:** ${formatCLP(toolOutput.debitoFiscalIva)}\n- **Crédito Fiscal IVA:** ${formatCLP(toolOutput.creditoFiscalIva)}\n- **PPM Determinado:** ${formatCLP(toolOutput.ppmDeterminado)} (tasa: ${(toolOutput.tasaPpm * 100).toFixed(2)}%)\n- **Retención Honorarios 14.5%:** ${formatCLP(toolOutput.retencionHonorarios145)}\n- **Impuesto Único 2da Categoría:** ${formatCLP(toolOutput.impuestoUnicoSegundaCategoria)}\n\n**Monto Total F29 Determinado:** **${formatCLP(toolOutput.totalPagarF29)}**.\n\n*Acreditación:* Conforme al Art. 23 DL 825 y Art. 84 LIR.`;
     } else if (request.module === 'ACTIVO_FIJO' || qLower.includes('depreci') || qLower.includes('activo fijo') || qLower.includes('baja')) {
-      const toolOutput = await this.executeTool('tool_fixed_assets_depreciate_period', {
+      const toolOutput = await this.coreTool(request, 'tool_fixed_assets_depreciate_period', {
         empresaId: request.empresaId,
-      }, request);
+      });
       if (toolOutput.status === 'MISSING_PARAMS') {
         return this.missingParamsResponse(request, agentDef, toolOutput);
       }
@@ -2319,10 +2419,10 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
       if (toolOutput.status === 'NO_DATA') {
         finalText = `### Auditoría de Activos Fijos NIC 16 (${currentPeriod})\n\n${toolOutput.mensaje}`;
       } else {
-        const propEntry = await this.executeTool('tool_fixed_assets_propose_entry', {
+        const propEntry = await this.coreTool(request, 'tool_fixed_assets_propose_entry', {
           periodo: currentPeriod,
           empresaId: request.empresaId,
-        }, request);
+        });
 
         steps.push({
           step: 2,
@@ -2339,15 +2439,16 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         finalText = `### Auditoría y Cuadro de Depreciación Activo Fijo NIC 16 (${currentPeriod})\n\n- **Total Activos Auditados:** ${toolOutput.totalActivosAuditados}\n- **Depreciación Financiera Mensual:** ${formatCLP(toolOutput.depreciacionFinancieraTotal)}\n- **Depreciación Tributaria (Art. 31 LIR):** ${formatCLP(toolOutput.depreciacionTributariaTotal)}\n- **Cuota Fabril CIF:** ${formatCLP(toolOutput.depreciacionFabrilCifTotal)}\n\nPropuesta de asiento contable generada y enviada a Gobernanza Agéntica para aprobación humana.`;
       }
     } else if (request.module === 'COSTOS_PRODUCCION' || qLower.includes('producc') || qLower.includes('costeo') || qLower.includes('orden de fabricacion')) {
+      this.assertCoreTool(request, 'tool_production_cost_order');
       const orders = diskPersistence.getProductionOrders(request.empresaId);
       const op = orders[0];
       if (!op) {
         finalText = `### Costos y Producción NIC 2\n\nNo se registran órdenes de producción activas en la empresa ${request.empresaId}.`;
       } else {
-        const costOutput = await this.executeTool('tool_production_cost_order', {
+        const costOutput = await this.coreTool(request, 'tool_production_cost_order', {
           folioOP: op.folioOP,
           empresaId: request.empresaId,
-        }, request);
+        });
 
         steps.push({
           step: 1,
@@ -2361,9 +2462,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         finalText = `### Liquidación de Costos de Producción NIC 2 — ${op.folioOP}\n\n- **Producto:** ${op.productoNombre}\n- **Avance Físico:** ${costOutput.orden?.avancePorcentaje}%\n- **Materia Prima Directa (MPD):** ${formatCLP(costOutput.costosNIC2?.materiaPrimaDirectaMPD)}\n- **Mano de Obra Directa (MOD):** ${formatCLP(costOutput.costosNIC2?.manoObraDirectaMOD)}\n- **Costos Indirectos (CIF):** ${formatCLP(costOutput.costosNIC2?.costosIndirectosFabricacionCIF)}\n- **Costo Total Acumulado:** **${formatCLP(costOutput.costosNIC2?.costoTotalProduccion)}**`;
       }
     } else if (request.module === 'FLUJO_CAJA' || qLower.includes('flujo de caja') || qLower.includes('liquidez')) {
-      const cfOutput = await this.executeTool('tool_cashflow_project_30_60_90', {
+      const cfOutput = await this.coreTool(request, 'tool_cashflow_project_30_60_90', {
         empresaId: request.empresaId,
-      }, request);
+      });
 
       steps.push({
         step: 1,
@@ -2376,9 +2477,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Proyección de Flujo de Caja & Liquidez\n\n- **Saldo Disponible Hoy:** **${formatCLP(cfOutput.saldoDisponibleHoy)}**\n- **Proyección a 30 días:** ${formatCLP(cfOutput.proyeccion?.dias30?.saldoFinal)} (${cfOutput.proyeccion?.dias30?.estado})\n- **Proyección a 60 días:** ${formatCLP(cfOutput.proyeccion?.dias60?.saldoFinal)} (${cfOutput.proyeccion?.dias60?.estado})\n- **Proyección a 90 días:** ${formatCLP(cfOutput.proyeccion?.dias90?.saldoFinal)} (${cfOutput.proyeccion?.dias90?.estado})`;
     } else if (request.module === 'COMERCIAL_COMPRAS' || qLower.includes('margen') || qLower.includes('rfq') || qLower.includes('compras')) {
-      const procOutput = await this.executeTool('tool_procurement_margin_analysis', {
+      const procOutput = await this.coreTool(request, 'tool_procurement_margin_analysis', {
         empresaId: request.empresaId,
-      }, request);
+      });
 
       steps.push({
         step: 1,
@@ -2391,14 +2492,15 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Auditoría Comercial & Abastecimiento\n\n- **Productos Auditados:** ${procOutput.totalProductosAuditados}\n- **Margen Ponderado Empresa:** ${procOutput.margenBrutoPonderadoEmpresa}%\n- **Alertas de Margen Crítico:** ${procOutput.productosConMargenCritico} ítems`;
     } else if (request.module === 'RENDICIONES' || qLower.includes('rendicion') || qLower.includes('gasto')) {
+      this.assertCoreTool(request, 'tool_expenses_validate_report');
       const reports = diskPersistence.getExpenseReports ? diskPersistence.getExpenseReports(request.empresaId) : [];
       const rep = reports[0];
       if (!rep) {
         finalText = `### Auditoría de Rendiciones de Gastos\n\nNo se registran rendiciones de gastos para la empresa ${request.empresaId}.`;
       } else {
-        const valOutput = await this.executeTool('tool_expenses_validate_report', {
+        const valOutput = await this.coreTool(request, 'tool_expenses_validate_report', {
           reportId: rep.id,
-        }, request);
+        });
 
         steps.push({
           step: 1,
@@ -2412,9 +2514,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
         finalText = `### Auditoría de Rendición de Gastos Folio ${rep.folio}\n\n- **Rendidor:** ${rep.rendidorNombre}\n- **Total Rendido:** ${formatCLP(rep.totalRendido)}\n- **Comprobantes Auditados:** ${valOutput.cantidadComprobantes}\n- **Dictamen:** **${valOutput.dictamenAuditor}**`;
       }
     } else if (request.module === 'INVENTARIO' || qLower.includes('kardex') || qLower.includes('stock')) {
-      const invOutput = await this.executeTool('tool_inventory_kardex', {
+      const invOutput = await this.coreTool(request, 'tool_inventory_kardex', {
         empresaId: request.empresaId,
-      }, request);
+      });
 
       steps.push({
         step: 1,
@@ -2427,9 +2529,9 @@ INSTRUCCIONES CRÍTICAS AGÉNTICAS:
 
       finalText = `### Auditoría de Inventarios & Kardex PMP\n\n- **Total Artículos Activos:** ${invOutput.totalItemsActivos}\n- **Valorización Total PMP:** **${formatCLP(invOutput.valorizacionTotalInventarioClp)}**\n- **Alertas de Stock Bajo Mínimo:** ${invOutput.itemsCriticosBajoReorden}`;
     } else if (request.module === 'CONCILIACION' || qLower.includes('conciliaci') || qLower.includes('cartola')) {
-      const recOutput = await this.executeTool('tool_bank_reconcile_movement', {
+      const recOutput = await this.coreTool(request, 'tool_bank_reconcile_movement', {
         empresaId: request.empresaId,
-      }, request);
+      });
 
       steps.push({
         step: 1,

@@ -1,4 +1,5 @@
 import type { ModuleAgentApprovalRequest } from '../types';
+import { getAllowedTools } from '../config/agentToolPolicy';
 
 export interface ModuleAgentDefinition {
   moduloId: string;
@@ -9,9 +10,11 @@ export interface ModuleAgentDefinition {
   responsabilidad: string;
   operacionesAutonomas: string[];
   operacionesQueRequierenAprobacion: string[];
+  /** 3.1: lista cerrada de herramientas que el agente puede invocar (ver src/config/agentToolPolicy.ts). */
+  herramientasPermitidas: readonly string[];
 }
 
-export const MODULE_AGENTS_REGISTRY: ModuleAgentDefinition[] = [
+const BASE_MODULE_AGENTS: Omit<ModuleAgentDefinition, 'herramientasPermitidas'>[] = [
   {
     moduloId: 'CONTABILIDAD',
     moduloNombre: 'Agente Contable Senior & Libros IFRS',
@@ -217,7 +220,28 @@ export const MODULE_AGENTS_REGISTRY: ModuleAgentDefinition[] = [
       'Rechazo formal de comprobantes no deducibles o duplicados.',
     ],
   },
+  {
+    moduloId: 'FACTURACION_DTE',
+    moduloNombre: 'Facturación Electrónica & Documentos Tributarios',
+    agenteNombre: 'Agente de Facturación',
+    agenteCargo: 'Responsable de Emisión DTE',
+    agenteAvatar: 'FileText',
+    responsabilidad:
+      'Prepara borradores de documentos tributarios electrónicos y consulta su estado en el SII. Nunca emite sin autorización humana.',
+    operacionesAutonomas: [
+      'Preparación de borradores DTE con los datos entregados por el usuario.',
+      'Consulta del estado de sincronización con el SII.',
+    ],
+    operacionesQueRequierenAprobacion: [
+      'Emisión y envío al SII de cualquier documento tributario electrónico.',
+    ],
+  },
 ];
+
+export const MODULE_AGENTS_REGISTRY: ModuleAgentDefinition[] = BASE_MODULE_AGENTS.map((agent) => ({
+  ...agent,
+  herramientasPermitidas: getAllowedTools(agent.moduloId),
+}));
 
 export class ModuleAgentGovernanceService {
   /**

@@ -649,7 +649,7 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
       // Normalizar nombre de módulo agéntico a Canónico
       let mappedCanonical: CanonicalModule = 'CONTABILIDAD';
       if (['RRHH', 'PAYROLL', 'RECURSOS_HUMANOS'].includes(reqModule)) mappedCanonical = 'RRHH';
-      else if (['TRIBUTARIO', 'SII', 'F29', 'RCV', 'DTE', 'FACTURACION'].includes(reqModule)) mappedCanonical = 'TRIBUTARIO_SII';
+      else if (['TRIBUTARIO', 'TRIBUTARIO_SII', 'SII', 'F29', 'RCV', 'DTE', 'FACTURACION', 'FACTURACION_DTE'].includes(reqModule)) mappedCanonical = 'TRIBUTARIO_SII';
       else if (['INVENTARIO', 'BODEGA', 'STOCK'].includes(reqModule)) mappedCanonical = 'INVENTARIO';
       else if (['ACTIVO_FIJO', 'LEASES'].includes(reqModule)) mappedCanonical = 'ACTIVO_FIJO';
       else if (['PRODUCCION', 'COSTOS', 'COSTOS_PRODUCCION'].includes(reqModule)) mappedCanonical = 'COSTOS_PRODUCCION';

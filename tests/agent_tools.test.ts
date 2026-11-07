@@ -61,10 +61,10 @@ async function runAutomatedAgentSuite() {
   };
 
   // ==========================================================================
-  // 1. GOBERNANZA: 11 AGENTES ESPECIALISTAS DE MÓDULO REGISTRADOS
+  // 1. GOBERNANZA: 12 AGENTES ESPECIALISTAS DE MÓDULO REGISTRADOS (3.1 agrega FACTURACION_DTE)
   // ==========================================================================
-  await test('Gobernanza: Registro completo de 11 Agentes Especialistas', () => {
-    assert.strictEqual(MODULE_AGENTS_REGISTRY.length, 11, 'Deben existir exactamente 11 agentes de módulo registrados');
+  await test('Gobernanza: Registro completo de 12 Agentes Especialistas', () => {
+    assert.strictEqual(MODULE_AGENTS_REGISTRY.length, 12, 'Deben existir exactamente 12 agentes de módulo registrados');
     const moduleIds = MODULE_AGENTS_REGISTRY.map(a => a.moduloId);
     const required = [
       'CONTABILIDAD',
@@ -78,6 +78,7 @@ async function runAutomatedAgentSuite() {
       'COSTOS_PRODUCCION',
       'CONCILIACION',
       'RENDICIONES',
+      'FACTURACION_DTE',
     ];
     for (const req of required) {
       assert.ok(moduleIds.includes(req), `Módulo ${req} debe estar registrado en la gobernanza`);
