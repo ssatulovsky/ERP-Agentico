@@ -44,7 +44,7 @@ async function run() {
       console.error(`  ❌ [FAIL] ${name}:`, err.message);
     }
   }
-  console.log('=== 4.4 BÚSQUEDA DE MARCADORES DE SIMULACIÓN ===\n');
+  console.log('=== 4.4 BÚSQUEDA DE MARCADORES DE SIMULACIÓN (y 4.1 cobertura de regresiones) ===\n');
   const files = sourceFiles();
 
   await test('Sin Math.random en montos, folios, claves ni contraseñas', () => {
@@ -137,6 +137,18 @@ async function run() {
     assert.ok(r.alertas_fiscales.some((a: any) => /tasa PPM/.test(a.descripcion)), 'Debe alertar la falta de tasa PPM');
     const post = JSON.stringify(r);
     assert.ok(!post.includes('2026-11-20'), 'Fecha de postergación fija');
+  });
+
+  await test('4.1 Cada hallazgo #1 a #10 tiene al menos una prueba de regresión dentro de npm test', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const suites: string[] = (pkg.scripts.test.match(/tests\/[\w.]+\.test\.ts/g) || []);
+    const nombres = suites.flatMap((s) =>
+      [...fs.readFileSync(path.join(ROOT, s), 'utf8').matchAll(/await test\('([^']+)'/g)].map((m) => m[1])
+    );
+    const sinPrueba = Array.from({ length: 10 }, (_, i) => i + 1).filter(
+      (n) => !nombres.some((t) => new RegExp(`(^|[^0-9])#${n}([^0-9]|$)`).test(t))
+    );
+    assert.deepStrictEqual(sinPrueba, [], `Hallazgos sin prueba: ${sinPrueba.map((n) => '#' + n).join(', ')}`);
   });
 
   console.log(`\nRESULTADO 4.4: ${passed} de ${total} pruebas pasaron.`);
