@@ -1643,7 +1643,10 @@ export class AutonomousAgentEngine {
           };
         }
 
-        const quotes = (rfq.proveedoresInvitados || []).filter((p: any) => p.cotizacionRecibida);
+        // Cotizaciones registradas por el flujo de compras (submitSupplierQuote): estado COTIZADA con monto ofertado.
+        const quotes = (rfq.proveedoresInvitados || []).filter(
+          (p: any) => p.estadoSeguimiento === 'COTIZADA' && Number(p.montoNetoOfertado) > 0
+        );
         if (quotes.length === 0) {
           return {
             status: 'NO_DATA',
@@ -1654,19 +1657,28 @@ export class AutonomousAgentEngine {
           };
         }
 
-        const comparativa = quotes.map((q: any) => ({
-          proveedorRut: q.proveedorRut,
-          proveedorNombre: q.proveedorRazonSocial,
-          montoTotalNeto: q.cotizacionRecibida?.montoTotalNeto || 0,
-          plazoEntregaDias: q.cotizacionRecibida?.plazoEntregaDias || 15,
-          score: q.scoringPuntaje || 85,
-        })).sort((a: any, b: any) => a.montoTotalNeto - b.montoTotalNeto);
+        // Solo lo que ofertó cada proveedor (antes: plazo 15 días y puntaje 85 supuestos si faltaban).
+        const comparativa = quotes.map((q: any) => {
+          const neto = Number(q.montoNetoOfertado);
+          const flete = Number(q.costoFleteClp || 0);
+          return {
+            proveedorRut: q.proveedorRut,
+            proveedorNombre: q.proveedorRazonSocial,
+            montoTotalNeto: neto,
+            costoFleteClp: flete,
+            costoTotalConFlete: neto + flete,
+            plazoEntregaDias: q.plazoEntregaDiasOfertado ?? null,
+            condicionPago: q.condicionPagoOfertada ?? null,
+            scoringTco: q.scoringPonderadoTotal ?? null,
+          };
+        }).sort((a: any, b: any) => a.costoTotalConFlete - b.costoTotalConFlete);
 
         return {
           status: 'SUCCESS',
           rfqId: rfq.folioRfq,
           totalCotizacionesRecibidas: quotes.length,
-          mejorOfertaPorPrecio: comparativa[0],
+          totalProveedoresInvitados: (rfq.proveedoresInvitados || []).length,
+          mejorOfertaPorCostoTotal: comparativa[0],
           cuadroComparativo: comparativa,
         };
       }

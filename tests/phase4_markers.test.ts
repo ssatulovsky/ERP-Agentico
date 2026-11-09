@@ -11,6 +11,8 @@ import path from 'node:path';
 import { generatePeriodClosingAdjustments } from '../src/utils/accountingOrchestratorEngine';
 import { calculatePreF29 } from '../src/utils/f29SeniorEngine';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
+import { AutonomousAgentEngine } from '../src/services/autonomousAgentEngine';
+import { commercialProcurementService } from '../src/services/commercialProcurementService';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -149,6 +151,26 @@ async function run() {
       (n) => !nombres.some((t) => new RegExp(`(^|[^0-9])#${n}([^0-9]|$)`).test(t))
     );
     assert.deepStrictEqual(sinPrueba, [], `Hallazgos sin prueba: ${sinPrueba.map((n) => '#' + n).join(', ')}`);
+  });
+
+  await test('4.2 (hallazgo de la evaluación) La comparativa de cotizaciones usa lo ofertado, sin plazo ni puntaje supuestos', async () => {
+    const emp = `75${String(Date.now()).slice(-6)}-4`;
+    const rfq = commercialProcurementService.createRfq(emp, {
+      titulo: 'Prueba comparativa',
+      items: [{ sku: 'X', descripcion: 'Insumo', cantidad: 10, unidad: 'UND' } as any],
+      proveedorRuts: ['78.555.666-7', '79.111.000-2'],
+    });
+    const req: any = { empresaId: emp, module: 'COMERCIAL_COMPRAS', agentRole: 't', query: 't', context: {} };
+    const vacia = await AutonomousAgentEngine.executeTool('tool_procurement_compare_quotes', { rfqId: rfq.id }, req);
+    assert.strictEqual(vacia.status, 'NO_DATA');
+    commercialProcurementService.submitSupplierQuote(emp, rfq.id, '78.555.666-7', { montoNetoOfertado: 500000, plazoEntregaDiasOfertado: 7, condicionPagoOfertada: '30 días', costoFleteClp: 90000 });
+    commercialProcurementService.submitSupplierQuote(emp, rfq.id, '79.111.000-2', { montoNetoOfertado: 540000, plazoEntregaDiasOfertado: 4, condicionPagoOfertada: 'Contado' });
+    const r = await AutonomousAgentEngine.executeTool('tool_procurement_compare_quotes', { rfqId: rfq.id }, req);
+    assert.strictEqual(r.status, 'SUCCESS', 'Antes: NO_DATA aunque hubiera ofertas registradas');
+    assert.strictEqual(r.totalCotizacionesRecibidas, 2);
+    assert.strictEqual(r.mejorOfertaPorCostoTotal.proveedorRut, '79.111.000-2', 'La mejor oferta considera el flete');
+    assert.strictEqual(r.cuadroComparativo.find((q: any) => q.proveedorRut === '78.555.666-7').plazoEntregaDias, 7);
+    assert.ok(!JSON.stringify(r).includes('"score":85'), 'Puntaje 85 supuesto');
   });
 
   console.log(`\nRESULTADO 4.4: ${passed} de ${total} pruebas pasaron.`);
