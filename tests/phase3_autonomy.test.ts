@@ -268,7 +268,8 @@ async function run() {
   for (const t of AGENT_SCHEDULED_TASKS) {
     agentSchedulerService.upsertSchedule({ empresaId: EMP, tareaId: t.id, usuarioId: 'test', now: T0 });
   }
-  const runs = await agentSchedulerService.tick(T1);
+  // Solo las ejecuciones de la empresa de la prueba (en data/ local puede haber otras programaciones).
+  const runs = (await agentSchedulerService.tick(T1)).filter((r) => r.empresaId === EMP);
   const byTask = Object.fromEntries(runs.map((r) => [r.tareaId, r]));
 
   await test('Cada programación vencida se ejecuta una vez en el despachador', () => {
@@ -318,7 +319,7 @@ async function run() {
   });
 
   await test('Un horario ya atendido no se vuelve a ejecutar', async () => {
-    const again = await agentSchedulerService.tick(T1);
+    const again = (await agentSchedulerService.tick(T1)).filter((r) => r.empresaId === EMP);
     assert.strictEqual(again.length, 0);
   });
 
@@ -475,7 +476,7 @@ async function run() {
     const emp = uniq('71');
     aiRouterService.setCompanyOverride(emp, { agentBudget: { maxEjecucionesProgramadasDiarias: 2 } });
     for (const t of AGENT_SCHEDULED_TASKS) agentSchedulerService.upsertSchedule({ empresaId: emp, tareaId: t.id, usuarioId: 'test', now: T0 });
-    const r = await agentSchedulerService.tick(T1);
+    const r = (await agentSchedulerService.tick(T1)).filter((x) => x.empresaId === emp);
     const ejecutadas = r.filter((x) => x.estado !== 'BLOQUEADO_LIMITE');
     const bloqueadas = r.filter((x) => x.estado === 'BLOQUEADO_LIMITE');
     assert.strictEqual(ejecutadas.length, 2, r.map((x) => `${x.tareaId}=${x.estado}`).join(', '));
