@@ -467,6 +467,17 @@ export const AGENT_FUNCTION_DECLARATIONS = [
     },
   },
   {
+    name: 'tool_billing_check_dte_status',
+    description: 'Consulta en el SII, por su Track ID, el resultado de los DTE enviados (ENVIADO) y actualiza su estado: ACEPTADO, ACEPTADO_CON_REPAROS o RECHAZADO. No emite ni reenvía documentos.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        empresaId: { type: 'STRING' as const, description: 'Identificador o RUT de la empresa' },
+      },
+      required: ['empresaId'],
+    },
+  },
+  {
     name: 'tool_sii_ingest_csv',
     description: 'Ingesta y procesa formalmente archivos CSV de compras o ventas oficiales descargados del Registro de Compras y Ventas (RCV) del SII.',
     parameters: {
@@ -1905,6 +1916,29 @@ export class AutonomousAgentEngine {
           estadoGobernanza: approval.estado,
           mensaje: `Borrador de DTE Tipo ${tipoDte} preparado y registrado para autorización humana previa antes de timbraje oficial (Folio: ${approval.id}).`,
         };
+      }
+
+      case 'tool_billing_check_dte_status': {
+        // 4.3: resultado real del SII para los DTE enviados (nunca se marca ACEPTADO sin consultar).
+        const rutEmpresa = request.empresaId;
+        const r = await HttpDteBillingService.actualizarEstadosEnvio(rutEmpresa);
+        if (r.revisados === 0) {
+          return {
+            status: 'NO_DATA',
+            empresaId: rutEmpresa,
+            mensaje: `No hay DTE enviados con Track ID pendientes de resultado para la empresa ${rutEmpresa}.`,
+          };
+        }
+        if (r.errores.length === r.revisados) {
+          return {
+            status: 'TOOL_EXECUTION_ERROR',
+            empresaId: rutEmpresa,
+            revisados: r.revisados,
+            error: `No se pudo consultar ningún Track ID: ${r.errores[0].error}`,
+            errores: r.errores,
+          };
+        }
+        return { status: 'SUCCESS', empresaId: rutEmpresa, ...r };
       }
 
       case 'tool_sii_sync_status': {

@@ -40,3 +40,8 @@ export function isSimulatedDte(d: { estadoSii?: string; tedXml?: string } | null
   if (!d) return false;
   return d.estadoSii === 'SIMULADO' || Boolean(d.tedXml && d.tedXml.includes(SIMULATED_TED_SIGNATURE));
 }
+
+/** Un DTE simulado o rechazado por el SII no tiene validez tributaria: no cuenta para el F29 ni el libro de ventas. */
+export function isDteSinValidezTributaria(d: { estadoSii?: string; tedXml?: string } | null | undefined): boolean {
+  return isSimulatedDte(d) || d?.estadoSii === 'RECHAZADO';
+}

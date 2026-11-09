@@ -254,6 +254,36 @@ export const AGENT_SCHEDULED_TASKS: AgentScheduledTaskDefinition[] = [
     },
   },
   {
+    id: 'ESTADO_DTE',
+    modulo: 'FACTURACION_DTE',
+    nombre: 'Resultado SII de los DTE enviados',
+    descripcion: 'Consulta por Track ID el resultado de los DTE enviados y avisa los rechazados.',
+    frecuenciaPorDefecto: { tipo: 'DIARIA', hora: '10:00' },
+    periodo: (now) => periodoActual(now),
+    async execute({ run }) {
+      const out = await run('tool_billing_check_dte_status', {});
+      const err = fromTool(out);
+      if (err) return err;
+      if (out.status === 'NO_DATA') return { estado: 'SIN_DATOS', resumen: out.mensaje };
+      const partes = [
+        `${out.revisados} DTE consultado(s)`,
+        out.aceptados ? `${out.aceptados} aceptado(s)` : '',
+        out.conReparos ? `${out.conReparos} con reparos` : '',
+        out.rechazados ? `${out.rechazados} rechazado(s)` : '',
+        out.enProceso ? `${out.enProceso} aún en proceso` : '',
+        out.errores?.length ? `${out.errores.length} sin respuesta` : '',
+      ].filter(Boolean).join(', ');
+      const rechazados = (out.detalle || []).filter((d: any) => d.estadoSii === 'RECHAZADO' || d.estadoSii === 'ACEPTADO_CON_REPAROS');
+      if (rechazados.length || out.errores?.length) {
+        return {
+          estado: 'REQUIERE_ATENCION',
+          resumen: `${partes}. ${rechazados.map((d: any) => `Folio ${d.folio} (tipo ${d.tipoDte}): ${d.estadoSii} ${d.codigoSii}${d.glosa ? ` – ${d.glosa}` : ''}`).join('; ')}`.trim(),
+        };
+      }
+      return { estado: 'SIN_CAMBIOS', resumen: `${partes}.` };
+    },
+  },
+  {
     id: 'DEPRECIACION_MENSUAL',
     modulo: 'ACTIVO_FIJO',
     nombre: 'Depreciación mensual (día 1)',

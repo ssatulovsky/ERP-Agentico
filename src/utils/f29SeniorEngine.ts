@@ -1,4 +1,4 @@
-import { isSimulatedDte } from '../config/dteSimulationPolicy';
+import { isDteSinValidezTributaria } from '../config/dteSimulationPolicy';
 import {
   F29SeniorResult,
   F29SeniorMapeo,
@@ -38,7 +38,7 @@ export function calculatePreF29(
   options: PreF29Options = {}
 ): F29SeniorResult {
   // 1.4: los DTE simulados (sin validez tributaria) nunca se declaran en el F29.
-  const safeDtes = (Array.isArray(dtes) ? dtes : []).filter((d) => !isSimulatedDte(d as any));
+  const safeDtes = (Array.isArray(dtes) ? dtes : []).filter((d) => !isDteSinValidezTributaria(d as any));
   const safePayrolls = Array.isArray(payrolls) ? payrolls : [];
   // 2.3: el período tributario es obligatorio; no se declara un mes supuesto.
   if (!options.periodo || !/^\d{4}-(0[1-9]|1[0-2])$/.test(options.periodo)) {

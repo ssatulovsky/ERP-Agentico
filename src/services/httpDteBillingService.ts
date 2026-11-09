@@ -1022,15 +1022,28 @@ export class HttpDteBillingService {
         // Si responde 200/201, parsear respuesta exitosa
         if (response.ok) {
           const resJson = await response.json().catch(() => ({}));
-          console.log(`[HttpDteBillingService] ¡Éxito en emisión DTE! Folio: ${resJson.folio || payload.folio}`);
+          // 4.3: solo lo que entregó el servicio. Antes, si faltaban, se fabricaban un Track ID
+          // (TRK-SII-<fecha>), un TED con firma TED_SIGNATURE_OK y un XML de relleno.
+          const ted = resJson.ted || resJson.timbre || undefined;
+          const xmlTimbrado = resJson.xml || resJson.dte_xml || undefined;
+          if (!ted && !xmlTimbrado) {
+            return {
+              success: false,
+              error: 'El servicio HTTP-DTE respondió sin timbre (TED) ni XML firmado. No se registra el documento como emitido.',
+              rawResponse: resJson,
+            };
+          }
+          const trackId = resJson.track_id || resJson.trackId || null;
+          console.log(`[HttpDteBillingService] DTE timbrado. Folio: ${resJson.folio || payload.folio} · Track ID: ${trackId || 'sin envío al SII'}`);
 
           return {
             success: true,
             folio: resJson.folio || payload.folio,
             tipoDte: payload.tipoDte,
-            trackId: resJson.track_id || resJson.trackId || `TRK-SII-${Date.now()}`,
-            ted: resJson.ted || resJson.timbre || `<TED version="1.0"><DD><RE>${payload.emisor.rut}</RE><TD>${payload.tipoDte}</TD><F>${resJson.folio || payload.folio}</F><FE>${payload.fechaEmision}</FE><RR>${payload.receptor.rut}</RR><RSR>${payload.receptor.razonSocial.slice(0, 40)}</RSR><MNT>${payload.totales?.montoTotal || 0}</MNT></DD><FRMT algoritmo="SHA1withRSA">TED_SIGNATURE_OK</FRMT></TED>`,
-            xmlTimbrado: resJson.xml || resJson.dte_xml || `<?xml version="1.0" encoding="ISO-8859-1"?><DTE version="1.0"><Documento ID="DTE-${payload.tipoDte}-${resJson.folio || payload.folio}"><Encabezado>...</Encabezado></Documento></DTE>`,
+            trackId,
+            estadoSii: trackId ? 'ENVIADO' : 'PENDIENTE',
+            ted,
+            xmlTimbrado,
             pdfBase64: resJson.pdf || resJson.pdf_base64 || undefined,
             ambiente: payload.ambiente,
             timestamp: new Date().toISOString(),
@@ -1131,7 +1144,8 @@ export class HttpDteBillingService {
     // Un DTE recién enviado queda ENVIADO hasta consultar su Track ID en el SII; nunca ACEPTADO de inmediato.
     // Un DTE simulado queda SIMULADO y no cuenta para el libro de ventas ni para el F29.
     const simulado = Boolean(emissionRes.simulated || emissionRes.rawResponse?.simulatedOffline || (emissionRes.ted || '').includes(SIMULATED_TED_SIGNATURE));
-    const estadoSii: 'ENVIADO' | 'SIMULADO' = simulado ? 'SIMULADO' : 'ENVIADO';
+    // Sin Track ID el documento está timbrado pero no enviado al SII: PENDIENTE.
+    const estadoSii: 'ENVIADO' | 'PENDIENTE' | 'SIMULADO' = simulado ? 'SIMULADO' : emissionRes.trackId ? 'ENVIADO' : 'PENDIENTE';
 
     // Guardar PDF en disco si vino en base64
     let savedPdfPath: string | undefined;
@@ -1273,6 +1287,92 @@ export class HttpDteBillingService {
    * Método de alto nivel: toma el borrador nativo del ERP y la ficha de la empresa,
    * mapea a LibreDTE, emite por HTTP y persiste en la base de datos.
    */
+  // ==========================================================================
+  // 4.3 CONSULTA DEL TRACK ID: ENVIADO → ACEPTADO / ACEPTADO_CON_REPAROS / RECHAZADO
+  // ==========================================================================
+
+  /**
+   * Traduce el estado de un envío informado por el SII. EPR = envío procesado (aceptado);
+   * RPR = aceptado con reparos; RCH, RCT, RFR, RSC, RCO, RCS, VOF, RPT = rechazo; el resto
+   * (SOK, CRT, PDR, FOK, REC…) sigue en proceso y el documento queda ENVIADO.
+   */
+  public static mapEstadoEnvioSii(codigo: string | undefined | null): 'ACEPTADO' | 'ACEPTADO_CON_REPAROS' | 'RECHAZADO' | 'ENVIADO' {
+    const c = String(codigo || '').trim().toUpperCase();
+    if (c === 'EPR' || c === 'ACEPTADO' || c === 'DOK') return 'ACEPTADO';
+    if (c === 'RPR' || c === 'RLV' || c === 'ACEPTADO_CON_REPAROS') return 'ACEPTADO_CON_REPAROS';
+    if (['RCH', 'RCT', 'RFR', 'RSC', 'RCO', 'RCS', 'VOF', 'RPT', 'RECHAZADO', 'DNK'].includes(c)) return 'RECHAZADO';
+    return 'ENVIADO';
+  }
+
+  /** Consulta al servicio HTTP-DTE el estado de un envío en el SII por su Track ID. */
+  public static async consultarEstadoEnvio(params: {
+    rutEmisor: string;
+    trackId: string;
+    ambiente?: 1 | 2;
+    baseUrl?: string;
+    timeoutMs?: number;
+  }): Promise<{ ok: true; estadoSii: ReturnType<typeof HttpDteBillingService.mapEstadoEnvioSii>; codigoSii: string; glosa: string; raw: any } | { ok: false; error: string }> {
+    const baseUrl = (params.baseUrl || this.DEFAULT_HTTP_DTE_URL).replace(/\/+$/, '');
+    const pathEstado = process.env.HTTP_DTE_ESTADO_PATH || '/dte/estado';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? this.DEFAULT_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${baseUrl}${pathEstado}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'ERP-Agentic-HttpDte/2.0' },
+        body: JSON.stringify({ rut_emisor: params.rutEmisor, rutEmisor: params.rutEmisor, track_id: params.trackId, trackId: params.trackId, ambiente: params.ambiente || 1 }),
+        signal: controller.signal,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: `HTTP-DTE respondió ${res.status} al consultar el Track ID ${params.trackId}: ${body?.error || body?.message || res.statusText}` };
+      const codigo = String(body.estado ?? body.estado_sii ?? body.estadoSii ?? body.status ?? '').trim();
+      if (!codigo) return { ok: false, error: `HTTP-DTE no informó el estado del Track ID ${params.trackId}.` };
+      return { ok: true, estadoSii: this.mapEstadoEnvioSii(codigo), codigoSii: codigo.toUpperCase(), glosa: String(body.glosa || body.detalle || body.descripcion || ''), raw: body };
+    } catch (e: any) {
+      return { ok: false, error: `No fue posible consultar el Track ID ${params.trackId}: ${e?.name === 'AbortError' ? 'tiempo de espera agotado' : e?.message || e}` };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Consulta todos los DTE ENVIADOS de la empresa que tienen Track ID y actualiza su estado.
+   * Un error de consulta deja el documento como estaba (ENVIADO) y se informa.
+   */
+  public static async actualizarEstadosEnvio(empresaId: string, opts: { baseUrl?: string } = {}): Promise<{
+    revisados: number;
+    aceptados: number;
+    conReparos: number;
+    rechazados: number;
+    enProceso: number;
+    errores: Array<{ folio: any; trackId: string; error: string }>;
+    detalle: Array<{ folio: any; tipoDte: any; trackId: string; estadoAnterior: string; estadoSii: string; codigoSii?: string; glosa?: string }>;
+  }> {
+    const dtes: any[] = diskPersistence.getDtes(empresaId) || [];
+    const pendientes = dtes.filter((d) => d.estadoSii === 'ENVIADO' && d.trackId);
+    const out = { revisados: pendientes.length, aceptados: 0, conReparos: 0, rechazados: 0, enProceso: 0, errores: [] as any[], detalle: [] as any[] };
+    const actualizados = new Map<string, any>();
+    for (const d of pendientes) {
+      const r = await this.consultarEstadoEnvio({ rutEmisor: d.rutEmisor || empresaId, trackId: d.trackId, ambiente: d.ambienteSii, baseUrl: opts.baseUrl });
+      if (r.ok === false) {
+        out.errores.push({ folio: d.folio, trackId: d.trackId, error: (r as { error: string }).error });
+        continue;
+      }
+      if (r.estadoSii === 'ACEPTADO') out.aceptados++;
+      else if (r.estadoSii === 'ACEPTADO_CON_REPAROS') out.conReparos++;
+      else if (r.estadoSii === 'RECHAZADO') out.rechazados++;
+      else out.enProceso++;
+      out.detalle.push({ folio: d.folio, tipoDte: d.tipoDte, trackId: d.trackId, estadoAnterior: d.estadoSii, estadoSii: r.estadoSii, codigoSii: r.codigoSii, glosa: r.glosa });
+      if (r.estadoSii !== 'ENVIADO') {
+        actualizados.set(d.id, { ...d, estadoSii: r.estadoSii, codigoEstadoSii: r.codigoSii, glosaEstadoSii: r.glosa, fechaConsultaEstadoSii: new Date().toISOString() });
+      }
+    }
+    if (actualizados.size > 0) {
+      diskPersistence.saveDtes(empresaId, [...actualizados.values()]);
+    }
+    return out;
+  }
+
   public static async emitirDteDesdeBorrador(
     draft: BillingEmissionDraft,
     company: any,
@@ -1302,7 +1402,7 @@ export class HttpDteBillingService {
     if (emissionRes.success) {
       const dteId = await this.persistEmittedDte(emissionRes, payload, draft);
       emissionRes.dteId = dteId;
-      emissionRes.estadoSii = emissionRes.simulated ? 'SIMULADO' : 'ENVIADO';
+      emissionRes.estadoSii = emissionRes.simulated ? 'SIMULADO' : emissionRes.trackId ? 'ENVIADO' : 'PENDIENTE';
     }
 
     return emissionRes;

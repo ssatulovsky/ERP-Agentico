@@ -453,7 +453,7 @@ export interface DteDocument {
   retencionTasa?: number; // Para Boletas de Honorarios (ej: 14.5%)
   retencionMonto?: number;
   // ENVIADO: timbrado y enviado, a la espera de consultar el Track ID. SIMULADO: sin validez tributaria (solo desarrollo).
-  estadoSii: 'ACEPTADO' | 'ACEPTADO_CON_REPAROS' | 'RECLAMADO' | 'PENDIENTE' | 'ENVIADO' | 'SIMULADO';
+  estadoSii: 'ACEPTADO' | 'ACEPTADO_CON_REPAROS' | 'RECLAMADO' | 'RECHAZADO' | 'PENDIENTE' | 'ENVIADO' | 'SIMULADO';
   estadoPago: 'PENDIENTE' | 'PAGADO' | 'COBRADO' | 'ABONADO' | 'VENCIDO';
   cuentaContableDebe?: string;
   cuentaContableHaber?: string;
@@ -3272,14 +3272,15 @@ export interface HttpDteEmissionResponse {
   success: boolean;
   folio?: number;
   tipoDte?: number;
-  trackId?: string; // Identificador oficial de recepción y envío del SII
+  trackId?: string | null; // Identificador oficial de recepción y envío del SII (null si el servicio no lo informó)
   ted?: string; // Timbre Electrónico DTE (<TED>...</TED>)
   xmlTimbrado?: string; // XML oficial firmado digitalmente
   pdfBase64?: string; // PDF generado en base64
   pdfUrl?: string; // Ruta local o URL del PDF almacenado
   dteId?: string; // ID asignado en la base de datos del ERP
   simulated?: boolean; // true solo con ALLOW_OFFLINE_DTE_SIMULATION en desarrollo: sin validez tributaria
-  estadoSii?: 'ENVIADO' | 'SIMULADO';
+  /** ENVIADO: con Track ID, falta consultar el resultado. PENDIENTE: timbrado sin envío al SII. */
+  estadoSii?: 'ENVIADO' | 'PENDIENTE' | 'SIMULADO';
   ambiente?: 1 | 2;
   timestamp?: string;
   error?: string;

@@ -29,6 +29,7 @@ export const AGENT_TOOL_POLICY: Record<string, readonly string[]> = {
   ],
   FACTURACION_DTE: [
     'tool_billing_draft_dte',
+    'tool_billing_check_dte_status',
     'tool_sii_sync_status',
     SUBMIT_APPROVAL_TOOL,
   ],
