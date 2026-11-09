@@ -1,5 +1,17 @@
 # CHANGELOG — ERPremIA
 
+## Plan de corrección · Fase 4: verificación (9 nov 2026)
+
+| Tarea | Cambio | Verificación |
+| :--- | :--- | :--- |
+| **4.1** Regresiones | Cada hallazgo #1–#10 tiene su prueba; una prueba falla si alguno queda sin cobertura. Tabla en `docs/plan-correccion/regresiones-hallazgos.md`. | `phase4_markers` |
+| **4.2** LLM real | Banco de 240 consultas (20 por agente) en `evals/llm`, con datos conocidos; mide herramienta correcta y montos sin origen; umbral 90 %. `npm run eval:llm` (requiere `GEMINI_API_KEY`). La autoprueba (oráculo 100 %, modelo que inventa 0 %) corre en `npm test`. Corrige la comparativa de cotizaciones, que nunca veía las ofertas. | Autoprueba; **pendiente la corrida con modelo real** |
+| **4.3** Certificación SII | La emisión ya no fabrica TED, XML ni Track ID; sin Track ID el DTE queda `PENDIENTE`. Consulta del Track ID (`ACEPTADO`, `ACEPTADO_CON_REPAROS`, `RECHAZADO`) con herramienta del agente de facturación y tarea diaria; el F29 excluye rechazados. `npm run certificacion:sii` revisa ambiente, HTTP-DTE, certificado y CAF, y con `--emitir`/`--rcv` emite y descarga en certificación. | `phase4_certification`; **pendiente la corrida en certificación** |
+| **4.4** Marcadores | Sin cambios respecto de la fase 2. | `phase4_markers` |
+| **4.5** Re-auditoría | 12 hallazgos nuevos corregidos: instalación real utilizable (primera empresa, cambio de clave obligatorio, ingreso sin empresas de demo), cartera de empresas en el servidor (`/api/clients`), estimaciones del dashboard y de producción presentadas como datos, condiciones supuestas en órdenes de compra. Informe: `docs/plan-correccion/reauditoria-2026-11-09.md`. | `phase4_install`, `phase4_markers`, prueba en el navegador |
+
+---
+
 ## Plan de corrección · Fase 3: autonomía real (6 nov 2026)
 
 | Tarea | Cambio | Verificación |
