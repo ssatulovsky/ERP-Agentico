@@ -247,9 +247,27 @@ async function runAutonomousModulesSuite() {
       baseRequest
     );
 
-    assert.strictEqual(varRes.status, 'SUCCESS');
-    assert.strictEqual(varRes.folioOP, testOp.folioOP);
-    assert.ok(typeof varRes.desviacionTotalClp === 'number');
+    // 4.5: sin presupuesto estándar no hay variación (antes se suponía estándar = real × 0,95).
+    assert.strictEqual(varRes.status, 'NO_DATA');
+
+    diskPersistence.saveProductionBudget({
+      id: `PPTO-${testOp.id}`,
+      empresaId: tenantRut,
+      ordenProduccionId: testOp.id,
+      folioOP: testOp.folioOP,
+      presupuestoMpdClp: 4200000,
+      presupuestoModClp: 1800000,
+      presupuestoCifClp: 650000,
+    });
+    const varConPpto = await (AutonomousAgentEngine as any).executeTool(
+      'tool_production_variance_standard_vs_real',
+      { folioOP: testOp.folioOP },
+      baseRequest
+    );
+    assert.strictEqual(varConPpto.status, 'SUCCESS');
+    assert.strictEqual(varConPpto.folioOP, testOp.folioOP);
+    assert.strictEqual(varConPpto.costoEstandarPresupuestado, 6650000);
+    assert.strictEqual(varConPpto.desviacionTotalClp, 350000);
   });
 
   await test('Parte B.2 [Producción]: tool_production_propose_closure_entry y ejecutor CIERRE_ORDEN_PRODUCCION', async () => {

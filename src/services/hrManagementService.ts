@@ -825,8 +825,9 @@ export class HrManagementService {
             {
               proveedorRut,
               proveedorRazonSocial,
-              condicionPago: datos.condicionPago || '30_DIAS_TRANSFERENCIA',
-              plazoEntregaDias: Number(datos.plazoEntregaDias || 15),
+              // Condiciones de la oferta adjudicada; si no vienen, quedan por confirmar (no se suponen).
+              condicionPago: datos.condicionPago || undefined,
+              plazoEntregaDias: Number(datos.plazoEntregaDias) > 0 ? Number(datos.plazoEntregaDias) : undefined,
               items: validatedItems,
               motivoGeneracion: datos.motivoAdjudicacion || datos.motivoGeneracion || item.titulo,
               estado: 'EMITIDA',

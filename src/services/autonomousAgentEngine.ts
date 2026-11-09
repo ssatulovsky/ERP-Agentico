@@ -1369,7 +1369,7 @@ export class AutonomousAgentEngine {
             id: op.id,
             folioOP: op.folioOP,
             productoNombre: op.productoNombre,
-            clienteNombre: op.clienteNombre || 'Industrial',
+            clienteNombre: op.clienteNombre || null,
             estado: op.estado,
             unidadMedida: op.unidadMedida || 'UND',
             cantidadObjetivo: cantObj,
@@ -1410,9 +1410,17 @@ export class AutonomousAgentEngine {
         const budgets = diskPersistence.getProductionBudgets(rutEmpresa);
         const budget = budgets.find((b: any) => b.ordenProduccionId === op.id || b.folioOP === op.folioOP);
 
-        const estMPD = budget ? Number(budget.presupuestoMpdClp || 0) : Math.round(Number(op.costoMateriaPrimaReal || 0) * 0.95);
-        const estMOD = budget ? Number(budget.presupuestoModClp || 0) : Math.round(Number(op.costoManoObraReal || 0) * 0.95);
-        const estCIF = budget ? Number(budget.presupuestoCifClp || 0) : Math.round(Number(op.costoCifReal || 0) * 0.95);
+        // 4.5: sin presupuesto estándar no hay variación que calcular (antes: estándar = real × 0,95).
+        if (!budget) {
+          return {
+            status: 'NO_DATA',
+            folioOP: op.folioOP,
+            mensaje: `La orden ${op.folioOP} no tiene presupuesto estándar registrado; registre el presupuesto para calcular variaciones.`,
+          };
+        }
+        const estMPD = Number(budget.presupuestoMpdClp || 0);
+        const estMOD = Number(budget.presupuestoModClp || 0);
+        const estCIF = Number(budget.presupuestoCifClp || 0);
         const estTotal = estMPD + estMOD + estCIF;
 
         const realMPD = Number(op.costoMateriaPrimaReal || 0);
@@ -1703,6 +1711,8 @@ export class AutonomousAgentEngine {
         const rfq = (comState.rfqs || []).find(
           (r: any) => String(r.id).toUpperCase() === rfqTarget || String(r.folioRfq).toUpperCase() === rfqTarget
         );
+        const normRut = (v: any) => String(v || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        const oferta = (rfq?.proveedoresInvitados || []).find((p: any) => normRut(p.proveedorRut) === normRut(args.proveedorRut));
         let items = Array.isArray(args.items) ? args.items : undefined;
         if (!items && rfq?.items) {
           const rfqItems = rfq.items;
@@ -1731,10 +1741,13 @@ export class AutonomousAgentEngine {
           datosOperacion: {
             rfqId: args.rfqId,
             proveedorRut: args.proveedorRut,
-            proveedorRazonSocial: args.proveedorRazonSocial || args.proveedorNombre,
+            proveedorRazonSocial: args.proveedorRazonSocial || args.proveedorNombre || oferta?.proveedorRazonSocial,
             items,
             montoTotalNeto: montoNeto,
             motivoAdjudicacion: args.motivoAdjudicacion,
+            // 4.5: condiciones de la oferta del proveedor (antes la OC suponía 15 días y 30 días de crédito).
+            plazoEntregaDias: oferta?.plazoEntregaDiasOfertado ?? null,
+            condicionPago: oferta?.condicionPagoOfertada ?? null,
           },
           impactoFinancieroClp: montoNeto,
           nivelRiesgo: montoNeto > 5000000 ? 'ALTO' : 'MEDIO',

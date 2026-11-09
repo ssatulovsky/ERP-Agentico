@@ -643,11 +643,11 @@ export const WarehouseWithdrawalModal: React.FC<WarehouseWithdrawalModalProps> =
                         <span className="text-slate-400 font-bold block">DATOS DE LA OP SELECCIONADA</span>
                         <div className="font-bold text-slate-800">{selectedOp.productoNombre}</div>
                         <div className="text-slate-600">
-                          Cliente: <strong>{selectedOp.clienteNombre || 'Cliente General'}</strong>
+                          Cliente: <strong>{selectedOp.clienteNombre || 'No informado'}</strong>
                         </div>
                         <div className="text-blue-700 font-mono font-semibold">
                           Presupuesto Base: {selectedOp.presupuestoFolio || 'Asignado Directo'} (Margen Meta:{' '}
-                          {selectedOp.margenPresupuestadoPct || 35}%)
+                          {selectedOp.margenPresupuestadoPct ? `${selectedOp.margenPresupuestadoPct}%` : 'no registrado'})
                         </div>
                       </div>
                     )}

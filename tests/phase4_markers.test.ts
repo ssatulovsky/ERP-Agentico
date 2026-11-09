@@ -13,6 +13,8 @@ import { calculatePreF29 } from '../src/utils/f29SeniorEngine';
 import { DEFAULT_INDICATORS } from '../src/utils/chileanAccounting';
 import { AutonomousAgentEngine } from '../src/services/autonomousAgentEngine';
 import { commercialProcurementService } from '../src/services/commercialProcurementService';
+import { diskPersistence } from '../src/services/diskPersistenceService';
+import { calculateExecutiveDashboardMetrics } from '../src/utils/executiveDashboardEngine';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -171,6 +173,37 @@ async function run() {
     assert.strictEqual(r.mejorOfertaPorCostoTotal.proveedorRut, '79.111.000-2', 'La mejor oferta considera el flete');
     assert.strictEqual(r.cuadroComparativo.find((q: any) => q.proveedorRut === '78.555.666-7').plazoEntregaDias, 7);
     assert.ok(!JSON.stringify(r).includes('"score":85'), 'Puntaje 85 supuesto');
+  });
+
+  await test('4.5 Variaciones de producción: sin presupuesto estándar no se calculan (antes: estándar = real × 0,95)', async () => {
+    const emp = `75${String(Date.now()).slice(-6)}-6`;
+    diskPersistence.setProductionOrders(emp, [{ id: `${emp}-op`, folioOP: 'OP-SIN-PPTO', productoNombre: 'X', costoMateriaPrimaReal: 1000000, costoManoObraReal: 200000, costoCifReal: 100000 }]);
+    const r = await AutonomousAgentEngine.executeTool('tool_production_variance_standard_vs_real', { folioOP: 'OP-SIN-PPTO' }, { empresaId: emp, module: 'COSTOS_PRODUCCION', agentRole: 't', query: 't', context: {} } as any);
+    assert.strictEqual(r.status, 'NO_DATA');
+    assert.ok(!('costoEstandarPresupuestado' in r));
+  });
+
+  await test('4.5 Dashboard: sin presupuestos ni registros no inventa variaciones, costos de ausencia ni reparto por departamento', () => {
+    const m: any = calculateExecutiveDashboardMetrics({
+      company: { rut: '76.000.000-0', razonSocial: 'X' } as any,
+      productionOrders: [{ id: 'op1', folioOP: 'OP-1', productoNombre: 'X', estado: 'TERMINADA', costoTotalProduccion: 1000000, costoDirectoMateriales: 700000, costoDirectoManoObra: 200000, costoIndirectoCif: 100000 } as any],
+      vacations: [{ rut: '1-9', diasTomadosHistorico: 5 } as any],
+      absenteeismList: [{ rut: '2-7', tipo: 'PERMISO_ADMINISTRATIVO', diasInasistencia: 1 } as any],
+    });
+    assert.deepStrictEqual(m.productionCostDeviations, [], 'Una OP sin presupuesto no tiene desvío');
+    assert.ok(m.hrAbsenceMetrics.chartData.every((c: any) => c.tipo.startsWith('Licencias') || c.tipo.startsWith('Inasistencias') || c.costo === 0));
+    assert.deepStrictEqual(m.hrAbsenceMetrics.departamentoData, []);
+  });
+
+  await test('4.5 La orden de compra adjudicada usa el plazo y la condición de la oferta, sin suponerlos', async () => {
+    const emp = `75${String(Date.now()).slice(-6)}-7`;
+    const rfq = commercialProcurementService.createRfq(emp, { titulo: 'OC', items: [{ sku: 'X', descripcion: 'Insumo', cantidad: 10, unidad: 'UND' } as any], proveedorRuts: ['78.555.666-7'] });
+    commercialProcurementService.submitSupplierQuote(emp, rfq.id, '78.555.666-7', { montoNetoOfertado: 500000, plazoEntregaDiasOfertado: 9, condicionPagoOfertada: '60 días' });
+    const r = await AutonomousAgentEngine.executeTool('tool_procurement_award_purchase_order', { rfqId: rfq.id, proveedorRut: '78555666-7', montoTotalNeto: 500000, motivoAdjudicacion: 'Única oferta' }, { empresaId: emp, module: 'COMERCIAL_COMPRAS', agentRole: 't', query: 't', context: {} } as any);
+    assert.strictEqual(r.status, 'SUCCESS');
+    const ap: any = diskPersistence.getApprovals(emp, 'COMERCIAL_COMPRAS').find((a: any) => a.id === r.approvalId);
+    assert.strictEqual(ap.datosOperacion.plazoEntregaDias, 9);
+    assert.strictEqual(ap.datosOperacion.condicionPago, '60 días');
   });
 
   console.log(`\nRESULTADO 4.4: ${passed} de ${total} pruebas pasaron.`);

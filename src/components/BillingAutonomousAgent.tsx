@@ -1447,7 +1447,7 @@ export const BillingAutonomousAgent: React.FC<BillingAutonomousAgentProps> = ({
                           <CheckCircle2 className="w-4 h-4" /> DTE {draft.tipoDte} Folio {lastEmissionReport.folio} Timbrado
                         </span>
                         <span className="font-mono text-[10px] bg-emerald-900/80 px-1.5 py-0.5 rounded text-emerald-300">
-                          TrackID: {lastEmissionReport.trackId || 'TRK-OK'}
+                          TrackID: {lastEmissionReport.trackId || 'sin Track ID (no enviado al SII)'}
                         </span>
                       </div>
                       <p className="text-[11px] text-emerald-300">

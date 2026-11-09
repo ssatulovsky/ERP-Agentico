@@ -888,8 +888,9 @@ class CommercialProcurementService {
       fechaEmision: new Date().toISOString().split('T')[0],
       proveedorRut: data.proveedorRut,
       proveedorRazonSocial: data.proveedorRazonSocial,
-      condicionPago: data.condicionPago || 'Crédito 30 días',
-      plazoEntregaDias: data.plazoEntregaDias || 5,
+      // 4.5: sin condiciones informadas quedan por confirmar (antes: crédito 30 días y entrega en 5 días supuestos).
+      condicionPago: data.condicionPago || 'Por confirmar con el proveedor',
+      plazoEntregaDias: data.plazoEntregaDias ?? null,
       items: itemsCalculated,
       totalNetoCLP,
       iva19CLP,

@@ -139,20 +139,21 @@ export interface ProductionOrderCostDeviationData {
   varianzaPct: number;
 
   // Elementos
-  costoMpdPresupuestado: number;
+  // Por elemento: null si el presupuesto no lo desglosa (no se estima).
+  costoMpdPresupuestado: number | null;
   costoMpdReal: number;
-  varianzaMpd: number;
+  varianzaMpd: number | null;
 
-  costoModPresupuestado: number;
+  costoModPresupuestado: number | null;
   costoModReal: number;
-  varianzaMod: number;
+  varianzaMod: number | null;
 
-  costoCifPresupuestado: number;
+  costoCifPresupuestado: number | null;
   costoCifReal: number;
-  varianzaCif: number;
+  varianzaCif: number | null;
 
-  margenPresupuestadoPct: number;
-  margenRealEstimadoPct: number;
+  margenPresupuestadoPct: number | null;
+  margenRealEstimadoPct: number | null;
   esSobrecosto: boolean;
 }
 
@@ -403,7 +404,8 @@ export function calculateExecutiveDashboardMetrics(params: {
       0
     );
 
-    const totalIngresosMes = movsIngresos > 0 ? movsIngresos : Math.round(dtesVentasMes * 0.95);
+    // Sin movimientos bancarios se usa lo facturado en el mes (antes: facturado × 0,95 como cobranza supuesta).
+    const totalIngresosMes = movsIngresos > 0 ? movsIngresos : Math.round(dtesVentasMes);
     const totalEgresosMes =
       movsEgresos > 0
         ? movsEgresos + provMes
@@ -508,11 +510,11 @@ export function calculateExecutiveDashboardMetrics(params: {
   // Inasistencias y Atrasos
   const diasInasistenciasInjustificadas = absenteeismList
     .filter((a) => a.tipo === 'INASISTENCIA_INJUSTIFICADA')
-    .reduce((acc, a) => acc + (a.diasInasistencia || 1), 0);
+    .reduce((acc, a) => acc + (Number(a.diasInasistencia) || 0), 0);
 
   const diasPermisosLegales = absenteeismList
     .filter((a) => a.tipo.startsWith('PERMISO_'))
-    .reduce((acc, a) => acc + (a.diasInasistencia || 2), 0);
+    .reduce((acc, a) => acc + (Number(a.diasInasistencia) || 0), 0);
 
   const descuentoNominaInasistencias = absenteeismList.reduce(
     (acc, a) => acc + (a.impactoDescuentoPesos || 0),
@@ -550,7 +552,8 @@ export function calculateExecutiveDashboardMetrics(params: {
       {
         tipo: 'Feriado Legal / Vacaciones',
         dias: diasVacacionesTomadas,
-        costo: Math.round(diasVacacionesTomadas * 55000),
+        // Feriado legal y permisos remunerados no descuentan nómina (antes: $55.000 y $48.000 por día supuestos).
+        costo: 0,
         color: '#3b82f6', // Blue
       },
       {
@@ -562,16 +565,19 @@ export function calculateExecutiveDashboardMetrics(params: {
       {
         tipo: 'Permisos Legales Remunerados',
         dias: diasPermisosLegales,
-        costo: Math.round(diasPermisosLegales * 48000),
+        costo: 0,
         color: '#10b981', // Emerald
       },
     ],
-    departamentoData: [
-      { departamento: 'Operaciones & Planta', dias: Math.round(totalDiasAusencia * 0.45) },
-      { departamento: 'Ingeniería & Software', dias: Math.round(totalDiasAusencia * 0.25) },
-      { departamento: 'Comercial & Ventas', dias: Math.round(totalDiasAusencia * 0.15) },
-      { departamento: 'Administración & Finanzas', dias: Math.round(totalDiasAusencia * 0.15) },
-    ],
+    // Por departamento solo si los registros lo informan (antes: reparto fijo 45/25/15/15 %).
+    departamentoData: (() => {
+      const porDepto = new Map<string, number>();
+      for (const a of absenteeismList as any[]) {
+        const depto = a.departamento || a.area || a.centroCostoNombre;
+        if (depto) porDepto.set(depto, (porDepto.get(depto) || 0) + (Number(a.diasInasistencia) || 0));
+      }
+      return [...porDepto.entries()].map(([departamento, dias]) => ({ departamento, dias }));
+    })(),
   };
 
   // ==========================================================================
@@ -674,34 +680,36 @@ export function calculateExecutiveDashboardMetrics(params: {
   // ==========================================================================
   // 10. COSTOS ESTIMADOS VS COSTO REAL POR ORDEN DE TRABAJO (OT / OP)
   // ==========================================================================
-  const productionCostDeviations: ProductionOrderCostDeviationData[] = productionOrders.map((op) => {
-    const costoPresupuestado = op.presupuestoBase?.costoTotalPresupuestado || op.costoTotalProduccion * 0.95;
+  // 4.5: solo órdenes con presupuesto registrado (antes: presupuesto = real × 0,92–0,98 y margen meta 28,5 %).
+  const productionCostDeviations: ProductionOrderCostDeviationData[] = productionOrders
+    .filter((op) => Number(op.presupuestoBase?.costoTotalPresupuestado) > 0)
+    .map((op) => {
+    const costoPresupuestado = Number(op.presupuestoBase!.costoTotalPresupuestado);
     const costoReal = op.costoTotalProduccion || 0;
     const varianzaClp = costoReal - costoPresupuestado;
-    const varianzaPct = costoPresupuestado > 0
-      ? Number(((varianzaClp / costoPresupuestado) * 100).toFixed(1))
-      : 0;
+    const varianzaPct = Number(((varianzaClp / costoPresupuestado) * 100).toFixed(1));
 
-    const costoMpdPresupuestado = op.presupuestoBase?.costoMpdPresupuestado || op.costoDirectoMateriales * 0.92;
+    const presupuestoDe = (v: any) => (Number(v) > 0 ? Number(v) : null);
+    const costoMpdPresupuestado = presupuestoDe(op.presupuestoBase?.costoMpdPresupuestado);
     const costoMpdReal = op.costoDirectoMateriales || 0;
-    const varianzaMpd = costoMpdReal - costoMpdPresupuestado;
+    const varianzaMpd = costoMpdPresupuestado === null ? null : costoMpdReal - costoMpdPresupuestado;
 
-    const costoModPresupuestado = op.presupuestoBase?.costoModPresupuestado || op.costoDirectoManoObra * 0.95;
+    const costoModPresupuestado = presupuestoDe(op.presupuestoBase?.costoModPresupuestado);
     const costoModReal = op.costoDirectoManoObra || 0;
-    const varianzaMod = costoModReal - costoModPresupuestado;
+    const varianzaMod = costoModPresupuestado === null ? null : costoModReal - costoModPresupuestado;
 
-    const costoCifPresupuestado = op.presupuestoBase?.costoCifPresupuestado || op.costoIndirectoCif * 0.98;
+    const costoCifPresupuestado = presupuestoDe(op.presupuestoBase?.costoCifPresupuestado);
     const costoCifReal = op.costoIndirectoCif || 0;
-    const varianzaCif = costoCifReal - costoCifPresupuestado;
+    const varianzaCif = costoCifPresupuestado === null ? null : costoCifReal - costoCifPresupuestado;
 
-    const margenPresupuestadoPct = op.margenPresupuestadoPct || 28.5;
-    const margenRealEstimadoPct = Number((margenPresupuestadoPct - varianzaPct).toFixed(1));
+    const margenPresupuestadoPct = Number.isFinite(Number(op.margenPresupuestadoPct)) && op.margenPresupuestadoPct !== undefined ? Number(op.margenPresupuestadoPct) : null;
+    const margenRealEstimadoPct = margenPresupuestadoPct === null ? null : Number((margenPresupuestadoPct - varianzaPct).toFixed(1));
 
     return {
       id: op.id,
       folioOp: op.folioOP,
       productoNombre: op.productoNombre,
-      clienteNombre: op.clienteNombre || 'Cliente General',
+      clienteNombre: op.clienteNombre || '',
       estado: op.estado,
       cantidadObjetivo: op.cantidadObjetivo,
       cantidadProducida: op.cantidadProducidaReal || 0,

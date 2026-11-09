@@ -1388,7 +1388,7 @@ export const CommercialProcurementAgentModule: React.FC<CommercialProcurementAge
                                 <div className="flex justify-between items-center text-xs">
                                   <span className="font-bold text-slate-700">Puntaje Ponderado TCO:</span>
                                   <span className="font-mono font-black text-sm text-sky-700">
-                                    {offer.scoringPonderadoTotal || 85} / 100
+                                    {offer.scoringPonderadoTotal ? `${offer.scoringPonderadoTotal} / 100` : 'Sin puntaje'}
                                   </span>
                                 </div>
                                 <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
