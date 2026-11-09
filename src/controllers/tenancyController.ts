@@ -155,11 +155,15 @@ tenancyRouter.post('/firms/:firmId/companies', async (req: Request, res: Respons
     const db = getMysqlDb();
     if (isRealMysqlConnected) {
       await db.insert(companies).values(newCompany);
+    } else {
+      // 4.5: sin MySQL se guarda en disco (antes respondía "vinculada exitosamente" sin guardar nada).
+      const stored: any[] = ((diskPersistence as any).getSnapshot().clients || []) as any[];
+      diskPersistence.updateCollection('clients', [...stored, { ...newCompany, createdAt: newCompany.createdAt.toISOString() }]);
     }
 
     res.status(201).json({
       success: true,
-      message: 'Empresa vinculada exitosamente al Estudio Contable.',
+      message: 'Empresa vinculada al Estudio Contable.',
       data: newCompany,
     });
   } catch (error: any) {

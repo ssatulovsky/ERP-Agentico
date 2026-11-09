@@ -61,10 +61,11 @@ export interface CurrentLiquidityData {
   totalPasivoCorriente: number;
 
   // Ratios Clave
-  ratioCorriente: number; // Activo Corriente / Pasivo Corriente
-  pruebaAcida: number; // (Activo Corriente - Inventario) / Pasivo Corriente
+  // null sin pasivos corrientes registrados: el ratio no se puede calcular (antes 2,5 y 2,0 supuestos).
+  ratioCorriente: number | null; // Activo Corriente / Pasivo Corriente
+  pruebaAcida: number | null; // (Activo Corriente - Inventario) / Pasivo Corriente
   capitalDeTrabajoNeto: number; // Activo Corriente - Pasivo Corriente
-  estadoSaludLiquidez: 'OPTIMO' | 'ADECUADO' | 'ALERTA_PREVENTIVA' | 'CRITICO';
+  estadoSaludLiquidez: 'OPTIMO' | 'ADECUADO' | 'ALERTA_PREVENTIVA' | 'CRITICO' | 'SIN_DATOS';
   diasCoberturaCaja: number;
 }
 
@@ -113,8 +114,9 @@ export interface CommercialBudgetMetricsData {
 
   tasaConversionVolumenPct: number; // aprobados / total
   tasaConversionMontoPct: number; // monto aprobado / monto total cotizado
-  margenPromedioCotizadoPct: number;
-  margenPromedioAprobadoPct: number;
+  // null sin presupuestos con margen registrado (antes 25 % supuesto).
+  margenPromedioCotizadoPct: number | null;
+  margenPromedioAprobadoPct: number | null;
 
   chartDataByStatus: Array<{
     estado: string;
@@ -307,17 +309,18 @@ export function calculateExecutiveDashboardMetrics(params: {
   const ratioCorriente =
     totalPasivoCorriente > 0
       ? Number((totalActivoCorriente / totalPasivoCorriente).toFixed(2))
-      : 2.5;
+      : null;
 
   const pruebaAcida =
     totalPasivoCorriente > 0
       ? Number(((totalActivoCorriente - inventarioValorizado) / totalPasivoCorriente).toFixed(2))
-      : 2.0;
+      : null;
 
   const capitalDeTrabajoNeto = totalActivoCorriente - totalPasivoCorriente;
 
   let estadoSaludLiquidez: CurrentLiquidityData['estadoSaludLiquidez'] = 'OPTIMO';
-  if (ratioCorriente >= 1.6) estadoSaludLiquidez = 'OPTIMO';
+  if (ratioCorriente === null) estadoSaludLiquidez = 'SIN_DATOS';
+  else if (ratioCorriente >= 1.6) estadoSaludLiquidez = 'OPTIMO';
   else if (ratioCorriente >= 1.2) estadoSaludLiquidez = 'ADECUADO';
   else if (ratioCorriente >= 0.9) estadoSaludLiquidez = 'ALERTA_PREVENTIVA';
   else estadoSaludLiquidez = 'CRITICO';
@@ -611,23 +614,13 @@ export function calculateExecutiveDashboardMetrics(params: {
     ? Number(((montoTotalAprobado / montoTotalCotizado) * 100).toFixed(1))
     : 0;
 
-  const margenPromedioCotizadoPct = totalPresupuestos > 0
-    ? Number(
-        (
-          productionBudgets.reduce((acc, b) => acc + (b.margenBrutoEstimadoPct || 25), 0) /
-          totalPresupuestos
-        ).toFixed(1)
-      )
-    : 25.0;
-
-  const margenPromedioAprobadoPct = aprobadosList.length > 0
-    ? Number(
-        (
-          aprobadosList.reduce((acc, b) => acc + (b.margenBrutoEstimadoPct || 25), 0) /
-          aprobadosList.length
-        ).toFixed(1)
-      )
-    : margenPromedioCotizadoPct;
+  const promedioMargen = (lista: typeof productionBudgets): number | null => {
+    const conMargen = lista.filter((b) => Number.isFinite(Number(b.margenBrutoEstimadoPct)) && b.margenBrutoEstimadoPct !== undefined && b.margenBrutoEstimadoPct !== null);
+    if (conMargen.length === 0) return null;
+    return Number((conMargen.reduce((acc, b) => acc + Number(b.margenBrutoEstimadoPct), 0) / conMargen.length).toFixed(1));
+  };
+  const margenPromedioCotizadoPct = promedioMargen(productionBudgets);
+  const margenPromedioAprobadoPct = promedioMargen(aprobadosList);
 
   const commercialBudgets: CommercialBudgetMetricsData = {
     totalPresupuestos,
@@ -738,7 +731,8 @@ export function calculateExecutiveDashboardMetrics(params: {
   let score = 70; // Base neutra
 
   // Componente 1: Ratio Corriente (Max +20 / Min -20)
-  if (ratioCorriente >= 1.6) score += 20;
+  if (ratioCorriente === null) score += 0; // sin pasivos registrados no suma ni resta
+  else if (ratioCorriente >= 1.6) score += 20;
   else if (ratioCorriente >= 1.2) score += 10;
   else if (ratioCorriente < 0.9) score -= 20;
   else score -= 10;
@@ -774,7 +768,7 @@ export function calculateExecutiveDashboardMetrics(params: {
   // ==========================================================================
   const alertasEstrategicas: ExecutiveDashboardSummary['alertasEstrategicas'] = [];
 
-  if (ratioCorriente < 1.2) {
+  if (ratioCorriente !== null && ratioCorriente < 1.2) {
     alertasEstrategicas.push({
       id: 'alt-liq-01',
       modulo: 'Agente Financiero',

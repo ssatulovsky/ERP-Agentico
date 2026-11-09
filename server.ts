@@ -18,6 +18,7 @@ import { billingDteRouter } from "./src/controllers/billingDteController";
 import { authRouter } from "./src/controllers/authController";
 import { autonomousAgentsRouter } from "./src/controllers/autonomousAgentsController";
 import { agentSchedulesRouter } from "./src/controllers/agentSchedulesController";
+import { clientsRouter } from "./src/controllers/clientsController";
 import { agentSchedulerService, isSchedulerEnabled } from "./src/services/agentSchedulerService";
 import { authenticateApiToken } from "./src/middlewares/authMiddleware";
 import { centralizedAuthorizationMiddleware, validateCompanyIdentifiers } from "./src/middlewares/centralizedAuthorizationMiddleware";
@@ -2332,6 +2333,9 @@ app.use("/api/agents/schedules", agentSchedulesRouter);
 
 // RUTAS DE TENANCY JERÁRQUICO (Nivel 1 Estudio, Nivel 2 Empresa, Nivel 3 Módulos, Vault)
 app.use("/api/tenancy", tenancyRouter);
+
+// 4.5 Cartera de empresas en el servidor (antes solo en el navegador)
+app.use("/api/clients", clientsRouter);
 
 // RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
 app.use("/api/modules", erpModulesRouter);

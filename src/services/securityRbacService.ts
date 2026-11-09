@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { ClientCompany } from '../types';
 import { verifyPassword, hashPassword } from '../utils/passwordCrypto';
+import { isDemoModeEnabled } from '../config/demoMode';
 
 /**
  * Genera una contraseña inicial aleatoria de alta entropía.
@@ -743,12 +744,20 @@ export const DEFAULT_SECURITY_USERS: SecurityUser[] = [
   },
 ];
 
+/**
+ * 4.5: las empresas y los usuarios de ejemplo (InnovAgile, Retail Logistics, admin, rrhh…) solo
+ * existen con DEMO_MODE. Antes se agregaban a todo estado de seguridad, también en una instalación
+ * real, donde además compartían id con el administrador instalado.
+ */
+const demoUsers = (): SecurityUser[] => (isDemoModeEnabled() ? DEFAULT_SECURITY_USERS : []);
+const demoCompanies = (): CompanySecurityConfig[] => (isDemoModeEnabled() ? DEFAULT_SECURITY_COMPANIES : []);
+
 export const DEFAULT_SECURITY_RBAC_STATE: SecurityRbacStoreState = {
   version: 1,
   mostrarPanelPruebasLogin: false, // Oculto por defecto para presentaciones / demos con clientes
-  companiesConfig: DEFAULT_SECURITY_COMPANIES,
+  companiesConfig: demoCompanies(),
   roles: DEFAULT_SECURITY_ROLES,
-  users: DEFAULT_SECURITY_USERS,
+  users: demoUsers(),
 };
 
 const STORAGE_KEY_SECURITY_STATE = 'erp_security_rbac_state_v1';
@@ -1279,7 +1288,7 @@ export function mergeSecurityRbacStates(
   }
 
   const defaultUsersMap = new Map<string, string>(
-    DEFAULT_SECURITY_USERS.map((u) => [u.username.trim().toLowerCase(), JSON.stringify(u)])
+    demoUsers().map((u) => [u.username.trim().toLowerCase(), JSON.stringify(u)])
   );
 
   // 1. Fusionar Roles
@@ -1324,7 +1333,7 @@ export function mergeSecurityRbacStates(
 
   // 2. Fusionar Usuarios (por username en minúsculas para evitar duplicados y preservar altas nuevas de cualquier sesión)
   const usersByUsername = new Map<string, SecurityUser>();
-  for (const u of DEFAULT_SECURITY_USERS) {
+  for (const u of demoUsers()) {
     usersByUsername.set(u.username.trim().toLowerCase(), u);
   }
   for (const u of serverState.users || []) {
@@ -1356,7 +1365,7 @@ export function mergeSecurityRbacStates(
 
   // 3. Fusionar Empresas
   const companiesMap = new Map<string, CompanySecurityConfig>();
-  for (const c of DEFAULT_SECURITY_COMPANIES) companiesMap.set(c.empresaId, c);
+  for (const c of demoCompanies()) companiesMap.set(c.empresaId, c);
   for (const c of localState.companiesConfig || []) companiesMap.set(c.empresaId, c);
   for (const c of serverState.companiesConfig || []) companiesMap.set(c.empresaId, c);
 

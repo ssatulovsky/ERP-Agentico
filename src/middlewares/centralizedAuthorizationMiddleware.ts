@@ -682,6 +682,12 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     return next();
   }
 
+  // 4.5: cartera de empresas. GET filtra por las empresas del usuario; PUT exige rol de administrador
+  // y acceso a la empresa (se valida en el controlador).
+  if (urlPath === '/api/clients' || urlPath.startsWith('/api/clients/')) {
+    return next();
+  }
+
   // Rutas de gobernanza
   if (urlPath.startsWith('/api/governance') || urlPath.startsWith('/api/agents/governance')) {
     return next();

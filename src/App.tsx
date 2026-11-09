@@ -219,6 +219,22 @@ export default function App() {
     return savedSession?.userId || null;
   });
 
+  // 4.5: la identidad de la sesión la entrega el servidor. El estado de seguridad del navegador
+  // (que antes de ingresar solo conoce la demostración) se completa con el usuario, el rol y la
+  // empresa de la sesión, para que un usuario de una instalación real pueda trabajar.
+  const mergeServerIdentity = (identity: { user?: any; role?: any; company?: any }) => {
+    setSecurityState((prev) => {
+      const users = identity.user && !prev.users.some((u) => u.id === identity.user.id) ? [...prev.users, identity.user] : prev.users;
+      const roles = identity.role && !prev.roles.some((r) => r.id === identity.role.id) ? [...prev.roles, identity.role] : prev.roles;
+      const companiesConfig =
+        identity.company && !prev.companiesConfig.some((c) => c.empresaId === identity.company.empresaId)
+          ? [...prev.companiesConfig, identity.company]
+          : prev.companiesConfig;
+      if (users === prev.users && roles === prev.roles && companiesConfig === prev.companiesConfig) return prev;
+      return { ...prev, users, roles, companiesConfig };
+    });
+  };
+
   // Al iniciar (en cualquier sesión, navegador o ventana incógnito), descargar del servidor (/api/security/state)
   // todos los usuarios, superusuarios, roles y empresas dados de alta sin pisar el servidor con valores por defecto
   useEffect(() => {
@@ -1256,7 +1272,25 @@ export default function App() {
   };
 
   // Add new client to firm's portfolio
+  // 4.5: cada alta o cambio de empresa se guarda en el servidor (antes solo en el navegador).
+  const syncClientToServer = async (client: ClientCompany) => {
+    try {
+      const res = await fetch(`/api/clients/${encodeURIComponent(client.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(client),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setServerSyncError(`La empresa ${client.razonSocial} quedó solo en este navegador: el servidor no la guardó (${data.errorMessage || res.status}).`);
+      }
+    } catch (e: any) {
+      setServerSyncError(`La empresa ${client.razonSocial} quedó solo en este navegador: no hubo conexión con el servidor (${e?.message || e}).`);
+    }
+  };
+
   const handleAddClient = (newClient: ClientCompany) => {
+    void syncClientToServer(newClient);
     const nextClients = [newClient, ...clients];
     setClients(nextClients);
     savePersistentState('erp_clients_portfolio_v1', nextClients);
@@ -1266,6 +1300,7 @@ export default function App() {
 
   // Update existing client configuration
   const handleUpdateClient = (updatedClient: ClientCompany) => {
+    void syncClientToServer(updatedClient);
     const nextClients = clients.map(c => c.id === updatedClient.id ? updatedClient : c);
     setClients(nextClients);
     savePersistentState('erp_clients_portfolio_v1', nextClients);
@@ -2137,6 +2172,56 @@ export default function App() {
     { id: 'ledger', label: 'Agente Contable Senior', subtitle: 'Núcleo ERP, Mayor, Diario & IFRS', icon: Scale },
   ];
 
+  // 4.5: cuando la cartera llega del servidor, se abre la empresa de la sesión (o la primera).
+  useEffect(() => {
+    if (!authUserId || clients.length === 0) return;
+    if (company?.id && clients.some((c) => c.id === company.id)) return;
+    const sesion = loadActiveAuthSession();
+    const objetivo = [activeClientId, sesion?.empresaId, clients[0]?.id].find((id) => id && clients.some((c) => c.id === id));
+    if (objetivo) handleSelectActiveClient(objetivo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, authUserId]);
+
+  // 4.5: identidad y cartera de empresas desde el servidor al ingresar o al recargar.
+  useEffect(() => {
+    if (!authUserId || !getStoredAuthToken()) return;
+    let cancelado = false;
+    (async () => {
+      try {
+        const me = await fetch('/api/auth/me');
+        if (me.status === 401) {
+          if (!cancelado) {
+            setAuthUserId(null);
+            saveActiveAuthSession(null);
+          }
+          return;
+        }
+        if (me.ok) {
+          const data = await me.json();
+          if (!cancelado && data?.success) mergeServerIdentity({ user: data.user, role: data.role, company: data.company });
+        }
+        const res = await fetch('/api/clients');
+        if (!res.ok || cancelado) return;
+        const data = await res.json();
+        const delServidor: ClientCompany[] = Array.isArray(data?.clientes) ? data.clientes : [];
+        if (delServidor.length === 0) return;
+        setClients((prev) => {
+          const porId = new Map(prev.map((c) => [c.id, c] as const));
+          for (const c of delServidor) porId.set(c.id, { ...((porId.get(c.id) || {}) as object), ...c } as ClientCompany);
+          const next = [...porId.values()];
+          savePersistentState('erp_clients_portfolio_v1', next);
+          return next;
+        });
+      } catch (e) {
+        console.warn('[App] No se pudo sincronizar la sesión o la cartera con el servidor:', e);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId]);
+
   // Resolver Usuario, Rol, Empresa y Módulos Autorizados en vivo
   const currentUser = authUserId
     ? securityState.users.find((u) => u.id === authUserId && u.estado === 'ACTIVO') || null
@@ -2241,6 +2326,7 @@ export default function App() {
 
   const handleLoginSuccess = (result: LoginValidationResult, selectedEmpresaId: string) => {
     if (!result.ok || !result.user || !result.role) return;
+    mergeServerIdentity({ user: result.user, role: result.role, company: (result as any).companyConfig });
     setAuthUserId(result.user.id);
     saveActiveAuthSession({
       userId: result.user.id,
@@ -2487,7 +2573,7 @@ export default function App() {
                 Empresa: <strong className="text-slate-700">{activeClient.nombreCorto}</strong>
               </div>
               <div className="text-[10px] text-slate-400">
-                Régimen: {company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : '14 A General'}
+                Régimen: {company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : company.regimenTributario ? company.regimenTributario.replace(/_/g, ' ') : 'No informado'}
               </div>
             </div>
 

@@ -100,7 +100,8 @@ setInterval(() => {
  */
 authRouter.post('/login', async (req: Request, res: Response) => {
   try {
-    const { username, password, empresaId } = req.body;
+    const { username, password } = req.body;
+    let empresaId: string = req.body?.empresaId ? String(req.body.empresaId) : '';
     const clientIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
     const now = Date.now();
 
@@ -115,15 +116,25 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    if (!username || !password || !empresaId) {
+    if (!username || !password) {
       return res.status(400).json({
         success: false,
         error: 'DATOS_INCOMPLETOS',
-        errorMessage: 'Debe ingresar usuario, contraseña y seleccionar una empresa.',
+        errorMessage: 'Debe ingresar usuario y contraseña.',
       });
     }
 
     const normUsername = String(username).trim().toLowerCase();
+
+    // 4.5: la pantalla de ingreso solo conoce las empresas de la demostración (el estado de seguridad
+    // del servidor requiere sesión). Sin empresa elegida se usa la empresa principal del usuario;
+    // si el usuario no existe se responde como credenciales inválidas, sin revelar nada más.
+    if (!empresaId) {
+      const found = (whatsappBridgeService.getRbacState().users || []).find(
+        (u: any) => String(u.username || '').trim().toLowerCase() === normUsername || String(u.email || '').trim().toLowerCase() === normUsername
+      );
+      empresaId = found?.empresaPrincipalId || '';
+    }
 
     // 2. Verificación de Bloqueo de Cuenta de Usuario (Máx 5 intentos en 15 minutos)
     const userRecord = failedUserAttempts.get(normUsername);
@@ -137,12 +148,19 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     }
 
     const state = whatsappBridgeService.getRbacState();
-    const result: LoginValidationResult = authenticateErpLogin({
-      usernameInput: String(username),
-      passwordInput: String(password),
-      empresaId: String(empresaId),
-      state,
-    });
+    const result: LoginValidationResult = empresaId
+      ? authenticateErpLogin({
+          usernameInput: String(username),
+          passwordInput: String(password),
+          empresaId: String(empresaId),
+          state,
+        })
+      : ({
+          ok: false,
+          errorCode: 'CREDENCIALES_INVALIDAS',
+          errorTitle: 'Credenciales inválidas',
+          errorMessage: 'Usuario o contraseña incorrectos.',
+        } as LoginValidationResult);
 
     if (!result.ok || !result.user || !result.role) {
       // Registrar intento fallido para la IP
@@ -233,6 +251,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
+      empresaId,
       debeCambiarPassword: Boolean(result.user.debeCambiarPassword),
       user: sanitizeSecurityUser(result.user),
       result: {

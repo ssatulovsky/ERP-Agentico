@@ -211,7 +211,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                 Asistentes con herramientas
               </span>
               <span>•</span>
-              <span>Régimen: <strong className="text-slate-700">{company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : '14 A General'}</strong></span>
+              <span>Régimen: <strong className="text-slate-700">{company.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : company.regimenTributario ? company.regimenTributario.replace(/_/g, ' ') : 'No informado'}</strong></span>
             </p>
           </div>
 
@@ -305,18 +305,22 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-black text-slate-900 font-mono">
-              {metrics.currentLiquidity.ratioCorriente.toFixed(2)}x
+              {metrics.currentLiquidity.ratioCorriente === null ? '—' : `${metrics.currentLiquidity.ratioCorriente.toFixed(2)}x`}
             </span>
             <span
               className={`text-[11px] font-bold ${
-                metrics.currentLiquidity.ratioCorriente >= 1.5 ? 'text-emerald-600' : 'text-amber-600'
+                metrics.currentLiquidity.ratioCorriente === null
+                  ? 'text-slate-500'
+                  : metrics.currentLiquidity.ratioCorriente >= 1.5 ? 'text-emerald-600' : 'text-amber-600'
               }`}
             >
-              {metrics.currentLiquidity.ratioCorriente >= 1.5 ? 'Saludable (> 1.5x)' : 'Bajo Observación'}
+              {metrics.currentLiquidity.ratioCorriente === null
+                ? 'Sin pasivos registrados'
+                : metrics.currentLiquidity.ratioCorriente >= 1.5 ? 'Saludable (> 1.5x)' : 'Bajo Observación'}
             </span>
           </div>
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Prueba Ácida: <strong className="text-slate-800 font-mono">{metrics.currentLiquidity.pruebaAcida.toFixed(2)}x</strong></span>
+            <span>Prueba Ácida: <strong className="text-slate-800 font-mono">{metrics.currentLiquidity.pruebaAcida === null ? '—' : `${metrics.currentLiquidity.pruebaAcida.toFixed(2)}x`}</strong></span>
             <span>Runway: <strong className="text-slate-800 font-mono">{metrics.currentLiquidity.diasCoberturaCaja} días</strong></span>
           </div>
         </div>
@@ -368,7 +372,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           </div>
           <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span>Aprobado: <strong className="text-emerald-700 font-mono">{formatCLP(metrics.commercialBudgets.montoTotalAprobado)}</strong></span>
-            <span>Margen: <strong className="text-slate-800 font-mono">{metrics.commercialBudgets.margenPromedioAprobadoPct}%</strong></span>
+            <span>Margen: <strong className="text-slate-800 font-mono">{metrics.commercialBudgets.margenPromedioAprobadoPct === null ? '—' : `${metrics.commercialBudgets.margenPromedioAprobadoPct}%`}</strong></span>
           </div>
         </div>
 
@@ -920,7 +924,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-slate-700">
                 <span>Margen Bruto Promedio Cotizado:</span>
                 <strong className="font-mono text-indigo-700 text-sm">
-                  {metrics.commercialBudgets.margenPromedioCotizadoPct}%
+                  {metrics.commercialBudgets.margenPromedioCotizadoPct === null ? 'Sin datos' : `${metrics.commercialBudgets.margenPromedioCotizadoPct}%`}
                 </strong>
               </div>
             </div>

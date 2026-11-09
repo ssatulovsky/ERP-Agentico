@@ -24,6 +24,7 @@ import {
   resolveCompaniesForLoginUsername,
 } from '../../services/securityRbacService';
 import { setStoredAuthToken } from '../../services/apiClient';
+import { isDemoModeEnabled } from '../../config/demoMode';
 
 interface LoginScreenProps {
   securityState: SecurityRbacStoreState;
@@ -44,6 +45,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<LoginValidationResult | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
+  // 4.5: cambio obligatorio de la clave temporal antes de entrar (el servidor bloquea todo lo demás).
+  const [pendingPasswordChange, setPendingPasswordChange] = useState<{ result: LoginValidationResult; empresaId: string } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+  const [changeError, setChangeError] = useState<string | null>(null);
 
   // Visibilidad del panel de pruebas QA (por defecto false para demos limpias con clientes, o según configuración)
   const [showQaPanel, setShowQaPanel] = useState<boolean>(
@@ -99,7 +105,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empresaId) {
+    // Un usuario que la pantalla no conoce (instalación real) ingresa sin elegir empresa:
+    // el servidor usa su empresa principal y luego se cambia de empresa dentro del ERP.
+    const usuarioConocido = allowedCompaniesForUser.length > 0;
+    if (!empresaId && (usuarioConocido || !username.trim() || !password)) {
       setValidationError({
         ok: false,
         errorCode: 'CREDENCIALES_INVALIDAS',
@@ -115,7 +124,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       const resp = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, empresaId }),
+        // Sin empresa elegida no se envía el campo: el servidor usa la empresa principal del usuario.
+        body: JSON.stringify(empresaId ? { username, password, empresaId } : { username, password }),
       });
       const data = await resp.json();
       if (resp.ok && data.success && data.result) {
@@ -123,7 +133,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           setStoredAuthToken(data.token);
         }
         setValidationError(null);
-        onLoginSuccess(data.result, empresaId);
+        if (data.debeCambiarPassword) {
+          setPendingPasswordChange({ result: data.result, empresaId: data.empresaId || empresaId });
+          return;
+        }
+        onLoginSuccess(data.result, data.empresaId || empresaId);
         return;
       }
       if (data && data.success === false && data.errorCode) {
@@ -134,6 +148,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       console.warn('[LoginScreen] Servidor no disponible vía fetch, usando contingencia local:', netErr);
     } finally {
       setIsAuthenticating(false);
+    }
+    if (!empresaId) {
+      setValidationError({
+        ok: false,
+        errorCode: 'CREDENCIALES_INVALIDAS',
+        errorTitle: 'No fue posible ingresar',
+        errorMessage: 'Usuario o contraseña incorrectos, o el servidor no está disponible.',
+      });
+      return;
     }
 
     // Validación de contingencia local
@@ -211,6 +234,79 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const selectedCompanyMeta = allowedCompaniesForUser.find(
     (c) => c.empresaId === empresaId
   );
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingPasswordChange) return;
+    if (newPassword.trim().length < 12) return setChangeError('La nueva clave debe tener al menos 12 caracteres.');
+    if (newPassword !== newPasswordConfirm) return setChangeError('Las claves nuevas no coinciden.');
+    setIsAuthenticating(true);
+    setChangeError(null);
+    try {
+      const resp = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: password, newPassword }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.success) {
+        setChangeError(data.message || data.errorMessage || `No se pudo cambiar la clave (${resp.status}).`);
+        return;
+      }
+      const { result, empresaId: emp } = pendingPasswordChange;
+      setPendingPasswordChange(null);
+      setPassword('');
+      onLoginSuccess({ ...result, user: result.user ? { ...result.user, debeCambiarPassword: false } : result.user }, emp);
+    } catch (err: any) {
+      setChangeError(`Sin conexión con el servidor: ${err?.message || err}`);
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  if (pendingPasswordChange) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4 py-10">
+        <form onSubmit={handleChangePassword} className="w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-400" />
+            <h1 className="text-base font-bold">Cambie su clave temporal</h1>
+          </div>
+          <p className="text-xs text-slate-400">
+            Es su primer ingreso. Defina una clave nueva de al menos 12 caracteres para continuar.
+          </p>
+          <label className="block text-xs font-semibold text-slate-300 space-y-1">
+            <span>Clave nueva</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </label>
+          <label className="block text-xs font-semibold text-slate-300 space-y-1">
+            <span>Repita la clave nueva</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={newPasswordConfirm}
+              onChange={(e) => setNewPasswordConfirm(e.target.value)}
+              className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </label>
+          {changeError && <p className="text-xs text-rose-300">{changeError}</p>}
+          <button
+            type="submit"
+            disabled={isAuthenticating}
+            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-bold disabled:opacity-60 cursor-pointer"
+          >
+            Cambiar clave e ingresar
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden">
@@ -392,7 +488,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       <div className="w-full pl-10 pr-4 py-2.5 bg-slate-900/70 border border-slate-800 rounded-xl text-xs text-slate-500 italic select-none">
                         {username.trim().length === 0
                           ? 'Ingrese primero su Usuario para cargar sus empresas autorizadas...'
-                          : 'Verificando empresas asignadas al usuario...'}
+                          : 'Se ingresará a su empresa principal; luego puede cambiar de empresa en el ERP.'}
                       </div>
                     ) : (
                       <select
@@ -450,6 +546,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 </span>
               </div>
 
+              {/* 4.5: los perfiles de prueba solo existen en la demostración */}
+              {isDemoModeEnabled() && (
               <button
                 type="button"
                 onClick={handleToggleQaPanel}
@@ -459,11 +557,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 <Sliders className="w-3 h-3" />
                 <span>{showQaPanel ? 'Ocultar Panel QA (Modo Demo)' : 'Accesos QA'}</span>
               </button>
+              )}
             </div>
           </div>
 
           {/* Right Column: Interactive Quick Test Scenarios (Only visible when enabled) */}
-          {showQaPanel && (
+          {showQaPanel && isDemoModeEnabled() && (
             <div className="lg:col-span-5 bg-slate-900/75 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between backdrop-blur-xl animate-in fade-in duration-200">
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2">
