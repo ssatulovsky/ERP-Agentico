@@ -13,6 +13,7 @@
     "db:init:mysql": "node ./node_modules/tsx/dist/cli.mjs src/scripts/initMysqlDb.ts",
     "db:update:mysql": "node ./node_modules/tsx/dist/cli.mjs src/scripts/updateMysqlDb.ts",
     "db:migrate:mysql": "node ./node_modules/tsx/dist/cli.mjs src/scripts/migrateMysql.ts",
+    "db:sync:mysql": "node ./node_modules/tsx/dist/cli.mjs src/scripts/syncMysqlSchema.ts",
     "download:voices": "bash scripts/download_all_piper_voices.sh",
     "download:voices:node": "node ./node_modules/tsx/dist/cli.mjs src/scripts/downloadPiperVoices.ts",
     "setup:install": "node ./node_modules/tsx/dist/cli.mjs src/scripts/installSystem.ts",
