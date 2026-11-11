@@ -73,7 +73,8 @@ export const bankAccounts = mysqlTable(
     saldoContable: decimal('saldo_contable', { precision: 15, scale: 2 }).notNull().default('0.00'),
     saldoCartola: decimal('saldo_cartola', { precision: 15, scale: 2 }).notNull().default('0.00'),
     tipoConexion: varchar('tipo_conexion', { length: 50 }).notNull().default('MANUAL'),
-    estadoConexion: varchar('estado_conexion', { length: 50 }).notNull().default('CONECTADO'),
+    // Sin integración bancaria real no hay conexión (hallazgo #7): por defecto SIN_CONFIGURAR.
+    estadoConexion: varchar('estado_conexion', { length: 50 }).notNull().default('SIN_CONFIGURAR'),
     esPrincipal: boolean('es_principal').notNull().default(false),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },

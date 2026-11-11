@@ -727,6 +727,21 @@ export async function ensureMysqlSchemaInitialized(): Promise<void> {
         await updateMysqlDatabase();
       }
 
+      // bank_accounts: el esquema Drizzle usa tipo_conexion, estado_conexion y es_principal, que ninguna
+      // migración creaba ("Failed query … from bank_accounts" al cargar las cuentas). Se agregan si faltan.
+      const columnasBanco: Array<[string, string]> = [
+        ['tipo_conexion', "VARCHAR(50) NOT NULL DEFAULT 'MANUAL'"],
+        ['estado_conexion', "VARCHAR(50) NOT NULL DEFAULT 'SIN_CONFIGURAR'"],
+        ['es_principal', 'BOOLEAN NOT NULL DEFAULT FALSE'],
+      ];
+      for (const [col, ddl] of columnasBanco) {
+        const [rows]: [any[], any] = await connection.query(`SHOW COLUMNS FROM \`bank_accounts\` LIKE '${col}';`);
+        if (!rows || rows.length === 0) {
+          await connection.query(`ALTER TABLE \`bank_accounts\` ADD COLUMN \`${col}\` ${ddl};`);
+          console.log(`[MySQL 8.0] bank_accounts: columna ${col} agregada.`);
+        }
+      }
+
       // Asegurar liberación de índices únicos restrictivos en accounting_entries
       try {
         await connection.query("ALTER TABLE `accounting_entries` DROP INDEX `uq_entries_empresa_origen_doc`;");

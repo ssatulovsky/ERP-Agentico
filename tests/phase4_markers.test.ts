@@ -206,6 +206,15 @@ async function run() {
     assert.strictEqual(ap.datosOperacion.condicionPago, '60 días');
   });
 
+  await test('#7 (resto) Una cuenta bancaria nueva no queda CONECTADA ni con token inventado; MySQL tiene sus columnas', () => {
+    const ui = fs.readFileSync(path.join(ROOT, 'src/components/BankReconciliation.tsx'), 'utf8');
+    assert.ok(!/estadoConexion: 'CONECTADO'/.test(ui), 'Cuenta marcada CONECTADO sin integración');
+    assert.ok(!ui.includes('api_token_'), 'Token de API inventado');
+    assert.ok(!ui.includes("|| '11-89201-0'"), 'Número de cuenta de respaldo');
+    const db = fs.readFileSync(path.join(ROOT, 'src/db/mysqlClient.ts'), 'utf8');
+    for (const col of ['tipo_conexion', 'estado_conexion', 'es_principal']) assert.ok(db.includes(`'${col}'`), `Falta auto-reparación de ${col}`);
+  });
+
   console.log(`\nRESULTADO 4.4: ${passed} de ${total} pruebas pasaron.`);
   process.exit(passed === total ? 0 : 1);
 }

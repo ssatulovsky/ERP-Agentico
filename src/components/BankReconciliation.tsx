@@ -3444,14 +3444,14 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                   banco: finalBankName,
                   bancoCodigo: bankCodigo,
                   tipoCuenta: tipoCuenta || 'CORRIENTE',
-                  numeroCuenta: (form.elements.namedItem('numeroCuenta') as HTMLInputElement).value || '11-89201-0',
+                  numeroCuenta: (form.elements.namedItem('numeroCuenta') as HTMLInputElement).value.trim(),
                   moneda: moneda || 'CLP',
                   saldoEnLinea: saldoInput,
-                  estadoConexion: 'CONECTADO',
-                  tipoConexion: (form.elements.namedItem('tipoConexion') as HTMLSelectElement).value as any || 'OPEN_BANKING_API',
-                  apiKey: `api_token_${Date.now().toString().slice(-6)}`,
+                  // Hallazgo #7 (resto): una cuenta nueva no queda CONECTADA ni con token inventado; los
+                  // movimientos llegan por cartola importada hasta tener integración bancaria real.
+                  estadoConexion: 'SIN_CONFIGURAR',
+                  tipoConexion: (form.elements.namedItem('tipoConexion') as HTMLSelectElement).value as any || 'IMPORTACION_CARTOLA',
                   esPrincipal: bankAccounts.length === 0,
-                  ultimaSincronizacion: new Date().toLocaleTimeString('es-CL'),
                 };
                 onUpdateBankAccounts([...bankAccounts, newAcc]);
                 setIsConfigModalOpen(false);
@@ -3539,9 +3539,10 @@ export const BankReconciliation: React.FC<BankReconciliationProps> = ({
                     name="tipoConexion"
                     className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-medium"
                   >
-                    <option value="OPEN_BANKING_API">API Open Banking Oficial (Recomendado)</option>
-                    <option value="EMPRESAS_CONNECT">Banca Empresas Connect (Host-to-Host)</option>
-                    <option value="IMPORTACION_CARTOLA">Importación Periódica de Cartolas</option>
+                    {/* Sin integración bancaria implementada, la única vía real es importar cartolas. */}
+                    <option value="IMPORTACION_CARTOLA">Importación periódica de cartolas</option>
+                    <option value="OPEN_BANKING_API" disabled>API Open Banking (no disponible aún)</option>
+                    <option value="EMPRESAS_CONNECT" disabled>Banca Empresas host-to-host (no disponible aún)</option>
                   </select>
                 </div>
               </div>
