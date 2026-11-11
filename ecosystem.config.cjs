@@ -7,10 +7,12 @@
 module.exports = {
   apps: [
     {
-      name: "erp-agentico-app",
+      name: "erpremia",
       script: "./dist/server.cjs",
-      instances: "max", // Escalamiento horizontal multinúcleo en Linux
-      exec_mode: "cluster",
+      // Una sola instancia: los datos en disco y el despachador de tareas programadas no se
+      // coordinan entre procesos (en modo cluster las tareas se ejecutarían una vez por núcleo).
+      instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       max_memory_restart: "1024M",

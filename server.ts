@@ -2486,11 +2486,10 @@ async function startServer() {
 
 export { app, startServer };
 
-const isMainScript = Boolean(
-  process.argv[1] &&
-  (process.argv[1].endsWith('server.ts') ||
-   process.argv[1].endsWith('server.cjs') ||
-   process.argv[1].endsWith('server.js'))
+// PM2 carga el script desde su propio contenedor (argv[1] no es server.cjs): se reconoce por pm_exec_path.
+const entryScript = [process.argv[1], process.env.pm_exec_path].filter(Boolean) as string[];
+const isMainScript = entryScript.some(
+  (p) => p.endsWith('server.ts') || p.endsWith('server.cjs') || p.endsWith('server.js')
 );
 
 if (process.env.NODE_ENV !== 'test' && isMainScript) {
