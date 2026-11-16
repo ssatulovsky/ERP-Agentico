@@ -128,7 +128,7 @@ export const ClientAuxiliariesMasterModal: React.FC<ClientAuxiliariesMasterModal
     setRegion(aux.region || 'Región Metropolitana de Santiago');
     setCiudad(aux.ciudad || 'Santiago');
     setComuna(aux.comuna || 'Providencia');
-    setTipoAuxiliar(aux.tipoAuxiliar);
+    setTipoAuxiliar(aux.tipoAuxiliar === 'RENDICIONES' ? 'RENDICION' : (aux.tipoAuxiliar || 'CLIENTE'));
     setLimiteCredito(aux.limiteCredito || 0);
     setTerminosPago(aux.terminosPago || '30 Días');
     setVendedor(aux.vendedor || '');
