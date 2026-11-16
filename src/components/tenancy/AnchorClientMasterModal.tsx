@@ -233,23 +233,8 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
       notasInternas: notasInternas.trim(),
       inactivo: inactivo,
       activa: !inactivo,
-      contrato: {
-        planId: selectedPlan.id,
-        nombrePlan: selectedPlan.nombre,
-        licenciasContratadas,
-        limiteUsuarios: mismoPlan ? client.contrato!.limiteUsuarios : selectedPlan.limiteUsuarios,
-        limiteEmpresas: mismoPlan ? client.contrato!.limiteEmpresas : selectedPlan.limiteEmpresasContables,
-        precioMensualNeto: mismoPlan ? client.contrato!.precioMensualNeto : selectedPlan.precioMensualClp,
-        modulosIncluidos: selectedPlan.modulosIncluidos,
-        numeroContrato,
-        tipoContrato,
-        fechaContrato,
-        duracionDias,
-        diasTolerancia,
-        fechaExpiracion,
-        ejecutivoAsignado: ejecutivoCuenta,
-        nivelSoporte,
-      },
+      // K3: el contrato lo administra el cliente ERP; la ficha de la empresa no lo modifica.
+      contrato: client.contrato,
       contabilidadConfig: {
         grupoImpuesto,
         cuentaCliente,
@@ -854,155 +839,17 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
 
           {/* TAB 5: CONTRATO Y LICENCIAS (Matching Page 8 top) */}
           {activeTab === 'CONTRATO' && (
-            <div className="space-y-4 animate-in fade-in duration-100">
-              {/* 4 KPI Chips from Page 8 top */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-center">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Usuarios Máx</span>
-                  <span className="text-lg font-black text-slate-800">{selectedPlan.limiteUsuarios}</span>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-center">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Empresas ERP</span>
-                  <span className="text-lg font-black text-slate-800">{selectedPlan.limiteEmpresasContables}</span>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-center">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Sub. Mensual</span>
-                  <span className="text-sm font-black text-emerald-700">{selectedPlan.referenciaTexto}</span>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-center">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Módulos</span>
-                  <span className="text-[11px] font-bold text-slate-700 block truncate" title={selectedPlan.modulosIncluidos.join(', ')}>
-                    {selectedPlan.modulosIncluidos.join(', ')}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Licencias Contratadas
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={licenciasContratadas}
-                    onChange={(e) => setLicenciasContratadas(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Nº Contrato
-                  </label>
-                  <input
-                    type="text"
-                    value={numeroContrato}
-                    onChange={(e) => setNumeroContrato(e.target.value)}
-                    placeholder="CTR-2026-0042"
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Tipo Contrato
-                  </label>
-                  <select
-                    value={tipoContrato}
-                    onChange={(e) => setTipoContrato(e.target.value as any)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  >
-                    <option value="Mensual">Mensual</option>
-                    <option value="Anual">Anual</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Fecha Contrato
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaContrato}
-                    onChange={(e) => setFechaContrato(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Duración (Días)
-                  </label>
-                  <input
-                    type="number"
-                    value={duracionDias}
-                    onChange={(e) => setDuracionDias(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Días Tolerancia
-                  </label>
-                  <input
-                    type="number"
-                    value={diasTolerancia}
-                    onChange={(e) => setDiasTolerancia(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Fecha Expiración
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaExpiracion}
-                    onChange={(e) => setFechaExpiracion(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Ejecutivo de Cuenta
-                  </label>
-                  <input
-                    type="text"
-                    value={ejecutivoCuenta}
-                    onChange={(e) => setEjecutivoCuenta(e.target.value)}
-                    placeholder="Seleccione Ejecutivo..."
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                  Nivel de Soporte
-                </label>
-                <select
-                  value={nivelSoporte}
-                  onChange={(e) => setNivelSoporte(e.target.value as any)}
-                  className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="Básico">Básico</option>
-                  <option value="Avanzado">Avanzado</option>
-                  <option value="Dedicado 24/7">Dedicado 24/7</option>
-                </select>
-              </div>
+            <div className="space-y-3 animate-in fade-in duration-100 text-xs">
+              <p className="bg-blue-50 border border-blue-200 rounded-md p-3 text-blue-900">
+                El plan, el contrato, los límites de empresas y usuarios, el estado de la cuenta y la cobranza se administran
+                en <strong>Configuración → Clientes ERP y cobranza</strong> (cliente ERP al que pertenece esta empresa), no en la
+                ficha de cada empresa.
+              </p>
+              {client?.clienteErpId ? (
+                <p className="text-slate-600">Cliente ERP asignado: <span className="font-mono">{client.clienteErpId}</span></p>
+              ) : (
+                <p className="text-amber-700">Esta empresa aún no tiene cliente ERP asignado.</p>
+              )}
             </div>
           )}
 

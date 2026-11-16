@@ -35,6 +35,13 @@ async function runAutonomousModulesSuite() {
   }
 
   const tenantRut = '761045509';
+  // K2.7: la empresa de prueba necesita plan de cuentas (los asientos se validan contra él).
+  {
+    const chartSvc = await import('../src/services/chartOfAccountsServerService');
+    if (chartSvc.getCompanyChartState(tenantRut).estado === 'SIN_PLAN') {
+      chartSvc.initializeCompanyChart(tenantRut, { origen: 'PLANTILLA_ESTANDAR' }, { canAccessCompany: () => true });
+    }
+  }
   const tenantCompany: CompanyProfile = {
     id: tenantRut,
     rut: '76.104.550-9',
@@ -66,6 +73,7 @@ async function runAutonomousModulesSuite() {
     },
   };
 
+  // K2.7: los códigos de cuenta de estas pruebas son del plan de la empresa de prueba (plantilla estándar).
   // ==========================================================================
   // 1. ACTIVO FIJO (NIC 16): DEPRECIACIÓN Y GOBERNANZA EJECUTADA
   // ==========================================================================
@@ -166,6 +174,8 @@ async function runAutonomousModulesSuite() {
       codigoPlaca: `PLC-BAJA-${Date.now().toString().slice(-4)}`,
       nombre: 'Impresora Térmica Obsoleta',
       categoria: 'EQUIPOS_COMPUTACION',
+      // K2.7: la cuenta del activo sale del plan de la empresa (sin cuenta por defecto)
+      cuentaContableActivo: '1.2.01.004',
       ubicacion: 'Oficina Central',
       responsableRut: '15.342.119-4',
       fechaAdquisicion: '2022-01-01',
@@ -534,6 +544,7 @@ async function runAutonomousModulesSuite() {
           id: 'item-1',
           informeId: '',
           concepto: 'Combustible y Peajes Visita a Clientes',
+          cuentaContableCodigo: '6.1.04.008',
           montoTotal: 95000,
           montoIva: 0,
           tipoComprobante: 'BOLETA_COMBUSTIBLE',
@@ -544,6 +555,7 @@ async function runAutonomousModulesSuite() {
           id: 'item-2',
           informeId: '',
           concepto: 'Almuerzo Trabajo Equipo Terreno',
+          cuentaContableCodigo: '6.1.04.007',
           montoTotal: 50000,
           montoIva: 0,
           tipoComprobante: 'BOLETA_ELECTRONICA',
@@ -1027,8 +1039,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         activosAfectados: [],
         lines: [
-          { cuentaCodigo: '5.2.13', debe: 250000, haber: 0 },
-          { cuentaCodigo: '1.2.99', debe: 0, haber: 250000 },
+          { cuentaCodigo: '6.1.04.004', debe: 250000, haber: 0 },
+          { cuentaCodigo: '1.2.02.001', debe: 0, haber: 250000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1050,8 +1062,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         activosAfectados: ['act-01'],
         lines: [
-          { cuentaCodigo: '5.2.13', debe: 200000, haber: 0 },
-          { cuentaCodigo: '1.2.99', debe: 0, haber: 200000 },
+          { cuentaCodigo: '6.1.04.004', debe: 200000, haber: 0 },
+          { cuentaCodigo: '1.2.02.001', debe: 0, haber: 200000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1084,8 +1096,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         activosAfectados: [],
         lines: [
-          { cuentaCodigo: '5.2.13', debe: 200000, haber: 0 },
-          { cuentaCodigo: '1.2.99', debe: 0, haber: 200000 },
+          { cuentaCodigo: '6.1.04.004', debe: 200000, haber: 0 },
+          { cuentaCodigo: '1.2.02.001', debe: 0, haber: 200000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1130,8 +1142,8 @@ async function runAutonomousModulesSuite() {
       impactoFinancieroClp: 100000,
       datosOperacion: {
         lines: [
-          { cuentaCodigo: '5.2.14', debe: 100000, haber: 0 },
-          { cuentaCodigo: '1.2.01', debe: 0, haber: 100000 },
+          { cuentaCodigo: '6.1.04.004', debe: 100000, haber: 0 },
+          { cuentaCodigo: '1.2.01.002', debe: 0, haber: 100000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1152,8 +1164,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         activoId: 'AF-FAKE-01',
         lines: [
-          { cuentaCodigo: '5.2.14', debe: 180000, haber: 0 },
-          { cuentaCodigo: '1.2.01', debe: 0, haber: 180000 },
+          { cuentaCodigo: '6.1.04.004', debe: 180000, haber: 0 },
+          { cuentaCodigo: '1.2.01.002', debe: 0, haber: 180000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1185,8 +1197,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         activoId: assetToRetire.id,
         lines: [
-          { cuentaCodigo: '5.2.14', debe: 50000, haber: 0 },
-          { cuentaCodigo: '1.2.01', debe: 0, haber: 50000 },
+          { cuentaCodigo: '6.1.04.004', debe: 50000, haber: 0 },
+          { cuentaCodigo: '1.2.01.002', debe: 0, haber: 50000 },
         ],
       },
       solicitadoPor: 'Agente Activo Fijo',
@@ -1215,8 +1227,8 @@ async function runAutonomousModulesSuite() {
       impactoFinancieroClp: 1200000,
       datosOperacion: {
         lines: [
-          { cuentaCodigo: '1.1.07', debe: 1200000, haber: 0 },
-          { cuentaCodigo: '1.1.08', debe: 0, haber: 1200000 },
+          { cuentaCodigo: '1.1.05.002', debe: 1200000, haber: 0 },
+          { cuentaCodigo: '1.1.05.001', debe: 0, haber: 1200000 },
         ],
       },
       solicitadoPor: 'Agente Producción',
@@ -1237,8 +1249,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         ordenId: 'OP-FAKE-01',
         lines: [
-          { cuentaCodigo: '1.1.07', debe: 1400000, haber: 0 },
-          { cuentaCodigo: '1.1.08', debe: 0, haber: 1400000 },
+          { cuentaCodigo: '1.1.05.002', debe: 1400000, haber: 0 },
+          { cuentaCodigo: '1.1.05.001', debe: 0, haber: 1400000 },
         ],
       },
       solicitadoPor: 'Agente Producción',
@@ -1270,8 +1282,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         ordenId: opToClose.id,
         lines: [
-          { cuentaCodigo: '1.1.07', debe: 850000, haber: 0 },
-          { cuentaCodigo: '1.1.08', debe: 0, haber: 850000 },
+          { cuentaCodigo: '1.1.05.002', debe: 850000, haber: 0 },
+          { cuentaCodigo: '1.1.05.001', debe: 0, haber: 850000 },
         ],
       },
       solicitadoPor: 'Agente Producción',
@@ -1350,8 +1362,8 @@ async function runAutonomousModulesSuite() {
       impactoFinancieroClp: 150000,
       datosOperacion: {
         lines: [
-          { cuentaCodigo: '5.2.05', debe: 150000, haber: 0 },
-          { cuentaCodigo: '1.1.01', debe: 0, haber: 150000 },
+          { cuentaCodigo: '6.1.04.007', debe: 150000, haber: 0 },
+          { cuentaCodigo: '1.1.02.001', debe: 0, haber: 150000 },
         ],
       },
       solicitadoPor: 'Agente Rendiciones',
@@ -1372,8 +1384,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         reportId: 'REP-FAKE-01',
         lines: [
-          { cuentaCodigo: '5.2.05', debe: 180000, haber: 0 },
-          { cuentaCodigo: '1.1.01', debe: 0, haber: 180000 },
+          { cuentaCodigo: '6.1.04.007', debe: 180000, haber: 0 },
+          { cuentaCodigo: '1.1.02.001', debe: 0, haber: 180000 },
         ],
       },
       solicitadoPor: 'Agente Rendiciones',
@@ -1406,8 +1418,8 @@ async function runAutonomousModulesSuite() {
       datosOperacion: {
         reportId: testReport.id,
         lines: [
-          { cuentaCodigo: '5.2.05', debe: 175000, haber: 0 },
-          { cuentaCodigo: '1.1.01', debe: 0, haber: 175000 },
+          { cuentaCodigo: '6.1.04.007', debe: 175000, haber: 0 },
+          { cuentaCodigo: '1.1.02.001', debe: 0, haber: 175000 },
         ],
       },
       solicitadoPor: 'Agente Rendiciones',

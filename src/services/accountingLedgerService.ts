@@ -1,4 +1,4 @@
-import { validateEntryAccounts } from './chartOfAccountsServerService';
+import { mapEntryLinesToCompanyChart, validateEntryAccounts } from './chartOfAccountsServerService';
 import crypto from 'node:crypto';
 import { sql, eq, and } from 'drizzle-orm';
 import {
@@ -382,6 +382,7 @@ export async function recordVerifiedEntry(
   }
 
   // 2.b K2.7: las cuentas deben existir en el plan de la empresa y ser imputables.
+  mapEntryLinesToCompanyChart(header.empresaId, lineas as any[]);
   const chartCheck = validateEntryAccounts(header.empresaId, lineas.map((l) => l.codigoCuenta));
   if (!chartCheck.ok) {
     throw new InvalidAccountingPayloadError(chartCheck.message || 'Cuentas inválidas para el plan de la empresa.', {

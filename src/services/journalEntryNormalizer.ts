@@ -122,6 +122,15 @@ const ACCOUNT_SYNONYMS: Array<{ claves: string[]; terminos: string[] }> = [
   { claves: ['asignaciones no imponibles'], terminos: ['asignaciones no imponibles'] },
   { claves: ['honorarios profesionales'], terminos: ['honorarios profesionales'] },
   { claves: ['gasto iva no recuperable', 'iva no recuperable'], terminos: ['iva no recuperable'] },
+  { claves: ['gasto depreciacion activo fijo', 'gasto depreciacion activo fijo nic 16', 'depreciacion del ejercicio'], terminos: ['depreciacion financiera'] },
+  { claves: ['depreciacion acumulada activo fijo', 'depreciacion acumulada activo fijo nic 16', 'depreciacion acumulada'], terminos: ['depreciacion acumulada activo fijo'] },
+  { claves: ['ajuste remuneraciones retroactivas'], terminos: ['sueldos y remuneraciones'] },
+  { claves: ['aportes patronales retroactivos'], terminos: ['aportes patronales'] },
+  { claves: ['sueldos liquidos retroactivos por pagar'], terminos: ['sueldos liquidos por pagar'] },
+  { claves: ['impuesto unico 2da cat por pagar'], terminos: ['impuesto unico'] },
+  { claves: ['mutual sis por pagar'], terminos: ['mutual de seguridad'] },
+  { claves: ['finiquitos por pagar'], terminos: ['finiquitos por pagar'] },
+  { claves: ['indemnizaciones legales'], terminos: ['indemnizaciones'] },
 ];
 
 /**

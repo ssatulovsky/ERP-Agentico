@@ -1,4 +1,3 @@
-import { assertEntryAccountsValid } from './chartOfAccountsServerService';
 import type { 
   EmployeePayroll, 
   ChileIndicators, 
@@ -28,6 +27,19 @@ import { ultimosPeriodos } from '../utils/periodo';
 import { commercialProcurementService } from './commercialProcurementService';
 
 const getDiskPersistence = (): any => (globalThis as any).__diskPersistence;
+// K2.7: validador de cuentas contra el plan de la empresa (lo registra el servidor; este módulo
+// también se carga en el navegador y no puede importar la persistencia).
+const ensureChartValidator = async (): Promise<(empresaId: string, lines: any[]) => void> => {
+  let v = (globalThis as any).__chartValidator?.assertEntryAccountsValid;
+  if (typeof v !== 'function' && typeof window === 'undefined') {
+    // En el servidor se carga a pedido (ruta no analizable por el empaquetador del navegador).
+    const modulo = './chartOfAccountsServerService';
+    await import(/* @vite-ignore */ modulo);
+    v = (globalThis as any).__chartValidator?.assertEntryAccountsValid;
+    if (typeof v !== 'function') throw new Error('El validador del plan de cuentas no está disponible; no se registra el asiento.');
+  }
+  return typeof v === 'function' ? v : () => undefined;
+};
 const safeDynamicImport = async (moduleSpecifier: string): Promise<any> => Function('m', 'return import(m)')(moduleSpecifier);
 const getHttpDteBillingService = async (): Promise<any> => {
   if ((globalThis as any).__httpDteBillingService) {
@@ -495,7 +507,7 @@ export class HrManagementService {
           });
 
           // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
-          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
+          (await ensureChartValidator())(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -594,7 +606,7 @@ export class HrManagementService {
           });
 
           // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
-          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
+          (await ensureChartValidator())(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -683,7 +695,7 @@ export class HrManagementService {
           });
 
           // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
-          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
+          (await ensureChartValidator())(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -903,7 +915,7 @@ export class HrManagementService {
           });
 
           // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
-          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
+          (await ensureChartValidator())(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -1250,7 +1262,7 @@ export class HrManagementService {
               };
             });
 
-            assertEntryAccountsValid(normalizedEntry.empresaId || item.empresaId, mappedLines);
+            (await ensureChartValidator())(normalizedEntry.empresaId || item.empresaId, mappedLines);
             if (dp && typeof dp.addAccountingEntry === 'function') {
               dp.addAccountingEntry(normalizedEntry, mappedLines);
             }

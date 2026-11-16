@@ -2918,7 +2918,10 @@ export interface ErpSubscriptionPlan {
   precioMensualClp: number;
   limiteUsuarios: number;
   limiteEmpresasContables: number;
+  /** Texto comercial (lo que ve el cliente). */
   modulosIncluidos: string[];
+  /** K3: módulos canónicos que habilita el plan (los que aplica el control de acceso). */
+  modulos: string[];
   referenciaTexto: string;
   nivelSoporteDefecto: 'Básico' | 'Avanzado' | 'Dedicado 24/7';
   destacado?: boolean;

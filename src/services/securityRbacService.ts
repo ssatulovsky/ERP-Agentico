@@ -868,10 +868,8 @@ export function resolveAllowedCompanyIdsForUser(
     }
   }
 
-  // Si por algún motivo el set quedó vacío, asignar la primera empresa disponible
-  if (allowedSet.size === 0 && companiesSource[0]?.empresaId) {
-    allowedSet.add(companiesSource[0].empresaId);
-  }
+  // K3.5: un usuario sin empresas asignadas no recibe acceso a ninguna (antes se le daba la primera
+  // empresa del sistema).
 
   return Array.from(allowedSet);
 }

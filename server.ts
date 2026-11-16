@@ -20,6 +20,10 @@ import { autonomousAgentsRouter } from "./src/controllers/autonomousAgentsContro
 import { agentSchedulesRouter } from "./src/controllers/agentSchedulesController";
 import { clientsRouter } from "./src/controllers/clientsController";
 import { chartOfAccountsRouter } from "./src/controllers/chartOfAccountsController";
+import { saasRouter } from "./src/controllers/saasController";
+import "./src/services/saasHooks";
+import { startSaasBillingScheduler } from "./src/services/saasBillingService";
+import { applyCommercialStatus, assertUserLimits, SaasError } from "./src/services/saasAccountService";
 import { agentSchedulerService, isSchedulerEnabled } from "./src/services/agentSchedulerService";
 import { authenticateApiToken } from "./src/middlewares/authMiddleware";
 import { centralizedAuthorizationMiddleware, validateCompanyIdentifiers } from "./src/middlewares/centralizedAuthorizationMiddleware";
@@ -923,6 +927,8 @@ app.get("/api/security/state", (req, res) => {
     // Sanitizar usuarios: NUNCA devolver contraseñas ni hashes
     const sanitizedState = {
       ...rbacState,
+      // K3: el estado comercial de cada empresa viene del cliente ERP (servidor).
+      companiesConfig: applyCommercialStatus(rbacState.companiesConfig || []),
       users: (rbacState.users || []).map((u) => sanitizeSecurityUser(u)),
     };
     res.json({ success: true, state: sanitizedState });
@@ -1000,10 +1006,22 @@ app.post("/api/security/state", (req, res) => {
       };
     });
 
+    // K3: límite de usuarios activos de cada cliente ERP
+    try {
+      assertUserLimits(usersWithPasswords as any[]);
+    } catch (limitErr: any) {
+      if (limitErr instanceof SaasError) {
+        return res.status(limitErr.status).json({ success: false, error: limitErr.code, errorMessage: limitErr.message, ...(limitErr.details || {}) });
+      }
+      throw limitErr;
+    }
+
     // 3. Registrar log de auditoría inmutable
     const updated = whatsappBridgeService.saveRbacStore({
       version: currentState.version || 1,
       ...payload,
+      // K3: el estado comercial no lo decide el navegador
+      companiesConfig: applyCommercialStatus((payload as any).companiesConfig || []) as any,
       roles: payload.roles as any,
       users: usersWithPasswords as any,
     });
@@ -2339,6 +2357,7 @@ app.use("/api/tenancy", tenancyRouter);
 // 4.5 Cartera de empresas en el servidor (antes solo en el navegador)
 app.use("/api/clients", clientsRouter);
 app.use("/api/companies", chartOfAccountsRouter);
+app.use("/api/saas", saasRouter);
 
 // RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
 app.use("/api/modules", erpModulesRouter);
@@ -2483,6 +2502,8 @@ async function startServer() {
     // 3.3: despachador de tareas programadas (activar en una sola instancia).
     if (isSchedulerEnabled()) {
       agentSchedulerService.start(Number(process.env.AGENT_SCHEDULER_TICK_MS) || 60_000);
+      // K4: facturación y cobranza de suscripciones (misma instancia única que el despachador).
+      startSaasBillingScheduler();
     } else {
       console.info("[AgentScheduler] Despachador apagado (AGENT_SCHEDULER_ENABLED != true). Las tareas solo se ejecutan a pedido.");
     }

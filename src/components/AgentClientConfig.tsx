@@ -62,6 +62,7 @@ import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePa
 import { periodoActual } from '../utils/periodo';
 import { fetchCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
 import { ChartInitializationWizard } from './accounting/ChartInitializationWizard';
+import { SaasAdminPanel } from './saas/SaasAdminPanel';
 import type { HierarchicalAccountItem } from '../types';
 
 interface AgentClientConfigProps {
@@ -82,6 +83,8 @@ interface AgentClientConfigProps {
   onOpenVoiceDialogue?: (personaId?: string) => void;
   /** K1.2: abre el plan de cuentas de la empresa en el Agente Contable (no hay un segundo editor). */
   onOpenChartOfAccounts?: (clientId: string) => void;
+  /** K3: el panel de clientes ERP y cobranza es solo para el SuperAdmin de la empresa dueña. */
+  isSuperAdmin?: boolean;
 }
 
 export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
@@ -98,6 +101,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onUpdateSystemParams,
   onOpenVoiceDialogue,
   onOpenChartOfAccounts,
+  isSuperAdmin = false,
 }) => {
   const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE' | 'WHATSAPP_BRIDGE'>('WHATSAPP_BRIDGE');
   
@@ -109,6 +113,25 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [activeClientChart, setActiveClientChart] = useState<HierarchicalAccountItem[]>([]);
   // K2: después del alta se elige el origen del plan de cuentas de la nueva empresa
   const [chartWizardClient, setChartWizardClient] = useState<ClientCompany | null>(null);
+  const [isSaasPanelOpen, setIsSaasPanelOpen] = useState(false);
+  const [saasAccounts, setSaasAccounts] = useState<any[]>([]);
+  const [myAccount, setMyAccount] = useState<any>(null);
+
+  // K3: clientes ERP (para el alta) o el consumo del propio cliente (administrador)
+  useEffect(() => {
+    if (isSuperAdmin) {
+      if (!isErpOnboardingOpen) return;
+      fetch('/api/saas/overview')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d?.success && setSaasAccounts(d.clientes || []))
+        .catch(() => {});
+    } else {
+      fetch('/api/saas/my-account')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d?.success && setMyAccount(d.cliente))
+        .catch(() => {});
+    }
+  }, [isSuperAdmin, isErpOnboardingOpen]);
 
   useEffect(() => {
     if (!isSystemConfigOpen) return;
@@ -505,6 +528,21 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setIsSaasPanelOpen(true)}
+                    className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <span>Clientes ERP y cobranza</span>
+                  </button>
+                )}
+                {!isSuperAdmin && myAccount && (
+                  <span className="text-[11px] text-slate-600 bg-slate-100 rounded-lg px-2.5 py-1.5">
+                    Plan {myAccount.planId} · {myAccount.consumo.empresas}/{myAccount.consumo.limiteEmpresas} empresas · {myAccount.consumo.usuarios}/
+                    {myAccount.consumo.limiteUsuarios} usuarios
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsErpOnboardingOpen(true)}
@@ -1654,7 +1692,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           setChartWizardClient(newClient);
         }}
         existingClientsCount={clients.length}
+        isSuperAdmin={isSuperAdmin}
+        saasAccounts={saasAccounts}
       />
+
+      <SaasAdminPanel isOpen={isSaasPanelOpen} onClose={() => setIsSaasPanelOpen(false)} />
 
       {chartWizardClient && (
         <ChartInitializationWizard

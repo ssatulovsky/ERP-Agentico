@@ -13,8 +13,6 @@ import { getMysqlDb, isRealMysqlConnected } from '../db/mysqlClient';
 import { IndicatorSyncService } from './indicatorSyncService';
 import { calculateImpuestoUnico } from '../utils/chileanAccounting';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
-// K2.7: registra el plan de cada empresa para el normalizador de asientos.
-import './chartOfAccountsServerService';
 import { diskPersistence } from './diskPersistenceService';
 
 // Tasas oficiales de cotización previsional de las AFPs chilenas (10% obligatorio + comisión de la administradora)

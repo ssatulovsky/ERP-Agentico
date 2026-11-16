@@ -2406,6 +2406,20 @@ export default function App() {
     saveActiveAuthSession(null);
   };
 
+  // K3: si el servidor informa que el cliente ERP está suspendido o dado de baja (o la empresa
+  // inactiva), la sesión se cierra en este navegador.
+  useEffect(() => {
+    let avisado = false;
+    const onBlocked = (e: any) => {
+      if (avisado) return;
+      avisado = true;
+      alert(e?.detail?.message || 'El acceso fue bloqueado por la administración del ERP.');
+      handleLogout();
+    };
+    window.addEventListener('erp:access-blocked', onBlocked);
+    return () => window.removeEventListener('erp:access-blocked', onBlocked);
+  }, [currentUser]);
+
   if (!isCurrentSessionValid || !currentUser || !currentRole) {
     return (
       <LoginScreen
@@ -2717,6 +2731,7 @@ export default function App() {
                 if (personaId) setVoiceDialoguePersonaId(personaId);
                 setIsVoiceDialogueOpen(true);
               }}
+              isSuperAdmin={currentRole?.tipoSistema === 'SUPERADMIN' || currentRole?.id === 'role-superadmin'}
               onOpenChartOfAccounts={(clientId) => {
                 if (clientId && clientId !== activeClientId) handleSelectActiveClient(clientId);
                 setLedgerInitialTab('PLAN_CUENTAS');

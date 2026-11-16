@@ -82,7 +82,8 @@ export function buildFirstInstallState(input: FirstCompanyInput, tempPassword: s
     ],
     users: [user],
   };
-  const client = { id: empresaId, rut, razonSocial: input.razonSocial.trim(), activo: true, fechaCreacion: hoy };
+  // K3: la primera empresa es la dueña del ERP (cliente ERP propietario: no se factura ni se suspende).
+  const client = { id: empresaId, rut, razonSocial: input.razonSocial.trim(), estadoEmpresa: 'ACTIVA', esEmpresaDuenaErp: true, fechaCreacion: hoy };
   return { state, client, username, empresaId };
 }
 
@@ -182,6 +183,8 @@ async function runFirstCompanyInstallation() {
   const snap: any = diskPersistence.getSnapshot();
   const otros = (snap.clients || []).filter((c: any) => c.id !== empresaId);
   diskPersistence.updateCollection('clients', [...otros, client]);
+  const { ensureOwnerAccount } = await import('../services/saasAccountService');
+  ensureOwnerAccount();
   diskPersistence.flushToDiskSync();
 
   console.log('========================================================================');

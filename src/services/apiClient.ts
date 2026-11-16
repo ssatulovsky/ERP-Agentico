@@ -121,6 +121,18 @@ export function installGlobalFetchInterceptor(): void {
       window.dispatchEvent(new CustomEvent('erp:unauthorized', { detail: { url: urlStr } }));
     }
 
+    // K3: cliente suspendido o dado de baja, o empresa inactiva: el servidor bloquea cada petición.
+    if (response.status === 403 && isApiCall && !isExempt) {
+      try {
+        const data = await response.clone().json();
+        if (['CLIENTE_SUSPENDIDO', 'CLIENTE_DADO_DE_BAJA', 'EMPRESA_DADA_DE_BAJA', 'EMPRESA_INACTIVA'].includes(data?.error)) {
+          window.dispatchEvent(new CustomEvent('erp:access-blocked', { detail: { code: data.error, message: data.errorMessage } }));
+        }
+      } catch {
+        /* respuesta sin JSON */
+      }
+    }
+
     return response;
   };
 

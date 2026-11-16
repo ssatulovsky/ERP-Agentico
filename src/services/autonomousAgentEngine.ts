@@ -13,8 +13,6 @@ import {
 import { HrManagementService } from './hrManagementService';
 import { SiiRcvService } from './siiRcvService';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
-// K2.7: registra el plan de cada empresa para el normalizador de asientos.
-import './chartOfAccountsServerService';
 import { calculatePreF29 } from '../utils/f29SeniorEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
 import { buildAgentMemoryContext } from './agentContextBuilderService';
@@ -747,7 +745,7 @@ export class AutonomousAgentEngine {
             return {
               status: 'MISSING_PARAMS',
               code: 'CUENTA_NO_RESUELTA',
-              missingParams: (valErr.lineas || []).map((l: any) => `cuenta del plan para "${l.nombreCuenta || l.codigoCuenta || 'línea sin cuenta'}"`),
+              faltantes: (valErr.lineas || []).map((l: any) => `cuenta del plan para "${l.nombreCuenta || l.codigoCuenta || 'línea sin cuenta'}"`),
               error: valErr.message,
               observacion: `${valErr.message} Pida al usuario la cuenta exacta del plan de cuentas de la empresa.`,
             };
@@ -1832,24 +1830,44 @@ export class AutonomousAgentEngine {
 
         const total = Number(report.totalRendido || 0);
         const fecha = report.fechaRendicion || new Date().toISOString().slice(0, 10);
+        // K2.7: cada gasto va a la cuenta asignada a su ítem (plan de la empresa); sin cuentas fijas.
+        const items: any[] = Array.isArray(report.items) ? report.items.filter((it: any) => it.estadoValidacion !== 'RECHAZADO') : [];
+        const sinCuenta = items.filter((it: any) => !it.cuentaContableCodigo);
+        if (items.length === 0 || sinCuenta.length > 0) {
+          return missingParamsResult(
+            'tool_expenses_propose_entry',
+            items.length === 0 ? ['ítems de la rendición'] : sinCuenta.map((it: any) => `cuenta contable del ítem "${it.concepto || it.id}"`)
+          );
+        }
+        const porCuenta = new Map<string, { nombre: string; monto: number }>();
+        for (const it of items) {
+          const prev = porCuenta.get(it.cuentaContableCodigo) || { nombre: it.cuentaContableNombre || it.concepto, monto: 0 };
+          prev.monto += Number(it.montoTotal || 0);
+          porCuenta.set(it.cuentaContableCodigo, prev);
+        }
         const lines: AccountingEntryLine[] = [
-          {
-            cuentaCodigo: '5.2.05',
-            cuentaNombre: 'Gastos Generales de Operación y Viáticos',
-            debe: total,
+          ...[...porCuenta.entries()].map(([codigo, v]) => ({
+            cuentaCodigo: codigo,
+            cuentaNombre: v.nombre,
+            debe: Math.round(v.monto),
             haber: 0,
             rutAuxiliar: report.rendidorRut,
             documentoRef: `RDG-${report.folio}`,
-          },
+          })),
           {
-            cuentaCodigo: '2.1.08',
-            cuentaNombre: 'Cuentas por Pagar Colaboradores (Rendiciones por Liquidar)',
+            // Se resuelve por nombre en el plan de la empresa al registrar el asiento.
+            cuentaCodigo: '',
+            cuentaNombre: 'Cuentas por Pagar Reembolso Gastos Empleados',
             debe: 0,
-            haber: total,
+            haber: Math.round([...porCuenta.values()].reduce((s, v) => s + v.monto, 0)),
             rutAuxiliar: report.rendidorRut,
             documentoRef: `RDG-${report.folio}`,
           },
         ];
+        (globalThis as any).__chartValidator?.mapEntryLinesToCompanyChart?.(rutEmpresa, lines);
+        if (!lines[lines.length - 1].cuentaCodigo) {
+          return missingParamsResult('tool_expenses_propose_entry', ['cuenta por pagar de reembolsos a colaboradores en el plan de cuentas de la empresa']);
+        }
 
         const entry: AccountingEntry = {
           id: `entry-rdg-${report.folio}-${Date.now()}`,

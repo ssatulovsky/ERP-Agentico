@@ -1,3 +1,5 @@
+import { companyAccessDecision, planAllowsModule } from '../services/saasAccountService';
+import { findCompany } from '../services/companyRegistryService';
 import type { Request, Response, NextFunction } from 'express';
 import {
   type AuthenticatedRequest,
@@ -90,6 +92,8 @@ export const ROUTE_MODULE_MAP: RouteModuleRule[] = [
   { prefix: '/api/voice/download-all', module: 'ADMIN', superAdminOnly: true },
   { prefix: '/api/voice/download-voice', module: 'ADMIN', superAdminOnly: true },
   { prefix: '/api/tenancy', module: 'ADMIN' },
+  // K3/K4: administración comercial del ERP (clientes ERP, cobranza). /api/saas/my-account está exenta abajo.
+  { prefix: '/api/saas', module: 'ADMIN', superAdminOnly: true },
   { prefix: '/api/modules/anchor', module: 'ADMIN', superAdminOnly: true },
 
   // 2. CONTABILIDAD
@@ -619,7 +623,10 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
   // 4. Regla A1: Extracción y validación de empresa (Aislamiento Multi-Tenant)
   const { companyId: targetCompanyId, isExplicit } = extractTargetCompanyId(req);
 
-  if (isExplicit && targetCompanyId) {
+  // K3: el alta de una empresa nueva (PUT /api/clients/:id con un RUT aún no registrado) la valida el
+  // controlador (SuperAdmin, o administrador dentro del límite de su cliente ERP).
+  const esAltaEmpresa = req.method === 'PUT' && urlPath.startsWith('/api/clients/') && targetCompanyId && !findCompany(targetCompanyId);
+  if (isExplicit && targetCompanyId && !esAltaEmpresa) {
     const compCheck = requireCompanyAccess(req, targetCompanyId);
     if (!compCheck.allowed) {
       return res.status(403).json({
@@ -642,6 +649,18 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     if ('empresaId' in req.body) req.body.empresaId = effectiveEmpresaId;
     if ('empresaRut' in req.body) req.body.empresaRut = effectiveEmpresaId;
     if ('companyId' in req.body) req.body.companyId = effectiveEmpresaId;
+  }
+
+  // 4.b K3: estado comercial. Un cliente ERP suspendido o dado de baja (o una empresa dada de baja o
+  // inactiva) queda bloqueado en cada petición, no solo al ingresar: una sesión abierta deja de operar
+  // en la petición siguiente. Bloqueo total, sin lectura ni exportación (decisión del 16 nov 2026).
+  if (!authUser.isSuperAdmin) {
+    for (const id of new Set([effectiveEmpresaId, authUser.empresaPrincipalId].filter(Boolean) as string[])) {
+      const decision = companyAccessDecision(id);
+      if (!decision.allowed) {
+        return res.status(403).json({ success: false, error: decision.code, errorMessage: decision.message });
+      }
+    }
   }
 
   // 5. Regla A5: Motor de asistentes con herramientas (/api/agents/autonomous/execute)
@@ -668,6 +687,13 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
           errorMessage: `El usuario '${authUser.username}' no tiene asignado el módulo '${mappedCanonical}' para ejecutar el agente.`,
         });
       }
+      if (!authUser.isSuperAdmin && !planAllowsModule(effectiveEmpresaId, mappedCanonical)) {
+        return res.status(403).json({
+          success: false,
+          error: 'MODULO_NO_CONTRATADO',
+          errorMessage: `El plan contratado no incluye el módulo '${mappedCanonical}'.`,
+        });
+      }
     }
     return next();
   }
@@ -687,6 +713,11 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
   // 4.5: cartera de empresas. GET filtra por las empresas del usuario; PUT exige rol de administrador
   // y acceso a la empresa (se valida en el controlador).
   if (urlPath === '/api/clients' || urlPath.startsWith('/api/clients/')) {
+    return next();
+  }
+
+  // K3: cualquier usuario autenticado consulta el plan y consumo de su propio cliente ERP.
+  if (urlPath === '/api/saas/my-account') {
     return next();
   }
 
@@ -719,6 +750,15 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
       success: false,
       error: 'MODULO_NO_PERMITIDO',
       errorMessage: `Acceso restringido: El usuario '${authUser.username}' (Rol: ${authUser.roleCodigo}) no tiene asignado el módulo '${matchedRule.module}'.`,
+    });
+  }
+
+  // 9. K3: el módulo debe estar incluido en el plan del cliente ERP de la empresa.
+  if (!authUser.isSuperAdmin && !planAllowsModule(effectiveEmpresaId, matchedRule.module)) {
+    return res.status(403).json({
+      success: false,
+      error: 'MODULO_NO_CONTRATADO',
+      errorMessage: `El plan contratado no incluye el módulo '${matchedRule.module}'.`,
     });
   }
 

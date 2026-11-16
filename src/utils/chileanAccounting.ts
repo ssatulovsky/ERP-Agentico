@@ -2405,7 +2405,7 @@ export function createFixedAssetAcquisitionEntry(asset: FixedAsset): AccountingE
 
   const lineas: AccountingEntryLine[] = [
     {
-      cuentaCodigo: asset.cuentaContableActivo || '1.2.05',
+      cuentaCodigo: asset.cuentaContableActivo || '',
       cuentaNombre: `${asset.nombre} (${asset.codigoPlaca})`,
       debe: neto,
       haber: 0,
@@ -2689,7 +2689,7 @@ export function createFixedAssetDisposalEntry(
   }
 
   lineas.push({
-    cuentaCodigo: asset.cuentaContableActivo || '1.2.05',
+    cuentaCodigo: asset.cuentaContableActivo || '',
     cuentaNombre: `${asset.nombre} (Baja de Costo Histórico)`,
     debe: 0,
     haber: costoHist,

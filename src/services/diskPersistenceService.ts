@@ -2974,3 +2974,5 @@ class DiskPersistenceService {
 
 export const diskPersistence = new DiskPersistenceService();
 (globalThis as any).__diskPersistence = diskPersistence;
+// K2.7: en el servidor, el validador del plan de cuentas queda disponible para los módulos isomórficos.
+void import('./chartOfAccountsServerService').catch(() => undefined);

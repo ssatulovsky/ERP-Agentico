@@ -8,6 +8,7 @@
 import { diskPersistence } from '../../src/services/diskPersistenceService';
 import { commercialProcurementService } from '../../src/services/commercialProcurementService';
 import { aiRouterService } from '../../src/services/aiRouterService';
+import { initializeCompanyChart, getCompanyChartState, saveCompanyChart } from '../../src/services/chartOfAccountsServerService';
 
 export interface EvalFixture {
   empresaId: string;
@@ -38,6 +39,20 @@ export function seedEvalCompany(): EvalFixture {
       evaluacionLlm: true,
     },
   ]);
+  // K2: los asientos propuestos se validan contra el plan de la empresa.
+  initializeCompanyChart(empresaId, { origen: 'PLANTILLA_ESTANDAR' }, { canAccessCompany: () => true });
+  {
+    // Cuentas que la empresa de evaluación agrega a la plantilla (las usa el banco de casos).
+    const st = getCompanyChartState(empresaId);
+    const base = (codigo: string) => st.chart.find((a: any) => a.codigo === codigo);
+    const extra = [
+      { ...base('6.1.04.001'), codigo: '6.1.04.010', nombre: 'Gastos y Comisiones Bancarias' },
+      { ...base('6.1.01.006'), codigo: '6.1.01.007', nombre: 'Gasto Provisión de Vacaciones' },
+      { ...base('2.1.02.001'), codigo: '2.1.02.006', nombre: 'Provisión de Vacaciones por Pagar' },
+      { ...base('5.1.01.002'), codigo: '5.1.01.004', nombre: 'Fletes y Transporte de Compras' },
+    ].map((a: any) => ({ ...a, id: `${empresaId}-${a.codigo}` }));
+    saveCompanyChart(empresaId, [...st.chart, ...extra], st.groups);
+  }
 
   // Tesorería y conciliación: 3 movimientos, 2 con asiento que calza, 1 sin calce.
   diskPersistence.saveBankAccounts(
@@ -114,9 +129,9 @@ export function seedEvalCompany(): EvalFixture {
       fechaRendicion: '2026-10-28',
       totalRendido: 186_400,
       items: [
-        { id: 'it1', concepto: 'Combustible visita a cliente', categoria: 'COMBUSTIBLE', montoTotal: 62_400, rutEmisor: '96.555.444-1', tipoDocumento: 'BOLETA_ELECTRONICA', folioDocumento: '993311' },
-        { id: 'it2', concepto: 'Almuerzo con cliente', categoria: 'REPRESENTACION_CLIENTES', montoTotal: 84_000, rutEmisor: '76.222.111-0', tipoDocumento: 'FACTURA_ELECTRONICA_33', folioDocumento: '4410' },
-        { id: 'it3', concepto: 'Peajes ruta 68', categoria: 'PEAJES_ESTACIONAMIENTOS', montoTotal: 40_000, tipoDocumento: 'TICKET_PEAJE' },
+        { id: 'it1', concepto: 'Combustible visita a cliente', categoria: 'COMBUSTIBLE', cuentaContableCodigo: '6.1.04.008', montoTotal: 62_400, rutEmisor: '96.555.444-1', tipoDocumento: 'BOLETA_ELECTRONICA', folioDocumento: '993311' },
+        { id: 'it2', concepto: 'Almuerzo con cliente', categoria: 'REPRESENTACION_CLIENTES', cuentaContableCodigo: '6.1.04.007', montoTotal: 84_000, rutEmisor: '76.222.111-0', tipoDocumento: 'FACTURA_ELECTRONICA_33', folioDocumento: '4410' },
+        { id: 'it3', concepto: 'Peajes ruta 68', categoria: 'PEAJES_ESTACIONAMIENTOS', cuentaContableCodigo: '6.1.04.009', montoTotal: 40_000, tipoDocumento: 'TICKET_PEAJE' },
       ],
     },
   ]);

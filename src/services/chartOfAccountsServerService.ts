@@ -14,7 +14,7 @@ import { diskPersistence } from './diskPersistenceService';
 import { companyKeys, normalizeCompanyKey, resolveCompanyId, findCompany } from './companyRegistryService';
 import { buildStandardChartTemplate } from '../utils/companyChartOfAccountsService';
 import { isDemoModeEnabled } from '../config/demoMode';
-import { setJournalChartProvider } from './journalEntryNormalizer';
+import { resolveAccountInChart, setJournalChartProvider } from './journalEntryNormalizer';
 
 export type ChartOrigin = 'PLANTILLA_ESTANDAR' | 'COPIA_EMPRESA' | 'IMPORTACION' | 'NAVEGADOR' | 'VACIO' | 'MIGRADO';
 
@@ -392,8 +392,33 @@ export function validateEntryAccounts(empresaIdOrRut: string, codigos: Array<str
   return { ok: true };
 }
 
+/**
+ * Las plantillas de asientos de algunos módulos (nómina, F29, depreciación) todavía traen códigos de
+ * otra codificación. Antes de validar, cada línea cuyo código no existe en el plan de la empresa se
+ * busca por su nombre en ese plan (nombre exacto, sinónimos frecuentes o una única coincidencia).
+ * Si no se encuentra, la línea queda como está y la validación la rechaza: nunca se inventa una cuenta.
+ * Modifica las líneas recibidas (código y nombre de cuenta).
+ */
+export function mapEntryLinesToCompanyChart(empresaIdOrRut: string, lines: any[]): void {
+  const state = getCompanyChartState(empresaIdOrRut);
+  if (state.estado !== 'CONFIGURADO' || state.chart.length === 0) return;
+  const codes = new Set(state.chart.map((a) => String(a.codigo)));
+  for (const l of lines || []) {
+    const codigo = String(l?.cuentaCodigo || l?.codigoCuenta || '').trim();
+    if (codigo && codes.has(codigo)) continue;
+    const nombre = l?.cuentaNombre || l?.nombreCuenta || l?.glosa || '';
+    const r = resolveAccountInChart(state.chart, '', nombre);
+    if (!r) continue;
+    if ('cuentaCodigo' in l || !('codigoCuenta' in l)) l.cuentaCodigo = r.codigo;
+    if ('codigoCuenta' in l) l.codigoCuenta = r.codigo;
+    if ('cuentaNombre' in l) l.cuentaNombre = r.nombre;
+    if ('nombreCuenta' in l) l.nombreCuenta = r.nombre;
+  }
+}
+
 /** Lanza un error con code CUENTA_NO_EXISTE / CUENTA_NO_IMPUTABLE / … si el asiento no calza con el plan. */
 export function assertEntryAccountsValid(empresaIdOrRut: string, lines: any[]): void {
+  mapEntryLinesToCompanyChart(empresaIdOrRut, lines);
   const v = validateEntryAccounts(empresaIdOrRut, (lines || []).map((l) => l?.cuentaCodigo || l?.codigoCuenta));
   if (!v.ok) {
     const err: any = new Error(v.message);
@@ -507,3 +532,6 @@ setJournalChartProvider((empresaId) => {
   const st = getCompanyChartState(empresaId);
   return st.estado === 'CONFIGURADO' && st.chart.length ? st.chart : null;
 });
+
+// Para módulos que también se cargan en el navegador (no pueden importar este servicio).
+(globalThis as any).__chartValidator = { assertEntryAccountsValid, validateEntryAccounts, mapEntryLinesToCompanyChart };

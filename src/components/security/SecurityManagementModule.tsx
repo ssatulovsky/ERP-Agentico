@@ -1000,61 +1000,18 @@ export const SecurityManagementModule: React.FC<SecurityManagementModuleProps> =
                   </div>
                 </div>
 
-                {/* Botones de cambio de Estado Comercial (Solo SuperAdmin) */}
-                <div className="flex flex-col sm:flex-row lg:flex-col gap-2 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pt-0 lg:pl-5">
-                  <span className="text-[10px] font-bold uppercase text-slate-400">
-                    Cambiar Estado Cuenta:
+                {/* K3: el estado comercial lo decide el cliente ERP en el servidor (Configuración → Clientes ERP y cobranza).
+                    Aquí solo se muestra; cambiarlo desde este módulo no tenía efecto en el servidor y se revertía. */}
+                <div className="flex flex-col gap-1 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pt-0 lg:pl-5 text-xs max-w-[220px]">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">Estado comercial</span>
+                  <span
+                    className={`px-2 py-1 rounded font-bold w-fit ${
+                      comp.estadoCuenta === 'ACTIVA' ? 'bg-emerald-100 text-emerald-800' : comp.estadoCuenta === 'BAJA' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {comp.estadoCuenta}
                   </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      disabled={!isSuperAdmin || comp.estadoCuenta === 'ACTIVA'}
-                      onClick={() => handleChangeCompanyStatus(comp.empresaId, 'ACTIVA')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
-                        comp.estadoCuenta === 'ACTIVA'
-                          ? 'bg-emerald-600 text-white border-emerald-600'
-                          : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50 disabled:opacity-50'
-                      }`}
-                    >
-                      Activa
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!isSuperAdmin || comp.estadoCuenta === 'SUSPENDIDA_PAGO'}
-                      onClick={() =>
-                        handleChangeCompanyStatus(
-                          comp.empresaId,
-                          'SUSPENDIDA_PAGO',
-                          'Facturación mensual ERP impaga.'
-                        )
-                      }
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
-                        comp.estadoCuenta === 'SUSPENDIDA_PAGO'
-                          ? 'bg-amber-600 text-white border-amber-600'
-                          : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50 disabled:opacity-50'
-                      }`}
-                    >
-                      Suspender por Pago
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!isSuperAdmin || comp.estadoCuenta === 'BAJA'}
-                      onClick={() =>
-                        handleChangeCompanyStatus(
-                          comp.empresaId,
-                          'BAJA',
-                          'Término de contrato de suscripción.'
-                        )
-                      }
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
-                        comp.estadoCuenta === 'BAJA'
-                          ? 'bg-rose-600 text-white border-rose-600'
-                          : 'bg-white text-rose-700 border-rose-300 hover:bg-rose-50 disabled:opacity-50'
-                      }`}
-                    >
-                      Dar de Baja
-                    </button>
-                  </div>
+                  <span className="text-[11px] text-slate-500">Se administra en Configuración → Clientes ERP y cobranza.</span>
                 </div>
               </div>
             ))}

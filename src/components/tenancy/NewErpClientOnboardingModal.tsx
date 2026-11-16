@@ -39,6 +39,9 @@ interface NewErpClientOnboardingModalProps {
   onClose: () => void;
   onSaveClient: (client: ClientCompany) => void;
   existingClientsCount: number;
+  /** K3: el SuperAdmin elige el cliente ERP de la empresa; un administrador la registra en el suyo. */
+  isSuperAdmin?: boolean;
+  saasAccounts?: Array<{ id: string; razonSocial: string; consumo?: { empresas: number; limiteEmpresas: number }; esPropietario?: boolean }>;
 }
 
 export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalProps> = ({
@@ -46,7 +49,10 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
   onClose,
   onSaveClient,
   existingClientsCount,
+  isSuperAdmin,
+  saasAccounts = [],
 }) => {
+  const [clienteErpId, setClienteErpId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'GENERAL' | 'UBICACION' | 'CONTABILIDAD' | 'COMERCIAL' | 'CONTRATO'>('GENERAL');
   const [selectedPlanId, setSelectedPlanId] = useState<string>('PLAN_PROFESIONAL');
   
@@ -178,6 +184,7 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
     if (!giroComercial.trim()) newErrors.push('El giro comercial es obligatorio (se usa en la emisión de DTE).');
     if (!direccionComercial.trim() || !comuna.trim()) newErrors.push('La dirección y la comuna son obligatorias (se usan en la emisión de DTE).');
     if (!regimenTributario) newErrors.push('Debe indicar el régimen tributario de la empresa.');
+    if (isSuperAdmin && !clienteErpId) newErrors.push('Seleccione el cliente ERP al que pertenece la empresa (pestaña Cliente ERP).');
     const ppm = Number(String(tasaPpmPorc).replace(',', '.'));
     if (tasaPpmPorc.trim() === '' || !Number.isFinite(ppm) || ppm < 0 || ppm > 100) {
       newErrors.push('Debe indicar la tasa de PPM en porcentaje (puede ser 0).');
@@ -223,30 +230,15 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
       contextoEspecialAgente: notasInternas.trim(),
       activa: !clienteInactivo,
       inactivo: clienteInactivo,
-      manejaInventario: selectedPlan.modulosIncluidos.some(m => m.includes('Inventario')),
+      manejaInventario: false,
       reglaValoracionInventario: 'PMP',
       alertasInventarioAgente: {
         autoReposicion: true,
         alertaStockCritico: true,
         controlGuiasDespacho52: true,
       },
-      contrato: {
-        planId: selectedPlan.id,
-        nombrePlan: selectedPlan.nombre,
-        licenciasContratadas,
-        limiteUsuarios: selectedPlan.limiteUsuarios,
-        limiteEmpresas: selectedPlan.limiteEmpresasContables,
-        precioMensualNeto: selectedPlan.precioMensualClp,
-        modulosIncluidos: selectedPlan.modulosIncluidos,
-        numeroContrato,
-        tipoContrato,
-        fechaContrato,
-        duracionDias,
-        diasTolerancia,
-        fechaExpiracion,
-        ejecutivoAsignado,
-        nivelSoporte,
-      },
+      // K3: plan, contrato y límites viven en el cliente ERP (no en cada empresa).
+      ...(isSuperAdmin && clienteErpId ? { clienteErpId } : {}),
       contabilidadConfig: {
         grupoImpuesto,
         cuentaCliente,
@@ -404,7 +396,7 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
             }`}
           >
             <FileCheck className="w-3.5 h-3.5" />
-            <span>Contrato</span>
+            <span>Cliente ERP</span>
           </button>
         </div>
 
@@ -940,205 +932,35 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
 
           {/* TAB 5: CONTRATO (Matching Page 3 & Page 8) */}
           {activeTab === 'CONTRATO' && (
-            <div className="space-y-4 animate-in fade-in duration-100">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
+            <div className="space-y-3 animate-in fade-in duration-100 text-xs">
+              {isSuperAdmin ? (
+                <>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Plan Contratado <span className="text-rose-500">*</span>
+                    Cliente ERP <span className="text-rose-500">*</span>
                   </label>
                   <select
-                    value={selectedPlanId}
-                    onChange={(e) => setSelectedPlanId(e.target.value)}
-                    className="w-full bg-blue-50 border border-blue-300 text-blue-900 font-extrabold rounded-md px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={clienteErpId}
+                    onChange={(e) => setClienteErpId(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    {ERP_SUBSCRIPTION_PLANS.map((plan) => (
-                      <option key={plan.id} value={plan.id}>
-                        ✔ {plan.nombre.toUpperCase()} — {formatCLP(plan.precioMensualClp)} + IVA / mes
+                    <option value="">Seleccione…</option>
+                    {saasAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.razonSocial}
+                        {a.esPropietario ? ' (empresa dueña del ERP)' : a.consumo ? ` · ${a.consumo.empresas}/${a.consumo.limiteEmpresas} empresas` : ''}
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Licencias Contratadas
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={licenciasContratadas}
-                    onChange={(e) => setLicenciasContratadas(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              {/* Exact Card matching Page 3 Screenshot */}
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                  <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                  <span>Características del {selectedPlan.nombre}</span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Límite Usuarios</span>
-                    <span className="font-extrabold text-slate-800 text-sm">{selectedPlan.limiteUsuarios}</span>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Gestión Empresas</span>
-                    <span className="font-extrabold text-slate-800 text-sm">{selectedPlan.limiteEmpresasContables} contables</span>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Módulos Incluidos</span>
-                    <span className="font-medium text-slate-700 text-xs truncate block">{selectedPlan.modulosIncluidos.join(', ')}</span>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Referencia Mensual</span>
-                    <span className="font-extrabold text-blue-700 text-sm">{selectedPlan.referenciaTexto}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Nº Contrato
-                  </label>
-                  <input
-                    type="text"
-                    value={numeroContrato}
-                    onChange={(e) => setNumeroContrato(e.target.value)}
-                    placeholder="CTR-2026-0042"
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Tipo Contrato (Ciclo)
-                  </label>
-                  <select
-                    value={tipoContrato}
-                    onChange={(e) => setTipoContrato(e.target.value as any)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="Mensual">Mensual</option>
-                    <option value="Trimestral">Trimestral</option>
-                    <option value="Semestral">Semestral</option>
-                    <option value="Anual">Anual</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Fecha Contrato
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaContrato}
-                    onChange={(e) => setFechaContrato(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Duración (Días)
-                  </label>
-                  <input
-                    type="number"
-                    value={duracionDias}
-                    onChange={(e) => setDuracionDias(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Días Tolerancia
-                  </label>
-                  <input
-                    type="number"
-                    value={diasTolerancia}
-                    onChange={(e) => setDiasTolerancia(Number(e.target.value))}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Fecha Expiración
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaExpiracion}
-                    onChange={(e) => setFechaExpiracion(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Ejecutivo Asignado <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={ejecutivoAsignado}
-                    onChange={(e) => setEjecutivoAsignado(e.target.value)}
-                    placeholder="Soporte Directo"
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Nivel de Soporte <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={nivelSoporte}
-                    onChange={(e) => setNivelSoporte(e.target.value as any)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="Básico">Básico (Email 24h)</option>
-                    <option value="Avanzado">Avanzado (Chat & Teléfono prioritario)</option>
-                    <option value="Dedicado 24/7">Dedicado 24/7 (SLA Crítico)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                  Notas Internas
-                </label>
-                <textarea
-                  rows={2}
-                  value={notasInternas}
-                  onChange={(e) => setNotasInternas(e.target.value)}
-                  placeholder="Comentarios sobre el cliente o el proceso de venta..."
-                  className="w-full bg-white border border-slate-300 rounded-md p-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="chk-cliente-inactivo-5"
-                  checked={clienteInactivo}
-                  onChange={(e) => setClienteInactivo(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <label htmlFor="chk-cliente-inactivo-5" className="text-xs font-medium text-slate-700 cursor-pointer">
-                  Cliente Inactivo
-                </label>
-              </div>
+                  <p className="text-slate-500">
+                    El plan, el contrato, los límites y la cobranza se administran en <strong>Clientes ERP y cobranza</strong>. Si el cliente
+                    alcanzó su límite de empresas, el servidor rechaza el alta.
+                  </p>
+                </>
+              ) : (
+                <p className="bg-blue-50 border border-blue-200 rounded-md p-3 text-blue-900">
+                  La empresa se registra en su cliente ERP y cuenta para el límite de empresas de su plan.
+                </p>
+              )}
             </div>
           )}
 

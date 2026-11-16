@@ -4,6 +4,7 @@ import { whatsappBridgeService } from '../services/whatsappBridgeService';
 import { resolveAllowedCompanyIdsForUser, ALL_ERP_MODULE_IDS } from '../services/securityRbacService';
 import type { ModuleAgentApprovalRequest } from '../types';
 import { companyKeys } from '../services/companyRegistryService';
+import { accountOfCompany, companiesOfAccount } from '../services/saasAccountService';
 
 /**
  * Rutas públicas exentas de autenticación Bearer
@@ -210,7 +211,7 @@ export function authenticateApiToken(req: Request, res: Response, next: NextFunc
   const isSuperAdmin = roleTipo === 'SUPERADMIN' || matchedUser.rolId === 'role-superadmin';
   const isAdmin = isSuperAdmin || roleTipo === 'ADMIN' || matchedUser.rolId === 'role-admin';
 
-  const empresasPermitidas = resolveAllowedCompanyIdsForUser(
+  const empresasBase = resolveAllowedCompanyIdsForUser(
     matchedUser,
     matchedRole || {
       id: matchedUser.rolId,
@@ -228,6 +229,12 @@ export function authenticateApiToken(req: Request, res: Response, next: NextFunc
     state.companiesConfig,
     session.empresaId
   );
+  // K3: el administrador de un cliente ERP accede a todas las empresas de su cliente (de a una por vez:
+  // trabaja en la empresa que selecciona; no hay consolidación todavía).
+  const cuentaAdmin = isAdmin && !isSuperAdmin ? accountOfCompany(matchedUser.empresaPrincipalId) : null;
+  const empresasPermitidas = cuentaAdmin
+    ? [...new Set([...empresasBase, ...companiesOfAccount(cuentaAdmin.id).map((c: any) => c.id)])]
+    : empresasBase;
 
   const modulosPermitidos = isSuperAdmin || isAdmin
     ? [...ALL_ERP_MODULE_IDS]

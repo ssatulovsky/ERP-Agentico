@@ -8,6 +8,8 @@ import {
   SystemGeneralParameters,
 } from '../types';
 
+// K3: `modulos` son los módulos canónicos que el control de acceso habilita para cada plan.
+// Revisar con la política comercial; los precios y límites son los que ya tenía el sistema.
 export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
   {
     id: 'PLAN_STARTER',
@@ -16,6 +18,7 @@ export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
     limiteUsuarios: 2,
     limiteEmpresasContables: 3,
     modulosIncluidos: ['Contabilidad IFRS', 'DTE 33/34/61'],
+    modulos: ['CONTABILIDAD', 'TRIBUTARIO_SII', 'CONCILIACION'],
     referenciaTexto: '$25.000 + IVA / mes',
     nivelSoporteDefecto: 'Básico',
     destacado: false,
@@ -27,6 +30,7 @@ export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
     limiteUsuarios: 5,
     limiteEmpresasContables: 10,
     modulosIncluidos: ['Contabilidad', 'DTE', 'RRHH Básico', 'Inventario'],
+    modulos: ['CONTABILIDAD', 'TRIBUTARIO_SII', 'CONCILIACION', 'RRHH', 'INVENTARIO', 'TESORERIA', 'RENDICIONES'],
     referenciaTexto: '$45.000 + IVA / mes',
     nivelSoporteDefecto: 'Avanzado',
     destacado: true,
@@ -38,6 +42,7 @@ export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
     limiteUsuarios: 15,
     limiteEmpresasContables: 30,
     modulosIncluidos: ['Contabilidad IFRS', 'DTE 33/34/61', 'RRHH Avanzado DT', 'Inventario WMS', 'Activo Fijo NIC 16', 'Costeo Producción NIC 2'],
+    modulos: ['CONTABILIDAD', 'TRIBUTARIO_SII', 'CONCILIACION', 'RRHH', 'INVENTARIO', 'TESORERIA', 'RENDICIONES', 'ACTIVO_FIJO', 'COSTOS_PRODUCCION', 'FLUJO_CAJA', 'COMERCIAL_COMPRAS'],
     referenciaTexto: '$95.000 + IVA / mes',
     nivelSoporteDefecto: 'Dedicado 24/7',
     destacado: false,
@@ -49,6 +54,7 @@ export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
     limiteUsuarios: 50,
     limiteEmpresasContables: 100,
     modulosIncluidos: ['Full Suite ERP', 'Auditor Fiscal IA', 'APIs Bancarias Abiertas', 'Previred Integrado', 'Multisucursal'],
+    modulos: ['CONTABILIDAD', 'TRIBUTARIO_SII', 'CONCILIACION', 'RRHH', 'INVENTARIO', 'TESORERIA', 'RENDICIONES', 'ACTIVO_FIJO', 'COSTOS_PRODUCCION', 'FLUJO_CAJA', 'COMERCIAL_COMPRAS'],
     referenciaTexto: '$165.000 + IVA / mes',
     nivelSoporteDefecto: 'Dedicado 24/7',
     destacado: false,

@@ -1,3 +1,4 @@
+import { applyCommercialStatus, companyAccessDecision } from '../services/saasAccountService';
 import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import {
@@ -147,7 +148,9 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    const state = whatsappBridgeService.getRbacState();
+    // K3: el estado comercial lo decide el servidor (cliente ERP), no el estado guardado por el navegador.
+    const rawState = whatsappBridgeService.getRbacState();
+    const state = { ...rawState, companiesConfig: applyCommercialStatus(rawState.companiesConfig || []) };
     const result: LoginValidationResult = empresaId
       ? authenticateErpLogin({
           usernameInput: String(username),
@@ -198,6 +201,23 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     // Login exitoso: Limpiar intentos fallidos
     failedUserAttempts.delete(normUsername);
     failedIpAttempts.delete(clientIp);
+
+    // K3: bloqueo total de clientes suspendidos o dados de baja y de empresas inactivas.
+    const esSuperAdmin = result.role.tipoSistema === 'SUPERADMIN' || result.user.rolId === 'role-superadmin';
+    if (!esSuperAdmin) {
+      for (const id of new Set([String(empresaId), result.user.empresaPrincipalId].filter(Boolean))) {
+        const decision = companyAccessDecision(id);
+        if (!decision.allowed) {
+          return res.status(403).json({
+            success: false,
+            ok: false,
+            errorCode: decision.code,
+            errorTitle: 'Acceso bloqueado',
+            errorMessage: decision.message,
+          });
+        }
+      }
+    }
 
     // Auto-migración a scrypt si el hash almacenado aún es s256 o antiguo
     if (result.user.password && !result.user.password.startsWith('scrypt:')) {

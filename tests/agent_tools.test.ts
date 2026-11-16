@@ -403,6 +403,11 @@ async function runAutomatedAgentSuite() {
   // 10. GOBERNANZA: Cierre Exitoso Propuesta -> Aprobación -> Asiento en Mayor
   // ==========================================================================
   await test('Gobernanza Human-in-the-Loop: Aprobación exitosa impacta efectivamente en Libro Mayor', async () => {
+    // K2.7: los asientos se validan contra el plan de la empresa; la empresa de prueba usa la plantilla estándar.
+    const chartSvc = await import('../src/services/chartOfAccountsServerService');
+    if (chartSvc.getCompanyChartState('761045509').estado === 'SIN_PLAN') {
+      chartSvc.initializeCompanyChart('761045509', { origen: 'PLANTILLA_ESTANDAR' }, { canAccessCompany: () => true });
+    }
     const entriesBefore = diskPersistence.getJournalEntries('761045509').length;
 
     // El agente puede enviar el asiento directamente en datosOperacion (sin subclave)
