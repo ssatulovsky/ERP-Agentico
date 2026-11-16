@@ -43,7 +43,6 @@ import {
   CompanyProfile, 
   DteDocument,
   SystemGeneralParameters,
-  AccountCreationDefinition,
   ClientAuxiliaryMasterRecord
 } from '../types';
 import { 
@@ -57,7 +56,6 @@ import { DEFAULT_SYSTEM_GENERAL_PARAMETERS } from '../config/erpMasterConfig';
 import { NewErpClientOnboardingModal } from './tenancy/NewErpClientOnboardingModal';
 import { AnchorClientMasterModal } from './tenancy/AnchorClientMasterModal';
 import { SystemGeneralConfigModal } from './tenancy/SystemGeneralConfigModal';
-import { IfrsChartOfAccountsModal } from './tenancy/IfrsChartOfAccountsModal';
 import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterModal';
 import { AgentPersonasConfigSection } from './voice/AgentPersonasConfigSection';
 import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePanel';
@@ -71,7 +69,7 @@ interface AgentClientConfigProps {
   onSelectActiveClient: (clientId: string) => void;
   onAddClient: (client: ClientCompany) => void;
   onUpdateClient: (client: ClientCompany) => void;
-  onDeleteClient: (clientId: string) => void;
+  onDeleteClient: (clientId: string, motivo: string) => void;
   onDownloadClientDtes: (
     client: ClientCompany,
     periodo: string
@@ -79,6 +77,8 @@ interface AgentClientConfigProps {
   systemParams?: SystemGeneralParameters;
   onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
   onOpenVoiceDialogue?: (personaId?: string) => void;
+  /** K1.2: abre el plan de cuentas de la empresa en el Agente Contable (no hay un segundo editor). */
+  onOpenChartOfAccounts?: (clientId: string) => void;
 }
 
 export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
@@ -94,6 +94,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   systemParams = DEFAULT_SYSTEM_GENERAL_PARAMETERS,
   onUpdateSystemParams,
   onOpenVoiceDialogue,
+  onOpenChartOfAccounts,
 }) => {
   const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE' | 'WHATSAPP_BRIDGE'>('WHATSAPP_BRIDGE');
   
@@ -102,13 +103,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [isAnchorModalOpen, setIsAnchorModalOpen] = useState(false);
   const [anchorModalClient, setAnchorModalClient] = useState<ClientCompany | null>(null);
   const [isSystemConfigOpen, setIsSystemConfigOpen] = useState(false);
-  const [isIfrsChartOpen, setIsIfrsChartOpen] = useState(false);
   const [isAuxiliariesModalOpen, setIsAuxiliariesModalOpen] = useState(false);
 
   // Modal / Editor State for Clients
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientCompany | null>(null);
-  const [showPassword, setShowPassword] = useState<Record<string, boolean>>({});
   
   // Test connection state
   const [isTestingSii, setIsTestingSii] = useState(false);
@@ -173,20 +172,6 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [modalShowClave, setModalShowClave] = useState(false);
   const [useCustomAuthRut, setUseCustomAuthRut] = useState(false);
 
-  // Open Modal to Add
-  const handleOpenAddModal = () => {
-    setEditingClient(null);
-    setClientForm({
-      ...defaultClientForm,
-      id: `client-${Date.now()}`,
-    });
-    setFormErrors([]);
-    setTestResult(null);
-    setModalShowClave(false);
-    setUseCustomAuthRut(false);
-    setIsClientModalOpen(true);
-  };
-
   // Open Modal to Edit
   const handleOpenEditModal = (client: ClientCompany) => {
     setEditingClient(client);
@@ -221,7 +206,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       errors.push(`El RUT ingresado "${clientForm.rut}" no es válido conforme al algoritmo Módulo 11 chileno.`);
     }
 
-    if (!clientForm.claveSii.trim()) {
+    if (!clientForm.claveSii.trim() && !clientForm.hasClaveSii) {
       errors.push('Debe ingresar la Clave del SII para que el agente pueda ingresar y descargar registros.');
     }
 
@@ -237,10 +222,9 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       nombreCorto: clientForm.nombreCorto.trim() || clientForm.razonSocial.split(' ')[0],
     };
 
+    // K1.5: las empresas nuevas se registran solo con el asistente de alta; este formulario edita.
     if (editingClient) {
       onUpdateClient(cleanedClient);
-    } else {
-      onAddClient(cleanedClient);
     }
 
     setIsClientModalOpen(false);
@@ -260,7 +244,12 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       const res = await fetch('/api/sii/test-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ empresaId: targetClient.id, rut: targetClient.rutAutenticacion || targetClient.rut }),
+        // Si el usuario escribió una clave nueva se prueba esa; si no, el servidor usa la de la bóveda.
+        body: JSON.stringify({
+          empresaId: targetClient.id,
+          rut: targetClient.rutAutenticacion || targetClient.rut,
+          ...(targetClient.claveSii ? { password: targetClient.claveSii } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (Array.isArray(data.logs)) pushLogs(data.logs);
@@ -513,14 +502,6 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                   <span>Alta Cliente ERP (Planes)</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleOpenAddModal}
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Agregar Rápido</span>
-                </button>
               </div>
             </div>
 
@@ -559,15 +540,16 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
 
               <button
                 type="button"
-                onClick={() => setIsIfrsChartOpen(true)}
+                onClick={() => onOpenChartOfAccounts?.(activeClientId)}
+                disabled={!onOpenChartOfAccounts || !activeClientId}
                 className="p-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/50 text-left transition-all cursor-pointer flex items-center gap-2.5"
               >
                 <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center shrink-0">
                   <FolderTree className="w-3.5 h-3.5" />
                 </div>
                 <div>
-                  <span className="block text-xs font-bold text-slate-800">Plan de Cuentas IFRS</span>
-                  <span className="block text-[10px] text-slate-400">Jerarquías y Cuentas Imputables</span>
+                  <span className="block text-xs font-bold text-slate-800">Plan de Cuentas de la Empresa</span>
+                  <span className="block text-[10px] text-slate-400">Se edita en el Agente Contable (único plan)</span>
                 </div>
               </button>
 
@@ -591,7 +573,6 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {clients.map((client) => {
               const isActive = client.id === activeClientId;
-              const isPswVisible = Boolean(showPassword[client.id]);
 
               return (
                 <div
@@ -680,17 +661,9 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                         <div className="flex items-center gap-2">
                           <span className="text-slate-400 text-[11px]">Clave SII:</span>
                           <span className="font-bold text-slate-800 tracking-wider">
-                            {isPswVisible ? client.claveSii : '••••••••••••'}
+                            {client.hasClaveSii ? 'Registrada en la bóveda del servidor' : 'No registrada'}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(prev => ({ ...prev, [client.id]: !prev[client.id] }))}
-                          className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
-                          title={isPswVisible ? 'Ocultar clave' : 'Mostrar clave'}
-                        >
-                          {isPswVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
                       </div>
 
                       <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
@@ -767,15 +740,16 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                         <Edit3 className="w-4 h-4" />
                       </button>
 
-                      {clients.length > 1 && (
+                      {clients.length > 1 && !client.esEmpresaDuenaErp && (
                         <button
                           onClick={() => {
-                            if (confirm(`¿Está seguro de eliminar el cliente ${client.nombreCorto}?`)) {
-                              onDeleteClient(client.id);
+                            const motivo = prompt(`Dar de baja la empresa ${client.nombreCorto}. Indique el motivo:`);
+                            if (motivo && motivo.trim()) {
+                              onDeleteClient(client.id, motivo.trim());
                             }
                           }}
                           className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
-                          title="Eliminar cliente"
+                          title="Dar de baja la empresa"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1312,16 +1286,16 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                   <div>
                     <label className="block font-bold text-slate-800 mb-1 flex items-center justify-between">
                       <span>Clave Tributaria del SII:</span>
-                      <span className="text-[10px] text-blue-700 font-semibold">Obligatorio</span>
+                      <span className="text-[10px] text-blue-700 font-semibold">{clientForm.hasClaveSii ? 'Registrada (vacío = conservar)' : 'Obligatorio'}</span>
                     </label>
                     <div className="relative">
                       <input
                         type={modalShowClave ? 'text' : 'password'}
                         value={clientForm.claveSii}
                         onChange={(e) => setClientForm({ ...clientForm, claveSii: e.target.value })}
-                        placeholder="Ingrese la clave secreta del SII..."
+                        placeholder={clientForm.hasClaveSii ? 'Escriba solo si desea reemplazarla' : 'Ingrese la clave secreta del SII...'}
                         className="w-full bg-white border-2 border-blue-300 rounded-lg p-2.5 font-mono text-slate-900 font-bold focus:outline-none focus:border-blue-600 pr-10"
-                        required
+                        required={!clientForm.hasClaveSii}
                       />
                       <button
                         type="button"
@@ -1424,7 +1398,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                 <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-blue-200">
                   <button
                     type="button"
-                    disabled={isTestingSii || !clientForm.claveSii}
+                    disabled={isTestingSii || !(clientForm.claveSii || clientForm.hasClaveSii)}
                     onClick={() => handleTestSiiConnection(clientForm)}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-2 cursor-pointer shadow-xs transition-all"
                   >
@@ -1666,7 +1640,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           onAddClient(newClient);
           onSelectActiveClient(newClient.id);
         }}
-        firmName={firm.nombreFantasia}
+        existingClientsCount={clients.length}
       />
 
       {/* 2. Modal Ficha Cliente Ancla (Parámetros Contables y Comerciales) */}
@@ -1677,7 +1651,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           setAnchorModalClient(null);
         }}
         client={anchorModalClient || clients.find(c => c.id === activeClientId) || clients[0]}
-        onSaveClient={(updated) => {
+        onSaveMasterClient={(updated) => {
           onUpdateClient(updated);
         }}
       />
@@ -1686,20 +1660,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
       <SystemGeneralConfigModal
         isOpen={isSystemConfigOpen}
         onClose={() => setIsSystemConfigOpen(false)}
-        initialParameters={systemParams}
+        parameters={systemParams}
         onSaveParameters={(updatedParams) => {
           if (onUpdateSystemParams) {
             onUpdateSystemParams(updatedParams);
           }
-        }}
-      />
-
-      {/* 4. Modal Plan de Cuentas IFRS (Jerarquía y Cuentas Imputables) */}
-      <IfrsChartOfAccountsModal
-        isOpen={isIfrsChartOpen}
-        onClose={() => setIsIfrsChartOpen(false)}
-        onAddAccount={(newAccount) => {
-          console.log('Nueva cuenta IFRS registrada:', newAccount);
         }}
       />
 

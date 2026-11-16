@@ -211,6 +211,9 @@ interface SeniorAccountingOrchestratorProps {
   absenteeismList?: AbsenteeismRecord[];
   benefits?: HrBenefit[];
   systemParams?: SystemGeneralParameters;
+  /** K1.2: pestaña a abrir al entrar (por ejemplo, desde Configuración → Plan de cuentas). */
+  initialTab?: 'PLAN_CUENTAS';
+  onInitialTabConsumed?: () => void;
   onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
   expenseReports?: ExpenseReport[];
 }
@@ -245,6 +248,8 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   systemParams,
   onUpdateSystemParams,
   expenseReports = [],
+  initialTab,
+  onInitialTabConsumed,
 }) => {
   const safeEntries = Array.isArray(entries) ? entries : [];
   const safeDtes = Array.isArray(dtes) ? dtes : [];
@@ -277,6 +282,12 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
 
   // Navigation tabs of the orchestrator
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'DIARIO' | 'MAYOR' | 'AUXILIARES' | 'PLAN_CUENTAS' | 'BALANCE_8COL' | 'FLUJO_EFECTIVO' | 'IFRS' | 'NOTAS_EEFF' | 'AI_ROUTING' | 'EJERCICIO_CIERRE'>('AUDIT');
+  React.useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+      onInitialTabConsumed?.();
+    }
+  }, [initialTab]);
   const [aiRoutingSubTab, setAiRoutingSubTab] = useState<'CONVERSACIONAL' | 'GLOSA_DIRECTA'>('CONVERSACIONAL');
 
   // Multi-currency display mode (CLP, UF, USD)
@@ -1513,7 +1524,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const handleResetChartToDefault = () => {
     if (confirm(`¿Desea restaurar el plan de cuentas de "${company.razonSocial}" al catálogo base oficial chileno (CMF / SII)? Esta acción sobreescribirá personalizaciones.`)) {
       const def = resetCompanyChartToDefault(company.rut);
-      setChartOfAccounts(def);
+      setChartOfAccounts(def.chart);
       const defGroups = loadCompanyGroups(company.rut);
       setChartGroups(defGroups);
       showToast('Plan de cuentas restaurado al catálogo estándar chileno.', 'success');

@@ -57,42 +57,45 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
 
   // Tab 1: GENERAL
   const [codigoAuxiliar, setCodigoAuxiliar] = useState<string>(`CLI-${String(existingClientsCount + 1).padStart(3, '0')}`);
-  const [rutEmpresa, setRutEmpresa] = useState<string>('77.543.890-2');
-  const [razonSocial, setRazonSocial] = useState<string>('SERVICIOS INDUSTRIALES DEL PACÍFICO SPA');
-  const [nombreFantasia, setNombreFantasia] = useState<string>('Pacífico Industrial');
-  const [giroComercial, setGiroComercial] = useState<string>('SERVICIOS DE MANTENIMIENTO INDUSTRIAL Y ASESORÍAS TÉCNICAS');
-  const [telefono, setTelefono] = useState<string>('+56 9 7845 2200');
-  const [emailContacto, setEmailContacto] = useState<string>('contacto@pacificoind.cl');
-  const [nombreContacto, setNombreContacto] = useState<string>('Carlos Medina Gómez');
-  const [emailDte, setEmailDte] = useState<string>('facturacion@pacificoind.cl');
-  const [notasInternas, setNotasInternas] = useState<string>('Cliente transferido para gestión contable tributaria mensual con soporte de facturación electrónica y nómina.');
+  const [rutEmpresa, setRutEmpresa] = useState<string>('');
+  const [razonSocial, setRazonSocial] = useState<string>('');
+  const [nombreFantasia, setNombreFantasia] = useState<string>('');
+  const [giroComercial, setGiroComercial] = useState<string>('');
+  const [telefono, setTelefono] = useState<string>('');
+  const [emailContacto, setEmailContacto] = useState<string>('');
+  const [nombreContacto, setNombreContacto] = useState<string>('');
+  const [emailDte, setEmailDte] = useState<string>('');
+  const [notasInternas, setNotasInternas] = useState<string>('');
   const [clienteInactivo, setClienteInactivo] = useState<boolean>(false);
+  // K1.4: régimen y tasa PPM los informa el usuario (antes: 14 D3 y 1 % fijos)
+  const [regimenTributario, setRegimenTributario] = useState<'' | ClientCompany['regimenTributario']>('');
+  const [tasaPpmPorc, setTasaPpmPorc] = useState<string>('');
 
   // Tab 2: UBICACIÓN
-  const [direccionComercial, setDireccionComercial] = useState<string>('Av. Vitacura 2909, Of. 602');
+  const [direccionComercial, setDireccionComercial] = useState<string>('');
   const [pais, setPais] = useState<string>('Chile');
-  const [region, setRegion] = useState<string>('Región Metropolitana de Santiago');
-  const [ciudad, setCiudad] = useState<string>('Santiago');
-  const [comuna, setComuna] = useState<string>('Las Condes');
+  const [region, setRegion] = useState<string>('');
+  const [ciudad, setCiudad] = useState<string>('');
+  const [comuna, setComuna] = useState<string>('');
 
   // Tab 3: CONTABILIDAD
-  const [grupoImpuesto, setGrupoImpuesto] = useState<string>('IVA General 19% (Afecto)');
-  const [cuentaCliente, setCuentaCliente] = useState<string>('1.1.03'); // Clientes Nacionales
-  const [cuentaVentas, setCuentaVentas] = useState<string>('4.1.01'); // Ingresos por Ventas
-  const [cuentaDescVentas, setCuentaDescVentas] = useState<string>('4.1.02'); // Descuentos en Ventas
-  const [cuentaRecepcionMercaderias, setCuentaRecepcionMercaderias] = useState<string>('2.1.04'); // Facturas por recibir
-  const [cuentaDescPagos, setCuentaDescPagos] = useState<string>('5.2.01'); // Descuentos por pronto pago
+  const [grupoImpuesto, setGrupoImpuesto] = useState<string>('');
+  const [cuentaCliente, setCuentaCliente] = useState<string>('')
+  const [cuentaVentas, setCuentaVentas] = useState<string>('')
+  const [cuentaDescVentas, setCuentaDescVentas] = useState<string>('')
+  const [cuentaRecepcionMercaderias, setCuentaRecepcionMercaderias] = useState<string>('')
+  const [cuentaDescPagos, setCuentaDescPagos] = useState<string>('')
 
   // Tab 4: COMERCIAL
-  const [tipoVenta, setTipoVenta] = useState<'Contado' | 'Crédito'>('Crédito');
-  const [estadoCredito, setEstadoCredito] = useState<'Sin Crédito' | 'Con Crédito' | 'Bloqueado'>('Con Crédito');
-  const [montoCredito, setMontoCredito] = useState<number>(5000000);
-  const [terminosPago, setTerminosPago] = useState<string>('30 Días Fecha Factura');
-  const [areaVentas, setAreaVentas] = useState<string>('Zona Central');
-  const [vendedor, setVendedor] = useState<string>('Andrea Morales (Ejecutiva Senior)');
-  const [centroCosto, setCentroCosto] = useState<string>('Operaciones y Mantenimiento');
+  const [tipoVenta, setTipoVenta] = useState<'Contado' | 'Crédito'>('Contado');
+  const [estadoCredito, setEstadoCredito] = useState<'Sin Crédito' | 'Con Crédito' | 'Bloqueado'>('Sin Crédito');
+  const [montoCredito, setMontoCredito] = useState<number>(0);
+  const [terminosPago, setTerminosPago] = useState<string>('');
+  const [areaVentas, setAreaVentas] = useState<string>('');
+  const [vendedor, setVendedor] = useState<string>('');
+  const [centroCosto, setCentroCosto] = useState<string>('');
   const [descuentoPorc, setDescuentoPorc] = useState<number>(0);
-  const [descProntoPagoPorc, setDescProntoPagoPorc] = useState<number>(2.5);
+  const [descProntoPagoPorc, setDescProntoPagoPorc] = useState<number>(0);
 
   // Tab 5: CONTRATO
   const [licenciasContratadas, setLicenciasContratadas] = useState<number>(1);
@@ -150,6 +153,12 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
     setNombreContacto('');
     setEmailDte('');
     setNotasInternas('');
+    setDireccionComercial('');
+    setRegion('');
+    setCiudad('');
+    setComuna('');
+    setRegimenTributario('');
+    setTasaPpmPorc('');
     setErrors([]);
   };
 
@@ -166,6 +175,14 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
       newErrors.push(`El RUT "${rutEmpresa}" no es válido conforme al Módulo 11 chileno.`);
     }
 
+    if (!giroComercial.trim()) newErrors.push('El giro comercial es obligatorio (se usa en la emisión de DTE).');
+    if (!direccionComercial.trim() || !comuna.trim()) newErrors.push('La dirección y la comuna son obligatorias (se usan en la emisión de DTE).');
+    if (!regimenTributario) newErrors.push('Debe indicar el régimen tributario de la empresa.');
+    const ppm = Number(String(tasaPpmPorc).replace(',', '.'));
+    if (tasaPpmPorc.trim() === '' || !Number.isFinite(ppm) || ppm < 0 || ppm > 100) {
+      newErrors.push('Debe indicar la tasa de PPM en porcentaje (puede ser 0).');
+    }
+
     if (newErrors.length > 0) {
       setErrors(newErrors);
       return;
@@ -174,7 +191,8 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
     const formattedRut = formatRutChileno(rutEmpresa);
 
     const newClient: ClientCompany = {
-      id: `client-${Date.now()}`,
+      // El id de la empresa es su RUT sin puntos (igual que el instalador): así id y RUT coinciden en el servidor.
+      id: formattedRut.replace(/\./g, '').toUpperCase(),
       rut: formattedRut,
       razonSocial: razonSocial.trim(),
       nombreCorto: nombreFantasia.trim() || razonSocial.split(' ')[0],
@@ -184,11 +202,8 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
       direccion: direccionComercial.trim(),
       comuna: comuna.trim(),
       ciudad: ciudad.trim(),
-      regimenTributario: '14D3_PROPYME_GENERAL',
-      tasaPpm: 0.01,
-      afpMutualTasa: 0.0093,
-      bancoPrincipal: 'Banco de Chile',
-      numeroCuenta: '00-129481-0',
+      regimenTributario: regimenTributario as ClientCompany['regimenTributario'],
+      tasaPpm: ppm / 100,
       contactoNombre: nombreContacto.trim(),
       contactoEmail: emailContacto.trim(),
       contactoTelefono: telefono.trim(),
@@ -483,6 +498,37 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                    Régimen Tributario <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={regimenTributario}
+                    onChange={(e) => setRegimenTributario(e.target.value as any)}
+                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">Seleccione…</option>
+                    <option value="14D3_PROPYME_GENERAL">Pro Pyme General (14 D N°3)</option>
+                    <option value="14D8_PROPYME_TRANSPARENTE">Pro Pyme Transparente (14 D N°8)</option>
+                    <option value="14A_SEMI_INTEGRADO">Régimen General Semi Integrado (14 A)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                    Tasa PPM (%) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={tasaPpmPorc}
+                    onChange={(e) => setTasaPpmPorc(e.target.value)}
+                    placeholder="Ej: 0,25"
+                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
@@ -603,13 +649,11 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                     value={region}
                     onChange={(e) => {
                       setRegion(e.target.value);
-                      const coms = CHILEAN_REGIONS_WITH_COMMUNES.find(r => r.region === e.target.value)?.comunas;
-                      if (coms && coms.length > 0) {
-                        setComuna(coms[0]);
-                      }
+                      setComuna('');
                     }}
                     className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
+                    <option value="">Seleccione…</option>
                     {CHILEAN_REGIONS_WITH_COMMUNES.map((r) => (
                       <option key={r.region} value={r.region}>
                         {r.region}
@@ -642,6 +686,7 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                     onChange={(e) => setComuna(e.target.value)}
                     className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
+                    <option value="">Seleccione…</option>
                     {comunasDisponibles.map((c) => (
                       <option key={c} value={c}>
                         {c}

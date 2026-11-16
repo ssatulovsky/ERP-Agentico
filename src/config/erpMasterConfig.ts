@@ -5,9 +5,7 @@
  */
 import { 
   ErpSubscriptionPlan, 
-  SystemGeneralParameters, 
-  AccountGroupClassification, 
-  AccountCreationDefinition 
+  SystemGeneralParameters,
 } from '../types';
 
 export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
@@ -173,28 +171,4 @@ export const CHILEAN_REGIONS_WITH_COMMUNES: { region: string; comunas: string[] 
     region: 'Región de Arica y Parinacota',
     comunas: ['Arica', 'Camarones', 'Putre', 'General Lagos']
   }
-];
-
-export const INITIAL_ACCOUNT_GROUPS: AccountGroupClassification[] = [
-  { codigo: '1', codPadre: 'Raíz del Catálogo', tipoCuenta: 'ACTIVO', descripcion: 'ACTIVO' },
-  { codigo: '1.1', codPadre: '1', tipoCuenta: 'ACTIVO', descripcion: 'ACTIVO CIRCULANTE / CORRIENTE' },
-  { codigo: '1.1.01', codPadre: '1.1', tipoCuenta: 'ACTIVO', descripcion: 'Disponibilidades y Efectivo Equivalente' },
-  { codigo: '1.1.03', codPadre: '1.1', tipoCuenta: 'ACTIVO', descripcion: 'Deudores Comerciales y Cuentas por Cobrar' },
-  { codigo: '1.1.05', codPadre: '1.1', tipoCuenta: 'ACTIVO', descripcion: 'Impuestos por Recuperar e IVA Crédito' },
-  { codigo: '1.1.08', codPadre: '1.1', tipoCuenta: 'ACTIVO', descripcion: 'Existencias e Inventarios (NIC 2)' },
-  { codigo: '1.2', codPadre: '1', tipoCuenta: 'ACTIVO', descripcion: 'ACTIVO NO CIRCULANTE' },
-  { codigo: '1.2.01', codPadre: '1.2', tipoCuenta: 'ACTIVO', descripcion: 'Propiedades, Planta y Equipo (NIC 16)' },
-  { codigo: '1.2.06', codPadre: '1.2', tipoCuenta: 'ACTIVO', descripcion: 'Instalaciones Acuícolas y Redes' },
-  { codigo: '2', codPadre: 'Raíz del Catálogo', tipoCuenta: 'PASIVO', descripcion: 'PASIVO' },
-  { codigo: '2.1', codPadre: '2', tipoCuenta: 'PASIVO', descripcion: 'PASIVO CIRCULANTE / CORTO PLAZO' },
-  { codigo: '2.1.01', codPadre: '2.1', tipoCuenta: 'PASIVO', descripcion: 'Cuentas por Pagar Comerciales' },
-  { codigo: '2.1.03', codPadre: '2.1', tipoCuenta: 'PASIVO', descripcion: 'Impuestos por Pagar y F29' },
-  { codigo: '2.1.07', codPadre: '2.1', tipoCuenta: 'PASIVO', descripcion: 'Obligaciones Laborales y Previsionales' },
-  { codigo: '3', codPadre: 'Raíz del Catálogo', tipoCuenta: 'PATRIMONIO', descripcion: 'PATRIMONIO NETO' },
-  { codigo: '3.1', codPadre: '3', tipoCuenta: 'PATRIMONIO', descripcion: 'Capital y Reservas' },
-  { codigo: '4', codPadre: 'Raíz del Catálogo', tipoCuenta: 'RESULTADO', descripcion: 'INGRESOS' },
-  { codigo: '4.1', codPadre: '4', tipoCuenta: 'RESULTADO', descripcion: 'Ingresos de Actividades Ordinarias' },
-  { codigo: '5', codPadre: 'Raíz del Catálogo', tipoCuenta: 'RESULTADO', descripcion: 'COSTOS Y GASTOS' },
-  { codigo: '5.1', codPadre: '5', tipoCuenta: 'RESULTADO', descripcion: 'Costo de Ventas y Fabricación' },
-  { codigo: '5.2', codPadre: '5', tipoCuenta: 'RESULTADO', descripcion: 'Gastos de Administración y Ventas' },
 ];

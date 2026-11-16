@@ -200,13 +200,19 @@ export default function App() {
     loadPersistentState<AccountingFirmProfile>('erp_firm_profile_v1', isDemoModeEnabled() ? seedFirm : EMPTY_FIRM)
   );
   const [clients, setClients] = useState<ClientCompany[]>(() =>
-    loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', isDemoModeEnabled() ? seedClients : [])
+    // K1.6: claves SII guardadas en el navegador por versiones anteriores se descartan al cargar.
+    loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', isDemoModeEnabled() ? seedClients : []).map((c) => ({
+      ...c,
+      hasClaveSii: Boolean(c.hasClaveSii || (c.claveSii && String(c.claveSii).trim())),
+      claveSii: isDemoModeEnabled() ? c.claveSii : '',
+    }))
   );
   const [activeClientId, setActiveClientId] = useState<string>(() => {
     const savedSession = loadActiveAuthSession();
     return savedSession?.empresaId || (isDemoModeEnabled() ? seedClients[0].id : '');
   });
   const [isFirstClientOnboardingOpen, setIsFirstClientOnboardingOpen] = useState(false);
+  const [ledgerInitialTab, setLedgerInitialTab] = useState<'PLAN_CUENTAS' | undefined>(undefined);
 
   // Security & RBAC State (Empresas, Usuarios, Roles y Permisos WhatsApp Vera)
   const [securityState, setSecurityState] = useState<SecurityRbacStoreState>(() => {
@@ -1289,8 +1295,16 @@ export default function App() {
     }
   };
 
-  const handleAddClient = (newClient: ClientCompany) => {
-    void syncClientToServer(newClient);
+  // K1.6: la clave SII escrita se envía una vez al servidor (que la cifra) y nunca se guarda en el navegador.
+  const withoutSecret = (c: ClientCompany): ClientCompany => ({
+    ...c,
+    hasClaveSii: Boolean(c.hasClaveSii || (c.claveSii && c.claveSii.trim())),
+    claveSii: '',
+  });
+
+  const handleAddClient = (typedClient: ClientCompany) => {
+    void syncClientToServer(typedClient);
+    const newClient = withoutSecret(typedClient);
     const nextClients = [newClient, ...clients];
     setClients(nextClients);
     savePersistentState('erp_clients_portfolio_v1', nextClients);
@@ -1299,8 +1313,9 @@ export default function App() {
   };
 
   // Update existing client configuration
-  const handleUpdateClient = (updatedClient: ClientCompany) => {
-    void syncClientToServer(updatedClient);
+  const handleUpdateClient = (typedClient: ClientCompany) => {
+    void syncClientToServer(typedClient);
+    const updatedClient = withoutSecret(typedClient);
     const nextClients = clients.map(c => c.id === updatedClient.id ? updatedClient : c);
     setClients(nextClients);
     savePersistentState('erp_clients_portfolio_v1', nextClients);
@@ -1317,7 +1332,23 @@ export default function App() {
   };
 
   // Delete client
-  const handleDeleteClient = (clientId: string) => {
+  // K1.7: la empresa se da de baja en el servidor (antes solo se quitaba del navegador y reaparecía).
+  const handleDeleteClient = async (clientId: string, motivo: string) => {
+    try {
+      const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/baja`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motivo }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        setServerSyncError(`No se dio de baja la empresa: ${data.errorMessage || `HTTP ${res.status}`}`);
+        return;
+      }
+    } catch (e: any) {
+      setServerSyncError(`No se dio de baja la empresa: sin conexión con el servidor (${e?.message || e}).`);
+      return;
+    }
     const remaining = clients.filter(c => c.id !== clientId);
     setClients(remaining);
     savePersistentState('erp_clients_portfolio_v1', remaining);
@@ -2204,8 +2235,14 @@ export default function App() {
         if (!res.ok || cancelado) return;
         const data = await res.json();
         const delServidor: ClientCompany[] = Array.isArray(data?.clientes) ? data.clientes : [];
-        if (delServidor.length === 0) return;
+        if (delServidor.length === 0 && isDemoModeEnabled()) return;
         setClients((prev) => {
+          // K1.7: fuera de la demostración el servidor manda; una empresa dada de baja o eliminada
+          // desaparece también de los navegadores que la tenían guardada.
+          if (!isDemoModeEnabled()) {
+            savePersistentState('erp_clients_portfolio_v1', delServidor);
+            return delServidor;
+          }
           const porId = new Map(prev.map((c) => [c.id, c] as const));
           for (const c of delServidor) porId.set(c.id, { ...((porId.get(c.id) || {}) as object), ...c } as ClientCompany);
           const next = [...porId.values()];
@@ -2662,6 +2699,11 @@ export default function App() {
                 if (personaId) setVoiceDialoguePersonaId(personaId);
                 setIsVoiceDialogueOpen(true);
               }}
+              onOpenChartOfAccounts={(clientId) => {
+                if (clientId && clientId !== activeClientId) handleSelectActiveClient(clientId);
+                setLedgerInitialTab('PLAN_CUENTAS');
+                setActiveTab('ledger');
+              }}
             />
           )}
 
@@ -2938,6 +2980,8 @@ export default function App() {
 
           {activeTab === 'ledger' && (
             <SeniorAccountingOrchestrator
+              initialTab={ledgerInitialTab}
+              onInitialTabConsumed={() => setLedgerInitialTab(undefined)}
               company={company}
               onUpdateCompany={(updated) => {
                 setCompany(prev => {

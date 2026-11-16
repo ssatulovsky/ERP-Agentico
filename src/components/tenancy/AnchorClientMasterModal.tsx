@@ -40,6 +40,9 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [accessConfigModalOpen, setAccessConfigModalOpen] = useState(false);
   const [tempPassword, setTempPassword] = useState<string>('');
+  const [accessForm, setAccessForm] = useState({ username: '', nombreCompleto: '', email: '' });
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
 
   // Tab 1: DATOS DEL CLIENTE
   const [rutClaveTributaria, setRutClaveTributaria] = useState<string>('');
@@ -154,13 +157,35 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
   const comunasDisponibles = CHILEAN_REGIONS_WITH_COMMUNES.find(r => r.region === region)?.comunas || [];
   const selectedPlan = ERP_SUBSCRIPTION_PLANS.find(p => p.id === planContratadoId) || ERP_SUBSCRIPTION_PLANS[1];
 
+  // K1.3: el acceso inicial crea de verdad el usuario administrador en el servidor (antes solo mostraba
+  // una clave generada en el navegador sin crear ningún usuario).
   const handleGenerateInitialAccess = () => {
-    // Contraseña temporal con aleatoriedad criptográfica (antes: "Daibuda#" + 4 dígitos con Math.random)
-    const bytes = new Uint8Array(12);
-    crypto.getRandomValues(bytes);
-    const pass = `Tmp_${Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 16)}!`;
-    setTempPassword(pass);
+    setTempPassword('');
+    setAccessError(null);
     setAccessConfigModalOpen(true);
+  };
+
+  const handleCreateInitialAdmin = async () => {
+    if (!client) return;
+    setAccessError(null);
+    setAccessBusy(true);
+    try {
+      const res = await fetch(`/api/clients/${encodeURIComponent(client.id)}/initial-admin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(accessForm),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        setAccessError(data.errorMessage || `No se creó el usuario (HTTP ${res.status}).`);
+        return;
+      }
+      setTempPassword(data.claveTemporal);
+    } catch (e: any) {
+      setAccessError(`Sin conexión con el servidor: ${e?.message || e}`);
+    } finally {
+      setAccessBusy(false);
+    }
   };
 
   const handleReset = () => {
@@ -184,30 +209,15 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
       return;
     }
 
+    if (!client) {
+      alert('Seleccione una empresa registrada; las empresas nuevas se crean con el asistente de alta.');
+      return;
+    }
+    // A9: si no cambia el plan se conservan las condiciones negociadas del contrato.
+    const mismoPlan = client.contrato?.planId === selectedPlan.id;
     const updated: ClientCompany = {
-      ...(client || {
-        id: `client-${Date.now()}`,
-        tasaPpm: 0.01,
-        afpMutualTasa: 0.0093,
-        regimenTributario: '14D3_PROPYME_GENERAL',
-        bancoPrincipal: 'Banco Santander Chile',
-        numeroCuenta: '00-000000-0',
-        claveSii: '', // 1.2: sin clave de ejemplo; se registra en la bóveda y se verifica con /api/sii/test-login
-        rutAutenticacion: rutClaveTributaria,
-        tipoAutenticacionSii: 'CLAVE_TRIBUTARIA',
-        estadoConexionSii: 'PENDIENTE_VERIFICACION',
-        automatizacionesAgente: {
-          descargaAutomaticaRcv: true,
-          descargaAutomaticaBhe: true,
-          alertaPlazo8DiasReclamo: true,
-          simulacionF29Automatica: true,
-          frecuenciaDescarga: 'DIARIA',
-        },
-        contextoEspecialAgente: '',
-        activa: true,
-        manejaInventario: false,
-      }),
-      rut: formatRutChileno(rutClaveTributaria || client?.rut || '76.123.456-7'),
+      ...client,
+      rut: client.rut,
       razonSocial: razonSocial.trim(),
       nombreCorto: nombreFantasia.trim() || razonSocial.split(' ')[0],
       nombreFantasia: nombreFantasia.trim(),
@@ -227,9 +237,9 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
         planId: selectedPlan.id,
         nombrePlan: selectedPlan.nombre,
         licenciasContratadas,
-        limiteUsuarios: selectedPlan.limiteUsuarios,
-        limiteEmpresas: selectedPlan.limiteEmpresasContables,
-        precioMensualNeto: selectedPlan.precioMensualClp,
+        limiteUsuarios: mismoPlan ? client.contrato!.limiteUsuarios : selectedPlan.limiteUsuarios,
+        limiteEmpresas: mismoPlan ? client.contrato!.limiteEmpresas : selectedPlan.limiteEmpresasContables,
+        precioMensualNeto: mismoPlan ? client.contrato!.precioMensualNeto : selectedPlan.precioMensualClp,
         modulosIncluidos: selectedPlan.modulosIncluidos,
         numeroContrato,
         tipoContrato,
@@ -315,22 +325,32 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
 
         {/* Modal Access Dialog if triggered */}
         {accessConfigModalOpen && (
-          <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-2.5 flex items-center justify-between text-xs text-emerald-900 animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                Acceso inicial habilitado para <strong>{rutClaveTributaria || 'RUT Cliente'}</strong>. Clave provisoria:{' '}
-                <code className="bg-white px-2 py-0.5 rounded font-mono font-bold text-slate-800 border border-emerald-300">
-                  {tempPassword}
-                </code>
-              </span>
-            </div>
-            <button
-              onClick={() => setAccessConfigModalOpen(false)}
-              className="text-emerald-700 hover:text-emerald-900 font-bold text-[11px] uppercase cursor-pointer"
-            >
-              Cerrar
-            </button>
+          <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-3 text-xs space-y-2">
+            {tempPassword ? (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-emerald-900">
+                  Usuario <strong>{accessForm.username}</strong> creado. Clave temporal (se muestra una sola vez; deberá cambiarla al ingresar):{' '}
+                  <code className="bg-white border border-emerald-300 px-1.5 py-0.5 rounded font-mono">{tempPassword}</code>
+                </span>
+                <button type="button" onClick={() => setAccessConfigModalOpen(false)} className="px-2 py-1 bg-emerald-600 text-white rounded cursor-pointer">
+                  Cerrar
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-end gap-2">
+                <span className="w-full font-bold text-emerald-900">Crear el usuario administrador de {client?.razonSocial || 'la empresa'}</span>
+                <input className="border border-emerald-300 rounded px-2 py-1" placeholder="Usuario" value={accessForm.username} onChange={(e) => setAccessForm({ ...accessForm, username: e.target.value })} />
+                <input className="border border-emerald-300 rounded px-2 py-1" placeholder="Nombre completo" value={accessForm.nombreCompleto} onChange={(e) => setAccessForm({ ...accessForm, nombreCompleto: e.target.value })} />
+                <input className="border border-emerald-300 rounded px-2 py-1" placeholder="Correo" type="email" value={accessForm.email} onChange={(e) => setAccessForm({ ...accessForm, email: e.target.value })} />
+                <button type="button" disabled={accessBusy} onClick={handleCreateInitialAdmin} className="px-2.5 py-1 bg-emerald-600 disabled:opacity-50 text-white rounded font-semibold cursor-pointer">
+                  {accessBusy ? 'Creando…' : 'Crear usuario'}
+                </button>
+                <button type="button" onClick={() => setAccessConfigModalOpen(false)} className="px-2 py-1 text-emerald-800 cursor-pointer">
+                  Cancelar
+                </button>
+                {accessError && <span className="w-full text-rose-700 font-semibold">{accessError}</span>}
+              </div>
+            )}
           </div>
         )}
 
@@ -415,7 +435,8 @@ export const AnchorClientMasterModal: React.FC<AnchorClientMasterModalProps> = (
                   <input
                     type="text"
                     value={rutClaveTributaria}
-                    onChange={(e) => setRutClaveTributaria(e.target.value)}
+                    readOnly
+                    title="El RUT de una empresa registrada no se puede cambiar"
                     placeholder="Ej: 76.123.456-7"
                     className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     required

@@ -36,6 +36,7 @@ import { checkMySqlConnection, ensureMysqlSchemaInitialized, isRealMysqlConnecte
 import { diskPersistence } from "./src/services/diskPersistenceService";
 import { getDemoClients } from "./src/data/seedData";
 import { assertDteSimulationPolicy } from "./src/config/dteSimulationPolicy";
+import { assertVaultSecretPolicy } from "./src/utils/vaultCrypto";
 import { resolveClaveSii, isMaskedSecret } from "./src/services/siiCredentialResolver";
 import { DEFAULT_INDICATORS } from "./src/utils/chileanAccounting";
 import {
@@ -2411,6 +2412,8 @@ app.post("/api/persistence/sync-all", async (_req, res) => {
 async function startServer() {
   // 1.4: Con NODE_ENV=production (o DTE_AMBIENTE=2) y ALLOW_OFFLINE_DTE_SIMULATION=true el servidor no arranca.
   assertDteSimulationPolicy();
+  // K1.6: sin clave maestra propia la bóveda no protege las claves SII ni los certificados.
+  assertVaultSecretPolicy();
   // Verificación de conectividad con MySQL 8.0 y auto-inicialización de tablas DDL
   checkMySqlConnection()
     .then(async (isConnected) => {

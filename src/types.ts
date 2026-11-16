@@ -168,6 +168,14 @@ export interface ClientCompany extends CompanyProfile {
   };
   // Capa de Seguridad & Estado Comercial de la Empresa en el ERP
   estadoCuentaEmpresa?: 'ACTIVA' | 'SUSPENDIDA_PAGO' | 'BAJA';
+  /** K1.6: el servidor nunca devuelve la clave SII; solo informa si hay una registrada en la bóveda. */
+  hasClaveSii?: boolean;
+  /** K1.7: estado propio de la empresa. BAJA = dada de baja (no aparece en la cartera). */
+  estadoEmpresa?: 'ACTIVA' | 'INACTIVA' | 'BAJA';
+  fechaBaja?: string;
+  motivoBaja?: string;
+  /** K3: cliente ERP (suscriptor) al que pertenece la empresa. */
+  clienteErpId?: string;
   empresasAnclasIds?: string[]; // Empresas vinculadas / grupo empresarial administradas por el mismo Admin
   esEmpresaDuenaErp?: boolean; // Si es la empresa propietaria del ERP (SuperAdmin)
 }
@@ -3015,53 +3023,6 @@ export interface SystemGeneralParameters {
   cuentaCostosEnsambleArticulosDefecto: string;
   // Fabricación por Defecto
   ordenTrabajoRequeridaDespuesDias: number;
-}
-
-// ==========================================
-// PLAN DE CUENTAS IFRS JERÁRQUICO (Pages 8-9)
-// ==========================================
-
-export interface AccountGroupClassification {
-  codigo: string;
-  codPadre: string;
-  tipoCuenta: 'ACTIVO' | 'PASIVO' | 'PATRIMONIO' | 'RESULTADO';
-  descripcion: string;
-}
-
-export interface AccountCreationDefinition {
-  codigo: string;
-  nombre: string;
-  clasificacion: 'ACTIVO' | 'PASIVO' | 'PATRIMONIO' | 'RESULTADO';
-  agrupacion: string;
-  codigoE?: string;
-  codigoS?: string;
-  codigoFlujoEfectivo?: string;
-  notas?: string;
-  // 11 toggles de atributos y controles de imputación
-  atributos?: {
-    activo: boolean;
-    auxiliar: boolean;
-    multimoneda: boolean;
-    moneda: string;
-    docRef: boolean;
-    conciliacion: boolean;
-    ifrs: boolean;
-    centroCosto: boolean;
-    dimension2: boolean;
-    detHabita: boolean;
-    proyecto: boolean;
-  };
-  activo?: boolean;
-  auxiliar?: boolean;
-  multimoneda?: boolean;
-  moneda?: string;
-  docRef?: boolean;
-  conciliacion?: boolean;
-  ifrs?: boolean;
-  centroCosto?: boolean;
-  dimension2?: boolean;
-  detHabita?: boolean;
-  proyecto?: boolean;
 }
 
 // ==========================================

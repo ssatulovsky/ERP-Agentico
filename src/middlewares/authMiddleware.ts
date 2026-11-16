@@ -3,6 +3,7 @@ import { getSessionByToken } from '../controllers/authController';
 import { whatsappBridgeService } from '../services/whatsappBridgeService';
 import { resolveAllowedCompanyIdsForUser, ALL_ERP_MODULE_IDS } from '../services/securityRbacService';
 import type { ModuleAgentApprovalRequest } from '../types';
+import { companyKeys } from '../services/companyRegistryService';
 
 /**
  * Rutas públicas exentas de autenticación Bearer
@@ -72,9 +73,10 @@ export function requireCompanyAccess(req: Request, targetEmpresaId?: string): { 
   }
 
   // 3. Verificar membresía en la lista de empresas permitidas (principal + anclas)
-  const normTarget = normalizeCompanyKey(targetEmpresaId);
-  const hasAccess = user.empresasPermitidas.some(
-    (emp) => normalizeCompanyKey(emp) === normTarget
+  // La empresa puede venir por id o por RUT: se comparan todas las formas registradas de ambas.
+  const targetKeys = new Set(companyKeys(targetEmpresaId));
+  const hasAccess = user.empresasPermitidas.some((emp) =>
+    companyKeys(emp).some((k) => targetKeys.has(k))
   );
 
   if (!hasAccess) {
