@@ -29,6 +29,14 @@ export function savePersistentState<T>(key: string, data: T): void {
 type StorageSyncErrorHandler = (error: Error, context: { empresaId: string; key: string }) => void;
 let globalSyncErrorHandler: StorageSyncErrorHandler | null = null;
 
+function hasServerSession(): boolean {
+  try {
+    return Boolean(window.localStorage.getItem('erp_auth_token') || window.localStorage.getItem('erpremia_auth_token'));
+  } catch {
+    return false;
+  }
+}
+
 export function setStorageSyncErrorHandler(handler: StorageSyncErrorHandler | null): void {
   globalSyncErrorHandler = handler;
 }
@@ -46,13 +54,16 @@ export function saveClientState<T>(clientId: string, entityKey: string, data: T)
   savePersistentState<T>(compositeKey, data);
 
   // Sincronización con el servidor (Multi-Tenant & Multi-Usuario)
-  if (typeof fetch !== 'undefined') {
+  // Sin sesión en el servidor (antes del ingreso o tras cerrarla) solo se guarda en el navegador.
+  if (typeof fetch !== 'undefined' && typeof window !== 'undefined' && hasServerSession()) {
     fetch('/api/accounting/client-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ empresaId: clientId, key: entityKey, data }),
     })
       .then(async (res) => {
+        // 401: la sesión venció; el interceptor devuelve al usuario al ingreso (no es un error de sincronización).
+        if (res.status === 401) return;
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `HTTP ${res.status} al sincronizar ${entityKey}`);

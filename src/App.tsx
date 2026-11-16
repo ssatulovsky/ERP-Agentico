@@ -146,7 +146,7 @@ import {
   ErpModuleId,
 } from './services/securityRbacService';
 import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
-import { getStoredAuthToken, erpFetch } from './services/apiClient';
+import { getStoredAuthToken, erpFetch, removeStoredAuthToken } from './services/apiClient';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -2404,7 +2404,20 @@ export default function App() {
   const handleLogout = () => {
     setAuthUserId(null);
     saveActiveAuthSession(null);
+    removeStoredAuthToken();
   };
+
+  // Sesión vencida o inválida en el servidor (401): se vuelve a la pantalla de ingreso en vez de
+  // seguir operando con una sesión local que el servidor ya no reconoce.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      if (!getStoredAuthToken()) return;
+      setServerSyncError(null);
+      handleLogout();
+    };
+    window.addEventListener('erp:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('erp:unauthorized', onUnauthorized);
+  }, []);
 
   // K3: si el servidor informa que el cliente ERP está suspendido o dado de baja (o la empresa
   // inactiva), la sesión se cierra en este navegador.
