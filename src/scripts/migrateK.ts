@@ -23,7 +23,7 @@ import { diskPersistence } from '../services/diskPersistenceService';
 
 const aplicar = process.argv.includes('--aplicar');
 
-function main() {
+async function main() {
   assertVaultSecretPolicy();
   const empresas = listCompanies();
   console.log(`Migración K1–K4 · ${empresas.length} empresas · modo ${aplicar ? 'APLICAR' : 'SOLO INFORME'}\n`);
@@ -47,14 +47,56 @@ function main() {
   console.log(`2. Empresas sin estadoEmpresa: ${sinEstado}${sinEstado && aplicar ? ' → completado' : ''}`);
   if (aplicar && (clavesPlanas || sinEstado)) saveCompanies(actualizadas);
 
+  // 2.b Empresas del módulo de seguridad sin ficha en el servidor: se crea una ficha mínima con su
+  //     id original (los usuarios, roles y anclas ya apuntan a ese id). El resto de los datos
+  //     (giro, dirección, régimen) se completan después en Configuración de clientes.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const rbacPath = path.join(process.cwd(), 'data', 'erp_security_rbac_state.json');
+  const rbacCompanies: any[] = fs.existsSync(rbacPath) ? JSON.parse(fs.readFileSync(rbacPath, 'utf8')).companiesConfig || [] : [];
+  const norm = (v: any) => String(v || '').replace(/[.\s]/g, '').toUpperCase();
+  const claves = new Set(listCompanies().flatMap((c: any) => [norm(c.id), norm(c.rut)].filter(Boolean)));
+  const sinFicha = rbacCompanies.filter((c: any) => !claves.has(norm(c.empresaId)) && !(c.rut && claves.has(norm(c.rut))));
+  console.log(`2.b Empresas del módulo de seguridad sin ficha en el servidor: ${sinFicha.length}${sinFicha.length && aplicar ? ' → fichas creadas (completar datos en Configuración de clientes)' : ''}`);
+  sinFicha.forEach((c: any) => console.log(`    - ${c.razonSocial || '(sin nombre)'} · ${c.empresaId}`));
+  if (aplicar && sinFicha.length) {
+    saveCompanies([
+      ...listCompanies(),
+      ...sinFicha.map((c: any) => ({
+        id: c.empresaId,
+        rut: c.rut || '',
+        razonSocial: c.razonSocial || c.nombreCorto || c.empresaId,
+        estadoEmpresa: c.estadoCuenta === 'BAJA' ? 'BAJA' : c.estadoCuenta === 'SUSPENDIDA_PAGO' ? 'INACTIVA' : 'ACTIVA',
+        ...(c.estadoCuenta === 'SUSPENDIDA_PAGO' ? { motivoInactiva: 'Suspendida por pago antes de la migración K3 (asignar a su Cliente ERP)' } : {}),
+        esEmpresaDuenaErp: Boolean(c.esEmpresaDuenaErp),
+        empresasAnclasIds: c.empresasAnclasIds || [],
+        origenFicha: 'MIGRACION_K_DESDE_SEGURIDAD',
+      })),
+    ]);
+  }
+
+  // 2.c Suspensiones del modelo anterior: el estado comercial ahora vive en el Cliente ERP. Una empresa
+  //     suspendida por pago que aún no tiene Cliente ERP quedaría activa; se deja INACTIVA (bloqueada)
+  //     hasta asignarla a su Cliente ERP y suspender ese cliente desde el panel SaaS.
+  const suspendidas = rbacCompanies.filter((r: any) => r.estadoCuenta === 'SUSPENDIDA_PAGO');
+  const aBloquear = listCompanies().filter(
+    (c: any) => !c.clienteErpId && c.estadoEmpresa === 'ACTIVA' && suspendidas.some((r: any) => norm(r.empresaId) === norm(c.id) || (r.rut && norm(r.rut) === norm(c.rut)))
+  );
+  console.log(`2.c Empresas suspendidas por pago en el modelo anterior que quedarían activas: ${aBloquear.length}${aBloquear.length && aplicar ? ' → INACTIVAS (bloqueadas)' : ''}`);
+  aBloquear.forEach((c: any) => console.log(`    - ${c.razonSocial} · ${c.id}`));
+  if (aplicar && aBloquear.length) {
+    const ids = new Set(aBloquear.map((c: any) => c.id));
+    saveCompanies(listCompanies().map((c: any) => (ids.has(c.id) ? { ...c, estadoEmpresa: 'INACTIVA', motivoInactiva: 'Suspendida por pago antes de la migración K3 (asignar a su Cliente ERP)' } : c)));
+  }
+
   // 3. Cliente ERP propietario
   const yaExiste = ownerAccount();
   if (yaExiste) {
     console.log(`3. Cliente ERP propietario: ya existe (${yaExiste.razonSocial})`);
-  } else if (!listCompanies().some((c: any) => c.esEmpresaDuenaErp)) {
+  } else if (!listCompanies().some((c: any) => c.esEmpresaDuenaErp) && !rbacCompanies.some((c: any) => c.esEmpresaDuenaErp)) {
     console.log('3. Cliente ERP propietario: ninguna empresa tiene esEmpresaDuenaErp = true. Márquela en la ficha (SuperAdmin) y vuelva a ejecutar.');
   } else if (aplicar) {
-    const acc = ensureOwnerAccount();
+    const acc = ensureOwnerAccount(rbacCompanies);
     console.log(`3. Cliente ERP propietario: creado (${acc?.razonSocial})`);
   } else {
     console.log('3. Cliente ERP propietario: se creará con --aplicar');
@@ -87,4 +129,4 @@ function main() {
   sinParametros.forEach((e) => console.log(`  - ${e}`));
 }
 
-main();
+void main();

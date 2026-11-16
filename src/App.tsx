@@ -2253,13 +2253,33 @@ export default function App() {
         if (!res.ok || cancelado) return;
         const data = await res.json();
         const delServidor: ClientCompany[] = Array.isArray(data?.clientes) ? data.clientes : [];
+        const bajas = new Set<string>((Array.isArray(data?.bajas) ? data.bajas : []).map((x: any) => String(x)));
         if (delServidor.length === 0 && isDemoModeEnabled()) return;
         setClients((prev) => {
-          // K1.7: fuera de la demostración el servidor manda; una empresa dada de baja o eliminada
-          // desaparece también de los navegadores que la tenían guardada.
+          // K1.7: fuera de la demostración el servidor manda en los datos de cada empresa, y una empresa
+          // dada de baja desaparece también de los navegadores que la tenían guardada. Las empresas que
+          // solo existen en este navegador (creadas antes de que el servidor guardara la cartera) se
+          // conservan y se informan, en vez de borrarse en silencio.
           if (!isDemoModeEnabled()) {
-            savePersistentState('erp_clients_portfolio_v1', delServidor);
-            return delServidor;
+            const enServidor = new Set(delServidor.flatMap((c) => [c.id, c.rut].filter(Boolean).map(String)));
+            const soloLocal = prev.filter((c) => !enServidor.has(String(c.id)) && !enServidor.has(String(c.rut)) && !bajas.has(String(c.id)) && !bajas.has(String(c.rut)));
+            if (soloLocal.length > 0) {
+              setServerSyncError(
+                `${soloLocal.length} empresa(s) existen solo en este navegador y no en el servidor: ${soloLocal
+                  .map((c) => c.razonSocial || c.id)
+                  .join(', ')}. Ábralas en Configuración de clientes y guárdelas para registrarlas en el servidor.`
+              );
+            }
+            // Los datos del servidor mandan; los campos que el servidor no envía se conservan del navegador.
+            const localPorClave = new Map<string, ClientCompany>();
+            for (const c of prev) [c.id, c.rut].filter(Boolean).forEach((k) => localPorClave.set(String(k), c));
+            const fusion = delServidor.map((c) => {
+              const local = localPorClave.get(String(c.id)) || localPorClave.get(String(c.rut));
+              return local ? ({ ...local, ...c } as ClientCompany) : c;
+            });
+            const next = [...fusion, ...soloLocal];
+            savePersistentState('erp_clients_portfolio_v1', next);
+            return next;
           }
           const porId = new Map(prev.map((c) => [c.id, c] as const));
           for (const c of delServidor) porId.set(c.id, { ...((porId.get(c.id) || {}) as object), ...c } as ClientCompany);

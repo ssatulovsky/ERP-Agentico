@@ -73,7 +73,13 @@ clientsRouter.get('/', (req: Request, res: Response) => {
     .filter((c) => c.estadoEmpresa !== 'BAJA')
     .filter((c) => user.isSuperAdmin || requireCompanyAccess(req, c.id).allowed)
     .map(sanitizeCompanyForClient);
-  res.json({ success: true, clientes });
+  // Empresas dadas de baja: el navegador las quita de su cartera local (las demás que solo tenga en
+  // el navegador se conservan y se informan, para no perder empresas que nunca llegaron al servidor).
+  const bajas = listCompanies()
+    .filter((c) => c.estadoEmpresa === 'BAJA')
+    .filter((c) => user.isSuperAdmin || requireCompanyAccess(req, c.id).allowed)
+    .flatMap((c) => [c.id, c.rut].filter(Boolean));
+  res.json({ success: true, clientes, bajas });
 });
 
 clientsRouter.put('/:id', async (req: Request, res: Response) => {
@@ -107,7 +113,13 @@ clientsRouter.put('/:id', async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, error: 'ROL_NO_PERMITIDO', errorMessage: 'Solo un SuperAdmin registra empresas nuevas.' });
     }
     // K1: el id de una empresa nueva es su RUT sin puntos (igual que el instalador).
-    if (normalizeCompanyKey(id) !== normalizeCompanyKey(body.rut)) {
+    // Excepción: empresas antiguas que ya existen en el módulo de seguridad con otro id (p. ej.
+    // "client-…") y cuya ficha nunca llegó al servidor; se registran con su id original para no
+    // romper usuarios, roles ni anclas que ya apuntan a él.
+    const idHeredado = (whatsappBridgeService.getRbacState().companiesConfig || []).some(
+      (c: any) => c.empresaId === id && normalizeCompanyKey(c.rut || '') === normalizeCompanyKey(body.rut)
+    );
+    if (!idHeredado && normalizeCompanyKey(id) !== normalizeCompanyKey(body.rut)) {
       return res.status(400).json({
         success: false,
         error: 'ID_DEBE_SER_RUT',
