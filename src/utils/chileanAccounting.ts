@@ -42,92 +42,9 @@ export const AFP_RATES: Record<string, number> = {
   UNO: 0.1049,
 };
 
-// Plan de Cuentas Chileno Estándar (CMF / SII / ERP Agéntico)
-export const STANDARD_ACCOUNT_PLAN: AccountPlanItem[] = [
-  // Activos Circulantes
-  { codigo: '1.1.01', nombre: 'Banco Santander Moneda Nacional', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', esEfectivoEquivalente: true, esConciliableBancaria: true, requiereDocReferencia: false },
-  { codigo: '1.1.01.03', nombre: 'Banco Moneda Extranjera (USD)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', manejaMultimoneda: true, esEfectivoEquivalente: true, esConciliableBancaria: true },
-  { codigo: '1.1.01.04', nombre: 'Valores en Tránsito y Clearing (Contracuenta Efectivo)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', esContracuentaEfectivo: true, requiereDocReferencia: true },
-  { codigo: '1.1.02', nombre: 'Caja Chica y Fondos Fijos', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', esEfectivoEquivalente: true },
-  { codigo: '1.1.02.02', nombre: 'Fondos por Rendir Operacionales (Contracuenta Efectivo)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', esContracuentaEfectivo: true, requiereDocReferencia: true, requiereAuxiliarRut: true },
-  { codigo: '1.1.03', nombre: 'Clientes Nacionales (Cuentas por Cobrar)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereAuxiliarRut: true, requiereDocReferencia: true },
-  { codigo: '1.1.03.02', nombre: 'Clientes Extranjeros / Exportaciones (USD)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereAuxiliarRut: true, requiereDocReferencia: true, manejaMultimoneda: true },
-  { codigo: '1.1.04', nombre: 'Documentos por Cobrar', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereDocReferencia: true },
-  { codigo: '1.1.05', nombre: 'IVA Crédito Fiscal', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereDocReferencia: true },
-  { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
-  { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
-  { codigo: '1.1.08', nombre: 'Mercaderías / Existencias Generales', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereDocReferencia: true, requiereCentroCosto: true },
-  { codigo: '1.1.08.01', nombre: 'Existencias - Materias Primas e Insumos', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereDocReferencia: true, requiereCentroCosto: true },
-  { codigo: '1.1.08.02', nombre: 'Existencias - Productos en Proceso (WIP / Proyectos)', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '1.1.08.03', nombre: 'Existencias - Productos Terminados', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE' },
-  { codigo: '1.1.09', nombre: 'Anticipo de Sueldos', tipo: 'ACTIVO', clasificacion: 'CIRCULANTE', requiereAuxiliarRut: true },
-  
-  // Activos No Circulantes / Fijos / IFRS 16 / NIC 16
-  { codigo: '1.2.01', nombre: 'Activo por Derecho de Uso (IFRS 16)', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
-  { codigo: '1.2.02', nombre: 'Depreciación Acumulada Activo Derecho de Uso', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
-  { codigo: '1.2.03', nombre: 'Mobiliario e Instalaciones', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereCentroCosto: true },
-  { codigo: '1.2.04', nombre: 'Equipos Computacionales y Servidores', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereCentroCosto: true },
-  { codigo: '1.2.05', nombre: 'Maquinarias, Equipos y Embarcaciones', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereCentroCosto: true },
-  { codigo: '1.2.06', nombre: 'Redes, Loberas e Instalaciones Acuícolas', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereCentroCosto: true },
-  { codigo: '1.2.07', nombre: 'Vehículos de Terreno y Flota', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereCentroCosto: true },
-  { codigo: '1.2.08', nombre: 'Infraestructura, Plantas y Edificios en Obra', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '1.2.99', nombre: 'Depreciación Acumulada Activo Fijo (NIC 16)', tipo: 'ACTIVO', clasificacion: 'NO_CIRCULANTE' },
-  
-  // Pasivos Circulantes
-  { codigo: '2.1.01', nombre: 'Proveedores Nacionales (Cuentas por Pagar)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO', requiereAuxiliarRut: true, requiereDocReferencia: true },
-  { codigo: '2.1.01.02', nombre: 'Proveedores Extranjeros / Importaciones (USD)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO', requiereAuxiliarRut: true, requiereDocReferencia: true, manejaMultimoneda: true },
-  { codigo: '2.1.02', nombre: 'Honorarios por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO', requiereAuxiliarRut: true, requiereDocReferencia: true },
-  { codigo: '2.1.03', nombre: 'IVA Débito Fiscal', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO', requiereDocReferencia: true },
-  { codigo: '2.1.04', nombre: 'Retención Honorarios 2da Categoría por Pagar (F29)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.05', nombre: 'Impuesto Único de Segunda Categoría por Pagar (F29)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.06', nombre: 'PPM por Pagar (F29)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.07', nombre: 'Sueldos Líquidos por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.08', nombre: 'Instituciones Previsionales (AFP) por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.09', nombre: 'Salud (Fonasa / Isapres) por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.10', nombre: 'AFC Seguro de Cesantía por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.11', nombre: 'Mutual de Seguridad / SIS por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.12', nombre: 'Pasivo por Arrendamiento Corto Plazo (IFRS 16)', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO' },
-  { codigo: '2.1.13', nombre: 'Arriendos por Pagar', tipo: 'PASIVO', clasificacion: 'CORTO_PLAZO', requiereDocReferencia: true },
+// K2.3: el plan "estándar" de 3 niveles que vivía aquí se eliminó. La única plantilla es
+// CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS y cada empresa usa su propio plan (/api/companies/:id/chart).
 
-  // Pasivos Largo Plazo
-  { codigo: '2.2.01', nombre: 'Pasivo por Arrendamiento Largo Plazo (IFRS 16)', tipo: 'PASIVO', clasificacion: 'LARGO_PLAZO' },
-  { codigo: '2.2.02', nombre: 'Créditos Bancarios Largo Plazo', tipo: 'PASIVO', clasificacion: 'LARGO_PLAZO' },
-
-  // Patrimonio
-  { codigo: '3.1.01', nombre: 'Capital Social Pagado', tipo: 'PATRIMONIO', clasificacion: 'NO_CIRCULANTE' },
-  { codigo: '3.1.02', nombre: 'Resultados Acumulados', tipo: 'PATRIMONIO', clasificacion: 'NO_CIRCULANTE' },
-  { codigo: '3.1.03', nombre: 'Resultado del Ejercicio', tipo: 'PATRIMONIO', clasificacion: 'NO_CIRCULANTE' },
-
-  // Ingresos
-  { codigo: '4.1.01', nombre: 'Ingresos por Ventas Afectas a IVA', tipo: 'INGRESO', clasificacion: 'OPERACIONAL', requiereDocReferencia: true, requiereCentroCosto: true },
-  { codigo: '4.1.02', nombre: 'Ingresos por Servicios Exentos', tipo: 'INGRESO', clasificacion: 'OPERACIONAL', requiereDocReferencia: true, requiereCentroCosto: true },
-  { codigo: '4.1.03', nombre: 'Intereses Ganados / Otros Ingresos', tipo: 'INGRESO', clasificacion: 'NO_OPERACIONAL' },
-  { codigo: '4.1.04', nombre: 'Utilidad en Enajenación de Activo Fijo', tipo: 'INGRESO', clasificacion: 'NO_OPERACIONAL' },
-
-  // Costos y Gastos
-  { codigo: '5.1.01', nombre: 'Costo de Ventas / Mercaderías', tipo: 'COSTO', clasificacion: 'OPERACIONAL', requiereCentroCosto: true },
-  { codigo: '5.1.02', nombre: 'Materia Prima Directa Consumida (MPD)', tipo: 'COSTO', clasificacion: 'OPERACIONAL', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '5.1.03', nombre: 'Mano de Obra Directa Fabril (MOD)', tipo: 'COSTO', clasificacion: 'OPERACIONAL', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '5.1.04', nombre: 'Costos Indirectos de Fabricación Reales (CIF)', tipo: 'COSTO', clasificacion: 'OPERACIONAL', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '5.1.05', nombre: 'Costos Indirectos de Fabricación Aplicados (WIP)', tipo: 'COSTO', clasificacion: 'OPERACIONAL', requiereProyecto: true, requiereCentroCosto: true },
-  { codigo: '5.2.01', nombre: 'Sueldos y Remuneraciones Base', tipo: 'GASTO', clasificacion: 'OPERACIONAL', requiereCentroCosto: true },
-  { codigo: '5.2.02', nombre: 'Gratificaciones Legales', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.03', nombre: 'Horas Extras', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.04', nombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.05', nombre: 'Asignaciones No Imponibles (Colación / Movilización)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.06', nombre: 'Gastos de Honorarios Profesionales', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.07', nombre: 'Gasto por Arriendo Comercial', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.08', nombre: 'Amortización Activo por Derecho de Uso (IFRS 16)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.09', nombre: 'Gastos Financieros por Arrendamiento (IFRS 16)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.10', nombre: 'Servicios Básicos (Luz, Agua, Telecomunicaciones)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.11', nombre: 'Software, Servidores y Licencias', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.13', nombre: 'Gasto Depreciación Activo Fijo (NIC 16)', tipo: 'GASTO', clasificacion: 'OPERACIONAL' },
-  { codigo: '5.2.14', nombre: 'Pérdida en Retiro o Enajenación de Activo Fijo', tipo: 'GASTO', clasificacion: 'NO_OPERACIONAL' },
-  { codigo: '6.1.01', nombre: 'Corrección Monetaria del Ejercicio (Art. 41 LIR)', tipo: 'GASTO', clasificacion: 'NO_OPERACIONAL' },
-];
-
-export const CHILE_CHART_OF_ACCOUNTS = STANDARD_ACCOUNT_PLAN;
 
 /**
  * Format currency to standard Chilean Peso ($ CLP)
@@ -497,10 +414,8 @@ export function enrichEntryWithChartAttributes(
     return entry;
   }
 
-  const catalog = [
-    ...(Array.isArray(customChart) ? customChart : []),
-    ...STANDARD_ACCOUNT_PLAN,
-  ];
+  // K2: solo el plan de la empresa (antes se mezclaba con un plan estándar de otra codificación).
+  const catalog = [...(Array.isArray(customChart) ? customChart : [])];
 
   const findAccountMeta = (codeRaw?: string, nameRaw?: string) => {
     const c = (codeRaw || '').trim().toLowerCase();

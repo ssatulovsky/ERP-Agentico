@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Building2, 
   Bot, 
@@ -60,6 +60,9 @@ import { ClientAuxiliariesMasterModal } from './tenancy/ClientAuxiliariesMasterM
 import { AgentPersonasConfigSection } from './voice/AgentPersonasConfigSection';
 import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePanel';
 import { periodoActual } from '../utils/periodo';
+import { fetchCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
+import { ChartInitializationWizard } from './accounting/ChartInitializationWizard';
+import type { HierarchicalAccountItem } from '../types';
 
 interface AgentClientConfigProps {
   firm: AccountingFirmProfile;
@@ -75,7 +78,7 @@ interface AgentClientConfigProps {
     periodo: string
   ) => Promise<{ success: boolean; logs: string[]; documentos: number; error?: string }>;
   systemParams?: SystemGeneralParameters;
-  onUpdateSystemParams?: (params: SystemGeneralParameters) => void;
+  onUpdateSystemParams?: (params: SystemGeneralParameters) => Promise<string | null>;
   onOpenVoiceDialogue?: (personaId?: string) => void;
   /** K1.2: abre el plan de cuentas de la empresa en el Agente Contable (no hay un segundo editor). */
   onOpenChartOfAccounts?: (clientId: string) => void;
@@ -103,6 +106,15 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [isAnchorModalOpen, setIsAnchorModalOpen] = useState(false);
   const [anchorModalClient, setAnchorModalClient] = useState<ClientCompany | null>(null);
   const [isSystemConfigOpen, setIsSystemConfigOpen] = useState(false);
+  const [activeClientChart, setActiveClientChart] = useState<HierarchicalAccountItem[]>([]);
+  // K2: después del alta se elige el origen del plan de cuentas de la nueva empresa
+  const [chartWizardClient, setChartWizardClient] = useState<ClientCompany | null>(null);
+
+  useEffect(() => {
+    if (!isSystemConfigOpen) return;
+    const rut = clients.find((c) => c.id === activeClientId)?.rut;
+    if (rut) void fetchCompanyChartOfAccounts(rut).then(setActiveClientChart);
+  }, [isSystemConfigOpen, activeClientId]);
   const [isAuxiliariesModalOpen, setIsAuxiliariesModalOpen] = useState(false);
 
   // Modal / Editor State for Clients
@@ -1639,9 +1651,20 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         onSaveClient={(newClient) => {
           onAddClient(newClient);
           onSelectActiveClient(newClient.id);
+          setChartWizardClient(newClient);
         }}
         existingClientsCount={clients.length}
       />
+
+      {chartWizardClient && (
+        <ChartInitializationWizard
+          isOpen={Boolean(chartWizardClient)}
+          empresaRut={chartWizardClient.rut}
+          empresaNombre={chartWizardClient.razonSocial}
+          onClose={() => setChartWizardClient(null)}
+          onInitialized={() => setChartWizardClient(null)}
+        />
+      )}
 
       {/* 2. Modal Ficha Cliente Ancla (Parámetros Contables y Comerciales) */}
       <AnchorClientMasterModal
@@ -1661,11 +1684,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         isOpen={isSystemConfigOpen}
         onClose={() => setIsSystemConfigOpen(false)}
         parameters={systemParams}
-        onSaveParameters={(updatedParams) => {
-          if (onUpdateSystemParams) {
-            onUpdateSystemParams(updatedParams);
-          }
-        }}
+        onSaveParameters={async (updatedParams) =>
+          onUpdateSystemParams ? onUpdateSystemParams(updatedParams) : 'No hay dónde guardar los parámetros.'
+        }
+        chartAccounts={activeClientChart}
+        empresaNombre={clients.find((c) => c.id === activeClientId)?.razonSocial}
       />
 
       {/* 5. Modal Maestro de Auxiliares de Clientes Padrón SII */}

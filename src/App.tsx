@@ -509,24 +509,41 @@ export default function App() {
   }, [activeClientId, karinCases]);
 
   // Parámetros Generales de Sistema ERP (Art. 16 Código Tributario, Moneda, Cuentas de Cierre y Redondeo)
-  const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(() => {
-    const saved = localStorage.getItem('audicon_system_general_params');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved system general params', e);
-      }
-    }
-    return DEFAULT_SYSTEM_GENERAL_PARAMETERS;
-  });
+  // K2.6/C10: son de cada empresa y viven en el servidor (antes uno solo para todo el navegador).
+  const [systemParams, setSystemParams] = useState<SystemGeneralParameters>(DEFAULT_SYSTEM_GENERAL_PARAMETERS);
 
-  const handleUpdateSystemParams = (newParams: SystemGeneralParameters) => {
-    setSystemParams(newParams);
+  useEffect(() => {
+    if (!activeClientId) return;
+    let cancelado = false;
+    setSystemParams(DEFAULT_SYSTEM_GENERAL_PARAMETERS);
+    fetch(`/api/companies/${encodeURIComponent(activeClientId)}/system-parameters`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelado && data?.success && data.parametros) {
+          setSystemParams({ ...DEFAULT_SYSTEM_GENERAL_PARAMETERS, ...data.parametros });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [activeClientId]);
+
+  const handleUpdateSystemParams = async (newParams: SystemGeneralParameters): Promise<string | null> => {
     try {
-      localStorage.setItem('audicon_system_general_params', JSON.stringify(newParams));
-    } catch (e) {
-      console.error('Failed to save system general params', e);
+      const res = await fetch(`/api/companies/${encodeURIComponent(activeClientId)}/system-parameters`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parametros: newParams }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const detalle = Array.isArray(data.errores) ? ` ${data.errores.map((e: any) => e.mensaje).join(' ')}` : '';
+        return `${data.errorMessage || `HTTP ${res.status}`}${detalle}`;
+      }
+      setSystemParams({ ...DEFAULT_SYSTEM_GENERAL_PARAMETERS, ...data.parametros });
+    } catch (e: any) {
+      return `Sin conexión con el servidor: ${e?.message || e}`;
     }
     // Sincronizar parámetros de cierre de ejercicio en el perfil de empresa activa
     setCompany(prev => ({
@@ -537,6 +554,7 @@ export default function App() {
       bloqueoPeriodoCerrado: newParams.bloqueoPeriodoCerrado,
       resolucionSiiCierreEspecial: newParams.resolucionSiiCierreEspecial,
     }));
+    return null;
   };
 
   // Inventory & Multi-Warehouse States (Agente de Inventarios & Bodegas - Servidor Fuente de Verdad)

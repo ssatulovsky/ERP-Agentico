@@ -17,13 +17,16 @@ import {
 } from 'lucide-react';
 import { SystemGeneralParameters } from '../../types';
 import { DEFAULT_SYSTEM_PARAMETERS } from '../../config/erpMasterConfig';
-import { STANDARD_ACCOUNT_PLAN } from '../../utils/chileanAccounting';
 
 interface SystemGeneralConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   parameters: SystemGeneralParameters;
-  onSaveParameters: (updatedParams: SystemGeneralParameters) => void;
+  /** K2.6/C10: guarda en el servidor los parámetros de la empresa activa; devuelve el error o null. */
+  onSaveParameters: (updatedParams: SystemGeneralParameters) => Promise<string | null>;
+  /** Cuentas del plan de la empresa activa (las cuentas por defecto se eligen de aquí). */
+  chartAccounts: Array<{ codigo: string; nombre: string; tipo?: string; activa?: boolean }>;
+  empresaNombre?: string;
 }
 
 export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> = ({
@@ -31,13 +34,20 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
   onClose,
   parameters,
   onSaveParameters,
+  chartAccounts,
+  empresaNombre,
 }) => {
+  // Solo cuentas imputables y activas del plan de la empresa
+  const imputables = (chartAccounts || []).filter(
+    (a) => a.activa !== false && !(chartAccounts || []).some((b) => b.codigo.startsWith(`${a.codigo}.`))
+  );
   const [formData, setFormData] = useState<SystemGeneralParameters>({
     ...DEFAULT_SYSTEM_PARAMETERS,
     ...parameters,
   });
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -51,9 +61,14 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
     }));
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveParameters(formData);
+    setSaveError(null);
+    const err = await onSaveParameters(formData);
+    if (err) {
+      setSaveError(err);
+      return;
+    }
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -101,6 +116,18 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
             </button>
           </div>
         </div>
+
+        <div className="bg-blue-50 border-b border-blue-200 px-5 py-2 text-[11px] text-blue-900">
+          Parámetros de {empresaNombre || 'la empresa activa'}. Las cuentas por defecto se eligen del plan de cuentas de la empresa
+          {imputables.length === 0 ? ' (la empresa aún no tiene plan: configúrelo en el Agente Contable).' : '.'}
+        </div>
+
+        {saveError && (
+          <div className="bg-rose-50 border-b border-rose-200 px-5 py-2 flex items-center gap-2 text-xs text-rose-800">
+            <AlertTriangle className="w-4 h-4 text-rose-600" />
+            <span className="font-semibold">No se guardó: {saveError}</span>
+          </div>
+        )}
 
         {savedSuccess && (
           <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-2 flex items-center justify-between text-xs text-emerald-800 animate-in fade-in">
@@ -215,7 +242,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaResultadosAcumulados', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -232,7 +260,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaGananciaPerdidaAno', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -251,7 +280,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaVariacionTipoCambio', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -268,7 +298,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaCargosBancarios', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -338,7 +369,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                     onChange={(e) => handleChange('cuentaGastosEnvio', e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                    <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                       <option key={acc.codigo} value={acc.codigo}>
                         {acc.codigo} - {acc.nombre}
                       </option>
@@ -365,7 +397,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentasPorCobrarDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'ACTIVO').map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.filter(a => a.tipo === 'ACTIVO').map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -382,7 +415,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaVentasDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'INGRESO').map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.filter(a => a.tipo === 'INGRESO').map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -401,7 +435,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaDescuentoVentasDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -418,7 +453,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaDescuentoProntoPagoDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -530,7 +566,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaPagableDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'PASIVO').map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.filter(a => a.tipo === 'PASIVO').map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -547,7 +584,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaDescuentoComprasDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -565,7 +603,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                     onChange={(e) => handleChange('cuentaGuiaEntradaDefecto', e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                    <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                       <option key={acc.codigo} value={acc.codigo}>
                         {acc.codigo} - {acc.nombre}
                       </option>
@@ -624,7 +663,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaInventarioDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'ACTIVO').map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.filter(a => a.tipo === 'ACTIVO').map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -641,7 +681,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaCostoVentaDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'COSTO').map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.filter(a => a.tipo === 'COSTO').map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -660,7 +701,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaAjustesInventarioDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>
@@ -677,7 +719,8 @@ export const SystemGeneralConfigModal: React.FC<SystemGeneralConfigModalProps> =
                       onChange={(e) => handleChange('cuentaCostosEnsambleArticulosDefecto', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
-                      {STANDARD_ACCOUNT_PLAN.map((acc) => (
+                      <option value="">— Sin definir —</option>
+                      {imputables.map((acc) => (
                         <option key={acc.codigo} value={acc.codigo}>
                           {acc.codigo} - {acc.nombre}
                         </option>

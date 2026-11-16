@@ -1,3 +1,4 @@
+import { assertEntryAccountsValid } from './chartOfAccountsServerService';
 import type { 
   EmployeePayroll, 
   ChileIndicators, 
@@ -493,6 +494,8 @@ export class HrManagementService {
             };
           });
 
+          // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
+          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -590,6 +593,8 @@ export class HrManagementService {
             };
           });
 
+          // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
+          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -677,6 +682,8 @@ export class HrManagementService {
             };
           });
 
+          // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
+          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -895,6 +902,8 @@ export class HrManagementService {
             };
           });
 
+          // K2.7: el asiento se valida contra el plan de cuentas de la empresa antes de registrarlo.
+          assertEntryAccountsValid(candidateEntry.empresaId || item.empresaId, mappedLines);
           if (dp && typeof dp.addAccountingEntry === 'function') {
             dp.addAccountingEntry({
               ...candidateEntry,
@@ -1241,6 +1250,7 @@ export class HrManagementService {
               };
             });
 
+            assertEntryAccountsValid(normalizedEntry.empresaId || item.empresaId, mappedLines);
             if (dp && typeof dp.addAccountingEntry === 'function') {
               dp.addAccountingEntry(normalizedEntry, mappedLines);
             }

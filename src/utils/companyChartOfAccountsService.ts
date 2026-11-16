@@ -19,12 +19,11 @@ export const DEFAULT_CHILEAN_GROUPS: AccountGroupDefinition[] = [
   // CLASE 1: ACTIVO
   { id: 'grp-1.1', codigo: '1.1', nombre: 'Activo Corriente / Circulante', clase: 1, nivel: 2, descripcion: 'Recursos realizables o convertibles en efectivo en un plazo menor a un año.' },
   { id: 'sub-1.1.01', codigo: '1.1.01', nombre: 'Efectivo y Equivalentes de Efectivo (Caja y Bancos)', clase: 1, nivel: 3, padreCodigo: '1.1' },
-  { id: 'sub-1.1.02', codigo: '1.1.02', nombre: 'Inversiones y Depósitos de Corto Plazo', clase: 1, nivel: 3, padreCodigo: '1.1' },
+  { id: 'sub-1.1.02', codigo: '1.1.02', nombre: 'Bancos (Cuentas Corrientes)', clase: 1, nivel: 3, padreCodigo: '1.1' },
   { id: 'sub-1.1.03', codigo: '1.1.03', nombre: 'Deudores Comerciales y Cuentas por Cobrar Clientes', clase: 1, nivel: 3, padreCodigo: '1.1' },
-  { id: 'sub-1.1.04', codigo: '1.1.04', nombre: 'Documentos y Letras por Cobrar', clase: 1, nivel: 3, padreCodigo: '1.1' },
-  { id: 'sub-1.1.05', codigo: '1.1.05', nombre: 'Impuestos Mensuales por Recuperar (IVA CF, PPM, Remanente)', clase: 1, nivel: 3, padreCodigo: '1.1' },
-  { id: 'sub-1.1.06', codigo: '1.1.06', nombre: 'Existencias e Inventarios de Mercaderías', clase: 1, nivel: 3, padreCodigo: '1.1' },
-  { id: 'sub-1.1.07', codigo: '1.1.07', nombre: 'Anticipos a Proveedores y Gastos Pagados por Anticipado', clase: 1, nivel: 3, padreCodigo: '1.1' },
+  { id: 'sub-1.1.04', codigo: '1.1.04', nombre: 'Impuestos Mensuales por Recuperar (IVA CF, Remanente, PPM)', clase: 1, nivel: 3, padreCodigo: '1.1' },
+  { id: 'sub-1.1.05', codigo: '1.1.05', nombre: 'Existencias e Inventarios', clase: 1, nivel: 3, padreCodigo: '1.1' },
+  { id: 'sub-1.1.06', codigo: '1.1.06', nombre: 'Anticipos a Proveedores y Gastos Pagados por Anticipado', clase: 1, nivel: 3, padreCodigo: '1.1' },
 
   { id: 'grp-1.2', codigo: '1.2', nombre: 'Activo No Corriente / Activos Fijos', clase: 1, nivel: 2, descripcion: 'Bienes de uso duradero, inmuebles, maquinarias y derechos de uso.' },
   { id: 'sub-1.2.01', codigo: '1.2.01', nombre: 'Propiedades, Planta y Equipos (Activo Fijo Físico)', clase: 1, nivel: 3, padreCodigo: '1.2' },
@@ -38,11 +37,10 @@ export const DEFAULT_CHILEAN_GROUPS: AccountGroupDefinition[] = [
   { id: 'sub-2.1.02', codigo: '2.1.02', nombre: 'Remuneraciones, Honorarios y Leyes Sociales por Pagar', clase: 2, nivel: 3, padreCodigo: '2.1' },
   { id: 'sub-2.1.03', codigo: '2.1.03', nombre: 'Impuestos Fiscales y Retenciones F29 por Pagar (TGR/SII)', clase: 2, nivel: 3, padreCodigo: '2.1' },
   { id: 'sub-2.1.04', codigo: '2.1.04', nombre: 'Pasivo por Arrendamiento Corto Plazo (IFRS 16)', clase: 2, nivel: 3, padreCodigo: '2.1' },
-  { id: 'sub-2.1.05', codigo: '2.1.05', nombre: 'Préstamos y Obligaciones Bancarias de Corto Plazo', clase: 2, nivel: 3, padreCodigo: '2.1' },
+  { id: 'sub-2.1.05', codigo: '2.1.05', nombre: 'Otras Cuentas por Pagar de Corto Plazo', clase: 2, nivel: 3, padreCodigo: '2.1' },
 
   { id: 'grp-2.2', codigo: '2.2', nombre: 'Pasivo No Corriente / Largo Plazo', clase: 2, nivel: 2, descripcion: 'Deudas y compromisos exigibles con vencimiento mayor a un año.' },
-  { id: 'sub-2.2.01', codigo: '2.2.01', nombre: 'Créditos Hipotecarios y Financiamiento Bancario LP', clase: 2, nivel: 3, padreCodigo: '2.2' },
-  { id: 'sub-2.2.02', codigo: '2.2.02', nombre: 'Pasivo por Arrendamiento Largo Plazo (IFRS 16)', clase: 2, nivel: 3, padreCodigo: '2.2' },
+  { id: 'sub-2.2.01', codigo: '2.2.01', nombre: 'Pasivos Financieros y Arrendamientos de Largo Plazo', clase: 2, nivel: 3, padreCodigo: '2.2' },
   { id: 'sub-2.2.03', codigo: '2.2.03', nombre: 'Provisiones de Desmantelamiento y Largo Plazo', clase: 2, nivel: 3, padreCodigo: '2.2' },
 
   // CLASE 3: PATRIMONIO
@@ -331,36 +329,12 @@ function getStorageKey(empresaRut: string, suffix: string): string {
 }
 
 /**
- * Cargar Plan de Cuentas personalizado para una empresa
+ * K2.3: plantilla estándar del plan de cuentas (la única). Función pura: la usan el servidor al
+ * inicializar el plan de una empresa y el navegador para mostrar la vista previa.
  */
-export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAccountItem[] {
-  const key = getStorageKey(empresaRut, 'accounts');
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((item: any) => ({
-          ...item,
-          manejaMultimoneda: item.manejaMultimoneda ?? inferDefaultMultiCurrency(item),
-          monedaCodigo: item.monedaCodigo ?? ((item.manejaMultimoneda || inferDefaultMultiCurrency(item)) ? inferDefaultCurrencyCode(item) : undefined),
-          requiereDocReferencia: item.requiereDocReferencia ?? inferDefaultDocReferencia(item),
-          esEfectivoEquivalente: item.esEfectivoEquivalente ?? inferDefaultEfectivoEquivalente(item),
-          esContracuentaEfectivo: item.esContracuentaEfectivo ?? inferDefaultContracuentaEfectivo(item),
-          requiereProyecto: item.requiereProyecto ?? inferDefaultProyecto(item),
-          notasExplicativas: item.notasExplicativas ?? inferDefaultNoteNumbers(item),
-        }));
-      }
-    }
-  } catch (e) {
-    console.warn('Error leyendo plan de cuentas desde localStorage:', e);
-  }
-
-  // Inicializar enriquecido con nombres de grupo y subgrupos estándar
-  const groups = loadCompanyGroups(empresaRut);
-  const groupMap = new Map(groups.map((g) => [g.codigo, g.nombre]));
-
-  const initialChart: HierarchicalAccountItem[] = CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS.map((acc) => {
+export function buildStandardChartTemplate(empresaRut = ''): { chart: HierarchicalAccountItem[]; groups: AccountGroupDefinition[] } {
+  const groupMap = new Map(DEFAULT_CHILEAN_GROUPS.map((g) => [g.codigo, g.nombre]));
+  const chart: HierarchicalAccountItem[] = CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS.map((acc) => {
     const mappings = inferDefaultMappings(acc);
     const isMulti = (acc as any).manejaMultimoneda ?? inferDefaultMultiCurrency(acc);
     return {
@@ -376,12 +350,218 @@ export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAcco
       nombreSubgrupo: groupMap.get(acc.subgrupo) || `Subgrupo ${acc.subgrupo}`,
       agrupacionFiscal: mappings.agrupacionFiscal,
       agrupacionMatrizExtranjera: mappings.agrupacionMatrizExtranjera,
-      empresaRut,
+      ...(empresaRut ? { empresaRut } : {}),
     };
   });
+  return { chart, groups: DEFAULT_CHILEAN_GROUPS.map((g) => ({ ...g })) };
+}
 
-  saveCompanyChartOfAccounts(empresaRut, initialChart);
-  return initialChart;
+// ============================================================================
+// K2 · Plan de cuentas único: el servidor manda; el navegador solo guarda una copia en caché.
+// ============================================================================
+// Antes el plan vivía en el navegador: se generaba solo con la plantilla, se sincronizaba por RUT
+// (para usuarios no SuperAdmin el servidor lo rechazaba) y, si el servidor no tenía plan, se adoptaba
+// un plan de respaldo de 25 cuentas con otra codificación. Ahora:
+//   - loadCompanyChartOfAccounts devuelve la copia en caché (o [] si la empresa no tiene plan) y
+//     pide al servidor la versión vigente en segundo plano.
+//   - saveCompanyChartOfAccounts guarda en el servidor; si el servidor lo rechaza (cuentas con
+//     movimientos, plan inválido…) se avisa con el evento `companyChartSaveError` y se recarga.
+//   - Una empresa sin plan se inicializa explícitamente (initializeCompanyChartOnServer).
+
+export interface CompanyChartServerState {
+  estado: 'SIN_PLAN' | 'CONFIGURADO';
+  chart: HierarchicalAccountItem[];
+  groups: AccountGroupDefinition[];
+  meta: { origen: string; empresaOrigenId?: string; sistemaOrigen?: string; actualizadoEn?: string } | null;
+  tieneMovimientos: boolean;
+}
+
+const chartApi = (empresaRut: string, suffix = '') => `/api/companies/${encodeURIComponent(empresaRut)}/chart${suffix}`;
+
+function readCache<T>(key: string): T | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, value: any): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* sin espacio o sin almacenamiento: la caché es opcional */
+  }
+}
+
+function emit(name: string, detail: any): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+  } catch {
+    /* entorno sin CustomEvent */
+  }
+}
+
+const pendingRefresh = new Set<string>();
+
+/** Copia en caché del plan de la empresa ([] si no tiene plan). Pide la vigente al servidor en segundo plano. */
+export function loadCompanyChartOfAccounts(empresaRut: string): HierarchicalAccountItem[] {
+  const cached = readCache<HierarchicalAccountItem[]>(getStorageKey(empresaRut, 'accounts'));
+  if (empresaRut && typeof fetch !== 'undefined' && !pendingRefresh.has(empresaRut)) {
+    pendingRefresh.add(empresaRut);
+    void fetchCompanyChartState(empresaRut)
+      .then((st) => {
+        if (st) emit('companyChartUpdated', { empresaRut, chart: st.chart, groups: st.groups, estado: st.estado });
+      })
+      .finally(() => pendingRefresh.delete(empresaRut));
+  }
+  return Array.isArray(cached) ? cached : [];
+}
+
+/** Estado del plan en el servidor (null si no hubo respuesta). Actualiza la caché. */
+export async function fetchCompanyChartState(empresaRut: string): Promise<CompanyChartServerState | null> {
+  try {
+    const res = await fetch(chartApi(empresaRut));
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json?.success) return null;
+    const state: CompanyChartServerState = {
+      estado: json.estado,
+      chart: Array.isArray(json.chart) ? json.chart : [],
+      groups: Array.isArray(json.groups) ? json.groups : [],
+      meta: json.meta || null,
+      tieneMovimientos: Boolean(json.tieneMovimientos),
+    };
+    const key = getStorageKey(empresaRut, 'accounts');
+    if (state.estado === 'SIN_PLAN') {
+      // Un plan que solo existía en este navegador (versiones anteriores) se conserva aparte para
+      // poder subirlo desde el asistente; no se usa como plan de la empresa.
+      const local = readCache<HierarchicalAccountItem[]>(key);
+      if (Array.isArray(local) && local.length > 0) writeCache(getStorageKey(empresaRut, 'legacy_accounts'), local);
+    }
+    writeCache(key, state.chart);
+    writeCache(getStorageKey(empresaRut, 'groups'), state.groups);
+    return state;
+  } catch (err) {
+    console.warn('[CompanyChartService] No se pudo obtener el plan del servidor:', err);
+    return null;
+  }
+}
+
+/** Plan vigente en el servidor; si no hay conexión, la copia en caché. */
+export async function fetchCompanyChartOfAccounts(empresaRut: string): Promise<HierarchicalAccountItem[]> {
+  const st = await fetchCompanyChartState(empresaRut);
+  return st ? st.chart : loadCompanyChartOfAccounts(empresaRut);
+}
+
+/** Plan que quedó solo en este navegador antes de K2 (para subirlo desde el asistente). */
+export function getLegacyBrowserChart(empresaRut: string): HierarchicalAccountItem[] {
+  const legacy = readCache<HierarchicalAccountItem[]>(getStorageKey(empresaRut, 'legacy_accounts'));
+  return Array.isArray(legacy) ? legacy : [];
+}
+
+export interface ChartSaveResult {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  details?: any;
+}
+
+async function putChart(empresaRut: string, chart: HierarchicalAccountItem[], groups?: AccountGroupDefinition[]): Promise<ChartSaveResult> {
+  try {
+    const res = await fetch(chartApi(empresaRut), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chart, ...(groups ? { groups } : {}) }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      const result = { ok: false, error: json.errorMessage || `HTTP ${res.status}`, code: json.code || json.error, details: json };
+      emit('companyChartSaveError', { empresaRut, ...result });
+      void fetchCompanyChartState(empresaRut).then((st) => st && emit('companyChartUpdated', { empresaRut, chart: st.chart, groups: st.groups, estado: st.estado }));
+      return result;
+    }
+    writeCache(getStorageKey(empresaRut, 'accounts'), json.chart);
+    writeCache(getStorageKey(empresaRut, 'groups'), json.groups);
+    emit('companyChartUpdated', { empresaRut, chart: json.chart, groups: json.groups, estado: json.estado });
+    return { ok: true };
+  } catch (err: any) {
+    const result = { ok: false, error: `Sin conexión con el servidor: ${err?.message || err}` };
+    emit('companyChartSaveError', { empresaRut, ...result });
+    return result;
+  }
+}
+
+/** Guarda el plan editado en el servidor (con los grupos en caché). */
+export function saveCompanyChartOfAccounts(empresaRut: string, chart: HierarchicalAccountItem[]): Promise<ChartSaveResult> {
+  return putChart(empresaRut, chart, loadCompanyGroups(empresaRut));
+}
+
+export interface ChartInitializeInput {
+  origen: 'PLANTILLA_ESTANDAR' | 'COPIA_EMPRESA' | 'IMPORTACION' | 'NAVEGADOR' | 'VACIO';
+  empresaOrigenId?: string;
+  cuentas?: HierarchicalAccountItem[];
+  grupos?: AccountGroupDefinition[];
+  sistemaOrigen?: string;
+  equivalencias?: Array<{ codigoExterno: string; codigo: string }>;
+  reemplazar?: boolean;
+}
+
+/** Inicializa el plan de una empresa en el servidor. */
+export async function initializeCompanyChartOnServer(
+  empresaRut: string,
+  input: ChartInitializeInput
+): Promise<{ ok: boolean; state?: CompanyChartServerState; error?: string; code?: string; details?: any }> {
+  try {
+    const res = await fetch(chartApi(empresaRut, '/initialize'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) return { ok: false, error: json.errorMessage || `HTTP ${res.status}`, code: json.code || json.error, details: json };
+    const state: CompanyChartServerState = { estado: json.estado, chart: json.chart || [], groups: json.groups || [], meta: json.meta || null, tieneMovimientos: Boolean(json.tieneMovimientos) };
+    writeCache(getStorageKey(empresaRut, 'accounts'), state.chart);
+    writeCache(getStorageKey(empresaRut, 'groups'), state.groups);
+    emit('companyChartUpdated', { empresaRut, chart: state.chart, groups: state.groups, estado: state.estado });
+    return { ok: true, state };
+  } catch (err: any) {
+    return { ok: false, error: `Sin conexión con el servidor: ${err?.message || err}` };
+  }
+}
+
+/** Valida un plan en el servidor sin guardarlo (vista previa de una importación). */
+export async function validateChartOnServer(
+  empresaRut: string,
+  cuentas: any[]
+): Promise<{ valido: boolean; cuentas: HierarchicalAccountItem[]; errores: any[]; advertencias: any[] } | null> {
+  try {
+    const res = await fetch(chartApi(empresaRut, '/validate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cuentas }),
+    });
+    const json = await res.json();
+    return json?.success ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Empresas (del mismo cliente ERP y con acceso) desde las que se puede copiar el plan. */
+export async function fetchChartCopySources(
+  empresaRut: string
+): Promise<Array<{ empresaId: string; rut: string; razonSocial: string; cuentas: number }>> {
+  try {
+    const res = await fetch(chartApi(empresaRut, '/copy-sources'));
+    const json = await res.json();
+    return Array.isArray(json?.fuentes) ? json.fuentes : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -402,189 +582,32 @@ export function normalizeAccountCodeKey(code?: string): string {
 }
 
 /**
- * Guardar Plan de Cuentas personalizado de la empresa (Sincronización Local + Servidor Multi-Usuario)
- */
-export function saveCompanyChartOfAccounts(empresaRut: string, chart: HierarchicalAccountItem[]): void {
-  const key = getStorageKey(empresaRut, 'accounts');
-  try {
-    localStorage.setItem(key, JSON.stringify(chart));
-  } catch (e) {
-    console.error('Error guardando plan de cuentas en localStorage:', e);
-  }
-
-  // Notificar en caliente a la ventana y pestañas locales
-  if (typeof window !== 'undefined') {
-    try {
-      window.dispatchEvent(
-        new CustomEvent('companyChartUpdated', {
-          detail: { empresaRut, chart },
-        })
-      );
-    } catch {}
-  }
-
-  // Sincronizar en segundo plano con el backend y base de datos MySQL (para que otros usuarios y el contador lo vean)
-  if (typeof fetch !== 'undefined') {
-    fetch('/api/accounting/chart-of-accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empresaId: empresaRut, chart }),
-    }).catch((err) => {
-      console.warn('[CompanyChartService] No se pudo sincronizar plan de cuentas con el servidor:', err);
-    });
-  }
-}
-
-/**
- * Obtener Plan de Cuentas actualizado desde el Servidor / Base de Datos MySQL
- */
-export async function fetchCompanyChartOfAccounts(empresaRut: string): Promise<HierarchicalAccountItem[]> {
-  try {
-    const res = await fetch(`/api/accounting/chart-of-accounts?empresaId=${encodeURIComponent(empresaRut)}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        // Mapear al modelo frontend tipado
-        const mapped: HierarchicalAccountItem[] = json.data.map((item: any) => ({
-          codigo: item.codigo || item.codigoCuenta,
-          nombre: item.nombre || item.nombreCuenta,
-          clase: item.clase || (item.codigo || item.codigoCuenta ? (parseInt(String(item.codigo || item.codigoCuenta).charAt(0), 10) as any) : 1),
-          grupo: item.grupo || (item.codigo || item.codigoCuenta ? String(item.codigo || item.codigoCuenta).substring(0, 3) : '1.1'),
-          subgrupo: item.subgrupo || (item.codigo || item.codigoCuenta ? String(item.codigo || item.codigoCuenta).substring(0, 6) : '1.1.01'),
-          nivel: item.nivel || 5,
-          tipo: item.tipo || (item.clasificacion === 'ACTIVO' ? 'ACTIVO' : item.clasificacion === 'PASIVO' ? 'PASIVO' : item.clasificacion === 'PATRIMONIO' ? 'PATRIMONIO' : item.clasificacion === 'INGRESOS' ? 'INGRESO' : item.clasificacion === 'COSTOS' ? 'COSTO' : 'GASTO'),
-          clasificacion: item.clasificacion || 'OPERACIONAL',
-          naturaleza: item.naturaleza || (item.tipo === 'PASIVO' || item.tipo === 'PATRIMONIO' || item.tipo === 'INGRESO' ? 'ACREEDORA' : 'DEUDORA'),
-          requiereAuxiliarRut: item.requiereAuxiliarRut !== undefined ? Boolean(item.requiereAuxiliarRut) : Boolean(item.aceptaAuxiliar),
-          requiereCentroCosto: Boolean(item.requiereCentroCosto),
-          esConciliableBancaria: Boolean(item.esConciliableBancaria),
-          activa: item.activa !== false,
-          manejaMultimoneda: Boolean(item.manejaMultimoneda),
-          monedaCodigo: item.monedaCodigo || 'CLP',
-          requiereDocReferencia: item.requiereDocReferencia !== undefined ? Boolean(item.requiereDocReferencia) : Boolean(item.requiereDocRef),
-          esEfectivoEquivalente: Boolean(item.esEfectivoEquivalente),
-          esContracuentaEfectivo: Boolean(item.esContracuentaEfectivo),
-          requiereProyecto: Boolean(item.requiereProyecto),
-          notasExplicativas: item.notasExplicativas || undefined,
-          tipoAuxiliarPermitido: item.tipoAuxiliarPermitido || undefined,
-          auxiliarPredeterminadoRut: item.auxiliarPredeterminadoRut || undefined,
-          agrupacionFiscal: item.agrupacionFiscal,
-          agrupacionMatrizExtranjera: item.agrupacionMatrizExtranjera,
-          agrupacionPersonalizada: item.agrupacionPersonalizada,
-          empresaRut,
-        }));
-
-        const key = getStorageKey(empresaRut, 'accounts');
-        try {
-          localStorage.setItem(key, JSON.stringify(mapped));
-        } catch {}
-
-        return mapped;
-      }
-    }
-  } catch (err) {
-    console.warn('[CompanyChartService] Error al obtener plan del servidor:', err);
-  }
-  return loadCompanyChartOfAccounts(empresaRut);
-}
-
-/**
- * Cargar Grupos y Subgrupos personalizados de la empresa
+ * Grupos y subgrupos de la empresa (copia en caché del servidor; [] si no tiene plan).
  */
 export function loadCompanyGroups(empresaRut: string): AccountGroupDefinition[] {
-  const key = getStorageKey(empresaRut, 'groups');
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.warn('Error leyendo grupos desde localStorage:', e);
-  }
-
-  saveCompanyGroups(empresaRut, DEFAULT_CHILEAN_GROUPS);
-  return DEFAULT_CHILEAN_GROUPS;
+  const cached = readCache<AccountGroupDefinition[]>(getStorageKey(empresaRut, 'groups'));
+  return Array.isArray(cached) ? cached : [];
 }
 
-/**
- * Guardar Grupos y Subgrupos personalizados de la empresa (Sincronización Local + Servidor Multi-Usuario)
- */
-export function saveCompanyGroups(empresaRut: string, groups: AccountGroupDefinition[]): void {
-  const key = getStorageKey(empresaRut, 'groups');
-  try {
-    localStorage.setItem(key, JSON.stringify(groups));
-  } catch (e) {
-    console.error('Error guardando grupos en localStorage:', e);
-  }
-
-  if (typeof window !== 'undefined') {
-    try {
-      window.dispatchEvent(
-        new CustomEvent('companyGroupsUpdated', {
-          detail: { empresaRut, groups },
-        })
-      );
-    } catch {}
-  }
-
-  if (typeof fetch !== 'undefined') {
-    fetch('/api/accounting/chart-groups', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empresaId: empresaRut, groups }),
-    }).catch(() => {});
-  }
+/** Guarda los grupos junto con el plan en el servidor. */
+export function saveCompanyGroups(empresaRut: string, groups: AccountGroupDefinition[]): Promise<ChartSaveResult> {
+  writeCache(getStorageKey(empresaRut, 'groups'), groups);
+  emit('companyGroupsUpdated', { empresaRut, groups });
+  return putChart(empresaRut, loadCompanyChartOfAccounts(empresaRut), groups);
 }
 
-/**
- * Obtener Grupos y Subgrupos actualizados desde el Servidor
- */
 export async function fetchCompanyGroups(empresaRut: string): Promise<AccountGroupDefinition[]> {
-  try {
-    const res = await fetch(`/api/accounting/chart-groups?empresaId=${encodeURIComponent(empresaRut)}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        const key = getStorageKey(empresaRut, 'groups');
-        try {
-          localStorage.setItem(key, JSON.stringify(json.data));
-        } catch {}
-        return json.data;
-      }
-    }
-  } catch (err) {
-    console.warn('[CompanyChartService] Error al obtener grupos del servidor:', err);
-  }
-  return loadCompanyGroups(empresaRut);
+  const st = await fetchCompanyChartState(empresaRut);
+  return st ? st.groups : loadCompanyGroups(empresaRut);
 }
 
 /**
- * Restablecer Plan de Cuentas y Grupos al estándar oficial de Chile (CMF / SII)
+ * Reemplaza el plan por la plantilla estándar (solo si la empresa no tiene asientos).
  */
-export function resetCompanyChartToDefault(empresaRut: string): {
-  chart: HierarchicalAccountItem[];
-  groups: AccountGroupDefinition[];
-} {
-  saveCompanyGroups(empresaRut, DEFAULT_CHILEAN_GROUPS);
-  const groupMap = new Map(DEFAULT_CHILEAN_GROUPS.map((g) => [g.codigo, g.nombre]));
-
-  const freshChart: HierarchicalAccountItem[] = CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS.map((acc) => {
-    const mappings = inferDefaultMappings(acc);
-    return {
-      ...acc,
-      nombreGrupo: groupMap.get(acc.grupo) || `Grupo ${acc.grupo}`,
-      nombreSubgrupo: groupMap.get(acc.subgrupo) || `Subgrupo ${acc.subgrupo}`,
-      agrupacionFiscal: mappings.agrupacionFiscal,
-      agrupacionMatrizExtranjera: mappings.agrupacionMatrizExtranjera,
-      empresaRut,
-    };
-  });
-
-  saveCompanyChartOfAccounts(empresaRut, freshChart);
-  return { chart: freshChart, groups: DEFAULT_CHILEAN_GROUPS };
+export async function resetCompanyChartToDefault(empresaRut: string): Promise<{ ok: boolean; chart: HierarchicalAccountItem[]; groups: AccountGroupDefinition[]; error?: string }> {
+  const r = await initializeCompanyChartOnServer(empresaRut, { origen: 'PLANTILLA_ESTANDAR', reemplazar: true });
+  if (!r.ok || !r.state) return { ok: false, chart: loadCompanyChartOfAccounts(empresaRut), groups: loadCompanyGroups(empresaRut), error: r.error };
+  return { ok: true, chart: r.state.chart, groups: r.state.groups };
 }
 
 /**

@@ -55,14 +55,15 @@ export const ERP_SUBSCRIPTION_PLANS: ErpSubscriptionPlan[] = [
   },
 ];
 
+// K2.6: las cuentas por defecto se eligen del plan de cada empresa (vacías hasta definirlas).
 export const DEFAULT_SYSTEM_PARAMETERS: SystemGeneralParameters = {
   tenantId: '001-A | DAIBUDA XI ENGINE',
   // Mayor General
   intervaloDiasVencimiento: 30,
-  cuentaResultadosAcumulados: '3.1.02',
-  cuentaGananciaPerdidaAno: '3.1.03',
-  cuentaVariacionTipoCambio: '5.2.09',
-  cuentaCargosBancarios: '5.2.10',
+  cuentaResultadosAcumulados: '',
+  cuentaGananciaPerdidaAno: '',
+  cuentaVariacionTipoCambio: '',
+  cuentaCargosBancarios: '',
   // Cierre Art. 16 Código Tributario
   mesCierreEjercicio: 12,
   diaCierreEjercicio: 31,
@@ -70,31 +71,31 @@ export const DEFAULT_SYSTEM_PARAMETERS: SystemGeneralParameters = {
   bloqueoPeriodoCerrado: true,
   resolucionSiiCierreEspecial: '',
   // Clientes y Ventas
-  limiteCreditoDefecto: 400000,
+  limiteCreditoDefecto: 0,
   envioAcumuladoLotes: false,
-  textoLegalFactura: 'Factura exenta de IVA según Art. 12 Ley DL 825 / Operación sujeta a verificación de cumplimiento tributario.',
-  cuentaGastosEnvio: '5.2.10',
+  textoLegalFactura: '',
+  cuentaGastosEnvio: '',
   // Clientes y Ventas por Defecto
-  cuentasPorCobrarDefecto: '1.1.03',
-  cuentaVentasDefecto: '4.1.01',
-  cuentaDescuentoVentasDefecto: '4.1.02',
-  cuentaDescuentoProntoPagoDefecto: '5.2.01',
+  cuentasPorCobrarDefecto: '',
+  cuentaVentasDefecto: '',
+  cuentaDescuentoVentasDefecto: '',
+  cuentaDescuentoProntoPagoDefecto: '',
   despachoRequeridoDias: 1,
   // Centro de Costos por Defecto
   centroCostosRequeridosDespuesDias: 20,
   // Proveedores y Compradores
   rangoToleranciaEntregaSobreRecepcionPorc: 10,
   rangoToleranciaFacturaSobreCargaPorc: 10,
-  cuentaPagableDefecto: '2.1.01',
-  cuentaDescuentoComprasDefecto: '4.1.03',
-  cuentaGuiaEntradaDefecto: '2.1.04',
+  cuentaPagableDefecto: '',
+  cuentaDescuentoComprasDefecto: '',
+  cuentaGuiaEntradaDefecto: '',
   // Inventario
   permitirInventarioNegativo: false,
   // Productos por Defecto
-  cuentaInventarioDefecto: '1.1.08',
-  cuentaCostoVentaDefecto: '5.1.01',
-  cuentaAjustesInventarioDefecto: '5.1.02',
-  cuentaCostosEnsambleArticulosDefecto: '5.1.04',
+  cuentaInventarioDefecto: '',
+  cuentaCostoVentaDefecto: '',
+  cuentaAjustesInventarioDefecto: '',
+  cuentaCostosEnsambleArticulosDefecto: '',
   // Fabricación por Defecto
   ordenTrabajoRequeridaDespuesDias: 20,
 };

@@ -1,3 +1,4 @@
+import { ChartError, getCompanyChartState, saveCompanyChart } from '../services/chartOfAccountsServerService';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
@@ -161,188 +162,50 @@ accountingJournalRouter.get('/entries/:id', async (req: Request, res: Response) 
 });
 
 /**
- * GET /api/accounting/chart-of-accounts
- * Plan de cuentas IFRS parametrizado por empresa (Multi-Tenant & Multi-Usuario)
+ * K2: rutas heredadas del plan de cuentas. Delegan en el servicio único (/api/companies/:id/chart):
+ * sin plan de respaldo (antes devolvían un plan de 25 cuentas con otra codificación) y con las
+ * mismas validaciones y protecciones que el editor.
  */
+function chartLegacyFail(res: Response, err: any) {
+  if (err instanceof ChartError) {
+    return res.status(err.status).json({ success: false, error: err.code, code: err.code, errorMessage: err.message, ...(err.details || {}) });
+  }
+  return res.status(500).json({ success: false, error: err?.message || String(err) });
+}
+
 accountingJournalRouter.get('/chart-of-accounts', async (req: Request, res: Response) => {
-  try {
-    const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
-    if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
-    const db = getMysqlDb();
-
-    // 1. Revisar persistencia física en disco
-    const diskAccounts = diskPersistence.getCompanyChart(empresaId);
-    if (diskAccounts && Array.isArray(diskAccounts) && diskAccounts.length > 0) {
-      return res.json({ success: true, source: 'LOCAL_DISK', count: diskAccounts.length, data: diskAccounts });
-    }
-
-    // 2. Si hay MySQL real conectado, buscar en MySQL
-    if (isRealMysqlConnected) {
-      const accounts = await db
-        .select()
-        .from(chartOfAccounts)
-        .where(eq(chartOfAccounts.empresaId, empresaId));
-      if (accounts && accounts.length > 0) {
-        diskPersistence.saveCompanyChart(empresaId, accounts);
-        return res.json({ success: true, source: 'MYSQL_8_0', count: accounts.length, data: accounts });
-      }
-    }
-
-    // Plan de cuentas oficial estándar IFRS PYME chileno
-    const standardPlan = [
-      { codigoCuenta: '1.1.01.001', nombreCuenta: 'Caja Moneda Nacional', clasificacion: 'ACTIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '1.1.01.002', nombreCuenta: 'Banco de Chile Cuenta Corriente', clasificacion: 'ACTIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '1.1.01.003', nombreCuenta: 'Banco Santander Cuenta Corriente', clasificacion: 'ACTIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '1.1.03.001', nombreCuenta: 'Clientes Nacionales', clasificacion: 'ACTIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '1.1.05.001', nombreCuenta: 'Existencias y Mercaderías en Bodega', clasificacion: 'ACTIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '1.1.07.001', nombreCuenta: 'IVA Crédito Fiscal (19%)', clasificacion: 'ACTIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '1.2.01.001', nombreCuenta: 'Activo por Derecho de Uso (IFRS 16 RoU)', clasificacion: 'ACTIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '2.1.01.001', nombreCuenta: 'Proveedores Nacionales por Pagar', clasificacion: 'PASIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '2.1.02.001', nombreCuenta: 'Honorarios por Pagar', clasificacion: 'PASIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '2.1.03.001', nombreCuenta: 'IVA Débito Fiscal (19%)', clasificacion: 'PASIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '2.1.03.002', nombreCuenta: 'Retención Impuesto de Segunda Categoría (14.5%)', clasificacion: 'PASIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '2.1.03.003', nombreCuenta: 'PPM por Enterar en F29', clasificacion: 'PASIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '2.1.04.001', nombreCuenta: 'Remuneraciones por Pagar', clasificacion: 'PASIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '2.1.04.002', nombreCuenta: 'Instituciones de Previsión (AFP y Fonasa) por Pagar', clasificacion: 'PASIVO', aceptaAuxiliar: false },
-      { codigoCuenta: '2.2.01.001', nombreCuenta: 'Pasivo Financiero por Arrendamiento (IFRS 16)', clasificacion: 'PASIVO', aceptaAuxiliar: true },
-      { codigoCuenta: '3.1.01.001', nombreCuenta: 'Capital Social Pagado', clasificacion: 'PATRIMONIO', aceptaAuxiliar: false },
-      { codigoCuenta: '3.1.02.001', nombreCuenta: 'Resultados Acumulados', clasificacion: 'PATRIMONIO', aceptaAuxiliar: false },
-      { codigoCuenta: '4.1.01.001', nombreCuenta: 'Ingresos por Ventas Facturadas Afectas', clasificacion: 'INGRESOS', aceptaAuxiliar: false },
-      { codigoCuenta: '4.1.01.002', nombreCuenta: 'Ingresos por Ventas Facturadas Exentas', clasificacion: 'INGRESOS', aceptaAuxiliar: false },
-      { codigoCuenta: '5.1.01.001', nombreCuenta: 'Costo de Ventas (PMP)', clasificacion: 'COSTOS', aceptaAuxiliar: false },
-      { codigoCuenta: '6.1.01.001', nombreCuenta: 'Gasto en Sueldos y Salarios', clasificacion: 'GASTOS', aceptaAuxiliar: true },
-      { codigoCuenta: '6.1.01.002', nombreCuenta: 'Gasto en Leyes Sociales Empleador (SIS, AFC, Mutual)', clasificacion: 'GASTOS', aceptaAuxiliar: false },
-      { codigoCuenta: '6.1.02.001', nombreCuenta: 'Gasto por Servicios de Honorarios', clasificacion: 'GASTOS', aceptaAuxiliar: true },
-      { codigoCuenta: '6.1.03.001', nombreCuenta: 'Gasto por Depreciación Derecho de Uso IFRS 16', clasificacion: 'GASTOS', aceptaAuxiliar: false },
-      { codigoCuenta: '6.1.04.001', nombreCuenta: 'Gasto Financiero por Intereses IFRS 16', clasificacion: 'GASTOS', aceptaAuxiliar: false },
-    ];
-
-    res.json({
-      success: true,
-      empresaId,
-      source: 'STANDARD_FALLBACK',
-      count: standardPlan.length,
-      data: standardPlan,
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
+  const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
+  if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
+  const state = getCompanyChartState(empresaId);
+  return res.json({ success: true, estado: state.estado, source: 'COMPANY_CHART', data: state.chart });
 });
 
-/**
- * POST /api/accounting/chart-of-accounts
- * Guarda o actualiza el Plan de Cuentas completo de una empresa
- */
 accountingJournalRouter.post('/chart-of-accounts', async (req: Request, res: Response) => {
+  const { empresaId, chart } = req.body || {};
+  if (!empresaId || !Array.isArray(chart)) {
+    return res.status(400).json({ success: false, code: 'MISSING_PARAMS', error: 'empresaId y chart (array) son requeridos' });
+  }
   try {
-    const { empresaId, chart } = req.body;
-    if (!empresaId || !Array.isArray(chart)) {
-      return res.status(400).json({ success: false, error: 'empresaId y chart (array) son requeridos' });
-    }
-
-    // Guardar en persistencia física en disco
-    diskPersistence.saveCompanyChart(empresaId, chart);
-
-    // Guardar en MySQL si está conectado
-    if (isRealMysqlConnected) {
-      try {
-        const db = getMysqlDb();
-        for (const acc of chart) {
-          const accountId = acc.id || `acc-${empresaId}-${acc.codigo}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-          const clasif = (acc.tipo === 'ACTIVO' ? 'ACTIVO' : acc.tipo === 'PASIVO' ? 'PASIVO' : acc.tipo === 'PATRIMONIO' ? 'PATRIMONIO' : acc.tipo === 'INGRESO' ? 'INGRESOS' : acc.tipo === 'COSTO' ? 'COSTOS' : 'GASTOS') as any;
-          await db.insert(chartOfAccounts).values({
-            id: accountId,
-            empresaId,
-            codigoCuenta: acc.codigo,
-            nombreCuenta: acc.nombre,
-            clasificacion: clasif,
-            aceptaAuxiliar: Boolean(acc.requiereAuxiliarRut),
-            manejaMultimoneda: Boolean(acc.manejaMultimoneda),
-            monedaCodigo: acc.monedaCodigo || 'CLP',
-            requiereDocReferencia: Boolean(acc.requiereDocReferencia),
-            esEfectivoEquivalente: Boolean(acc.esEfectivoEquivalente),
-            esContracuentaEfectivo: Boolean(acc.esContracuentaEfectivo),
-            requiereProyecto: Boolean(acc.requiereProyecto),
-            notasExplicativas: acc.notasExplicativas || null,
-          }).onDuplicateKeyUpdate({
-            set: {
-              nombreCuenta: acc.nombre,
-              aceptaAuxiliar: Boolean(acc.requiereAuxiliarRut),
-              manejaMultimoneda: Boolean(acc.manejaMultimoneda),
-              monedaCodigo: acc.monedaCodigo || 'CLP',
-              requiereDocReferencia: Boolean(acc.requiereDocReferencia),
-              esEfectivoEquivalente: Boolean(acc.esEfectivoEquivalente),
-              esContracuentaEfectivo: Boolean(acc.esContracuentaEfectivo),
-              requiereProyecto: Boolean(acc.requiereProyecto),
-              notasExplicativas: acc.notasExplicativas || null,
-            }
-          });
-        }
-      } catch (mysqlErr: any) {
-        console.warn('[AccountingJournalController] Advertencia al sincronizar plan en MySQL:', mysqlErr.message);
-      }
-    }
-
-    return res.json({ success: true, count: chart.length });
-  } catch (error: any) {
-    console.error('[AccountingJournalController] Error guardando plan de cuentas:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const state = saveCompanyChart(empresaId, chart, undefined, (req as any).user?.userId);
+    return res.json({ success: true, count: state.chart.length });
+  } catch (err) {
+    return chartLegacyFail(res, err);
   }
 });
 
-/**
- * PUT /api/accounting/chart-of-accounts/account
- * Actualiza una cuenta individual en el Plan de Cuentas de la empresa
- */
 accountingJournalRouter.put('/chart-of-accounts/account', async (req: Request, res: Response) => {
+  const { empresaId, account } = req.body || {};
+  if (!empresaId || !account || !account.codigo) {
+    return res.status(400).json({ success: false, code: 'MISSING_PARAMS', error: 'empresaId y account con codigo son requeridos' });
+  }
   try {
-    const { empresaId, account } = req.body;
-    if (!empresaId || !account || !account.codigo) {
-      return res.status(400).json({ success: false, error: 'empresaId y account con codigo son requeridos' });
-    }
-
-    diskPersistence.updateCompanyAccount(empresaId, account);
-
-    if (isRealMysqlConnected) {
-      try {
-        const db = getMysqlDb();
-        const accountId = account.id || `acc-${empresaId}-${account.codigo}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const clasif = (account.tipo === 'ACTIVO' ? 'ACTIVO' : account.tipo === 'PASIVO' ? 'PASIVO' : account.tipo === 'PATRIMONIO' ? 'PATRIMONIO' : account.tipo === 'INGRESO' ? 'INGRESOS' : account.tipo === 'COSTO' ? 'COSTOS' : 'GASTOS') as any;
-        await db.insert(chartOfAccounts).values({
-          id: accountId,
-          empresaId,
-          codigoCuenta: account.codigo,
-          nombreCuenta: account.nombre,
-          clasificacion: clasif,
-          aceptaAuxiliar: Boolean(account.requiereAuxiliarRut),
-          manejaMultimoneda: Boolean(account.manejaMultimoneda),
-          monedaCodigo: account.monedaCodigo || 'CLP',
-          requiereDocReferencia: Boolean(account.requiereDocReferencia),
-          esEfectivoEquivalente: Boolean(account.esEfectivoEquivalente),
-          esContracuentaEfectivo: Boolean(account.esContracuentaEfectivo),
-          requiereProyecto: Boolean(account.requiereProyecto),
-          notasExplicativas: account.notasExplicativas || null,
-        }).onDuplicateKeyUpdate({
-          set: {
-            nombreCuenta: account.nombre,
-            aceptaAuxiliar: Boolean(account.requiereAuxiliarRut),
-            manejaMultimoneda: Boolean(account.manejaMultimoneda),
-            monedaCodigo: account.monedaCodigo || 'CLP',
-            requiereDocReferencia: Boolean(account.requiereDocReferencia),
-            esEfectivoEquivalente: Boolean(account.esEfectivoEquivalente),
-            esContracuentaEfectivo: Boolean(account.esContracuentaEfectivo),
-            requiereProyecto: Boolean(account.requiereProyecto),
-            notasExplicativas: account.notasExplicativas || null,
-          }
-        });
-      } catch (mysqlErr: any) {
-        console.warn('[AccountingJournalController] Advertencia al sincronizar cuenta en MySQL:', mysqlErr.message);
-      }
-    }
-
-    return res.json({ success: true, data: account });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    const current = getCompanyChartState(empresaId).chart;
+    const exists = current.some((a: any) => a.codigo === account.codigo);
+    const next = exists ? current.map((a: any) => (a.codigo === account.codigo ? { ...a, ...account } : a)) : [...current, account];
+    const state = saveCompanyChart(empresaId, next, undefined, (req as any).user?.userId);
+    return res.json({ success: true, count: state.chart.length });
+  } catch (err) {
+    return chartLegacyFail(res, err);
   }
 });
 
@@ -404,7 +267,12 @@ accountingJournalRouter.get('/auxiliaries', async (req: Request, res: Response) 
       }
     }
 
-    // 3. Semilla predeterminada si no hay registros
+    // 3. Sin registros: lista vacía. Los auxiliares de ejemplo solo existen en la demostración
+    //    (antes cualquier empresa real recibía clientes y proveedores ficticios).
+    const { isDemoModeEnabled } = await import('../config/demoMode');
+    if (!isDemoModeEnabled()) {
+      return res.json({ success: true, empresaId, source: 'SIN_REGISTROS', count: 0, data: [] });
+    }
     const { INITIAL_CLIENT_AUXILIARIES } = await import('../data/seedClientAuxiliaries');
     const defaultList = INITIAL_CLIENT_AUXILIARIES.map((a: any) => ({
       id: a.id,
@@ -435,7 +303,7 @@ accountingJournalRouter.get('/auxiliaries', async (req: Request, res: Response) 
     return res.json({
       success: true,
       empresaId,
-      source: 'STANDARD_FALLBACK',
+      source: 'DEMO',
       count: defaultList.length,
       data: defaultList,
     });
@@ -516,8 +384,7 @@ accountingJournalRouter.get('/chart-groups', async (req: Request, res: Response)
   try {
     const empresaId = String(req.effectiveEmpresaId || (req.query.empresaId as string) || '').trim();
     if (!empresaId) return res.status(400).json({ success: false, code: 'MISSING_PARAMS', missingParams: ['empresaId'], error: 'Debe indicar la empresa; no se usa una empresa por defecto.' });
-    const groups = diskPersistence.getCompanyGroups(empresaId);
-    return res.json({ success: true, data: groups || [] });
+    return res.json({ success: true, data: getCompanyChartState(empresaId).groups });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -532,7 +399,11 @@ accountingJournalRouter.post('/chart-groups', async (req: Request, res: Response
     if (!empresaId || !Array.isArray(groups)) {
       return res.status(400).json({ success: false, error: 'empresaId y groups (array) son requeridos' });
     }
-    diskPersistence.saveCompanyGroups(empresaId, groups);
+    const state = getCompanyChartState(empresaId);
+    if (state.estado === 'SIN_PLAN') {
+      return res.status(409).json({ success: false, error: 'PLAN_NO_INICIALIZADO', errorMessage: 'Inicialice el plan de cuentas antes de editar sus grupos.' });
+    }
+    diskPersistence.saveCompanyGroups(state.empresaId, groups);
     return res.json({ success: true, count: groups.length });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

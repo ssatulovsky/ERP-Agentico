@@ -1110,21 +1110,6 @@ export const CHILE_HIERARCHICAL_CHART_OF_ACCOUNTS: HierarchicalAccountItem[] = [
     esConciliableBancaria: false,
     activa: true,
   },
-  {
-    codigo: '4.2.01.006',
-    nombre: 'Gastos de Alimentación & Viáticos Terreno',
-    clase: 4,
-    grupo: '4.2',
-    subgrupo: '4.2.01',
-    nivel: 5,
-    tipo: 'GASTO',
-    clasificacion: 'OPERACIONAL',
-    naturaleza: 'DEUDORA',
-    requiereAuxiliarRut: true,
-    requiereCentroCosto: true,
-    esConciliableBancaria: false,
-    activa: true,
-  },
 
   // ==========================================
   // CLASE 7: OTROS INGRESOS / GASTOS FUERA DE EXPLOTACIÓN (7.0.00.000)

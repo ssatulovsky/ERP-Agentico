@@ -13,6 +13,8 @@ import {
 import { HrManagementService } from './hrManagementService';
 import { SiiRcvService } from './siiRcvService';
 import { normalizeAndValidateJournalEntry } from './journalEntryNormalizer';
+// K2.7: registra el plan de cada empresa para el normalizador de asientos.
+import './chartOfAccountsServerService';
 import { calculatePreF29 } from '../utils/f29SeniorEngine';
 import { MODULE_AGENTS_REGISTRY } from './moduleAgentGovernanceService';
 import { buildAgentMemoryContext } from './agentContextBuilderService';
@@ -740,6 +742,16 @@ export class AutonomousAgentEngine {
             observacion: 'Asiento contable validado y balanceado al centavo según normativa chilena e IFRS.',
           };
         } catch (valErr: any) {
+          // K2.7: cuenta que no existe en el plan de la empresa → se pide la cuenta (no se inventa).
+          if (valErr?.code === 'CUENTA_NO_RESUELTA') {
+            return {
+              status: 'MISSING_PARAMS',
+              code: 'CUENTA_NO_RESUELTA',
+              missingParams: (valErr.lineas || []).map((l: any) => `cuenta del plan para "${l.nombreCuenta || l.codigoCuenta || 'línea sin cuenta'}"`),
+              error: valErr.message,
+              observacion: `${valErr.message} Pida al usuario la cuenta exacta del plan de cuentas de la empresa.`,
+            };
+          }
           return {
             status: 'UNBALANCED_ENTRY_ERROR',
             partidaDobleValida: false,

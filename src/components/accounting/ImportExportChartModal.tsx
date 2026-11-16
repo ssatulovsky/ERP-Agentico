@@ -15,7 +15,8 @@ interface ImportExportChartModalProps {
   onClose: () => void;
   chart?: HierarchicalAccountItem[];
   accounts?: HierarchicalAccountItem[];
-  onImport: (importedAccounts: HierarchicalAccountItem[]) => void;
+  /** Debe guardar en el servidor y devolver el resultado: el modal solo informa éxito si se guardó. */
+  onImport: (importedAccounts: HierarchicalAccountItem[]) => Promise<{ ok: boolean; error?: string }>;
   empresaNombre?: string;
   empresaRut?: string;
   company?: any;
@@ -70,7 +71,7 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const handleExecuteImport = () => {
+  const handleExecuteImport = async () => {
     setImportStatus(null);
     if (!importJsonText.trim()) {
       setImportStatus({ success: false, message: 'Pegue o cargue un contenido JSON válido.' });
@@ -97,13 +98,15 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
         return {
           codigo: cod,
           nombre: nom,
-          clase: Number(item.clase) >= 1 && Number(item.clase) <= 7 ? (Number(item.clase) as any) : 1,
+          // K2 (C7): sin valores supuestos. La clase sale del código; tipo, naturaleza y clasificación
+          // se toman del archivo y, si faltan, el servidor rechaza el plan indicando qué falta.
+          clase: Number(item.clase || cod.split('.')[0]) as any,
           grupo: item.grupo || cod.split('.').slice(0, 2).join('.'),
           subgrupo: item.subgrupo || cod.split('.').slice(0, 3).join('.'),
-          nivel: item.nivel || 5,
-          tipo: item.tipo || 'ACTIVO',
-          clasificacion: item.clasificacion || 'CIRCULANTE',
-          naturaleza: item.naturaleza || 'DEUDORA',
+          nivel: item.nivel || (Math.min(5, cod.split('.').length + (cod.split('.').length >= 4 ? 1 : 0)) as any),
+          tipo: item.tipo,
+          clasificacion: item.clasificacion,
+          naturaleza: item.naturaleza,
           requiereAuxiliarRut: Boolean(item.requiereAuxiliarRut),
           requiereCentroCosto: Boolean(item.requiereCentroCosto),
           esConciliableBancaria: Boolean(item.esConciliableBancaria),
@@ -131,8 +134,12 @@ export const ImportExportChartModal: React.FC<ImportExportChartModalProps> = ({
         };
       });
 
-      onImport(formatted);
-      setImportStatus({ success: true, message: `Se han importado exitosamente ${formatted.length} cuentas al plan de la empresa.` });
+      const r = await onImport(formatted);
+      if (!r.ok) {
+        setImportStatus({ success: false, message: `El servidor no guardó el plan: ${r.error || 'error desconocido'}` });
+        return;
+      }
+      setImportStatus({ success: true, message: `Se guardaron ${formatted.length} cuentas en el plan de la empresa.` });
       setTimeout(() => {
         onClose();
       }, 1500);

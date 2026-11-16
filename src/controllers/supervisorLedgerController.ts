@@ -1,3 +1,4 @@
+import { validateEntryAccounts } from '../services/chartOfAccountsServerService';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import crypto from 'node:crypto';
@@ -553,8 +554,9 @@ supervisorLedgerRouter.put('/entries/:id', async (req: Request, res: Response) =
           id: l.id || crypto.randomUUID(),
           entryId: id,
           lineaNumero: idx + 1,
-          codigoCuenta: l.codigoCuenta || l.cuentaCodigo || '1.1.01.001',
-          nombreCuenta: l.nombreCuenta || l.cuentaNombre || 'Cuenta Contable',
+          // K2.7: sin cuenta por defecto (antes Caja 1.1.01.001); la validación de abajo la rechaza.
+          codigoCuenta: String(l.codigoCuenta || l.cuentaCodigo || '').trim(),
+          nombreCuenta: l.nombreCuenta || l.cuentaNombre || '',
           debe: (d).toFixed(2),
           haber: (h).toFixed(2),
           rutAuxiliar: l.rutAuxiliar?.trim() || null,
@@ -576,6 +578,11 @@ supervisorLedgerRouter.put('/entries/:id', async (req: Request, res: Response) =
           tipoCambio: l.tipoCambio != null ? Number(l.tipoCambio).toFixed(4) : null,
         };
       });
+
+      const chartCheck = validateEntryAccounts(currentEntry.empresaId, processedLines.map((pl: any) => pl.codigoCuenta));
+      if (!chartCheck.ok) {
+        return res.status(400).json({ success: false, error: chartCheck.code, message: chartCheck.message, cuentas: chartCheck.cuentas });
+      }
 
       if (Math.abs(sumDebe - sumHaber) > 1) {
         return res.status(400).json({

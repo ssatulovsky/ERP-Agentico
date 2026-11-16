@@ -85,8 +85,10 @@ async function run() {
     assert.ok(!src('src/components/AgentClientConfig.tsx').includes("console.log('Nueva cuenta IFRS"));
   });
 
-  await test('C6: restaurar el plan estándar entrega el arreglo de cuentas, no el objeto', () => {
-    assert.ok(src('src/components/SeniorAccountingOrchestrator.tsx').includes('setChartOfAccounts(def.chart)'));
+  await test('C6: restaurar el plan ya no entrega un objeto como lista de cuentas (pasa por el asistente del servidor)', () => {
+    const sao = src('src/components/SeniorAccountingOrchestrator.tsx');
+    assert.ok(!sao.includes('setChartOfAccounts(def)'));
+    assert.ok(sao.includes('<ChartInitializationWizard'));
   });
 
   await test('A5: el alta no trae una empresa ficticia ni inventa banco, cuenta, régimen o PPM', () => {

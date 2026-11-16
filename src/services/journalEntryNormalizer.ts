@@ -4,7 +4,7 @@ import {
   type JournalEntryOrigin,
   type RawJournalEntryInput,
 } from '../types/accountingEntryFormat.types';
-import { STANDARD_ACCOUNT_PLAN, formatNumberCL } from '../utils/chileanAccounting';
+import { formatNumberCL } from '../utils/chileanAccounting';
 
 // ============================================================================
 // ERRORES ESTRUCTURADOS DE CONTABILIDAD Y LIBRO DIARIO
@@ -48,75 +48,81 @@ export class InvalidJournalEntryError extends Error {
 }
 
 // ============================================================================
-// DICCIONARIO DE MAPEADO INTELIGENTE DE CUENTAS CHILENAS COMUNES
+// RESOLUCIÓN DE CUENTAS CONTRA EL PLAN DE LA EMPRESA (K2.7)
 // ============================================================================
+//
+// Antes las cuentas se resolvían contra un plan "estándar" distinto del plan de la empresa y, si no se
+// encontraban, se inventaba la cuenta 9.9.99.99 "Cuenta No Clasificada" (además "banco de chile" se
+// asignaba a Banco Santander). Ahora:
+//   1. Si el código existe en el plan de la empresa, se usa.
+//   2. Si no, se busca por nombre exacto en el plan de la empresa.
+//   3. Si no, se busca por sinónimos frecuentes, solo si hay una única cuenta imputable que calce.
+//   4. Si no se resuelve, el asiento se rechaza con CUENTA_NO_RESUELTA y la lista de líneas: quien
+//      lo generó (agente, nómina, F29) debe pedir la cuenta.
+// Sin plan disponible (por ejemplo, una vista previa sin empresa) se aceptan los códigos tal como
+// vienen y se rechazan las líneas sin código.
 
-const COMMON_ACCOUNT_MAPPINGS: Record<string, { codigo: string; nombre: string }> = {
-  'caja': { codigo: '1.1.02', nombre: 'Caja Chica' },
-  'banco': { codigo: '1.1.01', nombre: 'Banco Santander Moneda Nacional' },
-  'banco santander': { codigo: '1.1.01', nombre: 'Banco Santander Moneda Nacional' },
-  'banco de chile': { codigo: '1.1.01', nombre: 'Banco Santander Moneda Nacional' },
-  'banco estado': { codigo: '1.1.01', nombre: 'Banco Santander Moneda Nacional' },
-  'clientes': { codigo: '1.1.03', nombre: 'Clientes Nacionales (Cuentas por Cobrar)' },
-  'clientes nacionales': { codigo: '1.1.03', nombre: 'Clientes Nacionales (Cuentas por Cobrar)' },
-  'cuentas por cobrar': { codigo: '1.1.03', nombre: 'Clientes Nacionales (Cuentas por Cobrar)' },
-  'iva credito fiscal': { codigo: '1.1.05', nombre: 'IVA Crédito Fiscal' },
-  'iva credito': { codigo: '1.1.05', nombre: 'IVA Crédito Fiscal' },
-  'credito fiscal': { codigo: '1.1.05', nombre: 'IVA Crédito Fiscal' },
-  'remanente credito fiscal': { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal' },
-  'remanente credito fiscal (mes anterior)': { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal' },
-  'remanente credito fiscal mes anterior': { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal' },
-  'remanente credito fiscal (mes siguiente)': { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal' },
-  'remanente credito fiscal mes siguiente': { codigo: '1.1.06', nombre: 'Remanente de Crédito Fiscal' },
-  'ppm por recuperar': { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar' },
-  'ppm por recuperar (activo)': { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar' },
-  'ppm por recuperar activo': { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar' },
-  'ppm pagos provisorios mensuales por recuperar': { codigo: '1.1.07', nombre: 'PPM Pagos Provisorios Mensuales por Recuperar' },
-  'mercaderias': { codigo: '1.1.08', nombre: 'Mercaderías / Existencias' },
-  'existencias': { codigo: '1.1.08', nombre: 'Mercaderías / Existencias' },
-  'inventario': { codigo: '1.1.08', nombre: 'Mercaderías / Existencias' },
-  'activo fijo': { codigo: '1.2.03', nombre: 'Mobiliario e Instalaciones' },
-  'proveedores': { codigo: '2.1.01', nombre: 'Proveedores Nacionales (Cuentas por Pagar)' },
-  'proveedores nacionales': { codigo: '2.1.01', nombre: 'Proveedores Nacionales (Cuentas por Pagar)' },
-  'cuentas por pagar': { codigo: '2.1.01', nombre: 'Proveedores Nacionales (Cuentas por Pagar)' },
-  'honorarios por pagar': { codigo: '2.1.02', nombre: 'Honorarios por Pagar' },
-  'iva debito fiscal': { codigo: '2.1.03', nombre: 'IVA Débito Fiscal' },
-  'iva debito': { codigo: '2.1.03', nombre: 'IVA Débito Fiscal' },
-  'debito fiscal': { codigo: '2.1.03', nombre: 'IVA Débito Fiscal' },
-  'retencion honorarios por pagar': { codigo: '2.1.04', nombre: 'Retención Honorarios 2da Categoría por Pagar (F29)' },
-  'retenciones honorarios por pagar': { codigo: '2.1.04', nombre: 'Retención Honorarios 2da Categoría por Pagar (F29)' },
-  'impuesto unico por pagar': { codigo: '2.1.05', nombre: 'Impuesto Único de Segunda Categoría por Pagar (F29)' },
-  'impuesto unico segunda categoria': { codigo: '2.1.05', nombre: 'Impuesto Único de Segunda Categoría por Pagar (F29)' },
-  'ppm por pagar': { codigo: '2.1.06', nombre: 'PPM por Pagar (F29)' },
-  'impuestos por pagar (f29 / tgr)': { codigo: '2.1.06', nombre: 'Impuestos por Pagar (F29 / TGR)' },
-  'impuestos por pagar f29  tgr': { codigo: '2.1.06', nombre: 'Impuestos por Pagar (F29 / TGR)' },
-  'impuestos por pagar f29 tgr': { codigo: '2.1.06', nombre: 'Impuestos por Pagar (F29 / TGR)' },
-  'impuestos por pagar': { codigo: '2.1.06', nombre: 'Impuestos por Pagar (F29 / TGR)' },
-  'sueldos liquidos por pagar': { codigo: '2.1.07', nombre: 'Sueldos Líquidos por Pagar' },
-  'remuneraciones por pagar': { codigo: '2.1.07', nombre: 'Sueldos Líquidos por Pagar' },
-  'instituciones previsionales (afp) por pagar': { codigo: '2.1.08', nombre: 'Instituciones Previsionales (AFP) por Pagar' },
-  'leyes sociales por pagar (afp)': { codigo: '2.1.08', nombre: 'Instituciones Previsionales (AFP) por Pagar' },
-  'salud (fonasa / isapres) por pagar': { codigo: '2.1.09', nombre: 'Salud (Fonasa / Isapres) por Pagar' },
-  'leyes sociales por pagar (salud)': { codigo: '2.1.09', nombre: 'Salud (Fonasa / Isapres) por Pagar' },
-  'afc seguro de cesantia por pagar': { codigo: '2.1.10', nombre: 'AFC Seguro de Cesantía por Pagar' },
-  'leyes sociales por pagar (afc)': { codigo: '2.1.10', nombre: 'AFC Seguro de Cesantía por Pagar' },
-  'mutual de seguridad / sis por pagar': { codigo: '2.1.11', nombre: 'Mutual de Seguridad / SIS por Pagar' },
-  'leyes sociales por pagar (mutual/sis)': { codigo: '2.1.11', nombre: 'Mutual de Seguridad / SIS por Pagar' },
-  'ingresos por ventas': { codigo: '4.1.01', nombre: 'Ingresos por Ventas Afectas a IVA' },
-  'ventas afectas': { codigo: '4.1.01', nombre: 'Ingresos por Ventas Afectas a IVA' },
-  'ventas exentas': { codigo: '4.1.02', nombre: 'Ingresos por Servicios Exentos' },
-  'costo de ventas': { codigo: '5.1.01', nombre: 'Costo de Ventas / Mercaderías' },
-  'sueldos y remuneraciones base': { codigo: '5.2.01', nombre: 'Sueldos y Remuneraciones Base' },
-  'sueldos': { codigo: '5.2.01', nombre: 'Sueldos y Remuneraciones Base' },
-  'gratificaciones legales': { codigo: '5.2.02', nombre: 'Gratificaciones Legales' },
-  'horas extras': { codigo: '5.2.03', nombre: 'Horas Extras' },
-  'aportes patronales': { codigo: '5.2.04', nombre: 'Aportes Patronales (SIS, Mutual, AFC Empleador)' },
-  'asignaciones no imponibles': { codigo: '5.2.05', nombre: 'Asignaciones No Imponibles (Colación / Movilización)' },
-  'honorarios profesionales': { codigo: '5.2.06', nombre: 'Gastos de Honorarios Profesionales' },
-  'gasto iva no recuperable': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
-  'gasto iva no recuperable (art. 23 dl 825)': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
-  'iva no recuperable': { codigo: '5.2.12', nombre: 'Gasto IVA No Recuperable (Art. 23 DL 825)' },
-};
+export interface ChartAccountRef {
+  codigo: string;
+  nombre: string;
+  activa?: boolean;
+}
+
+export class UnresolvedAccountError extends Error {
+  readonly code = 'CUENTA_NO_RESUELTA';
+  constructor(public readonly lineas: Array<{ codigoCuenta?: string; nombreCuenta?: string }>) {
+    super(
+      `No se pudo identificar la cuenta en el plan de la empresa para: ${lineas
+        .map((l) => [l.codigoCuenta, l.nombreCuenta].filter(Boolean).join(' ') || '(línea sin cuenta)')
+        .join('; ')}. Indique la cuenta exacta del plan.`
+    );
+    this.name = 'UnresolvedAccountError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+type ChartProvider = (empresaId: string) => ChartAccountRef[] | null;
+let chartProvider: ChartProvider | null = null;
+
+/** El servidor registra aquí cómo obtener el plan de cada empresa; el navegador puede pasarlo en opts.chart. */
+export function setJournalChartProvider(provider: ChartProvider | null): void {
+  chartProvider = provider;
+}
+
+/** Sinónimos frecuentes → términos que deben aparecer en el nombre de la cuenta del plan. */
+const ACCOUNT_SYNONYMS: Array<{ claves: string[]; terminos: string[] }> = [
+  { claves: ['caja', 'caja chica', 'fondo fijo'], terminos: ['caja'] },
+  { claves: ['banco santander'], terminos: ['santander'] },
+  { claves: ['banco de chile'], terminos: ['banco de chile'] },
+  { claves: ['banco estado'], terminos: ['estado'] },
+  { claves: ['clientes', 'clientes nacionales', 'cuentas por cobrar'], terminos: ['clientes nacionales', 'clientes'] },
+  { claves: ['iva credito fiscal', 'iva credito', 'credito fiscal'], terminos: ['iva credito fiscal'] },
+  { claves: ['remanente credito fiscal', 'remanente credito fiscal mes anterior', 'remanente credito fiscal mes siguiente'], terminos: ['remanente'] },
+  { claves: ['ppm por recuperar', 'ppm por recuperar activo', 'ppm pagos provisorios mensuales por recuperar'], terminos: ['ppm por recuperar'] },
+  { claves: ['mercaderias', 'existencias', 'inventario'], terminos: ['mercaderias', 'existencias'] },
+  { claves: ['proveedores', 'proveedores nacionales', 'cuentas por pagar'], terminos: ['proveedores nacionales', 'proveedores'] },
+  { claves: ['honorarios por pagar'], terminos: ['honorarios por pagar'] },
+  { claves: ['iva debito fiscal', 'iva debito', 'debito fiscal'], terminos: ['iva debito fiscal'] },
+  { claves: ['retencion honorarios por pagar', 'retenciones honorarios por pagar'], terminos: ['retencion honorarios'] },
+  { claves: ['impuesto unico por pagar', 'impuesto unico segunda categoria'], terminos: ['impuesto unico'] },
+  { claves: ['ppm por pagar'], terminos: ['ppm por pagar'] },
+  { claves: ['impuestos por pagar', 'impuestos por pagar f29 tgr'], terminos: ['impuestos mensuales f29 por pagar', 'impuestos por pagar'] },
+  { claves: ['sueldos liquidos por pagar', 'remuneraciones por pagar'], terminos: ['sueldos liquidos por pagar'] },
+  { claves: ['instituciones previsionales afp por pagar', 'leyes sociales por pagar afp'], terminos: ['afp'] },
+  { claves: ['salud fonasa isapres por pagar', 'leyes sociales por pagar salud'], terminos: ['fonasa', 'isapre'] },
+  { claves: ['afc seguro de cesantia por pagar', 'leyes sociales por pagar afc'], terminos: ['afc seguro de cesantia'] },
+  { claves: ['mutual de seguridad sis por pagar', 'leyes sociales por pagar mutualsis'], terminos: ['mutual de seguridad'] },
+  { claves: ['ingresos por ventas', 'ventas afectas'], terminos: ['ventas afectas'] },
+  { claves: ['ventas exentas'], terminos: ['exentos'] },
+  { claves: ['costo de ventas'], terminos: ['costo de ventas'] },
+  { claves: ['sueldos y remuneraciones base', 'sueldos'], terminos: ['sueldos y remuneraciones'] },
+  { claves: ['gratificaciones legales'], terminos: ['gratificaciones'] },
+  { claves: ['horas extras'], terminos: ['horas extra'] },
+  { claves: ['aportes patronales'], terminos: ['aportes patronales'] },
+  { claves: ['asignaciones no imponibles'], terminos: ['asignaciones no imponibles'] },
+  { claves: ['honorarios profesionales'], terminos: ['honorarios profesionales'] },
+  { claves: ['gasto iva no recuperable', 'iva no recuperable'], terminos: ['iva no recuperable'] },
+];
 
 /**
  * Normaliza un texto de nombre de cuenta para búsqueda
@@ -126,55 +132,50 @@ function normalizeAccountKey(name: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9 ]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
+function imputableAccounts(chart: ChartAccountRef[]): ChartAccountRef[] {
+  return chart.filter((a) => a.activa !== false && !chart.some((b) => b.codigo.startsWith(`${a.codigo}.`)));
+}
+
 /**
- * Resuelve el código y nombre formal de una cuenta a partir de su nombre o código
+ * Resuelve el código y nombre de una cuenta en el plan de la empresa. null = no resuelta.
  */
-function resolveAccountMetadata(codigo?: string, nombre?: string): { codigo: string; nombre: string } {
+export function resolveAccountInChart(
+  chart: ChartAccountRef[] | null,
+  codigo?: string,
+  nombre?: string
+): { codigo: string; nombre: string } | null {
   const cleanCodigo = (codigo || '').trim();
   const cleanNombre = (nombre || '').trim();
+  if (!chart) return cleanCodigo ? { codigo: cleanCodigo, nombre: cleanNombre || cleanCodigo } : null;
 
-  // 1. Si ya tiene código válido, buscar si existe en el Plan Estándar
+  const imputables = imputableAccounts(chart);
   if (cleanCodigo) {
-    const foundInPlan = STANDARD_ACCOUNT_PLAN.find((p) => p.codigo === cleanCodigo);
-    if (foundInPlan) {
-      return {
-        codigo: foundInPlan.codigo,
-        nombre: cleanNombre || foundInPlan.nombre,
-      };
-    }
+    const exact = imputables.find((a) => a.codigo === cleanCodigo);
+    if (exact) return { codigo: exact.codigo, nombre: cleanNombre || exact.nombre };
   }
-
-  // 2. Si tiene nombre, buscar en diccionario de cuentas frecuentes
   if (cleanNombre) {
     const key = normalizeAccountKey(cleanNombre);
-    if (COMMON_ACCOUNT_MAPPINGS[key]) {
-      return {
-        codigo: cleanCodigo || COMMON_ACCOUNT_MAPPINGS[key].codigo,
-        nombre: cleanNombre || COMMON_ACCOUNT_MAPPINGS[key].nombre,
-      };
+    const byName = imputables.filter((a) => normalizeAccountKey(a.nombre) === key);
+    if (byName.length === 1) return { codigo: byName[0].codigo, nombre: byName[0].nombre };
+    const syn = ACCOUNT_SYNONYMS.find((s) => s.claves.some((k) => key === k || key.startsWith(`${k} `)));
+    if (syn) {
+      for (const termino of syn.terminos) {
+        const hits = imputables.filter((a) => normalizeAccountKey(a.nombre).includes(termino));
+        if (hits.length === 1) return { codigo: hits[0].codigo, nombre: hits[0].nombre };
+      }
     }
-
-    // Búsqueda parcial en Plan Estándar
-    const partialMatch = STANDARD_ACCOUNT_PLAN.find((p) =>
-      normalizeAccountKey(p.nombre).includes(key) || key.includes(normalizeAccountKey(p.nombre))
-    );
-    if (partialMatch) {
-      return {
-        codigo: cleanCodigo || partialMatch.codigo,
-        nombre: cleanNombre || partialMatch.nombre,
-      };
-    }
+    const contains = imputables.filter((a) => {
+      const n = normalizeAccountKey(a.nombre);
+      return n.includes(key) || (key.length > 6 && key.includes(n));
+    });
+    if (contains.length === 1) return { codigo: contains[0].codigo, nombre: contains[0].nombre };
   }
-
-  // 3. Fallback: código genérico de acuerdo a la primera palabra
-  return {
-    codigo: cleanCodigo || '9.9.99.99',
-    nombre: cleanNombre || 'Cuenta No Clasificada',
-  };
+  return null;
 }
 
 /**
@@ -210,7 +211,8 @@ function parseSafeAmount(val: unknown): number {
  * 5. Valida la partida doble estricta (diferencia == 0.00). Si no cuadra, arroja UnbalancedJournalEntryError.
  */
 export function normalizeAndValidateJournalEntry(
-  rawEntry: Partial<JournalEntry> | RawJournalEntryInput
+  rawEntry: Partial<JournalEntry> | RawJournalEntryInput,
+  opts: { chart?: ChartAccountRef[] | null } = {}
 ): JournalEntry {
   if (!rawEntry) {
     throw new InvalidJournalEntryError('El asiento contable no puede ser nulo o indefinido.');
@@ -248,6 +250,8 @@ export function normalizeAndValidateJournalEntry(
 
   const debits: SanitizedLine[] = [];
   const credits: SanitizedLine[] = [];
+  const chart = opts.chart !== undefined ? opts.chart : chartProvider ? chartProvider(empresaId) : null;
+  const unresolved: Array<{ codigoCuenta?: string; nombreCuenta?: string }> = [];
 
   for (const rawLine of rawLines) {
     let rawDebe = parseSafeAmount(rawLine.debe);
@@ -255,7 +259,12 @@ export function normalizeAndValidateJournalEntry(
 
     // Resolución de nombres y códigos
     const accountName = rawLine.nombreCuenta || (rawLine as any).cuenta || (rawLine as any).cuentaNombre || '';
-    const { codigo, nombre } = resolveAccountMetadata(rawLine.codigoCuenta, accountName);
+    const resolved = resolveAccountInChart(chart && chart.length ? chart : null, rawLine.codigoCuenta, accountName);
+    if (!resolved) {
+      unresolved.push({ codigoCuenta: rawLine.codigoCuenta, nombreCuenta: accountName });
+      continue;
+    }
+    const { codigo, nombre } = resolved;
 
     // Tratamiento de números negativos (regla de no negatividad)
     // Si debe < 0, se pasa a haber como positivo
@@ -313,6 +322,10 @@ export function normalizeAndValidateJournalEntry(
     } else {
       credits.push(lineData);
     }
+  }
+
+  if (unresolved.length > 0) {
+    throw new UnresolvedAccountError(unresolved);
   }
 
   // Ordenamiento canónico:

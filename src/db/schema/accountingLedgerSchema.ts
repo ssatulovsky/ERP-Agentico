@@ -60,6 +60,9 @@ export const chartOfAccounts = mysqlTable(
     esContracuentaEfectivo: boolean('es_contracuenta_efectivo').notNull().default(false),
     requiereProyecto: boolean('requiere_proyecto').notNull().default(false),
     notasExplicativas: json('notas_explicativas').$type<number[]>(),
+    // K2: todos los atributos de la cuenta (naturaleza, centro de costo, conciliable, nivel, grupo,
+    // auxiliar, agrupaciones…). Antes MySQL guardaba solo una parte y el resto se perdía.
+    atributos: json('atributos').$type<Record<string, any>>(),
     createdAt: datetime('created_at', { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   (table) => ({

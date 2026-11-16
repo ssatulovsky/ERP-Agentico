@@ -134,10 +134,9 @@ import {
   saveCompanyChartOfAccounts,
   loadCompanyGroups,
   saveCompanyGroups,
-  resetCompanyChartToDefault,
   buildGroupedBalanceReport,
   normalizeAccountCodeKey,
-  fetchCompanyChartOfAccounts,
+  fetchCompanyChartState,
 } from '../utils/companyChartOfAccountsService';
 import {
   loadCompanyAuxiliaries,
@@ -152,6 +151,7 @@ import { loadCompanyProjects, saveCompanyProjects } from '../utils/companyProjec
 import type { ExpenseProject } from '../types';
 import { GroupManagerModal } from './accounting/GroupManagerModal';
 import { ImportExportChartModal } from './accounting/ImportExportChartModal';
+import { ChartInitializationWizard } from './accounting/ChartInitializationWizard';
 import { MassJournalEntryImportModal } from './accounting/MassJournalEntryImportModal';
 import { GroupedBalanceView } from './accounting/GroupedBalanceView';
 import { seedF29 } from '../data/seedData';
@@ -306,14 +306,14 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [auxiliarFilterStatus, setAuxiliarFilterStatus] = useState<'TODOS' | 'CON_SALDO' | 'SALDADO'>('TODOS');
   const [selectedAuxiliarRut, setSelectedAuxiliarRut] = useState<string | null>(null);
   const [auxiliarViewMode, setAuxiliarViewMode] = useState<'RESUMEN_RUT' | 'DETALLADO_FECHAS' | 'LIBRO_SEGUN_LEY'>('RESUMEN_RUT');
-  const [auxiliarDateFrom, setAuxiliarDateFrom] = useState<string>(() => dates.startDate || '2026-01-01');
-  const [auxiliarDateTo, setAuxiliarDateTo] = useState<string>(() => dates.endDate || '2026-12-31');
+  const [auxiliarDateFrom, setAuxiliarDateFrom] = useState<string>(() => dates.fechaInicio || '2026-01-01');
+  const [auxiliarDateTo, setAuxiliarDateTo] = useState<string>(() => dates.fechaFin || '2026-12-31');
   const [showAuxReportCustomizer, setShowAuxReportCustomizer] = useState<boolean>(false);
   const [auxReportConfig, setAuxReportConfig] = useState<AuxiliaryBookReportConfig>(() => ({
     bookScope: 'PROVEEDORES',
     reportMode: 'LIBRO_SEGUN_LEY',
-    fechaDesde: dates.startDate || '2026-01-01',
-    fechaHasta: dates.endDate || '2026-12-31',
+    fechaDesde: dates.fechaInicio || '2026-01-01',
+    fechaHasta: dates.fechaFin || '2026-12-31',
     selectedRut: null,
     customTitle: '',
     folioInicial: 101,
@@ -354,6 +354,10 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   const [chartGroups, setChartGroups] = useState<AccountGroupDefinition[]>(() =>
     loadCompanyGroups(company.rut)
   );
+  // K2: estado del plan en el servidor (SIN_PLAN abre el asistente de inicialización)
+  const [chartServerState, setChartServerState] = useState<'DESCONOCIDO' | 'SIN_PLAN' | 'CONFIGURADO'>('DESCONOCIDO');
+  const [isChartWizardOpen, setIsChartWizardOpen] = useState(false);
+  const [chartWizardReplace, setChartWizardReplace] = useState(false);
 
   // Notas a los Estados Financieros (NIIF / IFRS - CMF Chile)
   const [financialNotes, setFinancialNotes] = useState<FinancialStatementNote[]>(() =>
@@ -387,40 +391,41 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
       }
     }).catch(() => {});
 
-    // Sincronizar asíncronamente el Plan de Cuentas desde el servidor para reflejar cambios del contador o entre usuarios
-    fetchCompanyChartOfAccounts(company.rut).then((remoteChart) => {
-      if (isMounted && remoteChart && Array.isArray(remoteChart) && remoteChart.length > 0) {
-        setChartOfAccounts(remoteChart);
-      }
-    }).catch(() => {});
+    // K2: el plan vigente es el del servidor (también si está vacío o la empresa no tiene plan).
+    const refreshFromServer = () =>
+      fetchCompanyChartState(company.rut)
+        .then((st) => {
+          if (!isMounted || !st) return;
+          setChartOfAccounts(st.chart);
+          setChartGroups(st.groups);
+          setChartServerState(st.estado);
+        })
+        .catch(() => {});
+    setChartServerState('DESCONOCIDO');
+    void refreshFromServer();
 
-    // Escuchar actualizaciones de plan de cuentas despachadas en la misma ventana u otras pestañas
     const handleChartUpdated = (e: any) => {
       if (e?.detail?.empresaRut === company.rut && Array.isArray(e?.detail?.chart)) {
         setChartOfAccounts(e.detail.chart);
-      } else {
-        const fresh = loadCompanyChartOfAccounts(company.rut);
-        setChartOfAccounts(fresh);
+        if (Array.isArray(e.detail.groups)) setChartGroups(e.detail.groups);
+        if (e.detail.estado) setChartServerState(e.detail.estado);
       }
     };
-
-    const handleWindowFocus = () => {
-      fetchCompanyChartOfAccounts(company.rut).then((remoteChart) => {
-        if (isMounted && remoteChart && Array.isArray(remoteChart) && remoteChart.length > 0) {
-          setChartOfAccounts(remoteChart);
-        }
-      }).catch(() => {});
+    const handleChartSaveError = (e: any) => {
+      if (e?.detail?.empresaRut !== company.rut) return;
+      const cuentas = Array.isArray(e.detail.details?.cuentas) ? ` (${e.detail.details.cuentas.join(', ')})` : '';
+      showToast(`El plan de cuentas no se guardó: ${e.detail.error}${cuentas}`, 'error');
     };
 
     window.addEventListener('companyChartUpdated', handleChartUpdated);
-    window.addEventListener('storage', handleChartUpdated);
-    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('companyChartSaveError', handleChartSaveError);
+    window.addEventListener('focus', refreshFromServer);
 
     return () => {
       isMounted = false;
       window.removeEventListener('companyChartUpdated', handleChartUpdated);
-      window.removeEventListener('storage', handleChartUpdated);
-      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('companyChartSaveError', handleChartSaveError);
+      window.removeEventListener('focus', refreshFromServer);
     };
   }, [company.rut]);
 
@@ -1521,21 +1526,17 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
   };
 
   // Restaurar al estándar CMF
+  // K2: reemplazar el plan (plantilla, copia o importación) solo se permite sin asientos; lo decide el servidor.
   const handleResetChartToDefault = () => {
-    if (confirm(`¿Desea restaurar el plan de cuentas de "${company.razonSocial}" al catálogo base oficial chileno (CMF / SII)? Esta acción sobreescribirá personalizaciones.`)) {
-      const def = resetCompanyChartToDefault(company.rut);
-      setChartOfAccounts(def.chart);
-      const defGroups = loadCompanyGroups(company.rut);
-      setChartGroups(defGroups);
-      showToast('Plan de cuentas restaurado al catálogo estándar chileno.', 'success');
-    }
+    setChartWizardReplace(chartServerState === 'CONFIGURADO');
+    setIsChartWizardOpen(true);
   };
 
   // Importar plan desde archivo o JSON
-  const handleImportChart = (imported: HierarchicalAccountItem[]) => {
-    setChartOfAccounts(imported);
-    saveCompanyChartOfAccounts(company.rut, imported);
-    showToast(`Plan de cuentas importado (${imported.length} cuentas cargadas).`, 'success');
+  const handleImportChart = async (imported: HierarchicalAccountItem[]) => {
+    const r = await saveCompanyChartOfAccounts(company.rut, imported);
+    if (r.ok) showToast(`Plan de cuentas importado (${imported.length} cuentas).`, 'success');
+    return { ok: r.ok, error: r.error };
   };
 
   // Importación y registro masivo de asientos contables (Migración de sistemas)
@@ -5905,7 +5906,42 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
           )}
         </div>
       )}
-      {activeTab === 'PLAN_CUENTAS' && (
+      {activeTab === 'PLAN_CUENTAS' && chartServerState === 'SIN_PLAN' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-amber-900">{company.razonSocial} no tiene plan de cuentas</h3>
+            <p className="text-xs text-amber-800">
+              Los asientos se validan contra el plan de la empresa. Elija la plantilla estándar, copie el plan de otra empresa o impórtelo desde el sistema anterior.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setChartWizardReplace(false);
+              setIsChartWizardOpen(true);
+            }}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg cursor-pointer shrink-0"
+          >
+            Configurar plan de cuentas
+          </button>
+        </div>
+      )}
+
+      <ChartInitializationWizard
+        isOpen={isChartWizardOpen}
+        empresaRut={company.rut}
+        empresaNombre={company.razonSocial}
+        reemplazar={chartWizardReplace}
+        onClose={() => setIsChartWizardOpen(false)}
+        onInitialized={(st) => {
+          setChartOfAccounts(st.chart);
+          setChartGroups(st.groups);
+          setChartServerState(st.estado);
+          showToast(`Plan de cuentas creado (${st.chart.length} cuentas).`, 'success');
+        }}
+      />
+
+      {activeTab === 'PLAN_CUENTAS' && chartServerState !== 'SIN_PLAN' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div>
@@ -5977,7 +6013,7 @@ export const SeniorAccountingOrchestrator: React.FC<SeniorAccountingOrchestrator
               <button
                 onClick={handleResetChartToDefault}
                 className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold p-2 rounded-lg cursor-pointer transition-colors"
-                title="Restaurar al plan base estándar chileno CMF / SII"
+                title="Reemplazar el plan (plantilla, copia o importación); solo si la empresa no tiene asientos"
               >
                 <RefreshCw className="w-4 h-4" />
               </button>

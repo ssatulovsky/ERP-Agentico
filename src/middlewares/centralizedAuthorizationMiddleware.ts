@@ -94,6 +94,8 @@ export const ROUTE_MODULE_MAP: RouteModuleRule[] = [
 
   // 2. CONTABILIDAD
   { prefix: '/api/accounting', module: 'CONTABILIDAD' },
+  // K2: plan de cuentas único y cuentas por defecto de la empresa
+  { prefix: '/api/companies', module: 'CONTABILIDAD' },
   { prefix: '/api/accounting/senior-orchestrator', module: 'CONTABILIDAD' },
   { prefix: '/api/accounting/assistant-dialogue', module: 'CONTABILIDAD' },
   { prefix: '/api/gemini/audit-fiscal', module: 'CONTABILIDAD' },

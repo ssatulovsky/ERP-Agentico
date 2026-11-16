@@ -1,3 +1,4 @@
+import { validateEntryAccounts } from './chartOfAccountsServerService';
 import crypto from 'node:crypto';
 import { sql, eq, and } from 'drizzle-orm';
 import {
@@ -378,6 +379,15 @@ export async function recordVerifiedEntry(
 
     totalDebeCents += debeCents;
     totalHaberCents += haberCents;
+  }
+
+  // 2.b K2.7: las cuentas deben existir en el plan de la empresa y ser imputables.
+  const chartCheck = validateEntryAccounts(header.empresaId, lineas.map((l) => l.codigoCuenta));
+  if (!chartCheck.ok) {
+    throw new InvalidAccountingPayloadError(chartCheck.message || 'Cuentas inválidas para el plan de la empresa.', {
+      code: chartCheck.code,
+      cuentas: chartCheck.cuentas,
+    });
   }
 
   // 3. VALIDACIÓN MATEMÁTICA ESTRICTA DE PARTIDA DOBLE (|Σ Debe - Σ Haber| < 0.01)

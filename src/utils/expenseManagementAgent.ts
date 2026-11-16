@@ -31,7 +31,7 @@ export const EXPENSE_CATEGORIES_CONFIG: Record<
 > = {
   ALIMENTACION: {
     label: 'Alimentación & Viáticos Terreno',
-    defaultAccountCode: '4.2.01.006',
+    defaultAccountCode: '6.1.04.007',
     defaultAccountName: 'Gastos de Alimentación & Viáticos',
     icono: 'Utensils',
     requiereDetalleRUT: true,

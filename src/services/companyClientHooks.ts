@@ -16,6 +16,8 @@ export interface CompanyClientHooks {
   beforeCreateUser(ctx: { req: Request; user: any; empresa: any }): Promise<HookError | null> | HookError | null;
   /** true si un administrador (no SuperAdmin) puede registrar empresas nuevas en su cliente ERP. */
   allowAdminCreate(ctx: { user: any }): boolean;
+  /** true si dos empresas pertenecen al mismo cliente ERP (o el usuario es SuperAdmin). */
+  sameCommercialAccount(empresaA: string, empresaB: string, user: any): boolean;
 }
 
 const noop: CompanyClientHooks = {
@@ -23,6 +25,7 @@ const noop: CompanyClientHooks = {
   afterSave: () => undefined,
   beforeCreateUser: () => null,
   allowAdminCreate: () => false,
+  sameCommercialAccount: () => true,
 };
 
 export const companyClientHooks: CompanyClientHooks = { ...noop };

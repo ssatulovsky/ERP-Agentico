@@ -31,7 +31,7 @@ import {
   ERP_SUBSCRIPTION_PLANS, 
   CHILEAN_REGIONS_WITH_COMMUNES 
 } from '../../config/erpMasterConfig';
-import { STANDARD_ACCOUNT_PLAN, formatCLP, validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
+import { formatCLP, validateRutChileno, formatRutChileno } from '../../utils/chileanAccounting';
 import { isDemoModeEnabled } from '../../config/demoMode';
 
 interface NewErpClientOnboardingModalProps {
@@ -736,6 +736,7 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                   onChange={(e) => setGrupoImpuesto(e.target.value)}
                   className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
+                  <option value="">Seleccione…</option>
                   <option value="IVA General 19% (Afecto)">IVA General 19% (Afecto DL 825)</option>
                   <option value="Servicios Exentos Art. 12 DL 825">Servicios Profesionales / Exentos Art. 12 Letra E</option>
                   <option value="Honorarios 14.5% (Retención)">Honorarios 2da Categoría (14.5%)</option>
@@ -743,93 +744,10 @@ export const NewErpClientOnboardingModal: React.FC<NewErpClientOnboardingModalPr
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Cuenta Cliente (Cuentas por Cobrar)
-                  </label>
-                  <select
-                    value={cuentaCliente}
-                    onChange={(e) => setCuentaCliente(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'ACTIVO').map(a => (
-                      <option key={a.codigo} value={a.codigo}>
-                        {a.codigo} - {a.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Cuenta Ventas (Cuenta Ingresos)
-                  </label>
-                  <select
-                    value={cuentaVentas}
-                    onChange={(e) => setCuentaVentas(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'INGRESO').map(a => (
-                      <option key={a.codigo} value={a.codigo}>
-                        {a.codigo} - {a.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Cuenta Desc. Ventas (Cuenta de Ajuste)
-                  </label>
-                  <select
-                    value={cuentaDescVentas}
-                    onChange={(e) => setCuentaDescVentas(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {STANDARD_ACCOUNT_PLAN.map(a => (
-                      <option key={a.codigo} value={a.codigo}>
-                        {a.codigo} - {a.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Cuenta Recepción Mercaderías (Cuentas Puentes)
-                  </label>
-                  <select
-                    value={cuentaRecepcionMercaderias}
-                    onChange={(e) => setCuentaRecepcionMercaderias(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {STANDARD_ACCOUNT_PLAN.map(a => (
-                      <option key={a.codigo} value={a.codigo}>
-                        {a.codigo} - {a.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Cuenta Desc. Pagos (Gastos Financieros)
-                  </label>
-                  <select
-                    value={cuentaDescPagos}
-                    onChange={(e) => setCuentaDescPagos(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {STANDARD_ACCOUNT_PLAN.filter(a => a.tipo === 'GASTO' || a.tipo === 'COSTO').map(a => (
-                      <option key={a.codigo} value={a.codigo}>
-                        {a.codigo} - {a.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-[11px] text-blue-900">
+                Las cuentas contables (clientes, ventas, proveedores, descuentos…) se eligen del plan de cuentas de
+                esta empresa en <strong>Parámetros de sistema</strong>, una vez creado el plan. Al terminar el alta se
+                elige de dónde sale el plan: plantilla estándar, copia de otra empresa o importación desde el sistema anterior.
               </div>
 
               <div>

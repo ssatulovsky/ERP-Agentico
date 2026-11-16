@@ -9,6 +9,8 @@ import {
   type AccountingEntryLineInput,
 } from '../services/accountingLedgerService';
 import { normalizeAndValidateJournalEntry } from '../services/journalEntryNormalizer';
+// K2.7: registra el plan de cada empresa para el normalizador de asientos.
+import '../services/chartOfAccountsServerService';
 import { QUEUE_NAMES } from '../queues/types';
 import { getRedisConnectionOptions } from '../queues/redisConfig';
 import { calculatePreF29, type PreF29Options } from '../utils/f29SeniorEngine';
