@@ -31,6 +31,7 @@ import {
   saveCompanies,
 } from '../services/companyRegistryService';
 import { companyClientHooks } from '../services/companyClientHooks';
+import { normalizeClientCompany } from '../utils/clientCompanyDefaults';
 
 export const clientsRouter = Router();
 
@@ -72,7 +73,7 @@ clientsRouter.get('/', (req: Request, res: Response) => {
   const clientes = listCompanies()
     .filter((c) => c.estadoEmpresa !== 'BAJA')
     .filter((c) => user.isSuperAdmin || requireCompanyAccess(req, c.id).allowed)
-    .map(sanitizeCompanyForClient);
+    .map((c) => sanitizeCompanyForClient({ ...normalizeClientCompany(c), claveSii: c.claveSii }));
   // Empresas dadas de baja: el navegador las quita de su cartera local (las demás que solo tenga en
   // el navegador se conservan y se informan, para no perder empresas que nunca llegaron al servidor).
   const bajas = listCompanies()

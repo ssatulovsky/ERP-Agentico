@@ -683,7 +683,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                       <div className="bg-slate-50 border border-slate-100 rounded-lg p-2">
                         <span className="text-slate-400 text-[10px] uppercase font-bold block">Régimen Tributario</span>
                         <span className="font-bold text-slate-800 truncate block">
-                          {client.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : client.regimenTributario === '14D8_PROPYME_TRANSPARENTE' ? '14 D8 Transparente' : '14 A General'}
+                          {client.regimenTributario === '14D3_PROPYME_GENERAL' ? '14 D3 ProPyme' : client.regimenTributario === '14D8_PROPYME_TRANSPARENTE' ? '14 D8 Transparente' : client.regimenTributario === '14A_SEMI_INTEGRADO' ? '14 A General' : 'No informado'}
                         </span>
                       </div>
 

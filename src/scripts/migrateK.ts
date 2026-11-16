@@ -26,7 +26,13 @@ const aplicar = process.argv.includes('--aplicar');
 async function main() {
   assertVaultSecretPolicy();
   const empresas = listCompanies();
-  console.log(`Migración K1–K4 · ${empresas.length} empresas · modo ${aplicar ? 'APLICAR' : 'SOLO INFORME'}\n`);
+  console.log(`Migración K1–K4 · ${empresas.length} empresas · modo ${aplicar ? 'APLICAR' : 'SOLO INFORME'}`);
+  console.log(`Carpeta de datos: ${process.cwd()}/data`);
+  if (aplicar) {
+    console.log('IMPORTANTE: el servidor debe estar detenido (pm2 stop erpremia). Si sigue corriendo, al guardar');
+    console.log('cualquier dato vuelve a escribir su copia en memoria y deshace esta migración.');
+  }
+  console.log('');
 
   // 1 y 2. Clave SII en texto plano y estado de empresa
   let clavesPlanas = 0;

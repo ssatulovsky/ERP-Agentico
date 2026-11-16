@@ -22,7 +22,9 @@ export const PROTECTED_COMPANY_FIELDS = [
   'motivoBaja',
 ] as const;
 
-const same = (a: any, b: any) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+// Vacío equivalente: undefined, null, '' y [] (la UI completa contenedores vacíos en fichas parciales).
+const vacio = (v: any) => (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) ? null : v);
+const same = (a: any, b: any) => JSON.stringify(vacio(a)) === JSON.stringify(vacio(b));
 
 function toHookError(err: any): HookError {
   if (err instanceof SaasError) return { status: err.status, body: { error: err.code, errorMessage: err.message, ...(err.details || {}) } };

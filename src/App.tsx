@@ -147,6 +147,7 @@ import {
 } from './services/securityRbacService';
 import { generateMonthlyCentralizationEntry } from './utils/siiAutomation';
 import { getStoredAuthToken, erpFetch, removeStoredAuthToken } from './services/apiClient';
+import { normalizeClientCompany } from './utils/clientCompanyDefaults';
 import { 
   Receipt, 
   FileSpreadsheet, 
@@ -202,7 +203,7 @@ export default function App() {
   const [clients, setClients] = useState<ClientCompany[]>(() =>
     // K1.6: claves SII guardadas en el navegador por versiones anteriores se descartan al cargar.
     loadPersistentState<ClientCompany[]>('erp_clients_portfolio_v1', isDemoModeEnabled() ? seedClients : []).map((c) => ({
-      ...c,
+      ...normalizeClientCompany(c),
       hasClaveSii: Boolean(c.hasClaveSii || (c.claveSii && String(c.claveSii).trim())),
       claveSii: isDemoModeEnabled() ? c.claveSii : '',
     }))
@@ -2252,7 +2253,7 @@ export default function App() {
         const res = await fetch('/api/clients');
         if (!res.ok || cancelado) return;
         const data = await res.json();
-        const delServidor: ClientCompany[] = Array.isArray(data?.clientes) ? data.clientes : [];
+        const delServidor: ClientCompany[] = (Array.isArray(data?.clientes) ? data.clientes : []).map(normalizeClientCompany);
         const bajas = new Set<string>((Array.isArray(data?.bajas) ? data.bajas : []).map((x: any) => String(x)));
         if (delServidor.length === 0 && isDemoModeEnabled()) return;
         setClients((prev) => {

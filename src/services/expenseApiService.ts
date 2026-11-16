@@ -45,6 +45,8 @@ export const expenseApiService = {
    * Obtiene las rendiciones reales desde MySQL 8.0 para la empresa activa
    */
   async getExpenseReports(empresaId: string): Promise<ExpenseReport[]> {
+    // Sin empresa seleccionada (p. ej. mientras se carga la cartera) no se consulta.
+    if (!empresaId) return [];
     try {
       const res = await fetch(`/api/expenses/reports?empresaId=${encodeURIComponent(empresaId)}`);
       if (!res.ok) {
