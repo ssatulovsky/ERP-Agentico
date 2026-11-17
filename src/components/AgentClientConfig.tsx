@@ -1,3 +1,5 @@
+import { VoiceProviderSettings } from './voice/VoiceProviderSettings';
+import { DEFAULT_AGENT_PERSONAS } from '../config/defaultAgentPersonas';
 import React, { useEffect, useState } from 'react';
 import { 
   Building2, 
@@ -477,11 +479,20 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
 
       {/* SECTION -1: PERSONAS A CARGO, IDENTIDAD Y VOCES */}
       {activeSection === 'PERSONAS_VOICE' && (
-        <AgentPersonasConfigSection
-          activeClientId={activeClientId}
-          clientName={clients.find(c => c.id === activeClientId)?.razonSocial || firm.nombreFantasia}
-          onOpenVoiceDialogue={onOpenVoiceDialogue}
-        />
+        <div className="space-y-6">
+          {activeClientId && (
+            <VoiceProviderSettings
+              empresaId={activeClientId}
+              empresaNombre={clients.find((c) => c.id === activeClientId)?.razonSocial || 'la empresa'}
+              personas={DEFAULT_AGENT_PERSONAS}
+            />
+          )}
+          <AgentPersonasConfigSection
+            activeClientId={activeClientId}
+            clientName={clients.find(c => c.id === activeClientId)?.razonSocial || firm.nombreFantasia}
+            onOpenVoiceDialogue={onOpenVoiceDialogue}
+          />
+        </div>
       )}
 
       {/* SECTION 0: GOBERNANZA AGÉNTICA, CONTEXTO E INSTRUCCIONES ESPECIALES (MEMORIA) */}

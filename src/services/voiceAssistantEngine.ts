@@ -159,6 +159,20 @@ class VoiceAssistantEngine {
   private isListeningActive: boolean = false;
   private cachedVoices: SpeechSynthesisVoice[] = [];
   private currentAudioElement: HTMLAudioElement | null = null;
+  /** Empresa activa: decide el proveedor de voz (Gemini incluido o ElevenLabs de la empresa). */
+  private activeCompanyId = '';
+  /** Último motor que habló realmente (ELEVENLABS, GEMINI, PIPER o NAVEGADOR). */
+  public lastEngine: { motor: string; detalle?: string; aviso?: string } | null = null;
+
+  public setActiveCompany(empresaId: string): void {
+    this.activeCompanyId = empresaId || '';
+  }
+
+  private reportEngine(info: { motor: string; detalle?: string; aviso?: string }): void {
+    this.lastEngine = info;
+    if (info.aviso) console.warn(`[Voz] ${info.motor}: ${info.aviso}`);
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('erp:voice-engine', { detail: info }));
+  }
   private currentPlaybackSessionId: number = 0;
 
   constructor() {
@@ -317,15 +331,22 @@ class VoiceAssistantEngine {
             body: JSON.stringify({
               text: chunkText,
               voiceId,
+              personaId: persona.id,
               personaName: persona.nombre,
               geminiVoiceName: persona.voz.geminiVoiceName,
               rate: persona.voz.rate || 1.0,
               pitch: persona.voz.pitch || 1.0,
+              ...(this.activeCompanyId ? { empresaId: this.activeCompanyId } : {}),
             }),
           });
-          if (!response.ok) return null;
+          if (!response.ok) {
+            const err = await response.json().catch(() => null);
+            if (err?.motivos) console.warn('[Voz] El servidor no pudo sintetizar:', err.motivos.join(' | '));
+            return null;
+          }
           const data = await response.json();
           if (!data.success || !data.audioBase64) return null;
+          this.reportEngine({ motor: data.motor || 'SERVIDOR', detalle: data.modelUsed, aviso: data.aviso });
           return `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
         } catch {
           return null;
@@ -491,21 +512,12 @@ class VoiceAssistantEngine {
     utterance.lang = chosenVoice?.lang || persona.voz.lang || 'es-CL';
     const isChosenVoiceActuallyMale = chosenVoice ? detectVoiceGender(chosenVoice) === 'MALE' : false;
 
-    if (persona.sexo === 'MASCULINO') {
-      if (isChosenVoiceActuallyMale) {
-        utterance.pitch = persona.voz.pitch && persona.voz.pitch > 0.70 ? persona.voz.pitch : 0.95;
-      } else {
-        utterance.pitch = Math.min(persona.voz.pitch || 0.58, 0.62);
-      }
-      utterance.rate = persona.voz.rate || 0.94;
-    } else {
-      if (isChosenVoiceActuallyMale) {
-        utterance.pitch = 1.35;
-      } else {
-        utterance.pitch = Math.max(persona.voz.pitch || 1.15, 1.05);
-      }
-      utterance.rate = persona.voz.rate || 1.0;
-    }
+    // Voz de contingencia del navegador: tono natural. Forzar el tono (subirlo para simular una voz
+    // femenina o bajarlo para una masculina) es lo que la hacía sonar "a perico" o robótica.
+    void isChosenVoiceActuallyMale;
+    utterance.pitch = 1.0;
+    utterance.rate = Math.min(Math.max(persona.voz.rate || 1.0, 0.85), 1.1);
+    this.reportEngine({ motor: 'NAVEGADOR', detalle: chosenVoice?.name || 'voz del sistema', aviso: 'Sin motor de voz en el servidor; se usa la voz del navegador.' });
 
     utterance.volume = persona.voz.volume ?? 1.0;
 

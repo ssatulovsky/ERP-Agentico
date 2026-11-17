@@ -10,6 +10,7 @@ import { SeniorAccountingOrchestrator } from './components/SeniorAccountingOrche
 import { AiFiscalAuditorModal } from './components/AiFiscalAuditorModal';
 import { AiModelManagerModal } from './components/admin/AiModelManagerModal';
 import { AgentClientConfig } from './components/AgentClientConfig';
+import { voiceAssistantEngine } from './services/voiceAssistantEngine';
 import { ClientErpConsole } from './components/saas/ClientErpConsole';
 import { SaasAdminPanel } from './components/saas/SaasAdminPanel';
 import { BankReconciliation } from './components/BankReconciliation';
@@ -2441,6 +2442,11 @@ export default function App() {
     window.addEventListener('erp:unauthorized', onUnauthorized);
     return () => window.removeEventListener('erp:unauthorized', onUnauthorized);
   }, []);
+
+  // Voces: el proveedor (Gemini incluido o ElevenLabs de la empresa) depende de la empresa activa.
+  useEffect(() => {
+    voiceAssistantEngine.setActiveCompany(activeClientId);
+  }, [activeClientId]);
 
   // K6: cliente ERP (quien paga) para la barra superior.
   useEffect(() => {

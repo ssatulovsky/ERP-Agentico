@@ -22,6 +22,8 @@ import { clientsRouter } from "./src/controllers/clientsController";
 import { chartOfAccountsRouter } from "./src/controllers/chartOfAccountsController";
 import { saasRouter } from "./src/controllers/saasController";
 import { accountRouter } from "./src/controllers/accountController";
+import { voiceSettingsRouter } from "./src/controllers/voiceSettingsController";
+import { getCompanyVoiceSettings, synthesizeElevenLabs, geminiTtsModels, normalizeGeminiAudio } from "./src/services/ttsProviderService";
 import "./src/services/saasHooks";
 import { startSaasBillingScheduler } from "./src/services/saasBillingService";
 import { applyCommercialStatus, assertUserLimits, SaasError } from "./src/services/saasAccountService";
@@ -645,82 +647,73 @@ function getRuntimeGeminiKey(explicitKey?: string): string {
 
 app.post("/api/voice/tts", async (req, res) => {
   try {
-    const { text, voiceId, personaName, geminiVoiceName, rate, pitch, apiKey } = req.body;
+    const { text, voiceId, personaName, personaId, geminiVoiceName, rate, pitch, apiKey } = req.body;
     if (!text || typeof text !== "string") {
       return res.status(400).json({ success: false, error: "El campo 'text' es requerido." });
+    }
+    const empresaId: string | undefined = (req as any).effectiveEmpresaId || req.body?.empresaId;
+    const responder = (audio: Buffer, mimeType: string, motor: string, detalle: string, aviso?: string) => {
+      if (req.headers.accept?.includes("audio/")) {
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader("Content-Length", audio.length);
+        res.setHeader("X-Voice-Engine", motor);
+        return res.send(audio);
+      }
+      return res.json({ success: true, audioBase64: audio.toString("base64"), mimeType, motor, modelUsed: detalle, voiceName: detalle, ...(aviso ? { aviso } : {}) });
+    };
+    const fallos: string[] = [];
+
+    // 0. Proveedor propio de la empresa (p. ej. ElevenLabs con la cuenta que paga la empresa)
+    const ajustesVoz = getCompanyVoiceSettings(empresaId);
+    if (ajustesVoz?.proveedor === "ELEVENLABS" && empresaId) {
+      try {
+        const r = await synthesizeElevenLabs(empresaId, text, personaId);
+        return responder(r.audio, r.mimeType, r.motor, r.detalle);
+      } catch (elErr: any) {
+        console.warn(`[Server TTS] ElevenLabs falló para ${empresaId}: ${elErr.message}`);
+        fallos.push(`ElevenLabs: ${elErr.message}`);
+      }
     }
 
     const effectiveGeminiKey = getRuntimeGeminiKey(apiKey);
 
-    // 1. MOTOR PRINCIPAL: Gemini Speech Generation (Voz ultra-natural hiperrealista)
+    // 1. Gemini (voz incluida en el ERP)
     if (effectiveGeminiKey) {
       try {
         const ai = getAIClient(effectiveGeminiKey);
         const geminiVoice = mapToGeminiVoice(voiceId, personaName, geminiVoiceName);
-
-        // Modelos de Google Gen AI con soporte de modalidad de audio (TTS)
-        const ttsModelsToTry = [
-          process.env.GEMINI_TTS_MODEL,
-          "gemini-3.8-flash-tts",
-          "gemini-3.8-flash-lite-tts",
-          "gemini-2.5-flash-tts",
-          "gemini-2.5-flash",
-          "gemini-2.0-flash",
-        ].filter(Boolean) as string[];
-
-        for (const ttsModel of ttsModelsToTry) {
+        for (const ttsModel of geminiTtsModels()) {
           try {
             const geminiResp = await ai.models.generateContent({
               model: ttsModel,
               contents: text,
               config: {
                 responseModalities: ["AUDIO"],
-                speechConfig: {
-                  voiceConfig: {
-                    prebuiltVoiceConfig: {
-                      voiceName: geminiVoice,
-                    },
-                  },
-                },
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } },
               },
             });
-
-            const audioPart = geminiResp.candidates?.[0]?.content?.parts?.find(
-              (p: any) => p.inlineData && p.inlineData.mimeType?.startsWith("audio/")
+            // Algunos modelos entregan el audio en varias partes: se unen en orden.
+            const partes = (geminiResp.candidates?.[0]?.content?.parts || []).filter(
+              (p: any) => p.inlineData?.data && String(p.inlineData.mimeType || "").startsWith("audio/")
             );
-
-            if (audioPart && audioPart.inlineData?.data) {
-              const rawMime = audioPart.inlineData.mimeType || "audio/pcm;rate=24000";
-              const rawAudioBuffer = Buffer.from(audioPart.inlineData.data, "base64");
-              const sampleRateMatch = rawMime.match(/rate=(\d+)/);
-              const sampleRate = sampleRateMatch ? parseInt(sampleRateMatch[1], 10) : 24000;
-
-              // Convertir PCM crudo a WAV estándar con cabecera RIFF de 44 bytes para reproducción en navegadores
-              const wavBuffer = wrapPcmWithWavHeader(rawAudioBuffer, sampleRate);
-              const audioBase64 = wavBuffer.toString("base64");
-              const mimeType = "audio/wav";
-
-              if (req.headers.accept?.includes("audio/")) {
-                res.setHeader("Content-Type", mimeType);
-                res.setHeader("Content-Length", wavBuffer.length);
-                return res.send(wavBuffer);
-              }
-
-              return res.json({
-                success: true,
-                audioBase64,
-                mimeType,
-                modelUsed: `${ttsModel} (${geminiVoice})`,
-                voiceName: `Gemini Ultra-Natural (${geminiVoice})`,
-              });
+            if (partes.length) {
+              const mime = String(partes[0].inlineData!.mimeType || "audio/pcm;rate=24000");
+              const datos = Buffer.concat(partes.map((p: any) => Buffer.from(p.inlineData.data, "base64")));
+              const { audio, mimeType } = normalizeGeminiAudio(datos, mime);
+              console.info(`[Server TTS] Gemini ${ttsModel} (${geminiVoice}) · ${mime} · ${datos.length} bytes`);
+              return responder(audio, mimeType, "GEMINI", `${ttsModel} (${geminiVoice})`, fallos.length ? fallos.join(" | ") : undefined);
             }
+            fallos.push(`${ttsModel}: sin audio`);
           } catch (modelErr: any) {
             console.warn(`[Server TTS] Gemini TTS con modelo '${ttsModel}' falló: ${modelErr.message}`);
+            fallos.push(`${ttsModel}: ${String(modelErr.message).slice(0, 120)}`);
           }
         }
       } catch (geminiTtsErr: any) {
         console.warn("[Server TTS] Gemini Speech Generation no disponible o falló, activando Piper como fallback:", geminiTtsErr.message);
       }
+    } else {
+      fallos.push("Gemini: sin GEMINI_API_KEY");
     }
 
     // 2. MOTOR FALLBACK 1: Piper Neural TTS local (ONNX)
@@ -733,21 +726,27 @@ app.post("/api/voice/tts", async (req, res) => {
         return res.send(result.audioBuffer);
       }
 
+      console.info(`[Server TTS] Piper (${result.voiceName}) · motivos: ${fallos.join(" | ")}`);
       return res.json({
         success: true,
         audioBase64: result.audioBase64,
         mimeType: result.mimeType,
+        motor: "PIPER",
         modelUsed: result.modelUsed,
         voiceName: result.voiceName,
+        aviso: fallos.join(" | "),
       });
     } catch (piperErr: any) {
       console.warn("[Server TTS] Piper local no disponible:", piperErr.message);
+      fallos.push(`Piper: ${piperErr.message}`);
     }
 
-    // 3. MOTOR FALLBACK 2: Notificar al cliente que use síntesis local de navegador de contingencia
+    // 3. Ningún motor del servidor respondió: el navegador usa su voz de contingencia (y lo dice).
+    console.warn(`[Server TTS] Sin motor de voz en el servidor: ${fallos.join(" | ")}`);
     return res.status(503).json({
       success: false,
       fallbackToBrowser: true,
+      motivos: fallos,
       error: "Sintetizador neuronal de servidor no disponible. Usando sintetizador local del cliente.",
     });
   } catch (err: any) {
@@ -2361,6 +2360,8 @@ app.use("/api/companies", chartOfAccountsRouter);
 app.use("/api/saas", saasRouter);
 // K6: consola "Mi cliente ERP" (usuarios y empresas del propio cliente; el controlador valida el rol).
 app.use("/api/account", accountRouter);
+// Voces por empresa (Gemini incluido o ElevenLabs con la cuenta de la empresa)
+app.use("/api/voice-settings", voiceSettingsRouter);
 
 // RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
 app.use("/api/modules", erpModulesRouter);

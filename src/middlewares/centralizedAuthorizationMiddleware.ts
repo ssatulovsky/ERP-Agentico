@@ -727,6 +727,12 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     return next();
   }
 
+  // Voces por empresa: el controlador valida el acceso a la empresa del parámetro y exige
+  // administrador para modificar (la clave de ElevenLabs nunca sale del servidor).
+  if (urlPath.startsWith('/api/voice-settings/')) {
+    return next();
+  }
+
   // Rutas de gobernanza
   if (urlPath.startsWith('/api/governance') || urlPath.startsWith('/api/agents/governance')) {
     return next();
