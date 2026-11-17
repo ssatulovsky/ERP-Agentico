@@ -18,7 +18,8 @@ import {
   Sparkles,
   LogOut,
   UserCheck,
-  Cpu
+  Cpu,
+  Landmark
 } from 'lucide-react';
 import { 
   ChileIndicators, 
@@ -46,6 +47,12 @@ interface NavbarProps {
   currentUserName?: string;
   currentRoleName?: string;
   isAdminOrSuperAdmin?: boolean;
+  /** K6: SuperAdmin de la empresa dueña (ve Administración ERP). */
+  isSuperAdmin?: boolean;
+  /** K6: puede abrir la configuración operativa de la empresa activa. */
+  canConfigureCompany?: boolean;
+  /** K6: cliente ERP (quien paga) de la empresa activa. */
+  clienteErpNombre?: string;
   openAiModelManager?: () => void;
   onLogout?: () => void;
 }
@@ -67,6 +74,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUserName,
   currentRoleName,
   isAdminOrSuperAdmin,
+  isSuperAdmin = false,
+  canConfigureCompany = false,
+  clienteErpNombre,
   openAiModelManager,
   onLogout,
 }) => {
@@ -89,11 +99,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-300 flex items-center gap-1">
                 <Building2 className="w-3 h-3" />
-                <span>Estudio: {firm.nombreFantasia}</span>
-              </span>
-              <span className="text-slate-500 text-[10px]">|</span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                RUT Asesor: {firm.rut}
+                <span>Cliente ERP: {clienteErpNombre || 'sin asignar'}</span>
               </span>
             </div>
 
@@ -243,7 +249,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               type="button"
               onClick={() => setIsConfigDropdownOpen(!isConfigDropdownOpen)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                isConfigDropdownOpen || activeTab === 'security_admin' || activeTab === 'agents'
+                isConfigDropdownOpen || ['security_admin', 'agents', 'erp_admin', 'mi_cliente_erp'].includes(activeTab)
                   ? 'bg-blue-600 text-white border-blue-400 shadow-sm'
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
               }`}
@@ -275,62 +281,52 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
 
                   <div className="p-1.5 space-y-1">
-                    {/* 1. Seguridad, Roles & Usuarios */}
-                    {isAdminOrSuperAdmin && (
-                      <button
-                        type="button"
+                    {/* K6 · 1. Administración ERP (solo la empresa dueña) */}
+                    {isSuperAdmin && (
+                      <ConfigItem
+                        active={activeTab === 'erp_admin' || activeTab === 'security_admin'}
+                        icon={<Landmark className="w-4 h-4" />}
+                        tone="slate"
+                        title="Administración ERP"
+                        badge="EMPRESA DUEÑA"
+                        text="Clientes ERP, planes, contratos, facturación, cobranza y soporte de usuarios."
                         onClick={() => {
-                          setActiveTab('security_admin');
+                          setActiveTab('erp_admin');
                           setIsConfigDropdownOpen(false);
                         }}
-                        className={`w-full text-left p-2.5 rounded-lg text-xs flex items-start gap-2.5 hover:bg-slate-50 transition-colors cursor-pointer ${
-                          activeTab === 'security_admin' ? 'bg-emerald-50 border border-emerald-200 text-emerald-950 font-semibold' : 'text-slate-700'
-                        }`}
-                      >
-                        <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 shrink-0 mt-0.5">
-                          <Key className="w-4 h-4" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-bold flex items-center justify-between">
-                            <span>Seguridad, Roles & Usuarios</span>
-                            <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                              RBAC
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                            Usuarios, roles del sistema, permisos por módulo y empresas anclas.
-                          </p>
-                        </div>
-                      </button>
+                      />
                     )}
 
-                    {/* 2. Configuración Agentes & SII */}
+                    {/* K6 · 2. Mi cliente ERP (quien paga: sus empresas, usuarios y plan) */}
                     {isAdminOrSuperAdmin && (
-                      <button
-                        type="button"
+                      <ConfigItem
+                        active={activeTab === 'mi_cliente_erp'}
+                        icon={<Users className="w-4 h-4" />}
+                        tone="blue"
+                        title="Mi cliente ERP"
+                        badge="EMPRESAS Y USUARIOS"
+                        text="Empresas, usuarios y accesos, plan de cuentas, plan contratado y facturas."
+                        onClick={() => {
+                          setActiveTab('mi_cliente_erp');
+                          setIsConfigDropdownOpen(false);
+                        }}
+                      />
+                    )}
+
+                    {/* K6 · 3. Configuración de la empresa activa (lo operativo) */}
+                    {canConfigureCompany && (
+                      <ConfigItem
+                        active={activeTab === 'agents'}
+                        icon={<Sliders className="w-4 h-4" />}
+                        tone="emerald"
+                        title="Configuración de la empresa"
+                        badge="EMPRESA ACTIVA"
+                        text="Agentes, WhatsApp, consola SII y asesor contable de la empresa activa."
                         onClick={() => {
                           setActiveTab('agents');
                           setIsConfigDropdownOpen(false);
                         }}
-                        className={`w-full text-left p-2.5 rounded-lg text-xs flex items-start gap-2.5 hover:bg-slate-50 transition-colors cursor-pointer ${
-                          activeTab === 'agents' ? 'bg-blue-50 border border-blue-200 text-blue-950 font-semibold' : 'text-slate-700'
-                        }`}
-                      >
-                        <div className="p-2 rounded-lg bg-blue-100 text-blue-700 shrink-0 mt-0.5">
-                          <Sliders className="w-4 h-4" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-bold flex items-center justify-between">
-                            <span>Configuración Agentes & SII</span>
-                            <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                              SII & ESTUDIO
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                            Cartera de clientes, credenciales del SII, certificados y centralización.
-                          </p>
-                        </div>
-                      </button>
+                      />
                     )}
 
                     {/* 3. Modelos de IA & Reporte de Gastos */}
@@ -425,3 +421,37 @@ export const Navbar: React.FC<NavbarProps> = ({
   );
 };
 
+
+const TONES: Record<string, { box: string; active: string; badge: string }> = {
+  slate: { box: 'bg-slate-200 text-slate-800', active: 'bg-slate-100 border border-slate-300 text-slate-950 font-semibold', badge: 'bg-slate-200 text-slate-800' },
+  blue: { box: 'bg-blue-100 text-blue-700', active: 'bg-blue-50 border border-blue-200 text-blue-950 font-semibold', badge: 'bg-blue-100 text-blue-800' },
+  emerald: { box: 'bg-emerald-100 text-emerald-700', active: 'bg-emerald-50 border border-emerald-200 text-emerald-950 font-semibold', badge: 'bg-emerald-100 text-emerald-800' },
+};
+
+const ConfigItem: React.FC<{
+  active: boolean;
+  icon: React.ReactNode;
+  tone: keyof typeof TONES;
+  title: string;
+  badge: string;
+  text: string;
+  onClick: () => void;
+}> = ({ active, icon, tone, title, badge, text, onClick }) => {
+  const t = TONES[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full text-left p-2.5 rounded-lg text-xs flex items-start gap-2.5 hover:bg-slate-50 transition-colors cursor-pointer ${active ? t.active : 'text-slate-700'}`}
+    >
+      <div className={`p-2 rounded-lg shrink-0 mt-0.5 ${t.box}`}>{icon}</div>
+      <div className="flex-1 min-w-0">
+        <div className="font-bold flex items-center justify-between gap-2">
+          <span>{title}</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${t.badge}`}>{badge}</span>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{text}</p>
+      </div>
+    </button>
+  );
+};

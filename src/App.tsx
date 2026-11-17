@@ -10,6 +10,8 @@ import { SeniorAccountingOrchestrator } from './components/SeniorAccountingOrche
 import { AiFiscalAuditorModal } from './components/AiFiscalAuditorModal';
 import { AiModelManagerModal } from './components/admin/AiModelManagerModal';
 import { AgentClientConfig } from './components/AgentClientConfig';
+import { ClientErpConsole } from './components/saas/ClientErpConsole';
+import { SaasAdminPanel } from './components/saas/SaasAdminPanel';
 import { BankReconciliation } from './components/BankReconciliation';
 import { InventoryAgentModule } from './components/InventoryAgentModule';
 import { HrAgentModule } from './components/HrAgentModule';
@@ -214,6 +216,11 @@ export default function App() {
   });
   const [isFirstClientOnboardingOpen, setIsFirstClientOnboardingOpen] = useState(false);
   const [ledgerInitialTab, setLedgerInitialTab] = useState<'PLAN_CUENTAS' | undefined>(undefined);
+  // K6: cliente ERP que abre el SuperAdmin en "Mi cliente ERP" (desde Administración ERP)
+  const [consolaCuentaId, setConsolaCuentaId] = useState<string | null>(null);
+  // K6: nombres de clientes ERP para la barra superior (SuperAdmin: todos; resto: el propio)
+  const [clientesErpNombres, setClientesErpNombres] = useState<Record<string, string>>({});
+  const [miClienteErpNombre, setMiClienteErpNombre] = useState<string>('');
 
   // Security & RBAC State (Empresas, Usuarios, Roles y Permisos WhatsApp Vera)
   const [securityState, setSecurityState] = useState<SecurityRbacStoreState>(() => {
@@ -2191,13 +2198,8 @@ export default function App() {
         'cost_centers',
       ],
     },
-    {
-      id: 'configuracion_sistema',
-      label: 'Configuración & Gobierno',
-      icon: Sliders,
-      color: 'text-slate-500',
-      moduleIds: ['security_admin', 'agents'],
-    },
+    // K6: la configuración (Administración ERP, Mi cliente ERP, Configuración de la empresa) está
+    // solo en el menú "Configuración" de la barra superior, para no repetirla en el menú lateral.
   ];
 
   const allNavLinks = [
@@ -2440,6 +2442,37 @@ export default function App() {
     return () => window.removeEventListener('erp:unauthorized', onUnauthorized);
   }, []);
 
+  // K6: cliente ERP (quien paga) para la barra superior.
+  useEffect(() => {
+    if (!authUserId || !getStoredAuthToken()) return;
+    let cancelado = false;
+    fetch('/api/saas/my-account')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelado && d?.success) setMiClienteErpNombre(d.cliente?.razonSocial || '');
+      })
+      .catch(() => {});
+    // La lista de todos los clientes ERP solo la consulta el SuperAdmin de la empresa dueña.
+    const yo = securityState.users.find((u) => u.id === authUserId);
+    const miRol = securityState.roles.find((r) => r.id === yo?.rolId);
+    const esSuperAdmin = miRol?.tipoSistema === 'SUPERADMIN' || yo?.rolId === 'role-superadmin';
+    if (!esSuperAdmin) return () => {
+      cancelado = true;
+    };
+    fetch('/api/saas/overview')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelado || !d?.success) return;
+        const m: Record<string, string> = {};
+        for (const c of d.clientes || []) m[c.id] = c.razonSocial;
+        setClientesErpNombres(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [authUserId, securityState.users, securityState.roles]);
+
   // K3: si el servidor informa que el cliente ERP está suspendido o dado de baja (o la empresa
   // inactiva), la sesión se cierra en este navegador.
   useEffect(() => {
@@ -2529,6 +2562,15 @@ export default function App() {
         currentRoleName={currentRole.nombre}
         isAdminOrSuperAdmin={
           currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN'
+        }
+        isSuperAdmin={currentRole.tipoSistema === 'SUPERADMIN' || currentRole.id === 'role-superadmin'}
+        canConfigureCompany={
+          currentRole.tipoSistema === 'SUPERADMIN' || currentRole.tipoSistema === 'ADMIN' || allowedModules.includes('agents' as ErpModuleId)
+        }
+        clienteErpNombre={
+          (activeClient as any)?.clienteErpId && clientesErpNombres[(activeClient as any).clienteErpId]
+            ? clientesErpNombres[(activeClient as any).clienteErpId]
+            : miClienteErpNombre
         }
         openAiModelManager={() => setIsAiModelManagerOpen(true)}
         onLogout={handleLogout}
@@ -2745,6 +2787,67 @@ export default function App() {
               chequesCartera={chequesCartera}
               chequesEmitidos={chequesEmitidos}
               onNavigateToTab={(tabId) => setActiveTab(tabId)}
+            />
+          )}
+
+          {activeTab === 'erp_admin' && (currentRole?.tipoSistema === 'SUPERADMIN' || currentRole?.id === 'role-superadmin') && (
+            <div className="space-y-5">
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700">Administración ERP · empresa dueña</div>
+                  <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Clientes ERP, facturación y cobranza</h2>
+                  <p className="text-xs text-slate-500 mt-1 max-w-3xl">
+                    Quién paga el ERP (estudios contables o empresas), su plan y condiciones, contrato, plazos de cobranza, estado, facturas y pagos. Las empresas y usuarios de cada cliente se administran en su consola.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('security_admin')}
+                  className="px-3.5 py-2 border border-slate-300 hover:bg-slate-50 rounded-lg text-xs font-bold text-slate-700"
+                  title="Usuarios, roles y permisos de todos los clientes (soporte)"
+                >
+                  Soporte: usuarios y roles de todos los clientes
+                </button>
+              </div>
+              <SaasAdminPanel
+                isOpen
+                embebido
+                onClose={() => setActiveTab('executive_dashboard')}
+                onAdministrarCliente={(id) => {
+                  setConsolaCuentaId(id);
+                  setActiveTab('mi_cliente_erp');
+                }}
+              />
+            </div>
+          )}
+
+          {activeTab === 'mi_cliente_erp' && (
+            <ClientErpConsole
+              isSuperAdmin={currentRole?.tipoSistema === 'SUPERADMIN' || currentRole?.id === 'role-superadmin'}
+              currentUserId={currentUser?.id}
+              cuentaInicial={consolaCuentaId}
+              renderEmpresas={(ids) => (
+                <AgentClientConfig
+                  vista="EMPRESAS"
+                  firm={firm}
+                  onUpdateFirm={setFirm}
+                  clients={clients.filter((c) => ids.includes(c.id))}
+                  activeClientId={activeClientId}
+                  onSelectActiveClient={handleSelectActiveClient}
+                  onAddClient={handleAddClient}
+                  onUpdateClient={handleUpdateClient}
+                  onDeleteClient={handleDeleteClient}
+                  onDownloadClientDtes={handleDownloadClientDtes}
+                  systemParams={systemParams}
+                  onUpdateSystemParams={handleUpdateSystemParams}
+                  isSuperAdmin={currentRole?.tipoSistema === 'SUPERADMIN' || currentRole?.id === 'role-superadmin'}
+                  onOpenChartOfAccounts={(clientId) => {
+                    if (clientId && clientId !== activeClientId) handleSelectActiveClient(clientId);
+                    setLedgerInitialTab('PLAN_CUENTAS');
+                    setActiveTab('ledger');
+                  }}
+                />
+              )}
             />
           )}
 

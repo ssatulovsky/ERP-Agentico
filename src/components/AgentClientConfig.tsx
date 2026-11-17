@@ -62,7 +62,6 @@ import { WhatsAppSecurityBridgePanel } from './whatsapp/WhatsAppSecurityBridgePa
 import { periodoActual } from '../utils/periodo';
 import { fetchCompanyChartOfAccounts } from '../utils/companyChartOfAccountsService';
 import { ChartInitializationWizard } from './accounting/ChartInitializationWizard';
-import { SaasAdminPanel } from './saas/SaasAdminPanel';
 import type { HierarchicalAccountItem } from '../types';
 
 interface AgentClientConfigProps {
@@ -85,6 +84,11 @@ interface AgentClientConfigProps {
   onOpenChartOfAccounts?: (clientId: string) => void;
   /** K3: el panel de clientes ERP y cobranza es solo para el SuperAdmin de la empresa dueña. */
   isSuperAdmin?: boolean;
+  /**
+   * K6: EMPRESAS = lista de empresas del cliente ERP (dentro de "Mi cliente ERP");
+   * EMPRESA = configuración operativa de la empresa activa (agentes, WhatsApp, consola SII, asesor).
+   */
+  vista?: 'EMPRESAS' | 'EMPRESA';
 }
 
 export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
@@ -102,8 +106,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   onOpenVoiceDialogue,
   onOpenChartOfAccounts,
   isSuperAdmin = false,
+  vista = 'EMPRESA',
 }) => {
-  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE' | 'WHATSAPP_BRIDGE'>('WHATSAPP_BRIDGE');
+  const [activeSection, setActiveSection] = useState<'CLIENTS' | 'FIRM' | 'AGENT_TERMINAL' | 'GOVERNANCE' | 'PERSONAS_VOICE' | 'WHATSAPP_BRIDGE'>(
+    vista === 'EMPRESAS' ? 'CLIENTS' : 'WHATSAPP_BRIDGE'
+  );
   
   // Modales ERP Multi-Tenant (Conforme a Capturas del Sistema)
   const [isErpOnboardingOpen, setIsErpOnboardingOpen] = useState(false);
@@ -113,22 +120,15 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
   const [activeClientChart, setActiveClientChart] = useState<HierarchicalAccountItem[]>([]);
   // K2: después del alta se elige el origen del plan de cuentas de la nueva empresa
   const [chartWizardClient, setChartWizardClient] = useState<ClientCompany | null>(null);
-  const [isSaasPanelOpen, setIsSaasPanelOpen] = useState(false);
   const [saasAccounts, setSaasAccounts] = useState<any[]>([]);
-  const [myAccount, setMyAccount] = useState<any>(null);
 
-  // K3: clientes ERP (para el alta) o el consumo del propio cliente (administrador)
+  // K3: clientes ERP para el alta (el consumo del propio cliente se ve en "Mi cliente ERP")
   useEffect(() => {
     if (isSuperAdmin) {
       if (!isErpOnboardingOpen) return;
       fetch('/api/saas/overview')
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => d?.success && setSaasAccounts(d.clientes || []))
-        .catch(() => {});
-    } else {
-      fetch('/api/saas/my-account')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => d?.success && setMyAccount(d.cliente))
         .catch(() => {});
     }
   }, [isSuperAdmin, isErpOnboardingOpen]);
@@ -363,7 +363,8 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Top Header Card */}
+      {/* Top Header Card (K6: en la vista de empresas el encabezado lo pone "Mi cliente ERP") */}
+      {vista !== 'EMPRESAS' && (
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-start gap-4">
@@ -373,19 +374,11 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
             <div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                  CONFIGURACIÓN DE LOS AGENTES & CLIENTES
+                  CONFIGURACIÓN DE LA EMPRESA
                 </h2>
-                <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2.5 py-0.5 rounded-full border border-blue-200 flex items-center gap-1">
-                  <Building2 className="w-3.5 h-3.5" />
-                  <span>{firm.nombreFantasia}</span>
-                </span>
-                <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{clients.length} Clientes Administrados</span>
-                </span>
               </div>
               <p className="text-slate-500 text-xs sm:text-sm mt-1 max-w-3xl leading-relaxed">
-                Administre el contexto del <strong>Estudio Contable principal</strong> y configure para cada <strong>empresa cliente</strong> sus datos tributarios ante el SII y la <strong>Clave del SII</strong>, permitiendo al Agente descargar de forma desatendida compras, ventas, honorarios y conciliar el F29.
+                Lo operativo de la <strong>empresa activa</strong>: WhatsApp y lista blanca, personas a cargo de cada agente, gobernanza y memoria, consola del agente SII y datos del asesor contable. Las empresas, los usuarios y el plan se administran en <strong>Configuración → Mi cliente ERP</strong>.
               </p>
             </div>
           </div>
@@ -448,18 +441,6 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveSection('CLIENTS')}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-              activeSection === 'CLIENTS'
-                ? 'bg-[#2563eb] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Cartera de Clientes & Claves SII ({clients.length})</span>
-          </button>
-
-          <button
             onClick={() => setActiveSection('FIRM')}
             className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
               activeSection === 'FIRM'
@@ -468,7 +449,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
             }`}
           >
             <Building2 className="w-4 h-4" />
-            <span>Estudio Contable Principal ({firm.nombreFantasia})</span>
+            <span>Asesor contable (SII)</span>
           </button>
 
           <button
@@ -484,6 +465,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
           </button>
         </div>
       </div>
+      )}
 
       {/* SECTION -2: WHATSAPP WEB QR & LISTA BLANCA RBAC POR AGENTE */}
       {activeSection === 'WHATSAPP_BRIDGE' && (
@@ -516,40 +498,23 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="font-extrabold text-slate-800 text-sm">
-                    Cartera de Empresas Clientes & Módulos ERP
+                    Empresas del cliente ERP
                   </h3>
-                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded font-mono">
-                    MULTI-TENANCY & PARÁMETROS
-                  </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Gestión integral de clientes ERP, planes de suscripción, clientes ancla, parámetros de cierre Art. 16 CT, cuentas IFRS y padrón SII.
+                  Alta de empresas, ficha, plan de cuentas, parámetros de sistema, auxiliares y credenciales SII. Los botones de abajo actúan sobre la empresa activa
+                  {activeClient ? <> (<strong>{activeClient.razonSocial}</strong>)</> : null}; para cambiarla use "Seleccionar empresa" en su tarjeta.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {isSuperAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => setIsSaasPanelOpen(true)}
-                    className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-                  >
-                    <span>Clientes ERP y cobranza</span>
-                  </button>
-                )}
-                {!isSuperAdmin && myAccount && (
-                  <span className="text-[11px] text-slate-600 bg-slate-100 rounded-lg px-2.5 py-1.5">
-                    Plan {myAccount.planId} · {myAccount.consumo.empresas}/{myAccount.consumo.limiteEmpresas} empresas · {myAccount.consumo.usuarios}/
-                    {myAccount.consumo.limiteUsuarios} usuarios
-                  </span>
-                )}
                 <button
                   type="button"
                   onClick={() => setIsErpOnboardingOpen(true)}
                   className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg transition-all text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <UserPlus className="w-3.5 h-3.5 text-blue-200" />
-                  <span>Alta Cliente ERP (Planes)</span>
+                  <span>Nueva empresa</span>
                 </button>
 
               </div>
@@ -569,8 +534,8 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                   <Anchor className="w-3.5 h-3.5" />
                 </div>
                 <div>
-                  <span className="block text-xs font-bold text-slate-800">Ficha Cliente Ancla</span>
-                  <span className="block text-[10px] text-slate-400">Parámetros Contables/Comerciales</span>
+                  <span className="block text-xs font-bold text-slate-800">Ficha de la empresa</span>
+                  <span className="block text-[10px] text-slate-400">Datos tributarios, contacto y acceso inicial</span>
                 </div>
               </button>
 
@@ -598,7 +563,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                   <FolderTree className="w-3.5 h-3.5" />
                 </div>
                 <div>
-                  <span className="block text-xs font-bold text-slate-800">Plan de Cuentas de la Empresa</span>
+                  <span className="block text-xs font-bold text-slate-800">Plan de cuentas</span>
                   <span className="block text-[10px] text-slate-400">Se edita en el Agente Contable (único plan)</span>
                 </div>
               </button>
@@ -777,7 +742,7 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
                         title="Abrir Ficha de Cliente Ancla, Parámetros Contables y Crédito"
                       >
                         <Anchor className="w-3 h-3 text-indigo-600" />
-                        <span>Ficha Ancla</span>
+                        <span>Ficha</span>
                       </button>
                     </div>
 
@@ -1696,7 +1661,6 @@ export const AgentClientConfig: React.FC<AgentClientConfigProps> = ({
         saasAccounts={saasAccounts}
       />
 
-      <SaasAdminPanel isOpen={isSaasPanelOpen} onClose={() => setIsSaasPanelOpen(false)} />
 
       {chartWizardClient && (
         <ChartInitializationWizard
