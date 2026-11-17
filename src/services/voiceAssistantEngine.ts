@@ -336,6 +336,7 @@ class VoiceAssistantEngine {
               geminiVoiceName: persona.voz.geminiVoiceName,
               rate: persona.voz.rate || 1.0,
               pitch: persona.voz.pitch || 1.0,
+              preferEngine: persona.voz.neuralModel === 'piper' ? 'PIPER' : 'AUTO',
               ...(this.activeCompanyId ? { empresaId: this.activeCompanyId } : {}),
             }),
           });
@@ -470,7 +471,13 @@ class VoiceAssistantEngine {
       return;
     }
 
-    // Prioridad 1: Síntesis neuronal de alta fidelidad (/api/voice/tts: Gemini Speech Generation -> Piper -> Navegador)
+    // La persona eligió la voz del navegador: se respeta (antes todas pasaban por el servidor igual).
+    if (persona.voz.neuralModel === 'browser') {
+      this.speakBrowser(cleanText, persona, callbacks, sessionId);
+      return;
+    }
+
+    // Prioridad 1: voz del servidor (ElevenLabs de la empresa o Gemini -> Piper -> Navegador)
     this.speakWithPiper(cleanText, persona, callbacks, sessionId).then((played) => {
       // Fallback al navegador únicamente si la síntesis en servidor falló y la sesión no fue cancelada
       if (!played && this.currentPlaybackSessionId === sessionId) {

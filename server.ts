@@ -23,7 +23,7 @@ import { chartOfAccountsRouter } from "./src/controllers/chartOfAccountsControll
 import { saasRouter } from "./src/controllers/saasController";
 import { accountRouter } from "./src/controllers/accountController";
 import { voiceSettingsRouter } from "./src/controllers/voiceSettingsController";
-import { getCompanyVoiceSettings, synthesizeElevenLabs, geminiTtsModels, normalizeGeminiAudio } from "./src/services/ttsProviderService";
+import { getCompanyVoiceSettings, synthesizeElevenLabs, geminiTtsModels, normalizeGeminiAudio, GEMINI_TTS_STYLE } from "./src/services/ttsProviderService";
 import "./src/services/saasHooks";
 import { startSaasBillingScheduler } from "./src/services/saasBillingService";
 import { applyCommercialStatus, assertUserLimits, SaasError } from "./src/services/saasAccountService";
@@ -647,7 +647,9 @@ function getRuntimeGeminiKey(explicitKey?: string): string {
 
 app.post("/api/voice/tts", async (req, res) => {
   try {
-    const { text, voiceId, personaName, personaId, geminiVoiceName, rate, pitch, apiKey } = req.body;
+    const { text, voiceId, personaName, personaId, geminiVoiceName, rate, pitch, apiKey, preferEngine } = req.body;
+    // Motor pedido por la persona: PIPER = solo la voz local; AUTO (por defecto) = proveedor de la empresa.
+    const soloPiper = preferEngine === "PIPER";
     if (!text || typeof text !== "string") {
       return res.status(400).json({ success: false, error: "El campo 'text' es requerido." });
     }
@@ -665,7 +667,7 @@ app.post("/api/voice/tts", async (req, res) => {
 
     // 0. Proveedor propio de la empresa (p. ej. ElevenLabs con la cuenta que paga la empresa)
     const ajustesVoz = getCompanyVoiceSettings(empresaId);
-    if (ajustesVoz?.proveedor === "ELEVENLABS" && empresaId) {
+    if (!soloPiper && ajustesVoz?.proveedor === "ELEVENLABS" && empresaId) {
       try {
         const r = await synthesizeElevenLabs(empresaId, text, personaId);
         return responder(r.audio, r.mimeType, r.motor, r.detalle);
@@ -678,18 +680,28 @@ app.post("/api/voice/tts", async (req, res) => {
     const effectiveGeminiKey = getRuntimeGeminiKey(apiKey);
 
     // 1. Gemini (voz incluida en el ERP)
-    if (effectiveGeminiKey) {
+    if (soloPiper) {
+      fallos.push("La persona usa Piper");
+    } else if (effectiveGeminiKey) {
       try {
         const ai = getAIClient(effectiveGeminiKey);
         const geminiVoice = mapToGeminiVoice(voiceId, personaName, geminiVoiceName);
         for (const ttsModel of geminiTtsModels()) {
           try {
+            // Gemini 3.8 TTS usa otro esquema: la voz va en voiceConfig.voice y el estilo en speechMetadata
+            // del turno. Con el esquema anterior (prebuiltVoiceConfig) la llamada falla y se terminaba en
+            // Piper o en la voz del navegador, iguales para todos los agentes.
+            const esquema38 = /gemini-3\.8/.test(ttsModel);
             const geminiResp = await ai.models.generateContent({
               model: ttsModel,
-              contents: text,
+              contents: esquema38
+                ? [{ role: "user", parts: [{ text, speechMetadata: { style: GEMINI_TTS_STYLE } } as any] }]
+                : `${GEMINI_TTS_STYLE}: ${text}`,
               config: {
                 responseModalities: ["AUDIO"],
-                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } },
+                speechConfig: (esquema38
+                  ? { voiceConfig: { voice: geminiVoice } }
+                  : { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } }) as any,
               },
             });
             // Algunos modelos entregan el audio en varias partes: se unen en orden.

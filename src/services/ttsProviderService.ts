@@ -15,6 +15,9 @@ import { normalizeCompanyKey, companyKeys } from './companyRegistryService';
 
 export type VoiceProvider = 'GEMINI' | 'ELEVENLABS';
 
+/** Indicación de estilo para Gemini TTS (detecta el idioma solo; esto fija acento y registro). */
+export const GEMINI_TTS_STYLE = 'Habla en español de Chile, con tono profesional, cálido y natural, a ritmo conversacional';
+
 /** Gemini TTS entrega PCM 16 bits mono a 24 kHz salvo que el tipo MIME indique otra frecuencia. */
 export const GEMINI_TTS_DEFAULT_SAMPLE_RATE = 24_000;
 

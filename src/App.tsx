@@ -2352,8 +2352,11 @@ export default function App() {
     return allowedCompanyIds.includes(c.id);
   });
 
-  const navLinks = allNavLinks.filter((link) =>
-    allowedModules.includes(link.id as ErpModuleId)
+  // K6: Seguridad y Configuración de la empresa se abren desde el menú "Configuración" de la barra
+  // superior; no se repiten en el menú lateral (antes caían en "Módulos adicionales").
+  const SOLO_MENU_CONFIGURACION = new Set(['security_admin', 'agents']);
+  const navLinks = allNavLinks.filter(
+    (link) => allowedModules.includes(link.id as ErpModuleId) && !SOLO_MENU_CONFIGURACION.has(link.id)
   );
 
   // Agrupamiento dinámico y búsqueda inteligente para la barra lateral

@@ -460,7 +460,7 @@ export const AgentPersonasConfigSection: React.FC<AgentPersonasConfigSectionProp
                       onChange={e => handleUpdateVoiceConfig(persona.id, 'neuralModel', e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:ring-1 focus:ring-teal-500 focus:outline-hidden cursor-pointer"
                     >
-                      <option value="gemini">🌟 Gemini Ultra-Natural HD (Locutor Humano en Tiempo Real)</option>
+                      <option value="gemini">🌟 Voz premium de la empresa: Gemini (o ElevenLabs si la empresa lo contrató)</option>
                       <option value="piper">✨ Piper Neural TTS (Modelo Humano VITS en Español)</option>
                       <option value="browser">🔊 Síntesis Nativa del Navegador (Web Speech API)</option>
                     </select>
