@@ -2438,13 +2438,23 @@ export default function App() {
   // seguir operando con una sesión local que el servidor ya no reconoce.
   useEffect(() => {
     const onUnauthorized = () => {
-      if (!getStoredAuthToken()) return;
+      // Con una sesión abierta en pantalla (aunque falte el token), un 401 obliga a volver a ingresar.
+      if (!loadActiveAuthSession()) return;
       setServerSyncError(null);
       handleLogout();
     };
     window.addEventListener('erp:unauthorized', onUnauthorized);
     return () => window.removeEventListener('erp:unauthorized', onUnauthorized);
   }, []);
+
+  // Sesión guardada en el navegador sin token del servidor (p. ej. tras actualizar o vencer la sesión):
+  // la pantalla parecía funcionar, pero toda consulta al servidor respondía 401 y las voces caían a la
+  // voz del navegador. Se pide ingresar de nuevo.
+  useEffect(() => {
+    if (authUserId && !isDemoModeEnabled() && !getStoredAuthToken()) {
+      handleLogout();
+    }
+  }, [authUserId]);
 
   // Voces: el proveedor (Gemini incluido o ElevenLabs de la empresa) depende de la empresa activa.
   useEffect(() => {
