@@ -314,7 +314,12 @@ export default function App() {
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
 
   // Alerta de sincronización o persistencia fallida con el servidor (Punto C: jamás silenciar fallos)
-  const [serverSyncError, setServerSyncError] = useState<string | null>(null);
+  const [serverSyncError, setServerSyncErrorRaw] = useState<string | null>(null);
+  // Un rechazo por sesión (401) no es un error de sincronización: la app vuelve al ingreso sola.
+  const setServerSyncError = useCallback((mensaje: string | null) => {
+    if (mensaje && /AUTH_REQUIRED|INVALID_OR_EXPIRED_TOKEN|HTTP 401/.test(mensaje)) return;
+    setServerSyncErrorRaw(mensaje);
+  }, []);
 
   useEffect(() => {
     setStorageSyncErrorHandler((err, ctx) => {
@@ -721,6 +726,8 @@ export default function App() {
   // Carga reactiva de fuente de verdad del servidor
   const syncCompanyDataFromServer = useCallback((clientId: string) => {
     if (typeof window === 'undefined' || !clientId) return;
+    // Antes de ingresar no hay token: no se consulta (se carga al ingresar).
+    if (!getStoredAuthToken()) return;
     const encId = encodeURIComponent(clientId);
     const headers = getAuthHeaders();
 
@@ -985,10 +992,10 @@ export default function App() {
 
   // Carga y sincronización inicial y reactiva desde el Servidor (Fuente de Verdad)
   useEffect(() => {
-    if (activeClientId) {
+    if (activeClientId && authUserId) {
       syncCompanyDataFromServer(activeClientId);
     }
-  }, [activeClientId, syncCompanyDataFromServer]);
+  }, [activeClientId, authUserId, syncCompanyDataFromServer]);
 
   // Handlers sincronizados con Persistencia en Servidor (Fuente de Verdad)
   const handleUpdateWarehouses = (newWarehouses: Warehouse[]) => {
