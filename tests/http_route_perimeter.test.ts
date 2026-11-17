@@ -220,6 +220,7 @@ async function runPerimeterTestSuite() {
         r.path.startsWith('/api/agents/schedules') ||
         r.path.startsWith('/api/clients') ||
         r.path === '/api/saas/my-account' ||
+        r.path.startsWith('/api/account') ||
         r.path === '/api/voice/status' ||
         r.path === '/api/voice/tts' ||
         r.path === '/api/voice/piper-voices' ||

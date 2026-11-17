@@ -21,6 +21,7 @@ import { agentSchedulesRouter } from "./src/controllers/agentSchedulesController
 import { clientsRouter } from "./src/controllers/clientsController";
 import { chartOfAccountsRouter } from "./src/controllers/chartOfAccountsController";
 import { saasRouter } from "./src/controllers/saasController";
+import { accountRouter } from "./src/controllers/accountController";
 import "./src/services/saasHooks";
 import { startSaasBillingScheduler } from "./src/services/saasBillingService";
 import { applyCommercialStatus, assertUserLimits, SaasError } from "./src/services/saasAccountService";
@@ -2358,6 +2359,8 @@ app.use("/api/tenancy", tenancyRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/companies", chartOfAccountsRouter);
 app.use("/api/saas", saasRouter);
+// K6: consola "Mi cliente ERP" (usuarios y empresas del propio cliente; el controlador valida el rol).
+app.use("/api/account", accountRouter);
 
 // RUTAS DE MÓDULOS OPERATIVOS DEL ERP AGÉNTICO
 app.use("/api/modules", erpModulesRouter);

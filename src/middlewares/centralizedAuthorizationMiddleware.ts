@@ -721,6 +721,12 @@ export function centralizedAuthorizationMiddleware(req: Request, res: Response, 
     return next();
   }
 
+  // K6: consola "Mi cliente ERP". El controlador exige administrador (o SuperAdmin) y limita todo al
+  // cliente ERP de su empresa principal; nunca expone usuarios ni facturas de otro cliente.
+  if (urlPath === '/api/account' || urlPath.startsWith('/api/account/')) {
+    return next();
+  }
+
   // Rutas de gobernanza
   if (urlPath.startsWith('/api/governance') || urlPath.startsWith('/api/agents/governance')) {
     return next();
