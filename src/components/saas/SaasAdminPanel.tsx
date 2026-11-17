@@ -45,6 +45,10 @@ async function api(method: string, url: string, body?: any) {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  /** K6: se muestra como página dentro de "Administración ERP" (sin ventana flotante). */
+  embebido?: boolean;
+  /** K6: abre la consola "Mi cliente ERP" de ese cliente (empresas y usuarios). */
+  onAdministrarCliente?: (cuentaId: string) => void;
 }
 
 type View = { tipo: 'LISTA' } | { tipo: 'NUEVO' } | { tipo: 'DETALLE'; id: string };
@@ -69,7 +73,7 @@ const emptyForm = () => ({
 const input = 'w-full border border-slate-300 rounded px-2 py-1 text-xs';
 const label = 'block text-[10px] font-bold text-slate-500 uppercase mb-0.5';
 
-export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
+export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose, embebido = false, onAdministrarCliente }) => {
   const [view, setView] = useState<View>({ tipo: 'LISTA' });
   const [overview, setOverview] = useState<any>(null);
   const [planes, setPlanes] = useState<any[]>([]);
@@ -106,8 +110,8 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
   }, []);
 
   useEffect(() => {
-    if (isOpen) void load();
-  }, [isOpen, load]);
+    if (isOpen || embebido) void load();
+  }, [isOpen, embebido, load]);
 
   useEffect(() => {
     if (view.tipo === 'DETALLE') void loadDetail(view.id);
@@ -153,7 +157,7 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
   const sinCliente: any[] = overview?.empresasSinCliente || [];
   const clientes: any[] = useMemo(() => overview?.clientes || [], [overview]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !embebido) return null;
 
   const accountForm = (esNuevo: boolean) => (
     <div className="space-y-3 text-xs">
@@ -377,6 +381,16 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
     const pendientes = detail.facturas.filter((f: any) => f.estado === 'EMITIDA');
     return (
       <div className="space-y-4 text-xs">
+        {onAdministrarCliente && (
+          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            <span className="text-blue-900">
+              <strong>{c.razonSocial}</strong>: sus empresas, usuarios y accesos se administran en su consola.
+            </span>
+            <button type="button" className="px-3 py-1.5 bg-blue-600 text-white rounded font-bold" onClick={() => onAdministrarCliente(c.id)}>
+              Administrar empresas y usuarios
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <span className={`px-2 py-0.5 rounded font-bold ${ESTADO_STYLE[c.estado] || ''}`}>{c.estado}</span>
           {c.motivoEstado && <span className="text-slate-500">{c.motivoEstado}</span>}
@@ -561,8 +575,8 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-3">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col">
+    <div className={embebido ? '' : 'fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-3'}>
+      <div className={embebido ? 'bg-white rounded-xl border border-slate-200 shadow-xs w-full flex flex-col' : 'bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col'}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <div>
             <h3 className="text-sm font-black text-slate-900">Clientes ERP y cobranza</h3>
@@ -578,9 +592,11 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
             >
               <RefreshCw className="w-3.5 h-3.5" /> Ejecutar ciclo ahora
             </button>
-            <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
-              <X className="w-4 h-4" />
-            </button>
+            {!embebido && (
+              <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -595,7 +611,7 @@ export const SaasAdminPanel: React.FC<Props> = ({ isOpen, onClose }) => {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className={embebido ? 'p-5' : 'flex-1 overflow-y-auto p-5'}>
           {view.tipo !== 'LISTA' && (
             <button type="button" className="text-xs underline mb-3" onClick={() => setView({ tipo: 'LISTA' })}>
               ← Volver a la lista
